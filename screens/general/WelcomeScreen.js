@@ -1,5 +1,5 @@
 import 'react-native-gesture-handler';
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,11 @@ import {
   SafeAreaView,
   StatusBar,
   Dimensions,
-  Modal,
-  Pressable,
-  TouchableWithoutFeedback,
 } from 'react-native';
 import Carousel from 'react-native-reanimated-carousel';
+import { useNavigation } from '@react-navigation/native';
+
+import OverlayDropdown from './OverlayDropdown';
 
 const { width } = Dimensions.get('window');
 
@@ -21,16 +21,15 @@ const slides = [
   {
     image: require('../../assets/shop.png'),
     title: 'Reach millions of customers',
-    description:
-      'Expand your business offering with delivery, pickup, cashless payments, and more.',
+    description: 'Expand your business offering with delivery, pickup, cashless payments, and more.',
   },
   {
-    image: require('../../assets/shop.png'),
+    image: require('../../assets/business.png'),
     title: 'Accelerate your business growth',
     description: 'Get access to all the tools to run and grow your business, in one place.',
   },
   {
-    image: require('../../assets/shop.png'),
+    image: require('../../assets/partner.png'),
     title: 'Be our merchant-partner today',
     description: 'Signing up is simple, and you can get onboard in as little as 3 working days.',
   },
@@ -39,85 +38,76 @@ const slides = [
 const DOT_SIZE = 8;
 const DOT_MARGIN = 5;
 
-export default function WelcomeScreen({ navigation }) {
+export default function WelcomeScreen() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [selectedCountry, setSelectedCountry] = useState({
+    name: 'Singapore',
+    code: 'sg',
+    timestamp: Date.now()
+  });
   const carouselRef = useRef(null);
+  const navigation = useNavigation();
+
+  const countries = [
+    { name: 'Singapore', code: 'sg' },
+    { name: 'Malaysia', code: 'my' },
+    { name: 'Indonesia', code: 'id' },
+    { name: 'Philippines', code: 'ph' },
+    { name: 'Thailand', code: 'th' },
+    { name: 'Vietnam', code: 'vn' },
+    { name: 'Myanmar', code: 'mm' },
+    { name: 'Cambodia', code: 'kh' },
+  ];
+
+  const handleSelectCountry = useCallback((country) => {
+    setSelectedCountry({
+      ...country,
+      timestamp: Date.now()
+    });
+  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
-      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.logo}>
           <Text style={{ color: '#00b14f', fontWeight: 'bold' }}>Grab</Text>
           <Text style={{ color: '#00b14f' }}>Merchant</Text>
         </Text>
 
-        {/* Country Selector */}
         <TouchableOpacity
           style={styles.countrySelector}
-          onPress={() => setShowDropdown(prev => !prev)}
+          onPress={() => setShowDropdown(true)}
         >
-          <Image source={{ uri: 'https://flagcdn.com/w40/sg.png' }} style={styles.flag} />
-          <Text style={styles.countryText}>Singapore</Text>
-          <Image source={require('../../assets/arrow-down.png')} style={styles.dropdownIcon} />
+          <Image
+            source={{ 
+              uri: `https://flagcdn.com/w40/${selectedCountry.code}.png?ts=${selectedCountry.timestamp}`,
+              cache: 'reload'
+            }}
+            style={styles.flag}
+            key={selectedCountry.code}
+            onError={(e) => console.log('Flag load error:', e.nativeEvent.error)}
+          />
+          <Text style={styles.countryText}>{selectedCountry.name}</Text>
+          <Image
+            source={require('../../assets/arrow-down.png')}
+            style={styles.dropdownIcon}
+          />
         </TouchableOpacity>
       </View>
 
-      {/* Country Dropdown Modal */}
-      <Modal
+      <OverlayDropdown
         visible={showDropdown}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowDropdown(false)}
-      >
-        {/* Clicking outside closes the modal */}
-        <Pressable style={styles.modalOverlay} onPress={() => setShowDropdown(false)}>
-          {/* Prevent closing when clicking inside dropdown */}
-          <TouchableWithoutFeedback onPress={(e) => e.stopPropagation()}>
-            <View style={styles.dropdownMenu}>
-              <TouchableOpacity style={styles.dropdownItem}>
-                <Image source={{ uri: 'https://flagcdn.com/w40/sg.png' }} style={styles.flag} />
-                <Text style={styles.dropdownText}>Singapore</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.dropdownItem}>
-                <Image source={{ uri: 'https://flagcdn.com/w40/my.png' }} style={styles.flag} />
-                <Text style={styles.dropdownText}>Malaysia</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.dropdownItem}>
-                <Image source={{ uri: 'https://flagcdn.com/w40/id.png' }} style={styles.flag} />
-                <Text style={styles.dropdownText}>Indonesia</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.dropdownItem}>
-                <Image source={{ uri: 'https://flagcdn.com/w40/ph.png' }} style={styles.flag} />
-                <Text style={styles.dropdownText}>Philippines</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.dropdownItem}>
-                <Image source={{ uri: 'https://flagcdn.com/w40/th.png' }} style={styles.flag} />
-                <Text style={styles.dropdownText}>Thailand</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.dropdownItem}>
-                <Image source={{ uri: 'https://flagcdn.com/w40/vn.png' }} style={styles.flag} />
-                <Text style={styles.dropdownText}>Vietnam</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.dropdownItem}>
-                <Image source={{ uri: 'https://flagcdn.com/w40/mm.png' }} style={styles.flag} />
-                <Text style={styles.dropdownText}>Myanmar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.dropdownItem}>
-                <Image source={{ uri: 'https://flagcdn.com/w40/kh.png' }} style={styles.flag} />
-                <Text style={styles.dropdownText}>Cambodia</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableWithoutFeedback>
-        </Pressable>
-      </Modal>
+        onClose={() => setShowDropdown(false)}
+        countries={countries}
+        selectedCountry={selectedCountry}
+        onSelect={handleSelectCountry}
+      />
 
       <Text style={styles.version}>v 4.134.0</Text>
 
-      {/* Carousel */}
       <View style={styles.carouselContainer}>
         <Carousel
           ref={carouselRef}
@@ -138,7 +128,6 @@ export default function WelcomeScreen({ navigation }) {
         />
       </View>
 
-      {/* Dot indicators */}
       <View style={styles.dotWrapper}>
         <View style={styles.dots}>
           {slides.map((_, index) => (
@@ -147,23 +136,21 @@ export default function WelcomeScreen({ navigation }) {
         </View>
       </View>
 
-      {/* Buttons */}
       <View style={styles.buttonContainer}>
         <TouchableOpacity
           style={styles.signUpBtn}
-          onPress={() => navigation.navigate('SignUp')}
+          onPress={() => navigation.navigate('OnboardingScreen')}
         >
           <Text style={styles.signUpText}>Sign Up</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.logInBtn}
-          onPress={() => navigation.navigate('LogIn')}
+          onPress={() => navigation.navigate('LoginScreen')}
         >
           <Text style={styles.logInText}>Log In</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Terms */}
       <View style={styles.bottomContent}>
         <Text style={styles.terms}>
           I have read, understood and accepted the{' '}
@@ -315,16 +302,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
-    width: '100%',
-    height: '100%',
+    alignItems: 'center',
   },
   dropdownMenu: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
-    height: '50%', // half screen height
+    paddingBottom: 40,
+    maxHeight: '60%',
     width: '100%',
+  },
+  dropdownTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 20,
   },
   dropdownItem: {
     flexDirection: 'row',
