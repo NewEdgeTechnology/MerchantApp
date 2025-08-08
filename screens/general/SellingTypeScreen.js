@@ -8,10 +8,10 @@ import {
   ScrollView,
   Dimensions,
   SafeAreaView,
-  Platform
+  Platform,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import Icon from 'react-native-vector-icons/FontAwesome5';
+import HeaderWithSteps from './HeaderWithSteps'; // Adjust the path if needed
 
 const { width, height } = Dimensions.get('window');
 
@@ -20,19 +20,8 @@ const SellingTypeScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.leftHeader}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
-            <Text style={styles.icon}>←</Text>
-          </TouchableOpacity>
-          <Text style={styles.step}>Step 1 of 7</Text>
-        </View>
-
-        <TouchableOpacity onPress={() => navigation.navigate('HelpScreen')} style={styles.iconButton}>
-          <Icon name="question-circle" size={20} color="#1A1D1F" />
-        </TouchableOpacity>
-      </View>
+      {/* Reusable Header */}
+      <HeaderWithSteps step="Step 1 of 7" />
 
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>What are you selling?</Text>
@@ -76,36 +65,8 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 15,
-    marginTop: 24,
-  },
-  leftHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  iconButton: {
-    padding: 8,
-  },
-  icon: {
-    fontSize: 24,
-    color: '#1A1D1F',
-    fontFamily: 'Inter-Regular',
-  },
   scrollView: {
     paddingHorizontal: 24,
-  },
-  step: {
-    fontSize: 18,
-    color: '#000',
-    marginBottom: 8,
-    marginTop: 10,
-    fontWeight: 'bold',
-    opacity: 0.7,
-    fontFamily: 'Inter-Regular',
   },
   title: {
     fontSize: 24,
@@ -120,7 +81,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     elevation: 2,
     ...Platform.select({
-      ios: {
+      android: {
         shadowColor: '#000',
         shadowOpacity: 0.1,
         shadowRadius: 4,
