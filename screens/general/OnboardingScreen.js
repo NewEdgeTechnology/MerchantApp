@@ -10,7 +10,7 @@ import {
   Dimensions
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import Icon from 'react-native-vector-icons/FontAwesome5';
+import Icon from 'react-native-vector-icons/Ionicons';
 
 const { width, height } = Dimensions.get('window');
 
@@ -48,7 +48,7 @@ const OnboardingScreen = () => {
             <Text style={styles.icon}>←</Text>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => navigation.navigate('HelpScreen')} style={styles.iconButton}>
-            <Icon name="question-circle" size={20} color="#1A1D1F" />
+          <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
         </TouchableOpacity>
 
       </View>
@@ -110,6 +110,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     color: '#1A1D1F',
     fontFamily: 'Inter-Regular',
+    paddingLeft:10,
   },
   scrollContainer: {
     flexGrow: 1,

@@ -27,13 +27,9 @@ const LoginScreen = () => {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'android' ? 'padding' : 'height'}
     >
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-        <ScrollView
-          contentContainerStyle={styles.scrollContainer}
-          keyboardShouldPersistTaps="handled"
-        >
           <View style={styles.inner}>
             {/* Header */}
             <View style={styles.header}>
@@ -113,19 +109,39 @@ const LoginScreen = () => {
             {/* Footer */}
             <View style={styles.footer}>
               <Text style={styles.forgotText}>
-                Forgot your <Text style={styles.link}>username</Text> or <Text style={styles.link}>password</Text>?
+                Forgot your{' '}
+                <Text
+                  style={styles.link}
+                  onPress={() => navigation.navigate('ForgotUsername')}
+                >
+                  username
+                </Text>{' '}
+                or{' '}
+                <Text
+                  style={styles.link}
+                  onPress={() => navigation.navigate('ForgotPassword')}
+                >
+                  password
+                </Text>
+                ?
               </Text>
 
-              <TouchableOpacity style={styles.loginButtonDisabled} disabled>
-                <Text style={styles.loginButtonTextDisabled}>Log In</Text>
+              <TouchableOpacity
+                style={username && password ? styles.loginButton : styles.loginButtonDisabled}
+                disabled={!(username && password)}
+              >
+                <Text style={username && password ? styles.loginButtonText : styles.loginButtonTextDisabled}>
+                  Log In
+                </Text>
               </TouchableOpacity>
 
-              <TouchableOpacity style={styles.loginPhoneButton}>
-                <Text style={styles.loginPhoneText}>Log In with Phone</Text>
+              <TouchableOpacity style={styles.loginPhoneButton}
+              onPress={() => navigation.navigate('MobileLoginScreen')}>
+                <Text style={styles.loginPhoneText}
+                >Log In with Phone</Text>
               </TouchableOpacity>
             </View>
           </View>
-        </ScrollView>
       </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
   );
@@ -138,12 +154,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#fff',
   },
-  scrollContainer: {
-    flexGrow: 1,
-  },
+  
   inner: {
     flex: 1,
-    justifyContent: 'space-between',
+    // justifyContent: 'space-between',
     padding: 20,
     paddingTop: 40,
   },
@@ -156,7 +170,6 @@ const styles = StyleSheet.create({
   iconButton: {
     padding: 8,
   },
-  
   icon: {
     fontSize: 24,
     color: '#1A1D1F',
@@ -166,11 +179,11 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '600',
     color: '#1A1D1F',
-    marginRight:180,
+    marginRight: 180,
   },
   form: {
     flexGrow: 1,
-    padding:8,
+    padding: 8,
   },
   label: {
     marginBottom: 6,
@@ -184,7 +197,7 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     paddingHorizontal: 10,
     marginBottom: 16,
-    height:50,
+    height: 50,
   },
   inputField: {
     flex: 1,
@@ -211,7 +224,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingRight: 14,
     marginBottom: 16,
-    height:50,
+    height: 50,
   },
   passwordInput: {
     flex: 1,
@@ -226,12 +239,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 24,
-    marginTop:10,
+    marginTop: 10,
   },
   checkboxLabel: {
     marginLeft: 8,
     fontSize: 14,
-    opacity:0.7,
+    opacity: 0.7,
   },
   forgotText: {
     textAlign: 'center',
@@ -242,6 +255,19 @@ const styles = StyleSheet.create({
   },
   link: {
     color: '#007AFF',
+    fontWeight: '500',
+    opacity: 0.8,
+  },
+  loginButton: {
+    backgroundColor: '#00b14f',
+    paddingVertical: 14,
+    borderRadius: 25,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  loginButtonText: {
+    color: '#fff',
+    fontSize: 16,
     fontWeight: '500',
   },
   loginButtonDisabled: {
@@ -268,7 +294,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   footer: {
-    // paddingTop: 20,
-    marginBottom:20,
+    marginBottom: 15,
   },
 });

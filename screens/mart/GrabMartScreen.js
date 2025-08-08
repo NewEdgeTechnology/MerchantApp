@@ -35,7 +35,7 @@ const GrabMartScreen = () => {
         </View>
 
         <View style={styles.content}>
-          <Text style={styles.title}>GrabFood</Text>
+          <Text style={styles.title}>GrabMart</Text>
           <Text style={styles.description}>
             Suitable if you are selling groceries, healthcare, beauty products
             and raw or dry ingredients. For ready-to-eat food and beverages,
@@ -89,7 +89,8 @@ const GrabMartScreen = () => {
 
       {/* Fixed Bottom Button */}
       <View style={styles.buttonContainer}>
-        <TouchableOpacity style={styles.button}>
+        <TouchableOpacity style={styles.button}
+          onPress={() => navigation.navigate('SignupScreen')}>
           <Text style={styles.buttonText}>Continue</Text>
         </TouchableOpacity>
       </View>
@@ -184,20 +185,23 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height:120,
-    padding: 15,
+    width:'100%',
+    padding: 24,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#eee',
     borderRadius: 15,
     elevation: 15,
+    marginBottom: 3,
   },
   button: {
     backgroundColor: '#00b14f',
-    paddingVertical: 18,
-    borderRadius: 25,
+    paddingVertical: 16,
+    borderRadius: 30,
     alignItems: 'center',
-    height:60,
+    justifyContent:'center',
+    width:'100%',
+    marginBottom:6,
   },
   buttonText: {
     color: '#fff',
