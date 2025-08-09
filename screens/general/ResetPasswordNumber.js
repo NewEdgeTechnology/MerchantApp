@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
+import CountrySelectScreen from './CountrySelectScreen';
 
 const COUNTRIES = [
   { name: 'Singapore', code: 'sg' },
@@ -32,13 +33,22 @@ const ResetPasswordNumber = () => {
 
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isFocused, setIsFocused] = useState(false);
-  const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]); // default Singapore
+  const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
+  const [countryVisible, setCountryVisible] = useState(false);
 
   const isValidPhone = phoneNumber.trim().length > 0;
 
-  const handleClear = () => {
-    setPhoneNumber('');
-  };
+  const handleClear = () => setPhoneNumber('');
+
+  const dialCode =
+    selectedCountry.code === 'sg' ? '65' :
+    selectedCountry.code === 'my' ? '60' :
+    selectedCountry.code === 'id' ? '62' :
+    selectedCountry.code === 'ph' ? '63' :
+    selectedCountry.code === 'th' ? '66' :
+    selectedCountry.code === 'vn' ? '84' :
+    selectedCountry.code === 'mm' ? '95' :
+    selectedCountry.code === 'kh' ? '855' : '';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -63,46 +73,28 @@ const ResetPasswordNumber = () => {
           {/* Content */}
           <View style={styles.content}>
             <Text style={styles.title}>Reset password</Text>
-            <Text style={styles.subtitle}>
-              Enter your registered mobile number
-            </Text>
+            <Text style={styles.subtitle}>Enter your registered mobile number</Text>
 
             {/* Phone Input */}
             <View
               style={[
                 styles.inputWrapper,
-                {
-                  borderColor: isFocused ? '#00b14f' : '#E5E7EB',
-                  borderWidth: 1.5,
-                },
+                { borderColor: isFocused ? '#00b14f' : '#E5E7EB', borderWidth: 1.5 },
               ]}
             >
               {/* Country (flag + code) */}
               <TouchableOpacity
                 style={styles.flagContainer}
-                onPress={() =>
-                  navigation.navigate('CountrySelect', {
-                    countries: COUNTRIES,
-                    selectedCode: selectedCountry.code,
-                    onPick: (c) => setSelectedCountry(c),
-                  })
-                }
+                onPress={() => setCountryVisible(true)}
                 activeOpacity={0.7}
               >
-                <Image
-                  source={{ uri: `https://flagcdn.com/w40/${selectedCountry.code}.png` }}
-                  style={styles.flag}
-                />
-                <Text style={styles.dialCode}>
-                  {`+${selectedCountry.code === 'sg' ? '65' :
-                      selectedCountry.code === 'my' ? '60' :
-                      selectedCountry.code === 'id' ? '62' :
-                      selectedCountry.code === 'ph' ? '63' :
-                      selectedCountry.code === 'th' ? '66' :
-                      selectedCountry.code === 'vn' ? '84' :
-                      selectedCountry.code === 'mm' ? '95' :
-                      selectedCountry.code === 'kh' ? '855' : ''}`}
-                </Text>
+                <View style={styles.flagBox}>
+                  <Image
+                    source={{ uri: `https://flagcdn.com/w40/${selectedCountry.code}.png` }}
+                    style={styles.flag}
+                  />
+                </View>
+                <Text style={styles.dialCode}>{`+${dialCode}`}</Text>
               </TouchableOpacity>
 
               {/* Phone number field */}
@@ -140,12 +132,22 @@ const ResetPasswordNumber = () => {
             onPress={() => navigation.navigate('PasswordSentScreen')}
             disabled={!isValidPhone}
           >
-            <Text style={isValidPhone ? styles.submitButtonText : styles.submitTextDisabled}>
-              Next
-            </Text>
+            <Text style={isValidPhone ? styles.submitButtonText : styles.submitTextDisabled}>Next</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Country select overlay */}
+      <CountrySelectScreen
+        visible={countryVisible}
+        countries={COUNTRIES}
+        selectedCode={selectedCountry.code}
+        onPick={(c) => {
+          setSelectedCountry(c);
+          setCountryVisible(false);
+        }}
+        onClose={() => setCountryVisible(false)}
+      />
     </SafeAreaView>
   );
 };
@@ -181,15 +183,24 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     justifyContent: 'space-between',
   },
-  flagContainer: { flexDirection: 'row', alignItems: 'center', marginRight: 10 },
-  flag: {
+  flagContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  flagBox: {
     width: 30,
     height: 23,
     marginRight: 12,
-    resizeMode: 'contain',
-    borderColor: '#ccc',
     borderRadius: 3,
     borderWidth: 1,
+    borderColor: '#ccc',
+    overflow: 'hidden',
+  },
+  flag: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   dialCode: { fontSize: 16, fontWeight: '400' },
   input: { flex: 1, fontSize: 16, color: '#1A1D1F', fontWeight: '400' },

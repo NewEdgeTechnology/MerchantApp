@@ -6,18 +6,19 @@ import { createStackNavigator } from '@react-navigation/stack';
 import WelcomeScreen from './screens/general/WelcomeScreen';
 import CountrySelectScreen from './screens/general/CountrySelectScreen';
 import OnboardingScreen from './screens/general/OnboardingScreen';
-import SellingTypeScreen from './screens/general/SellingTypeScreen';
+import SellingTypeScreen from './screens/registrationsteps/SellingTypeScreen';
 import GrabFoodScreen from './screens/food/GrabFoodScreen';
 import GrabMartScreen from './screens/mart/GrabMartScreen';
 import LoginScreen from './screens/general/LoginScreen';
-import SignupScreen from './screens/general/SignupScreen';
-import PhoneNumberScreen from './screens/general/PhoneNumberScreen';
+import SignupScreen from './screens/registrationsteps/SignupScreen';
+import PhoneNumberScreen from './screens/registrationsteps/PhoneNumberScreen';
 import MobileLoginScreen from './screens/general/MobileLoginScreen';
 import ForgotUsername from './screens/general/ForgotUsername';
 import EmailSentScreen from './screens/general/EmailSentScreen';
 import ForgotPassword from './screens/general/ForgotPassword';
 import PasswordSentScreen from './screens/general/PasswordSentScreen';
 import ResetPasswordNumber from './screens/general/ResetPasswordNumber';
+import MerchantRegistrationScreen from './screens/registrationsteps/MerchantRegistrationScreen';
 
 const Stack = createStackNavigator();
 
@@ -47,6 +48,7 @@ export default function App() {
         <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
         <Stack.Screen name="PasswordSentScreen" component={PasswordSentScreen} />
         <Stack.Screen name="ResetPasswordNumber" component={ResetPasswordNumber} />
+        <Stack.Screen name="MerchantRegistrationScreen" component={MerchantRegistrationScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -1,12 +1,11 @@
 import 'react-native-gesture-handler';
 import React, { useState, useRef, useMemo, useCallback } from 'react';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import { useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Image, SafeAreaView, StatusBar, Dimensions,
 } from 'react-native';
 import Carousel from 'react-native-reanimated-carousel';
-// import { useNavigation } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
+import CountrySelectScreen from './CountrySelectScreen';
 
 const { width } = Dimensions.get('window');
 
@@ -24,6 +23,9 @@ const DOT_MARGIN = 5;
 
 export default function WelcomeScreen() {
   const [activeIndex, setActiveIndex] = useState(0);
+  const [countryParams, setCountryParams] = useState({});
+  const [countryVisible, setCountryVisible] = useState(false);
+
 
   const [selectedCountry, setSelectedCountry] = useState({
     name: 'Singapore',
@@ -48,14 +50,6 @@ export default function WelcomeScreen() {
   const handleSelectCountry = useCallback((country) => {
     setSelectedCountry({ ...country, timestamp: Date.now() });
   }, []);
-  const route = useRoute();
-useEffect(() => {
-  const picked = route.params?.pickedCountry;
-  if (picked) {
-    setSelectedCountry(picked);
-    navigation.setParams({ pickedCountry: undefined });
-  }
-}, [route.params?.pickedCountry, navigation]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -69,13 +63,15 @@ useEffect(() => {
 
         <TouchableOpacity
           style={styles.countrySelector}
-          onPress={() =>
-            navigation.navigate('CountrySelect', {
+          onPress={() => {
+            setCountryParams({
               countries,
               selectedCode: selectedCountry.code,
-              returnTo: 'Welcomscreen',
-            })
-          }
+              onPick: (c) => handleSelectCountry(c),
+            });
+            setCountryVisible(true);
+          }}
+
           activeOpacity={0.8}
         >
           <Image
@@ -88,6 +84,11 @@ useEffect(() => {
           <Text style={styles.countryText}>{selectedCountry.name}</Text>
           <Image source={require('../../assets/arrow-down.png')} style={styles.dropdownIcon} />
         </TouchableOpacity>
+        <CountrySelectScreen
+            {...countryParams}
+            visible={countryVisible}
+            onClose={() => setCountryVisible(false)}
+          />
       </View>
       <Text style={styles.version}>v 4.134.0</Text>
 
@@ -134,6 +135,7 @@ useEffect(() => {
           <Text style={styles.link}>Privacy Policy</Text>.
         </Text>
       </View>
+
     </SafeAreaView>
   );
 }
