@@ -32,7 +32,7 @@ const SellingTypeScreen = () => {
           activeOpacity={0.8}
           onPress={() => navigation.navigate('GrabFoodScreen')}
         >
-          <Image source={require('../../assets/dummy.jpg')} style={styles.image} />
+          <Image source={require('../../assets/grabfood.png')} style={styles.image} />
           <View style={styles.textContainer}>
             <Text style={styles.cardTitle}>Food delivery: GrabFood</Text>
             <Text style={styles.cardText}>
@@ -47,7 +47,7 @@ const SellingTypeScreen = () => {
           activeOpacity={0.8}
           onPress={() => navigation.navigate('GrabMartScreen')}
         >
-          <Image source={require('../../assets/dummy.jpg')} style={styles.image} />
+          <Image source={require('../../assets/grabmart.png')} style={styles.image} />
           <View style={styles.textContainer}>
             <Text style={styles.cardTitle}>Groceries delivery: GrabMart</Text>
             <Text style={styles.cardText}>

@@ -28,7 +28,7 @@ const GrabFoodScreen = () => {
         {/* Header Image with Back Button */}
         <View style={styles.imageContainer}>
           <Image
-            source={require('../../assets/dummy.jpg')}
+            source={require('../../assets/grabfood.png')}
             style={styles.headerImage}
           />
           
@@ -49,7 +49,7 @@ const GrabFoodScreen = () => {
 
           <View style={styles.feature}>
             <Image
-              source={require('../../assets/dummy1.jpg')}
+              source={require('../../assets/reach.png')}
               style={styles.featureIcon}
             />
             <View style={styles.featureText}>
@@ -63,7 +63,7 @@ const GrabFoodScreen = () => {
 
           <View style={styles.feature}>
             <Image
-              source={require('../../assets/dummy.jpg')}
+              source={require('../../assets/boost.png')}
               style={styles.featureIcon}
             />
             <View style={styles.featureText}>
@@ -77,7 +77,7 @@ const GrabFoodScreen = () => {
 
           <View style={styles.feature}>
             <Image
-              source={require('../../assets/dummy.jpg')}
+              source={require('../../assets/ease.png')}
               style={styles.featureIcon}
             />
             <View style={styles.featureText}>
