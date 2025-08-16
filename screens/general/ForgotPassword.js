@@ -25,11 +25,6 @@ const ResetPasswordScreen = () => {
     setUsername('');
   };
 
-//   const handleNext = () => {
-//     // console.log('Reset password for:', username);
-//     navigation.navigate('PasswordSentScreen');
-//   };
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
@@ -42,10 +37,19 @@ const ResetPasswordScreen = () => {
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
           {/* Header */}
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
-              <Text style={styles.icon}>←</Text>
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={styles.iconButton}
+              activeOpacity={0.7}
+            >
+              <Icon name="arrow-back" size={24} color="#1A1D1F" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('HelpScreen')} style={styles.iconButton}>
+
+            <TouchableOpacity
+              onPress={() => navigation.navigate('HelpScreen')}
+              style={styles.iconButton}
+              activeOpacity={0.7}
+            >
               <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
             </TouchableOpacity>
           </View>
@@ -83,18 +87,15 @@ const ResetPasswordScreen = () => {
             </View>
 
             {/* Mobile instead link */}
-            <TouchableOpacity>
-              <Text style={styles.link}
-              onPress={() => navigation.navigate('ResetPasswordNumber')}
-              >Use mobile number instead</Text>
+            <TouchableOpacity onPress={() => navigation.navigate('ResetPasswordNumber')}>
+              <Text style={styles.link}>Use mobile number instead</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
 
         {/* Bottom Section */}
         <View style={styles.bottomSticky}>
-          <TouchableOpacity
-          onPress={() => navigation.navigate('ForgotUsername')}>
+          <TouchableOpacity onPress={() => navigation.navigate('ForgotUsername')}>
             <Text style={styles.bottomLink}>Forgot your username?</Text>
           </TouchableOpacity>
 
@@ -129,12 +130,8 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     padding: 8,
-  },
-  icon: {
-    fontSize: 24,
-    color: '#1A1D1F',
-    fontFamily: 'Inter-Regular',
-    paddingLeft: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   content: {
     flex: 1,
@@ -180,8 +177,8 @@ const styles = StyleSheet.create({
     color: '#007bff',
     fontSize: 14,
     marginTop: 10,
-    fontWeight:'bold',
-    opacity:0.9,
+    fontWeight: 'bold',
+    opacity: 0.9,
   },
   bottomSticky: {
     paddingHorizontal: 24,
@@ -194,8 +191,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     marginBottom: 10,
-    fontWeight:'bold',
-    opacity:0.9,
+    fontWeight: 'bold',
+    opacity: 0.9,
   },
   submitButton: {
     backgroundColor: '#00b14f',

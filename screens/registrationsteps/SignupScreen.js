@@ -1,3 +1,4 @@
+// screens/registrationsteps/SignupScreen.js
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -13,12 +14,25 @@ import {
   Switch,
   SafeAreaView,
 } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { useNavigation } from '@react-navigation/native';
-import HeaderWithSteps from './HeaderWithSteps'; // Adjust path if needed
+import { useNavigation, useRoute } from '@react-navigation/native';
+import HeaderWithSteps from './HeaderWithSteps';
 
-const SignupScreen = () => {
+export default function SignupScreen() {
   const navigation = useNavigation();
+  const route = useRoute();
+
+  // May arrive when editing from Review
+  const {
+    merchant: incomingMerchant = {},
+    initialEmail = null,
+    initialPassword = null,
+    returnTo = null, // e.g., "ReviewSubmitScreen"
+    serviceType,
+    owner_type,
+  } = route.params ?? {};
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [savePassword, setSavePassword] = useState(false);
@@ -36,8 +50,44 @@ const SignupScreen = () => {
     };
   }, []);
 
-  const isValidEmail = (email) =>
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  // Prefill priority:
+  // 1) initialEmail/initialPassword (from Review "Edit")
+  // 2) incomingMerchant.email/password (carried through params)
+  // 3) SecureStore (ONLY if BOTH saved_email and saved_password exist)
+  useEffect(() => {
+    (async () => {
+      // 1 & 2
+      const seededEmail = (initialEmail ?? incomingMerchant?.email ?? '').trim();
+      const seededPassword = initialPassword ?? incomingMerchant?.password ?? '';
+
+      if (seededEmail) setEmail(seededEmail);
+      if (seededPassword) {
+        setPassword(seededPassword);
+        // don't auto-enable saving; let user decide unless SecureStore has both
+      }
+
+      // 3) Only read from secure store if we still miss either value
+      if (!seededEmail || !seededPassword) {
+        try {
+          const [savedEmail, savedPw] = await Promise.all([
+            SecureStore.getItemAsync('saved_email'),
+            SecureStore.getItemAsync('saved_password'),
+          ]);
+          // Use SecureStore only when BOTH exist (means user explicitly saved before)
+          if (!seededEmail && savedEmail && savedPw) setEmail(savedEmail);
+          if (!seededPassword && savedEmail && savedPw) {
+            setPassword(savedPw);
+            setSavePassword(true); // reflect previously saved choice
+          }
+        } catch {
+          // ignore
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const isValidEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
 
   const checkRules = {
     length: password.length >= 8,
@@ -51,27 +101,60 @@ const SignupScreen = () => {
   const isFormValid = isValidEmail(email) && isValidPassword;
   const showPasswordRules = isPasswordFocused && password.length > 0;
 
+  const handleContinue = async () => {
+    if (!isFormValid) return;
+
+    try {
+      if (savePassword) {
+        await SecureStore.setItemAsync('saved_email', email.trim());
+        await SecureStore.setItemAsync('saved_password', password);
+      } else {
+        // User chose not to save → clear any old saved creds so it won't reappear next launch
+        await SecureStore.deleteItemAsync('saved_email');
+        await SecureStore.deleteItemAsync('saved_password');
+      }
+    } catch {
+      // ignore; not critical to block flow
+    }
+
+    // Always pass forward so Review + Edit can prefill without SecureStore
+    const mergedMerchant = {
+      ...incomingMerchant,
+      email: email.trim(),
+      password,
+      owner_type: owner_type ?? serviceType ?? incomingMerchant?.owner_type ?? undefined,
+    };
+
+    navigation.navigate('PhoneNumberScreen', {
+      ...(route.params ?? {}),
+      serviceType,
+      owner_type: owner_type ?? serviceType,
+      merchant: mergedMerchant,
+      initialPhone: incomingMerchant?.phone ?? null,
+      returnTo,
+    });
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
-      <HeaderWithSteps step="Step 2 of 7" />
+      <HeaderWithSteps step="Step 1 of 7" />
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={0}
       >
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
           <View style={{ flex: 1 }}>
             <ScrollView
               contentContainerStyle={[
                 styles.scrollContainer,
-                { paddingBottom: keyboardVisible ? 10 : 100 }
+                { paddingBottom: keyboardVisible ? 10 : 100 },
               ]}
               keyboardShouldPersistTaps="handled"
             >
               <View style={styles.inner}>
                 <Text style={styles.title}>Set up email and password</Text>
                 <Text style={styles.subtitle}>
-                  You can use this to log in. We'll guide you through the onboarding process after your account has been created.
+                  You’ll use this to log in. We’ll guide you through the rest of onboarding.
                 </Text>
 
                 <View style={styles.form}>
@@ -155,7 +238,7 @@ const SignupScreen = () => {
                     <Switch
                       value={savePassword}
                       onValueChange={setSavePassword}
-                      trackColor={{ false: "#aaa", true: "#00b14f" }}
+                      trackColor={{ false: '#aaa', true: '#00b14f' }}
                       thumbColor="#fff"
                     />
                   </View>
@@ -167,7 +250,7 @@ const SignupScreen = () => {
             <View style={styles.bottomSticky}>
               <TouchableOpacity
                 style={isFormValid ? styles.continueButton : styles.continueButtonDisabled}
-                onPress={() => navigation.navigate('PhoneNumberScreen')}
+                onPress={handleContinue}
                 disabled={!isFormValid}
               >
                 <Text style={isFormValid ? styles.continueButtonText : styles.continueTextDisabled}>
@@ -180,132 +263,46 @@ const SignupScreen = () => {
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
-};
-
-export default SignupScreen;
+}
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
-  container: {
-    flex: 1,
-  },
-  scrollContainer: {
-    paddingHorizontal: 20,
-  },
-  inner: {
-    flex: 1,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#1A1D1F',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 24,
-  },
-  form: {
-    flexGrow: 1,
-  },
-  label: {
-    marginBottom: 6,
-    fontSize: 14,
-    color: '#333',
-  },
+  safeArea: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1 },
+  scrollContainer: { paddingHorizontal: 20 },
+  inner: { flex: 1 },
+  title: { fontSize: 22, fontWeight: 'bold', color: '#1A1D1F', marginBottom: 8 },
+  subtitle: { fontSize: 14, color: '#666', marginBottom: 24 },
+  form: { flexGrow: 1 },
+  label: { marginBottom: 6, fontSize: 14, color: '#333' },
   inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 15,
-    paddingHorizontal: 10,
-    marginBottom: 16,
-    height: 50,
+    flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1, borderRadius: 15, paddingHorizontal: 10,
+    marginBottom: 16, height: 50,
   },
-  inputField: {
-    flex: 1,
-    fontSize: 14,
-    paddingVertical: 10,
-  },
+  inputField: { flex: 1, fontSize: 14, paddingVertical: 10 },
   passwordContainer: {
-    flexDirection: 'row',
-    borderWidth: 1,
-    borderRadius: 15,
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingRight: 14,
-    marginBottom: 16,
-    height: 50,
+    flexDirection: 'row', borderWidth: 1, borderRadius: 15, alignItems: 'center',
+    paddingHorizontal: 10, paddingRight: 14, marginBottom: 16, height: 50,
   },
-  passwordInput: {
-    flex: 1,
-    fontSize: 14,
-    paddingVertical: 10,
-    paddingRight: 8,
-  },
-  eyeIcon: {
-    padding: 4,
-  },
-  rulesContainer: {
-    marginBottom: 20,
-  },
-  ruleItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  ruleItem: {
-    fontSize: 12,
-    color: '#555',
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  checkboxLabel: {
-    fontSize: 14,
-    opacity: 0.7,
-    flex: 1,
-    paddingRight: 10,
-  },
+  passwordInput: { flex: 1, fontSize: 14, paddingVertical: 10, paddingRight: 8 },
+  eyeIcon: { padding: 4 },
+  rulesContainer: { marginBottom: 20 },
+  ruleItemRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  ruleItem: { fontSize: 12, color: '#555' },
+  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 },
+  checkboxLabel: { fontSize: 14, opacity: 0.7, flex: 1, paddingRight: 10 },
   bottomSticky: {
-    padding: 24,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#eee',
+    padding: 24, backgroundColor: '#fff',
+    borderTopWidth: 1, borderTopColor: '#eee',
   },
   continueButton: {
-    backgroundColor: '#00b14f',
-    paddingVertical: 14,
-    borderRadius: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    marginBottom:6,
-    elevation: 15,
+    backgroundColor: '#00b14f', paddingVertical: 14, borderRadius: 30,
+    alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: 6, elevation: 15,
   },
-  continueButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  continueButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   continueButtonDisabled: {
-    backgroundColor: '#eee',
-    paddingVertical: 14,
-    borderRadius: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
+    backgroundColor: '#eee', paddingVertical: 14, borderRadius: 30,
+    alignItems: 'center', justifyContent: 'center', width: '100%',
   },
-  continueTextDisabled: {
-    color: '#aaa',
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  continueTextDisabled: { color: '#aaa', fontSize: 16, fontWeight: '600' },
 });

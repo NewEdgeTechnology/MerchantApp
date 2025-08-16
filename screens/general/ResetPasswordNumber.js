@@ -18,6 +18,7 @@ import { useNavigation } from '@react-navigation/native';
 import CountrySelectScreen from './CountrySelectScreen';
 
 const COUNTRIES = [
+  { name: 'Bhutan', code: 'bt' },
   { name: 'Singapore', code: 'sg' },
   { name: 'Malaysia', code: 'my' },
   { name: 'Indonesia', code: 'id' },
@@ -41,6 +42,7 @@ const ResetPasswordNumber = () => {
   const handleClear = () => setPhoneNumber('');
 
   const dialCode =
+    selectedCountry.code === 'bt' ? '975' :
     selectedCountry.code === 'sg' ? '65' :
     selectedCountry.code === 'my' ? '60' :
     selectedCountry.code === 'id' ? '62' :
