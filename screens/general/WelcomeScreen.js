@@ -28,8 +28,8 @@ export default function WelcomeScreen() {
 
 
   const [selectedCountry, setSelectedCountry] = useState({
-    name: 'Singapore',
-    code: 'sg',
+    name: 'Bhutan',
+    code: 'bt',
     timestamp: Date.now(),
   });
 
@@ -37,6 +37,7 @@ export default function WelcomeScreen() {
   const navigation = useNavigation();
 
   const countries = useMemo(() => ([
+    { name: 'Bhutan',      code: 'bt'},
     { name: 'Singapore', code: 'sg' },
     { name: 'Malaysia', code: 'my' },
     { name: 'Indonesia', code: 'id' },

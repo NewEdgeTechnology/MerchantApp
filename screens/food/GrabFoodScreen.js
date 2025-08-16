@@ -8,30 +8,33 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import Icon from 'react-native-vector-icons/Ionicons';
 
 const GrabFoodScreen = () => {
   const navigation = useNavigation();
 
   return (
     <View style={styles.container}>
+      {/* Back Button */}
+      <TouchableOpacity
+        onPress={() => navigation.goBack()}
+        style={styles.backButton}
+        activeOpacity={0.7}
+      >
+        <Icon name="arrow-back" size={24} color="#1A1D1F" />
+      </TouchableOpacity>
+
       {/* Scrollable Content */}
-        <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.backButton}
-            >
-            <Text style={styles.icon}>←</Text>
-        </TouchableOpacity>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header Image with Back Button */}
+        {/* Header Image */}
         <View style={styles.imageContainer}>
           <Image
             source={require('../../assets/grabfood.png')}
             style={styles.headerImage}
           />
-          
         </View>
 
         <View style={styles.content}>
@@ -83,7 +86,9 @@ const GrabFoodScreen = () => {
             <View style={styles.featureText}>
               <Text style={styles.featureTitle}>Operate with ease & speed</Text>
               <Text style={styles.featureDescription}>
-                You don’t have to worry about any of the logistics. All you have to do is prepare the customer orders and we'll manage the rest
+                You don’t have to worry about any of the logistics. All you
+                have to do is prepare the customer orders and we'll manage the
+                rest
               </Text>
             </View>
           </View>
@@ -92,9 +97,10 @@ const GrabFoodScreen = () => {
 
       {/* Fixed Bottom Button */}
       <View style={styles.buttonContainer}>
-        <TouchableOpacity 
-            style={styles.button}
-            onPress={() => navigation.navigate('SignupScreen')}
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => navigation.navigate('SignupScreen')}
+          activeOpacity={0.9}
         >
           <Text style={styles.buttonText}>Continue</Text>
         </TouchableOpacity>
@@ -109,7 +115,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
-    paddingTop:30,
+    paddingTop: 30,
   },
   scrollContent: {
     paddingBottom: 100,
@@ -129,15 +135,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.7)',
     width: 40,
     height: 40,
-    borderRadius: 20, // half of width/height
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10,
-},
-  icon: {
-    fontSize: 24,
-    color: '#1A1D1F',
-    fontFamily: 'Inter-Regular',
   },
   content: {
     padding: 25,
@@ -195,7 +196,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    width:'100%',
+    width: '100%',
     padding: 24,
     backgroundColor: '#fff',
     borderTopWidth: 1,
@@ -209,14 +210,13 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     borderRadius: 30,
     alignItems: 'center',
-    justifyContent:'center',
-    width:'100%',
-    marginBottom:6,
+    justifyContent: 'center',
+    width: '100%',
+    marginBottom: 6,
   },
   buttonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
-    
   },
 });

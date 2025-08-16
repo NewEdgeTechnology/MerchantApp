@@ -44,9 +44,11 @@ const OnboardingScreen = () => {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
-            <Text style={styles.icon}>←</Text>
+        {/* back button copied from HeaderWithSteps */}
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton} activeOpacity={0.7}>
+          <Icon name="arrow-back" size={24} color="#1A1D1F" />
         </TouchableOpacity>
+
         <TouchableOpacity onPress={() => navigation.navigate('HelpScreen')} style={styles.iconButton}>
           <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
         </TouchableOpacity>
