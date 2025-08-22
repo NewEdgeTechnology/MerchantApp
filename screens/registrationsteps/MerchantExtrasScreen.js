@@ -59,7 +59,7 @@ export default function MerchantExtrasScreen() {
   const effectiveOwnerType = String(
     owner_type ?? incomingMerchant?.owner_type ?? serviceType ?? "food"
   )
-    .trim()
+    .trim()      
     .toLowerCase();
 
   // files
@@ -763,7 +763,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "E5E7EB",
+    borderColor: "ccc",
     height: 180,
     marginBottom: 8,
     position: "relative",
