@@ -146,7 +146,9 @@ export default function ReviewSubmitScreen() {
         try {
           const data = await res.json();
           msg = data?.message || data?.error || msg;
-        } catch {}
+        } catch (_e) {
+          /* ignore parse error */
+        }
         throw new Error(msg);
       }
 
@@ -491,87 +493,87 @@ function maskPassword(pw = "") {
 function TermsContent() {
   return (
     <View>
-      <H2>Introduction</H2>
-      <P>
-        These Terms & Conditions (“Terms”) govern your use of our app and services (“Services”). By
-        creating an account or using the Services, you agree to these Terms.
-      </P>
+      <Text style={styles.h2}>Introduction</Text>
+      <Text style={styles.p}>
+        These Terms &amp; Conditions (“Terms”) govern your use of our app and services
+        (“Services”). By creating an account or using the Services, you agree to these Terms.
+      </Text>
 
-      <H2>Eligibility</H2>
-      <P>
+      <Text style={styles.h2}>Eligibility</Text>
+      <Text style={styles.p}>
         You must be legally capable of entering into contracts within your jurisdiction. You are
         responsible for ensuring the information you provide is accurate and complete.
-      </P>
+      </Text>
 
-      <H2>Account & Registration</H2>
-      <P>
+      <Text style={styles.h2}>Account &amp; Registration</Text>
+      <Text style={styles.p}>
         Keep your login credentials confidential and notify us promptly of any unauthorized access.
         You are responsible for all activity under your account.
-      </P>
+      </Text>
 
-      <H2>Merchant Responsibilities</H2>
-      <P>
+      <Text style={styles.h2}>Merchant Responsibilities</Text>
+      <Text style={styles.p}>
         Comply with applicable laws and regulations, including licensing, tax, food safety, and
         delivery standards. You are responsible for your products/services, pricing, and
         fulfillment.
-      </P>
+      </Text>
 
-      <H2>Payments</H2>
-      <P>
+      <Text style={styles.h2}>Payments</Text>
+      <Text style={styles.p}>
         Payouts are processed to the bank account you provide. You authorize us and our payment
         partners to process, hold, and disburse funds. Fees and settlement timelines may vary.
-      </P>
+      </Text>
 
-      <H2>Delivery Options</H2>
-      <P>
+      <Text style={styles.h2}>Delivery Options</Text>
+      <Text style={styles.p}>
         For Self Delivery, you handle your own logistics and liabilities. For Grab Delivery or Both,
         you agree to the relevant third-party terms and pricing that may apply.
-      </P>
+      </Text>
 
-      <H2>Prohibited Activities</H2>
-      <P>
+      <Text style={styles.h2}>Prohibited Activities</Text>
+      <Text style={styles.p}>
         Don’t misuse the Services: no unlawful activity, IP infringement, deceptive/harmful content,
         interference, or unauthorized data access.
-      </P>
+      </Text>
 
-      <H2>Intellectual Property</H2>
-      <P>
+      <Text style={styles.h2}>Intellectual Property</Text>
+      <Text style={styles.p}>
         The app, logos, content, and technology are owned by us or our licensors. You get a
         limited, non-exclusive, non-transferable license to use the Services.
-      </P>
+      </Text>
 
-      <H2>Suspension & Termination</H2>
-      <P>
+      <Text style={styles.h2}>Suspension &amp; Termination</Text>
+      <Text style={styles.p}>
         We may suspend/terminate access for policy violations or risk/security reasons and remove
         content that violates laws or our policies.
-      </P>
+      </Text>
 
-      <H2>Limitation of Liability</H2>
-      <P>
+      <Text style={styles.h2}>Limitation of Liability</Text>
+      <Text style={styles.p}>
         To the fullest extent permitted by law, we’re not liable for indirect, incidental, special,
         or consequential damages, or for lost profits, data, or goodwill.
-      </P>
+      </Text>
 
-      <H2>Indemnity</H2>
-      <P>
+      <Text style={styles.h2}>Indemnity</Text>
+      <Text style={styles.p}>
         You agree to indemnify and hold us harmless from claims arising out of your use of the
         Services, your content, or your violation of these Terms/laws.
-      </P>
+      </Text>
 
-      <H2>Changes to the Terms</H2>
-      <P>
+      <Text style={styles.h2}>Changes to the Terms</Text>
+      <Text style={styles.p}>
         We may update these Terms from time to time. We’ll notify you of material changes.
         Continued use after changes means acceptance.
-      </P>
+      </Text>
 
-      <H2>Governing Law</H2>
-      <P>
+      <Text style={styles.h2}>Governing Law</Text>
+      <Text style={styles.p}>
         These Terms are governed by the laws of your operating jurisdiction unless otherwise
         required by mandatory local law.
-      </P>
+      </Text>
 
-      <H2>Contact</H2>
-      <P>For questions, contact support@example.com.</P>
+      <Text style={styles.h2}>Contact</Text>
+      <Text style={styles.p}>For questions, contact support@example.com.</Text>
     </View>
   );
 }
@@ -579,86 +581,75 @@ function TermsContent() {
 function PrivacyContent() {
   return (
     <View>
-      <H2>Overview</H2>
-      <P>
+      <Text style={styles.h2}>Overview</Text>
+      <Text style={styles.p}>
         This Privacy Policy explains how we collect, use, and protect your information when you use
         our Services. By using the Services, you consent to this Policy.
-      </P>
+      </Text>
 
-      <H2>Information We Collect</H2>
-      <P>
+      <Text style={styles.h2}>Information We Collect</Text>
+      <Text style={styles.p}>
         We collect information you provide (e.g., name, email, business details, bank info for
         payouts) and data generated during use (device info, logs, usage analytics).
-      </P>
+      </Text>
 
-      <H3>Images & Documents</H3>
-      <P>
+      <Text style={styles.h3}>Images &amp; Documents</Text>
+      <Text style={styles.p}>
         When you upload logos, licenses, bank cards, or QR codes, we store them to verify your
         merchant account and to facilitate payouts and compliance checks.
-      </P>
+      </Text>
 
-      <H2>How We Use Information</H2>
-      <P>
+      <Text style={styles.h2}>How We Use Information</Text>
+      <Text style={styles.p}>
         To operate and improve the Services, verify merchants, process payouts, provide support,
         monitor for fraud/misuse, and comply with legal obligations.
-      </P>
+      </Text>
 
-      <H2>Sharing & Disclosure</H2>
-      <P>
+      <Text style={styles.h2}>Sharing &amp; Disclosure</Text>
+      <Text style={styles.p}>
         We may share information with payment/delivery partners, service providers, and authorities
         where required by law. We do not sell personal data.
-      </P>
+      </Text>
 
-      <H2>Data Retention</H2>
-      <P>
+      <Text style={styles.h2}>Data Retention</Text>
+      <Text style={styles.p}>
         We retain information as long as needed to provide the Services, comply with legal
         obligations, resolve disputes, and enforce agreements.
-      </P>
+      </Text>
 
-      <H2>Security</H2>
-      <P>
+      <Text style={styles.h2}>Security</Text>
+      <Text style={styles.p}>
         We use technical and organizational measures to protect your information, but no method of
         transmission or storage is 100% secure.
-      </P>
+      </Text>
 
-      <H2>Your Rights</H2>
-      <P>
+      <Text style={styles.h2}>Your Rights</Text>
+      <Text style={styles.p}>
         Depending on your location, you may request access, correction, or deletion of your data.
         Contact privacy@example.com for requests.
-      </P>
+      </Text>
 
-      <H2>International Transfers</H2>
-      <P>
+      <Text style={styles.h2}>International Transfers</Text>
+      <Text style={styles.p}>
         Your information may be processed in countries with different data protection laws. We
         implement safeguards where required.
-      </P>
+      </Text>
 
-      <H2>Children</H2>
-      <P>
+      <Text style={styles.h2}>Children</Text>
+      <Text style={styles.p}>
         Our Services aren’t intended for children, and we don’t knowingly collect children’s data.
-      </P>
+      </Text>
 
-      <H2>Changes to this Policy</H2>
-      <P>
+      <Text style={styles.h2}>Changes to this Policy</Text>
+      <Text style={styles.p}>
         We may update this Policy periodically. Material changes will be notified in-app or by
         email. Continued use after changes constitutes acceptance.
-      </P>
+      </Text>
 
-      <H2>Contact</H2>
-      <P>For privacy questions, contact privacy@example.com.</P>
+      <Text style={styles.h2}>Contact</Text>
+      <Text style={styles.p}>For privacy questions, contact privacy@example.com.</Text>
     </View>
   );
-}
-
-/* ---------- Tiny typography helpers ---------- */
-function H2({ children }) {
-  return <Text style={styles.h2}>{children}</Text>;
-}
-function H3({ children }) {
-  return <Text style={styles.h3}>{children}</Text>;
-}
-function P({ children }) {
-  return <Text style={styles.p}>{children}</Text>;
 }
 
 /* ---------- Styles ---------- */

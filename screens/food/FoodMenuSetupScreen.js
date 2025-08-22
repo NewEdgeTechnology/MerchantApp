@@ -258,7 +258,7 @@ export default function FoodMenuSetupScreen() {
   const [saving, setSaving] = useState(false);
 
   const [categories, setCategories] = useState([
-    { id: uid(), name: "Drinks", items: [] },
+    { id: uid(), name: "Halal", items: [] },
   ]);
 
   useEffect(() => {

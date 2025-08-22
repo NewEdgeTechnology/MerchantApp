@@ -18,13 +18,26 @@ import {
   ActivityIndicator,
   Keyboard,
   LayoutAnimation,
+  UIManager,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LOGIN_MERCHANT_ENDPOINT } from '@env';
 
 const { height } = Dimensions.get('window');
 const SHEET_HEIGHT = Math.round(height / 2);
+
+// ✅ Helper: enable LayoutAnimation ONLY on Android + Paper, called once in useEffect
+function enableAndroidLayoutAnimationOnPaper() {
+  if (Platform.OS !== 'android') return;
+  // @ts-ignore fabric flag is present on New Architecture
+  const isFabric = !!global?.nativeFabricUIManager;
+  if (isFabric) return; // skip on Fabric
+  if (typeof UIManager?.setLayoutAnimationEnabledExperimental === 'function') {
+    UIManager.setLayoutAnimationEnabledExperimental(true);
+  }
+}
 
 const COUNTRY_OPTIONS = [
   { name: 'Bhutan', code: 'bt', dial: '+975' },
@@ -60,46 +73,54 @@ const postJson = async (url, body, signal) => {
   return { res, ...parsed };
 };
 
-/** Small hook to keep a consistent bottom spacing when keyboard shows */
-function useKeyboardPadding(defaultPadding = 20) {
-  const [pad, setPad] = useState(defaultPadding);
+/** 📏 Simple + stable: bottom offset that follows keyboard height.
+ * When keyboard is visible → kbHeight + GAP
+ * When hidden → safe-area bottom + BASE_REST
+ */
+function useKeyboardBottomOffset(gapPx = 60, insetsBottom = 0, baseRest = 12) {
+  const [kbHeight, setKbHeight] = useState(0);
 
   useEffect(() => {
     const onShow = (e) => {
-      // Animate to feel smoother
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      const kbHeight = e.endCoordinates?.height ?? 0;
-      // Keep some air between the button and the keyboard
-      setPad(Math.max(defaultPadding, kbHeight + 12));
+      setKbHeight(e?.endCoordinates?.height ?? 0);
+    };
+    const onChange = (e) => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setKbHeight(e?.endCoordinates?.height ?? 0);
     };
     const onHide = () => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setPad(defaultPadding);
+      setKbHeight(0);
     };
 
-    const subShow =
-      Platform.OS === 'ios'
-        ? Keyboard.addListener('keyboardWillShow', onShow)
-        : Keyboard.addListener('keyboardDidShow', onShow);
+    const evtShow = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const evtHide = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const evtChange = Platform.OS === 'ios' ? 'keyboardWillChangeFrame' : 'keyboardDidChangeFrame';
 
-    const subHide =
-      Platform.OS === 'ios'
-        ? Keyboard.addListener('keyboardWillHide', onHide)
-        : Keyboard.addListener('keyboardDidHide', onHide);
+    const s1 = Keyboard.addListener(evtShow, onShow);
+    const s2 = Keyboard.addListener(evtHide, onHide);
+    const s3 = Keyboard.addListener(evtChange, onChange);
 
     return () => {
-      subShow.remove();
-      subHide.remove();
+      s1.remove();
+      s2.remove();
+      s3.remove();
     };
-  }, [defaultPadding]);
+  }, []);
 
-  return pad;
+  return kbHeight > 0 ? kbHeight + gapPx : insetsBottom + baseRest;
 }
 
 export default function MobileLoginScreen() {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
 
-  const [country, setCountry] = useState(COUNTRY_OPTIONS[0]); // Default Bhutan (change to [4] for Philippines)
+  useEffect(() => {
+    enableAndroidLayoutAnimationOnPaper();
+  }, []);
+
+  const [country, setCountry] = useState(COUNTRY_OPTIONS[0]);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [hasError, setHasError] = useState(true);
@@ -110,16 +131,16 @@ export default function MobileLoginScreen() {
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState('');
 
-  // 👉 Refs so we control focus transitions (prevents accidental jumps)
   const phoneRef = useRef(null);
   const passwordRef = useRef(null);
 
-  // 👉 Dynamic bottom padding for consistent spacing
-  const bottomPadding = useKeyboardPadding(Platform.OS === 'android' ? 34 : 20);
+  // 👇 Constant 60px visual gap above the keyboard (adjust gapPx to taste)
+  const bottomOffset = useKeyboardBottomOffset(60, insets.bottom, 12);
 
   const handlePhoneChange = (text) => {
     setPhoneNumber(text);
-    setHasError(!(text.length >= 8)); // Simple validation
+    const digits = text.replace(/\D/g, '');
+    setHasError(digits.length < 8);
   };
 
   const isButtonEnabled = !hasError && password.trim().length >= 6 && !loading;
@@ -158,24 +179,22 @@ export default function MobileLoginScreen() {
       return;
     }
 
-    let base = LOGIN_MERCHANT_ENDPOINT;
+    const base = LOGIN_MERCHANT_ENDPOINT;
     if (!base) {
       setApiError('LOGIN_MERCHANT_ENDPOINT is not configured.');
       return;
     }
 
     const payload = {
-      phone: `${country.dial}${phoneNumber}`, // e.g., +63XXXXXXXXXX (no spaces)
+      phone: `${country.dial}${phoneNumber}`,
       password: password.trim(),
     };
 
     setLoading(true);
-
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
 
     try {
-      // Attempt 1: as-is
       let attemptUrl = base;
       let out = await postJson(attemptUrl, payload, controller.signal);
 
@@ -185,12 +204,10 @@ export default function MobileLoginScreen() {
         return;
       }
 
-      // Attempt 2: with trailing slash
       const withSlash = base.endsWith('/') ? base : `${base}/`;
       if (withSlash !== base) {
         attemptUrl = withSlash;
         out = await postJson(attemptUrl, payload, controller.signal);
-
         if (out.res.ok) {
           setApiError('');
           navigation.replace('MenuServiceSetup');
@@ -198,7 +215,6 @@ export default function MobileLoginScreen() {
         }
       }
 
-      // If both failed -> surface clearest message
       const serverMsg =
         (out?.data && (out.data.message || out.data.error)) ||
         (out?.raw && out.raw.slice(0, 200)) ||
@@ -220,58 +236,33 @@ export default function MobileLoginScreen() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        // If you have a custom header, set an offset here
-        keyboardVerticalOffset={0}
-      >
-        <ScrollView
-          contentContainerStyle={{ flexGrow: 1 }}
-          keyboardShouldPersistTaps="handled"
-        >
+      {/* Keep KAV but no behavior; we control the bottom bar explicitly */}
+      <KeyboardAvoidingView style={{ flex: 1 }}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
           <View style={styles.inner}>
-            {/* Header — matches LoginScreen spacing */}
             <View style={styles.header}>
-              <TouchableOpacity
-                onPress={() => navigation.goBack()}
-                style={styles.iconButton}
-                activeOpacity={0.7}
-              >
+              <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton} activeOpacity={0.7}>
                 <Icon name="arrow-back" size={24} color="#1A1D1F" />
               </TouchableOpacity>
 
               <View style={{ width: 1, opacity: 0 }} />
 
-              <TouchableOpacity
-                onPress={() => navigation.navigate('HelpScreen')}
-                style={styles.iconButton}
-                activeOpacity={0.7}
-              >
+              <TouchableOpacity onPress={() => navigation.navigate('HelpScreen')} style={styles.iconButton} activeOpacity={0.7}>
                 <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
               </TouchableOpacity>
             </View>
 
-            {/* Content */}
             <View style={styles.content}>
               <Text style={styles.title}>Log in with mobile number</Text>
 
-              {/* Phone Input with Country Selector */}
               <View style={[styles.phoneRow, { zIndex: 2 }]}>
-                <TouchableOpacity
-                  style={styles.countrySelector}
-                  onPress={() => setCodeVisible(true)}
-                  activeOpacity={0.8}
-                >
+                <TouchableOpacity style={styles.countrySelector} onPress={() => setCodeVisible(true)} activeOpacity={0.8}>
                   <Text style={styles.countryCode}>{country.dial}</Text>
                   <Icon name="chevron-down" size={16} color="#666" />
                 </TouchableOpacity>
 
                 <View
-                  style={[
-                    styles.phoneInputWrapper,
-                    hasError && touched && styles.phoneInputError,
-                  ]}
+                  style={[styles.phoneInputWrapper, hasError && touched && styles.phoneInputError]}
                 >
                   <TextInput
                     ref={phoneRef}
@@ -282,7 +273,6 @@ export default function MobileLoginScreen() {
                     placeholderTextColor="#9CA3AF"
                     keyboardType="phone-pad"
                     onFocus={() => setTouched(true)}
-                    // Only go to password when pressing Next on keyboard:
                     returnKeyType="next"
                     blurOnSubmit={false}
                     onSubmitEditing={() => passwordRef.current?.focus()}
@@ -294,9 +284,9 @@ export default function MobileLoginScreen() {
                   )}
                 </View>
               </View>
+
               {hasError && touched && <Text style={styles.errorText}>Invalid number</Text>}
 
-              {/* Password Input with eye toggle */}
               <View style={[styles.inputContainer, { zIndex: 1 }]}>
                 <TextInput
                   ref={passwordRef}
@@ -314,29 +304,35 @@ export default function MobileLoginScreen() {
                   style={styles.eyeToggle}
                   hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
                 >
-                  <Icon
-                    name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                    size={20}
-                    color="#666"
-                  />
+                  <Icon name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color="#666" />
                 </TouchableOpacity>
               </View>
 
-              {/* API error (if any) */}
               {apiError ? <Text style={styles.apiError}>{apiError}</Text> : null}
 
-              {/* Add a little filler so content can scroll above the button if needed */}
-              <View style={{ height: 12 }} />
+              {/* Spacer so content never hides under the absolute bottom bar when keyboard is hidden */}
+              <View style={{ height: insets.bottom + 88 }} />
             </View>
           </View>
         </ScrollView>
 
-        {/* Bottom Section with Button (auto-pads with keyboard) */}
-        <View style={[styles.bottomSticky, { paddingBottom: bottomPadding }]}>
+        {/* 🔽 Absolute bottom bar — follows keyboard height with constant 60px gap */}
+        <View
+          style={[
+            styles.bottomSticky,
+            {
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: bottomOffset,
+            },
+          ]}
+        >
           <TouchableOpacity
             style={isButtonEnabled ? styles.continueButton : styles.continueButtonDisabled}
             onPress={handleLogin}
             disabled={!isButtonEnabled}
+            activeOpacity={0.85}
           >
             {loading ? (
               <ActivityIndicator size="small" />
@@ -349,7 +345,6 @@ export default function MobileLoginScreen() {
         </View>
       </KeyboardAvoidingView>
 
-      {/* Country Overlay */}
       <Modal
         visible={codeVisible}
         animationType="slide"
@@ -384,14 +379,12 @@ export default function MobileLoginScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8f9fa' },
 
-  // Match LoginScreen: inner padding controls top spacing
   inner: {
     flex: 1,
     padding: 20,
     paddingTop: 40,
   },
 
-  // Match LoginScreen header spacing exactly
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -400,7 +393,6 @@ const styles = StyleSheet.create({
   },
   iconButton: { padding: 8 },
 
-  // Content (inner already has padding)
   content: { flex: 1 },
   title: {
     fontSize: 26,
@@ -420,6 +412,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#E5E7EB',
     gap: 8,
+    height: 50,
   },
   countryCode: { fontSize: 16, fontWeight: '500', color: '#1A1D1F' },
   phoneInputWrapper: {
@@ -461,13 +454,8 @@ const styles = StyleSheet.create({
     padding: 4,
   },
 
-  apiError: {
-    color: '#EF4444',
-    marginTop: 10,
-    fontSize: 14,
-  },
+  apiError: { color: '#EF4444', marginTop: 10, fontSize: 14 },
 
-  // Bottom area now adapts to keyboard with extra padding set in code
   bottomSticky: {
     paddingHorizontal: 24,
   },

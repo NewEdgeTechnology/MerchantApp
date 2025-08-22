@@ -1,8 +1,9 @@
 import 'react-native-gesture-handler';
 import React, { useState, useRef, useMemo, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Image, SafeAreaView, StatusBar, Dimensions,
+  View, Text, TouchableOpacity, StyleSheet, Image, StatusBar, Dimensions, Platform,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Carousel from 'react-native-reanimated-carousel';
 import { useNavigation } from '@react-navigation/native';
 import CountrySelectScreen from './CountrySelectScreen';
@@ -26,7 +27,6 @@ export default function WelcomeScreen() {
   const [countryParams, setCountryParams] = useState({});
   const [countryVisible, setCountryVisible] = useState(false);
 
-
   const [selectedCountry, setSelectedCountry] = useState({
     name: 'Bhutan',
     code: 'bt',
@@ -37,7 +37,7 @@ export default function WelcomeScreen() {
   const navigation = useNavigation();
 
   const countries = useMemo(() => ([
-    { name: 'Bhutan',      code: 'bt'},
+    { name: 'Bhutan', code: 'bt' },
     { name: 'Singapore', code: 'sg' },
     { name: 'Malaysia', code: 'my' },
     { name: 'Indonesia', code: 'id' },
@@ -52,11 +52,19 @@ export default function WelcomeScreen() {
     setSelectedCountry({ ...country, timestamp: Date.now() });
   }, []);
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+  const insets = useSafeAreaInsets();
 
-      <View style={styles.header}>
+  return (
+    <SafeAreaView style={styles.container} edges={['left','right']}>
+      {/* Translucent, transparent status bar for real edge-to-edge */}
+      <StatusBar
+        translucent
+        backgroundColor="transparent"
+        barStyle="dark-content"
+      />
+
+      {/* Header (pad by safe area top instead of fixed) */}
+      <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
         <Text style={styles.logo}>
           <Text style={{ color: '#00b14f', fontWeight: 'bold' }}>Grab</Text>
           <Text style={{ color: '#00b14f' }}>Merchant</Text>
@@ -72,25 +80,24 @@ export default function WelcomeScreen() {
             });
             setCountryVisible(true);
           }}
-
           activeOpacity={0.8}
         >
           <Image
-            source={{
-              uri: `https://flagcdn.com/w40/${selectedCountry.code}.png?ts=${selectedCountry.timestamp}`,
-            }}
+            source={{ uri: `https://flagcdn.com/w40/${selectedCountry.code}.png?ts=${selectedCountry.timestamp}` }}
             style={styles.flag}
             key={selectedCountry.code}
           />
           <Text style={styles.countryText}>{selectedCountry.name}</Text>
           <Image source={require('../../assets/arrow-down.png')} style={styles.dropdownIcon} />
         </TouchableOpacity>
+
         <CountrySelectScreen
-            {...countryParams}
-            visible={countryVisible}
-            onClose={() => setCountryVisible(false)}
-          />
+          {...countryParams}
+          visible={countryVisible}
+          onClose={() => setCountryVisible(false)}
+        />
       </View>
+
       <Text style={styles.version}>v 4.134.0</Text>
 
       <View style={styles.carouselContainer}>
@@ -130,210 +137,186 @@ export default function WelcomeScreen() {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.bottomContent}>
+      {/* Footer (pad by safe area bottom so it sits above home indicator) */}
+      <View style={[styles.bottomContent, { paddingBottom: (insets.bottom || 0) + 30 }]}>
         <Text style={styles.terms}>
           I have read, understood and accepted the <Text style={styles.link}>Terms of Service</Text> and the{' '}
           <Text style={styles.link}>Privacy Policy</Text>.
         </Text>
       </View>
-
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create(
-  {
-    // ===== Page =====
-    container:
-    {
-      flex: 1,
-      backgroundColor: '#fff',
-      padding: 20,
-    },
+const styles = StyleSheet.create({
+  // ===== Page =====
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+    // no global padding → real full-bleed
+  },
 
-    header:
-    {
-      paddingTop: 30,
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-    },
+  header: {
+    paddingHorizontal: 20, // local spacing
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
 
-    logo:
-    {
-      fontSize: 20,
-    },
+  logo: {
+    fontSize: 20,
+  },
 
-    version:
-    {
-      fontSize: 12,
-      color: '#888',
-      marginTop: -5,
-    },
+  version: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: -5,
+    paddingHorizontal: 20,
+  },
 
-    // ===== Country pill =====
-    countrySelector:
-    {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 15,
-      paddingVertical: 8,
-      borderRadius: 10,
-      borderWidth: 1,
-      borderColor: '#c9c3b1ff',
-      gap: 8,
-    },
+  // ===== Country pill =====
+  countrySelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#c9c3b1ff',
+    gap: 8,
+    backgroundColor: '#fff',
+  },
 
-    flag:
-    {
-      width: 24,
-      height: 16,
-      borderColor: '#ccc',
-      borderRadius: 3,
-      borderWidth: 1,
-    },
+  flag: {
+    width: 24,
+    height: 16,
+    borderColor: '#ccc',
+    borderRadius: 3,
+    borderWidth: 1,
+  },
 
-    countryText:
-    {
-      fontSize: 14,
-    },
+  countryText: {
+    fontSize: 14,
+  },
 
-    dropdownIcon:
-    {
-      width: 12,
-      height: 12,
-      marginLeft: 6,
-      resizeMode: 'contain',
-      tintColor: '#444',
-    },
+  dropdownIcon: {
+    width: 12,
+    height: 12,
+    marginLeft: 6,
+    resizeMode: 'contain',
+    tintColor: '#444',
+  },
 
-    // ===== Carousel =====
-    carouselContainer:
-    {
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
+  // ===== Carousel =====
+  carouselContainer: {
+    flex: 1, // expands to fill
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
 
-    slide:
-    {
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: 240,
-      marginTop: 30,
-    },
+  slide: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 240,
+    marginTop: 30,
+  },
 
-    image:
-    {
-      width: 320,
-      height: 220,
-      marginBottom: 15,
-    },
+  image: {
+    width: 320,
+    height: 220,
+    marginBottom: 15,
+  },
 
-    title:
-    {
-      fontSize: 17,
-      fontWeight: '600',
-      textAlign: 'center',
-      marginTop: -5,
-    },
+  title: {
+    fontSize: 17,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: -5,
+  },
 
-    description:
-    {
-      fontSize: 14,
-      color: '#666',
-      textAlign: 'center',
-      marginTop: 9,
-      paddingHorizontal: 10,
-      lineHeight: 20,
-    },
+  description: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 9,
+    paddingHorizontal: 10,
+    lineHeight: 20,
+  },
 
-    // ===== Dots =====
-    dotWrapper:
-    {
-      marginTop: -10,
-      marginBottom: 80,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
+  // ===== Dots =====
+  dotWrapper: {
+    marginTop: -10,
+    marginBottom: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
-    dots:
-    {
-      flexDirection: 'row',
-      justifyContent: 'center',
-    },
+  dots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
 
-    dot:
-    {
-      width: DOT_SIZE,
-      height: DOT_SIZE,
-      borderRadius: DOT_SIZE / 2,
-      marginHorizontal: DOT_MARGIN,
-      borderWidth: 1,
-      borderColor: '#ccc',
-      backgroundColor: 'white',
-    },
+  dot: {
+    width: DOT_SIZE,
+    height: DOT_SIZE,
+    borderRadius: DOT_SIZE / 2,
+    marginHorizontal: DOT_MARGIN,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    backgroundColor: 'white',
+  },
 
-    activeDot:
-    {
-      backgroundColor: '#ccc',
-      borderColor: '#ccc',
-    },
+  activeDot: {
+    backgroundColor: '#ccc',
+    borderColor: '#ccc',
+  },
 
-    // ===== Buttons =====
-    buttonContainer:
-    {
-      flexDirection: 'row',
-      justifyContent: 'space-evenly',
-      gap: 20,
-      marginTop: 10,
-    },
+  // ===== Buttons =====
+  buttonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-evenly',
+    gap: 20,
+    marginTop: 10,
+    paddingHorizontal: 20,
+  },
 
-    signUpBtn:
-    {
-      backgroundColor: '#edf8faff',
-      paddingVertical: 16,
-      paddingHorizontal: 50,
-      borderRadius: 30,
-    },
+  signUpBtn: {
+    backgroundColor: '#edf8faff',
+    paddingVertical: 16,
+    paddingHorizontal: 50,
+    borderRadius: 30,
+  },
 
-    logInBtn:
-    {
-      backgroundColor: '#00b14f',
-      paddingVertical: 16,
-      paddingHorizontal: 50,
-      borderRadius: 30,
-    },
+  logInBtn: {
+    backgroundColor: '#00b14f',
+    paddingVertical: 16,
+    paddingHorizontal: 50,
+    borderRadius: 30,
+  },
 
-    signUpText:
-    {
-      color: '#000',
-      fontSize: 16,
-    },
+  signUpText: {
+    color: '#000',
+    fontSize: 16,
+  },
 
-    logInText:
-    {
-      color: '#fff',
-      fontSize: 16,
-    },
+  logInText: {
+    color: '#fff',
+    fontSize: 16,
+  },
 
-    // ===== Footer =====
-    bottomContent:
-    {
-      marginTop: 20,
-      paddingBottom: 30,
-    },
+  // ===== Footer =====
+  bottomContent: {
+    marginTop: 20,
+    paddingHorizontal: 20,
+  },
 
-    terms:
-    {
-      fontSize: 12.5,
-      textAlign: 'center',
-      color: '#888',
-    },
+  terms: {
+    fontSize: 12.5,
+    textAlign: 'center',
+    color: '#888',
+  },
 
-    link:
-    {
-      color: '#417fa2ff',
-    },
-  }
-);
+  link: {
+    color: '#417fa2ff',
+  },
+});

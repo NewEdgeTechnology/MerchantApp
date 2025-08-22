@@ -14,6 +14,8 @@ import {
   ActivityIndicator,
   Alert,
   Modal,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
 import CheckBox from 'expo-checkbox';
 import Icon from 'react-native-vector-icons/Ionicons';
@@ -21,12 +23,46 @@ import { useNavigation } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import { LOGIN_USERNAME_MERCHANT_ENDPOINT as ENV_LOGIN_USERNAME_MERCHANT_ENDPOINT } from '@env';
 
-const NEXT_ROUTE = 'FoodMenuSetupScreen';
-
 const KEY_SAVED_USERNAME = 'saved_username';
 const KEY_SAVED_PASSWORD = 'saved_password';
 const KEY_LAST_LOGIN_USERNAME = 'last_login_username';
 const KEY_AUTH_TOKEN = 'auth_token';
+
+const endpoint = (ENV_LOGIN_USERNAME_MERCHANT_ENDPOINT ?? '').trim();
+
+// Enable smooth LayoutAnimation on Android (for keyboard show/hide)
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+// Tiny keyboard gap hook (keeps ~8px between keyboard and footer button)
+function useKeyboardGap(minGap = 8) {
+  const [gap, setGap] = useState(minGap);
+
+  useEffect(() => {
+    const onShow = (e) => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      const h = e?.endCoordinates?.height ?? 0;
+      setGap(Math.max(minGap, h + 8));
+    };
+    const onHide = () => {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setGap(minGap);
+    };
+
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const s1 = Keyboard.addListener(showEvt, onShow);
+    const s2 = Keyboard.addListener(hideEvt, onHide);
+    return () => {
+      s1.remove();
+      s2.remove();
+    };
+  }, [minGap]);
+
+  return gap;
+}
 
 const LoginScreen = () => {
   const navigation = useNavigation();
@@ -39,15 +75,13 @@ const LoginScreen = () => {
   const [isPasswordFocused, setIsPasswordFocused] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const endpoint =
-    (ENV_LOGIN_USERNAME_MERCHANT_ENDPOINT || '').trim() ||
-    'http://192.168.131.19:8080/api/merchant/login-username';
-
   const canSubmit = username.trim().length > 0 && password.length > 0 && !loading;
+
+  // responsive footer spacing
+  const bottomGap = useKeyboardGap(8);
 
   // ---------- helpers ----------
   const persistSavedCreds = async (u, p) => {
-    // if checkbox is on AND we have values → store; otherwise remove
     if (savePassword && u && p) {
       await SecureStore.setItemAsync(KEY_SAVED_USERNAME, u);
       await SecureStore.setItemAsync(KEY_SAVED_PASSWORD, p);
@@ -68,13 +102,12 @@ const LoginScreen = () => {
         if (u || p) {
           setUsername(u || '');
           setPassword(p || '');
-          setSavePassword(true); // show as checked if we loaded anything
+          setSavePassword(true);
         } else {
-          // fall back to last username (optional)
           const lastU = await SecureStore.getItemAsync(KEY_LAST_LOGIN_USERNAME);
           if (lastU) setUsername(lastU);
         }
-      } catch {}
+      } catch { }
     })();
   }, []);
 
@@ -83,13 +116,12 @@ const LoginScreen = () => {
     if (!savePassword) return;
     const t = setTimeout(() => {
       persistSavedCreds(username.trim(), password);
-    }, 250); // tiny debounce
+    }, 250);
     return () => clearTimeout(t);
   }, [username, password, savePassword]);
 
   const handleToggleSave = async (val) => {
     setSavePassword(val);
-    // Immediately reflect the toggle in storage
     if (val) {
       await persistSavedCreds(username.trim(), password);
     } else {
@@ -97,10 +129,59 @@ const LoginScreen = () => {
     }
   };
 
+  // Normalize/derive owner type from API payload
+  const getOwnerType = (data) => {
+    const pick = (...paths) => {
+      for (const p of paths) {
+        try {
+          const v = p();
+          if (v !== undefined && v !== null && v !== '') return v;
+        } catch { }
+      }
+      return '';
+    };
+
+    let v = pick(
+      () => data?.merchant?.owner_type,
+      () => data?.merchant?.ownerType,
+      () => data?.merchant?.type,
+      () => data?.user?.owner_type,
+      () => data?.user?.ownerType,
+      () => data?.user?.type,
+      () => data?.data?.owner_type,
+      () => data?.data?.ownerType,
+      () => data?.data?.type,
+      () => data?.owner_type,
+      () => data?.ownerType,
+      () => data?.type
+    );
+
+    // map numeric codes if backend sends them (adjust mapping to your API if needed)
+    const mapCodeToType = (x) => {
+      if (x === 1 || x === '1') return 'food';
+      if (x === 2 || x === '2') return 'mart';
+      return String(x || '').toLowerCase();
+    };
+
+    return mapCodeToType(v).trim().toLowerCase();
+  };
+
   const handleLogin = async () => {
     if (!canSubmit) return;
+
+    if (!endpoint) {
+      Alert.alert(
+        'Configuration error',
+        'LOGIN_USERNAME_MERCHANT_ENDPOINT is not set in your .env file.'
+      );
+      return;
+    }
+
     setLoading(true);
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -108,39 +189,144 @@ const LoginScreen = () => {
           user_name: username.trim(),
           password: password,
         }),
+        signal: controller.signal,
       });
 
-      // Read once; support JSON or plain text
+      clearTimeout(timeout);
+
       const raw = await res.text();
       let data = {};
-      try { data = raw ? JSON.parse(raw) : {}; } catch { /* not JSON */ }
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch (e) {
+        console.log('❌ JSON parse error:', e);
+      }
+
+      // Debug prints so you can see what the API actually sends
+      // console.log('🔵 status:', res.status);
+      // console.log('🔵 raw:', raw);
+      // console.log('🔵 parsed:', data);
 
       const msg = (data?.message ?? data?.error ?? raw ?? '').toString().trim();
 
       const looksLikeSuccess =
-        res.ok && (
-          data?.success === true ||
+        res.ok &&
+        (data?.success === true ||
           typeof data?.token === 'string' ||
+          (data?.token && typeof data?.token?.access_token === 'string') ||
           (data?.status && String(data.status).toLowerCase() === 'ok') ||
-          /login\s*successful/i.test(msg)
-        );
+          /login\s*successful/i.test(msg));
 
       if (!looksLikeSuccess) {
         const errText = msg || `Request failed with ${res.status}`;
         throw new Error(errText);
       }
 
+      // ✅ Save token string (supports both string and object tokens)
       if (data?.token) {
-        await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(data.token));
+        const tokenStr =
+          typeof data.token === 'string'
+            ? data.token
+            : (data.token?.access_token ?? '');
+        if (tokenStr) {
+          await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(tokenStr));
+        }
       }
-      await SecureStore.setItemAsync(KEY_LAST_LOGIN_USERNAME, username.trim());
 
-      // Save or clear based on checkbox
+      await SecureStore.setItemAsync(KEY_LAST_LOGIN_USERNAME, username.trim());
       await persistSavedCreds(username.trim(), password);
 
-      navigation.replace(NEXT_ROUTE, { user: data?.merchant || null });
+      // 🔀 Route based on owner type from API
+      const ownerType = getOwnerType(data);
+
+      // Extract user (merchant) info and pass business fields
+      const userInfo = data?.merchant || data?.user || {};
+
+      const business_name =
+        userInfo?.business_name ??
+        userInfo?.businessName ??
+        '';
+
+      const business_logo =
+        userInfo?.business_logo ??
+        userInfo?.businessLogo ??
+        userInfo?.logo ??
+        '';
+
+      // ✅ NEW: robust business address extraction
+      const business_address =
+        userInfo?.business_address ??
+        userInfo?.businessAddress ??
+        userInfo?.address ??
+        userInfo?.location ??
+        data?.business_address ??
+        data?.address ??
+        '';
+
+      // ✅ robust email & phone extraction
+      const email =
+        userInfo?.email ??
+        userInfo?.owner_email ??
+        userInfo?.contact_email ??
+        userInfo?.contact?.email ??
+        data?.email ??
+        data?.user?.email ??
+        data?.merchant?.email ??
+        '';
+
+      const phone =
+        userInfo?.phone ??
+        userInfo?.phone_number ??
+        userInfo?.mobile ??
+        userInfo?.contact_phone ??
+        userInfo?.contact?.phone ??
+        userInfo?.contact?.mobile ??
+        data?.phone ??
+        data?.user?.phone ??
+        data?.merchant?.phone ??
+        '';
+      const business_id =
+        userInfo?.business_id ??
+        userInfo?.businessId ??
+        userInfo?.id ??
+        data?.business_id ??
+        data?.id ??
+        '';
+
+
+      // ✅ assemble payload (now includes business_address)
+      const userPayload = {
+        user: userInfo,
+        business_name,
+        business_id,
+        business_logo,
+        business_address,         // ← added
+        username: username.trim(),
+        email,
+        phone,
+      };
+
+      if (ownerType === 'mart') {
+        navigation.replace('MartServiceSetupScreen', userPayload);
+        return;
+      }
+      if (ownerType === 'food') {
+        navigation.replace('GrabMerchantHomeScreen', userPayload);
+        return;
+      }
+
+      // No recognized owner type → make it explicit instead of silently going elsewhere
+      Alert.alert(
+        'Cannot route',
+        `Owner type missing or unknown.\nGot: ${JSON.stringify(ownerType)}\nPlease check the API response.`
+      );
+      console.log('⚠️ No owner_type match; full payload:', data);
+
     } catch (err) {
-      const msg = err?.message?.toString() ?? 'Login failed';
+      const msg =
+        err?.name === 'AbortError'
+          ? 'Request timed out. Please try again.'
+          : err?.message?.toString() ?? 'Login failed';
       Alert.alert('Login failed', msg);
     } finally {
       setLoading(false);
@@ -148,10 +334,8 @@ const LoginScreen = () => {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'android' ? 'padding' : 'height'}
-    >
+    // Disable KAV behavior so our keyboard gap hook is the single source of truth
+    <KeyboardAvoidingView style={styles.container}>
       <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <View style={styles.inner}>
           {/* Loading overlay */}
@@ -256,8 +440,8 @@ const LoginScreen = () => {
             </View>
           </ScrollView>
 
-          {/* Footer */}
-          <View style={styles.footer}>
+          {/* Footer (pads itself to float above keyboard with tiny gap) */}
+          <View style={[styles.footer, { paddingBottom: bottomGap }]}>
             <Text style={styles.forgotText}>
               Forgot your{' '}
               <Text style={styles.link} onPress={() => !loading && navigation.navigate('ForgotUsername')}>
@@ -274,7 +458,7 @@ const LoginScreen = () => {
               style={canSubmit ? styles.loginButton : styles.loginButtonDisabled}
               disabled={!canSubmit}
               onPress={handleLogin}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
               <Text style={canSubmit ? styles.loginButtonText : styles.loginButtonTextDisabled}>
                 Log In
@@ -284,7 +468,7 @@ const LoginScreen = () => {
             <TouchableOpacity
               style={styles.loginPhoneButton}
               onPress={() => !loading && navigation.navigate('MobileLoginScreen')}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
               disabled={loading}
             >
               <Text style={styles.loginPhoneText}>Log In with Phone</Text>
@@ -331,6 +515,6 @@ const styles = StyleSheet.create({
   loginButtonTextDisabled: { color: '#aaa', fontSize: 16, fontWeight: '500' },
   loginPhoneButton: { backgroundColor: '#e9fcf6', paddingVertical: 14, borderRadius: 25, alignItems: 'center' },
   loginPhoneText: { color: '#004d3f', fontSize: 16, fontWeight: '600' },
-  footer: { marginBottom: 15 },
+  footer: { marginBottom: 15, paddingHorizontal: 8 }, // paddingBottom set dynamically
   loadingOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center' },
 });
