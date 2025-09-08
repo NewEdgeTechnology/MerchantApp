@@ -15,42 +15,16 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
-import CountrySelectScreen from './CountrySelectScreen';
-
-const COUNTRIES = [
-  { name: 'Bhutan', code: 'bt' },
-  { name: 'Singapore', code: 'sg' },
-  { name: 'Malaysia', code: 'my' },
-  { name: 'Indonesia', code: 'id' },
-  { name: 'Philippines', code: 'ph' },
-  { name: 'Thailand', code: 'th' },
-  { name: 'Vietnam', code: 'vn' },
-  { name: 'Myanmar', code: 'mm' },
-  { name: 'Cambodia', code: 'kh' },
-];
 
 const ResetPasswordNumber = () => {
   const navigation = useNavigation();
 
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isFocused, setIsFocused] = useState(false);
-  const [selectedCountry, setSelectedCountry] = useState(COUNTRIES[0]);
-  const [countryVisible, setCountryVisible] = useState(false);
 
   const isValidPhone = phoneNumber.trim().length > 0;
 
   const handleClear = () => setPhoneNumber('');
-
-  const dialCode =
-    selectedCountry.code === 'bt' ? '975' :
-    selectedCountry.code === 'sg' ? '65' :
-    selectedCountry.code === 'my' ? '60' :
-    selectedCountry.code === 'id' ? '62' :
-    selectedCountry.code === 'ph' ? '63' :
-    selectedCountry.code === 'th' ? '66' :
-    selectedCountry.code === 'vn' ? '84' :
-    selectedCountry.code === 'mm' ? '95' :
-    selectedCountry.code === 'kh' ? '855' : '';
 
   return (
     <SafeAreaView style={styles.container}>
@@ -84,20 +58,16 @@ const ResetPasswordNumber = () => {
                 { borderColor: isFocused ? '#00b14f' : '#E5E7EB', borderWidth: 1.5 },
               ]}
             >
-              {/* Country (flag + code) */}
-              <TouchableOpacity
-                style={styles.flagContainer}
-                onPress={() => setCountryVisible(true)}
-                activeOpacity={0.7}
-              >
+              {/* Fixed Bhutan flag + dial code */}
+              <View style={styles.flagContainer}>
                 <View style={styles.flagBox}>
                   <Image
-                    source={{ uri: `https://flagcdn.com/w40/${selectedCountry.code}.png` }}
+                    source={{ uri: 'https://flagcdn.com/w40/bt.png' }}
                     style={styles.flag}
                   />
                 </View>
-                <Text style={styles.dialCode}>{`+${dialCode}`}</Text>
-              </TouchableOpacity>
+                <Text style={styles.dialCode}>+975</Text>
+              </View>
 
               {/* Phone number field */}
               <TextInput
@@ -138,18 +108,6 @@ const ResetPasswordNumber = () => {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
-
-      {/* Country select overlay */}
-      <CountrySelectScreen
-        visible={countryVisible}
-        countries={COUNTRIES}
-        selectedCode={selectedCountry.code}
-        onPick={(c) => {
-          setSelectedCountry(c);
-          setCountryVisible(false);
-        }}
-        onClose={() => setCountryVisible(false)}
-      />
     </SafeAreaView>
   );
 };

@@ -1,21 +1,26 @@
-// App.js
 import React from 'react';
 import 'react-native-gesture-handler';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { TouchableOpacity } from 'react-native';
+import { TouchableOpacity, Platform, UIManager } from 'react-native';
 
 if (!TouchableOpacity.defaultProps) {
   TouchableOpacity.defaultProps = {};
 }
 TouchableOpacity.defaultProps = {
   ...TouchableOpacity.defaultProps,
-  activeOpacity: 1, 
+  activeOpacity: 1,
 };
 
+// Fabric-aware guard: only enable LayoutAnimation on old architecture to avoid the warning
+const isFabric = !!global?.nativeFabricUIManager;
+if (Platform.OS === 'android' && !isFabric && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
 import WelcomeScreen from './screens/general/WelcomeScreen';
-import CountrySelectScreen from './screens/general/CountrySelectScreen';
+// import CountrySelectScreen from './screens/general/CountrySelectScreen';
 import OnboardingScreen from './screens/general/OnboardingScreen';
 import SellingTypeScreen from './screens/registrationsteps/SellingTypeScreen';
 import GrabFoodScreen from './screens/food/GrabFoodScreen';
@@ -38,7 +43,15 @@ import EmailOtpVerificationScreen from './screens/registrationsteps/EmailOtpVeri
 import MartServiceSetupScreen from './screens/mart/MartServiceSetupScreen';
 import FoodMenuSetupScreen from './screens/food/FoodMenuSetupScreen';
 import GrabMerchantHomeScreen from './screens/food/GrabMerchantHomeScreen';
-import MenuScreen from './screens/food/MenuScreen'; // ensure this path matches your file structure
+import MenuScreen from './screens/food/MenuScreen';
+import AccountSettings from './screens/food/AccountSettings';
+import PasswordManagement from './screens/food/PasswordManagement';
+import SecuritySettings from './screens/food/SecuritySettings';
+import LinkedDevices from './screens/food/LinkedDevices';
+import NotificationSettings from './screens/food/NotificationSettings';
+import PersonalInformation from './screens/food/PersonalInformation';
+import ProfileBusinessDetails from './screens/food/ProfileBusinessDetails';
+import './screens/food/secureStorePatch';
 
 const Stack = createStackNavigator();
 
@@ -48,11 +61,11 @@ export default function App() {
       <NavigationContainer>
         <Stack.Navigator initialRouteName="Welcome" screenOptions={{ headerShown: false }}>
           <Stack.Screen name="Welcome" component={WelcomeScreen} />
-          <Stack.Screen
+          {/* <Stack.Screen
             name="CountrySelect"
             component={CountrySelectScreen}
             options={{ presentation: 'modal', headerShown: false }}
-          />
+          /> */}
           <Stack.Screen name="LoginScreen" component={LoginScreen} />
           <Stack.Screen name="OnboardingScreen" component={OnboardingScreen} />
           <Stack.Screen name="SellingTypeScreen" component={SellingTypeScreen} />
@@ -76,6 +89,13 @@ export default function App() {
           <Stack.Screen name="FoodMenuSetupScreen" component={FoodMenuSetupScreen} />
           <Stack.Screen name="GrabMerchantHomeScreen" component={GrabMerchantHomeScreen} />
           <Stack.Screen name="MenuScreen" component={MenuScreen} />
+          <Stack.Screen name="AccountSettings" component={AccountSettings} />
+          <Stack.Screen name="PersonalInformation" component={PersonalInformation} />
+          <Stack.Screen name="PasswordManagement" component={PasswordManagement} />
+          <Stack.Screen name="SecuritySettings" component={SecuritySettings} />
+          <Stack.Screen name="LinkedDevices" component={LinkedDevices} />
+          <Stack.Screen name="NotificationSettings" component={NotificationSettings} />
+          <Stack.Screen name="ProfileBusinessDetails" component={ProfileBusinessDetails} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

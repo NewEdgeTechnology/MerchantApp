@@ -222,6 +222,8 @@ export default function MenuTab({ isTablet }) {
 
   const [basePrice, setBasePrice] = useState('');
   const [taxRate, setTaxRate] = useState('');
+  const [discount, setDiscount] = useState('');     // ← NEW: discount %
+
   const [isVeg, setIsVeg] = useState(false);
 
   const SPICE_OPTIONS = ['None', 'Mild', 'Medium', 'Hot'];
@@ -387,8 +389,11 @@ export default function MenuTab({ isTablet }) {
 
     const token = (await SecureStore.getItemAsync('auth_token')) || '';
 
-    // Try JSON
-    try {
+    // If there's a local image URI, prefer multipart so the file is actually uploaded
+    const hasLocalImage = !!payload.item_image;
+
+    if (!hasLocalImage) {
+      // JSON is fine when no image file to upload
       const res = await fetch(ENV_ADD_MENU_ENDPOINT, {
         method: 'POST',
         headers: {
@@ -398,55 +403,58 @@ export default function MenuTab({ isTablet }) {
         },
         body: JSON.stringify(payload),
       });
-      if (res.ok) {
-        try { return await res.json(); } catch { return null; }
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(`Server error ${res.status}: ${txt}`);
       }
-      if ([400, 415, 422].includes(res.status)) {
-        const msg = await res.text();
-        throw new Error(`JSON rejected (${res.status}). ${msg || ''}`);
-      }
-      const txt = await res.text();
-      throw new Error(`Server error ${res.status}: ${txt}`);
-    } catch {
-      // Fallback multipart (with image file)
-      const fd = new FormData();
-      fd.append('business_id', String(payload.business_id));
-      if (payload.category_name != null) fd.append('category_name', String(payload.category_name));
-      fd.append('item_name', payload.item_name);
-      fd.append('description', payload.description ?? '');
-      fd.append('base_price', String(payload.base_price));
-      if (payload.tax_rate != null) fd.append('tax_rate', String(payload.tax_rate));
-      fd.append('is_veg', String(payload.is_veg));
-      fd.append('spice_level', payload.spice_level);
-      fd.append('is_available', String(payload.is_available));
-      if (payload.stock_limit != null) fd.append('stock_limit', String(payload.stock_limit));
-      fd.append('sort_order', String(payload.sort_order));
-
-      if (payload.item_image) {
-        const lower = String(payload.item_image).toLowerCase();
-        const type =
-          lower.endsWith('.png') ? 'image/png'
-          : (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) ? 'image/jpeg'
-          : 'image/*';
-        const name = (payload.item_image.split('/').pop() || 'image.jpg');
-        fd.append('image', { uri: payload.item_image, name, type });
-        fd.append('item_image', String(payload.item_image));
-      }
-
-      const res2 = await fetch(ENV_ADD_MENU_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: fd,
-      });
-      if (!res2.ok) {
-        const txt2 = await res2.text();
-        throw new Error(`Server error ${res2.status}: ${txt2}`);
-      }
-      try { return await res2.json(); } catch { return null; }
+      try { return await res.json(); } catch { return null; }
     }
+
+    // Multipart for image upload
+    const fd = new FormData();
+    fd.append('business_id', String(payload.business_id));
+    if (payload.category_name != null) fd.append('category_name', String(payload.category_name));
+    fd.append('item_name', payload.item_name);
+    fd.append('description', payload.description ?? '');
+
+    // numeric fields
+    fd.append('actual_price', String(payload.actual_price));
+    if (payload.discount_percentage != null) fd.append('discount_percentage', String(payload.discount_percentage));
+    if (payload.tax_rate != null) fd.append('tax_rate', String(payload.tax_rate));
+    fd.append('is_veg', String(payload.is_veg));
+    fd.append('spice_level', payload.spice_level);
+    fd.append('is_available', String(payload.is_available));
+    if (payload.stock_limit != null) fd.append('stock_limit', String(payload.stock_limit));
+    fd.append('sort_order', String(payload.sort_order));
+
+    // ✅ send the file under the key your backend expects: item_image
+    if (payload.item_image) {
+      const uri = String(payload.item_image);
+      const filenameGuess = uri.split('/').pop() || 'image.jpg';
+      const lower = filenameGuess.toLowerCase();
+      const type =
+        lower.endsWith('.png') ? 'image/png'
+        : (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) ? 'image/jpeg'
+        : 'application/octet-stream';
+
+      fd.append('item_image', { uri, name: filenameGuess, type });
+      // ⚠️ Do NOT also append a string 'item_image' – that can confuse the backend
+    }
+
+    const res2 = await fetch(ENV_ADD_MENU_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        // Important: don't set Content-Type manually; let fetch set the multipart boundary
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: fd,
+    });
+    if (!res2.ok) {
+      const txt2 = await res2.text();
+      throw new Error(`Server error ${res2.status}: ${txt2}`);
+    }
+    try { return await res2.json(); } catch { return null; }
   }
 
   // Save: VALIDATE -> POST ONLY (no local persistence)
@@ -456,6 +464,7 @@ export default function MenuTab({ isTablet }) {
     // Category may be "None" now → allowed
     if (!basePrice || isNaN(Number(basePrice))) return Alert.alert('Validation', 'Enter a valid base price.');
     if (taxRate !== '' && isNaN(Number(taxRate))) return Alert.alert('Validation', 'Enter a valid tax rate.');
+    if (discount !== '' && isNaN(Number(discount))) return Alert.alert('Validation', 'Enter a valid discount.'); // ← NEW
     if (!SPICE_OPTIONS.includes(spiceLevel)) {
       return Alert.alert('Validation', `Spice level must be one of: ${SPICE_OPTIONS.join(', ')}`);
     }
@@ -465,14 +474,18 @@ export default function MenuTab({ isTablet }) {
 
     const selectedCat = categories.find((x) => x.id === category);
 
+    // 🔁 payload keys adjusted to your backend
     const payload = {
       business_id: Number(BUSINESS_ID),
       category_name: (category === 'None') ? null : (selectedCat?.name ?? null),
       item_name: itemName.trim(),
       description: description.trim(),
-      item_image: imageUri || null, // URI; used by JSON or multipart
-      base_price: Number(basePrice),
+      item_image: imageUri || null,
+
+      actual_price: Number(basePrice),              // was base_price
+      discount_percentage: discount === '' ? null : Number(discount), // ← NEW
       tax_rate: taxRate === '' ? null : Number(taxRate),
+
       is_veg: isVeg ? 1 : 0,
       spice_level: spiceLevel,
       is_available: isAvailable ? 1 : 0,
@@ -488,7 +501,7 @@ export default function MenuTab({ isTablet }) {
         id: String(created?.id ?? created?._id ?? created?.menu_id ?? Date.now()),
         name: created?.item_name ?? payload.item_name,
         title: created?.title ?? undefined,
-        price: created?.base_price ?? payload.base_price,
+        price: created?.actual_price ?? payload.actual_price, // ← prefer actual_price
         currency: created?.currency ?? 'Nu',
         inStock: (created?.is_available ?? payload.is_available) ? true : false,
         category: created?.category_name ?? payload.category_name ?? '',
@@ -508,6 +521,7 @@ export default function MenuTab({ isTablet }) {
       setImageSize(0);
       setBasePrice('');
       setTaxRate('');
+      setDiscount('');              // ← NEW
       setIsVeg(false);
       setSpiceLevel('None');
       setIsAvailable(true);
@@ -515,7 +529,7 @@ export default function MenuTab({ isTablet }) {
       setSortPriority('None');
       setCategory('None');
 
-      Alert.alert('Saved', 'Menu item added to backend.');
+      Alert.alert('Saved', 'Menu item added Successfully.');
     } catch (e) {
       Alert.alert('Error', e?.message || 'Failed to save.');
     }
@@ -637,6 +651,19 @@ export default function MenuTab({ isTablet }) {
         </View>
       </View>
 
+      {/* Discount (%) */}
+      <View style={styles.field}>
+        <Text style={[styles.label, { fontSize: FS.label }]}>Discount (%)</Text>
+        <TextInput
+          value={discount}
+          onChangeText={setDiscount}
+          keyboardType={Platform.OS === 'ios' ? 'decimal-pad' : 'numeric'}
+          placeholder="e.g., 10"
+          placeholderTextColor={PLACEHOLDER_COLOR}
+          style={[styles.input, { fontSize: FS.base, fontFamily: FONT_FAMILY, height: INPUT_HEIGHT }]}
+        />
+      </View>
+
       {/* Switches */}
       <View style={[styles.row, { alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }]}>
         <View style={styles.switchRow}>
@@ -739,7 +766,7 @@ export default function MenuTab({ isTablet }) {
     </View>
   ), [
     FS, itemName, description, imageUri, imageName, imageSize, isTablet,
-    basePrice, taxRate, isVeg, isAvailable, category, categories, loadingCats,
+    basePrice, taxRate, discount, isVeg, isAvailable, category, categories, loadingCats,
     spiceLevel, stockLimit, sortPriority
   ]);
 
@@ -781,7 +808,7 @@ export default function MenuTab({ isTablet }) {
 
       {/* Modal overlay (image preview) */}
       <Modal visible={previewOpen} animationType="fade" transparent>
-        <TouchableWithoutFeedback onPress={() => setPreviewOpen(false)}>
+        <TouchableWithoutFeedback onPress={() => setPreviewOpen(false)}> 
           <View style={styles.modalBackdrop}>
             <TouchableWithoutFeedback>
               <View style={styles.modalCard}>
@@ -930,7 +957,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#f1f59',
     paddingHorizontal: 16,
     borderRadius: 999,
     alignSelf: 'flex-start',
