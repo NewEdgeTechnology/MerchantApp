@@ -84,7 +84,7 @@ export default function ReviewSubmitScreen() {
   // ✅ Normalize to **IDs** for downstream API
   const normalizedCategoryIds = normalizeCategoryIds(merchant?.category);
 
-  // For display, we just join IDs (no UI change)
+  // For display, map IDs → names if list is present
   const displayCategory =
     normalizedCategoryIds.length && Array.isArray(merchant?.categories)
       ? normalizedCategoryIds
@@ -125,7 +125,6 @@ export default function ReviewSubmitScreen() {
       Alert.alert("Accept terms", "Please accept Terms & Conditions and Privacy Policy to continue.");
       return;
     }
-
     if (!business.email) {
       Alert.alert("Missing email", "Please add your email in Signup first.");
       return;
@@ -146,29 +145,55 @@ export default function ReviewSubmitScreen() {
         try {
           const data = await res.json();
           msg = data?.message || data?.error || msg;
-        } catch (_e) {
-          /* ignore parse error */
-        }
+        } catch (_e) {}
         throw new Error(msg);
       }
 
-      // ➡️ Navigate to the OTP verification screen
-      navigation.navigate(NEXT_ROUTE, {
-        ...(route.params ?? {}),
-        serviceType, // keep original serviceType for compatibility
-        // 👇 forward owner type explicitly
+      // 🔐 Build a single canonical payload to forward EVERYTHING to the next page
+      const review = {
+        serviceType,
         owner_type: effectiveOwnerType,
         deliveryOption,
-        // ✅ ensure merchant carries **ID** categories forward + owner_type
+        agreeTerms: true,
+        displayCategory,
+        normalizedCategoryIds: business.category,
+        business, // full normalized business block
+        bank,     // full bank block
+        // keep a normalized merchant for later steps/submit
+        merchantNormalized: {
+          ...(merchant ?? {}),
+          category: business.category,
+          owner_type: effectiveOwnerType,
+          registration_no: business.regNo,
+          address: business.address,
+          latitude: business.latitude,
+          longitude: business.longitude,
+          full_name: business.fullName,
+          business_name: business.businessName,
+          email: business.email,
+          phone: business.phone,
+          password: business.password,
+          bank, // embed full bank data here as well
+        },
+      };
+
+      // ➡️ Navigate to the OTP verification screen with ALL data
+      navigation.navigate(NEXT_ROUTE, {
+        ...(route.params ?? {}),   // preserve any incoming data
+        email: business.email,     // explicit for OTP screen
+        otpType: "email_verification",
+        serviceType,
+        owner_type: effectiveOwnerType,
+        deliveryOption,
+        // legacy keys used by some downstream screens
+        initialCategory: business.category,
         merchant: {
           ...(merchant ?? {}),
           category: business.category,
           owner_type: effectiveOwnerType,
         },
-        // also carry initialCategory for any downstream that still checks it
-        initialCategory: business.category,
-        email: business.email,
-        otpType: "email_verification",
+        // NEW: a single object carrying the entire review state
+        review,
       });
     } catch (e) {
       Alert.alert("Submit failed", e?.message || "Please try again.");
@@ -217,6 +242,10 @@ export default function ReviewSubmitScreen() {
         initialEmail: business.email,
         initialPhone: business.phone,
         initialPassword: business.password,
+        initialAddress: business.address,
+        initialLatitude: business.latitude,
+        initialLongitude: business.longitude,
+        initialRegNo: business.regNo,
       });
       return;
     }
@@ -303,7 +332,6 @@ export default function ReviewSubmitScreen() {
           rows={[
             ["Full name", business.fullName || "—"],
             ["Business name", business.businessName || "—"],
-            // show IDs as comma-separated (no UI change)
             ["Category", displayCategory || "—"],
             ["License number", business.regNo || "—"],
             ["Address", business.address || "—"],

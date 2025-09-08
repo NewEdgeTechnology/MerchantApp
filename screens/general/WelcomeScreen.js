@@ -1,12 +1,11 @@
 import 'react-native-gesture-handler';
-import React, { useState, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Image, StatusBar, Dimensions, Platform,
+  View, Text, TouchableOpacity, StyleSheet, Image, StatusBar, Dimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Carousel from 'react-native-reanimated-carousel';
 import { useNavigation } from '@react-navigation/native';
-import CountrySelectScreen from './CountrySelectScreen';
 
 const { width } = Dimensions.get('window');
 
@@ -24,10 +23,9 @@ const DOT_MARGIN = 5;
 
 export default function WelcomeScreen() {
   const [activeIndex, setActiveIndex] = useState(0);
-  const [countryParams, setCountryParams] = useState({});
-  const [countryVisible, setCountryVisible] = useState(false);
 
-  const [selectedCountry, setSelectedCountry] = useState({
+  // Fixed to Bhutan only
+  const [selectedCountry] = useState({
     name: 'Bhutan',
     code: 'bt',
     timestamp: Date.now(),
@@ -35,23 +33,6 @@ export default function WelcomeScreen() {
 
   const carouselRef = useRef(null);
   const navigation = useNavigation();
-
-  const countries = useMemo(() => ([
-    { name: 'Bhutan', code: 'bt' },
-    { name: 'Singapore', code: 'sg' },
-    { name: 'Malaysia', code: 'my' },
-    { name: 'Indonesia', code: 'id' },
-    { name: 'Philippines', code: 'ph' },
-    { name: 'Thailand', code: 'th' },
-    { name: 'Vietnam', code: 'vn' },
-    { name: 'Myanmar', code: 'mm' },
-    { name: 'Cambodia', code: 'kh' },
-  ]), []);
-
-  const handleSelectCountry = useCallback((country) => {
-    setSelectedCountry({ ...country, timestamp: Date.now() });
-  }, []);
-
   const insets = useSafeAreaInsets();
 
   return (
@@ -70,32 +51,16 @@ export default function WelcomeScreen() {
           <Text style={{ color: '#00b14f' }}>Merchant</Text>
         </Text>
 
-        <TouchableOpacity
-          style={styles.countrySelector}
-          onPress={() => {
-            setCountryParams({
-              countries,
-              selectedCode: selectedCountry.code,
-              onPick: (c) => handleSelectCountry(c),
-            });
-            setCountryVisible(true);
-          }}
-          activeOpacity={0.8}
-        >
+        {/* Country pill (no dropdown, no onPress) */}
+        <TouchableOpacity style={styles.countrySelector} activeOpacity={1}>
           <Image
             source={{ uri: `https://flagcdn.com/w40/${selectedCountry.code}.png?ts=${selectedCountry.timestamp}` }}
             style={styles.flag}
             key={selectedCountry.code}
           />
           <Text style={styles.countryText}>{selectedCountry.name}</Text>
-          <Image source={require('../../assets/arrow-down.png')} style={styles.dropdownIcon} />
+          {/* dropdown icon removed */}
         </TouchableOpacity>
-
-        <CountrySelectScreen
-          {...countryParams}
-          visible={countryVisible}
-          onClose={() => setCountryVisible(false)}
-        />
       </View>
 
       <Text style={styles.version}>v 4.134.0</Text>
@@ -178,7 +143,7 @@ const styles = StyleSheet.create({
   countrySelector: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 15,
+    paddingHorizontal: 20,
     paddingVertical: 8,
     borderRadius: 10,
     borderWidth: 1,
@@ -197,14 +162,6 @@ const styles = StyleSheet.create({
 
   countryText: {
     fontSize: 14,
-  },
-
-  dropdownIcon: {
-    width: 12,
-    height: 12,
-    marginLeft: 6,
-    resizeMode: 'contain',
-    tintColor: '#444',
   },
 
   // ===== Carousel =====

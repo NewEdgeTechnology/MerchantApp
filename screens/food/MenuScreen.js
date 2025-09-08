@@ -22,7 +22,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
-import { DISPLAY_MENU_ENDPOINT as ENV_DISPLAY_MENU_ENDPOINT } from '@env';
+import * as ImagePicker from 'expo-image-picker';
+import { DISPLAY_MENU_ENDPOINT as ENV_DISPLAY_MENU_ENDPOINT, MENU_ENDPOINT as ENV_MENU_ENDPOINT } from '@env';
 
 const money = (n, c = 'Nu') => `${c} ${Number(n ?? 0).toFixed(2)}`;
 
@@ -47,18 +48,31 @@ function toAbsoluteUrl(origin, pathOrUrl) {
   return origin ? `${origin}${rel}` : rel;
 }
 
+/** ───────── Image helpers for multipart ───────── */
+const isLocalUri = (u) => !!u && !/^https?:\/\//i.test(String(u)); // file:// or content://
+const guessMimeFromName = (name) => {
+  const ext = (name || '').split('.').pop()?.toLowerCase();
+  if (ext === 'png') return 'image/png';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'heic') return 'image/heic';
+  return 'application/octet-stream';
+};
+const buildFilePart = (uri) => {
+  const name = (uri?.split('/')?.pop() || 'photo.jpg');
+  return { uri, name, type: guessMimeFromName(name) };
+};
+
 export default function MenuScreen() {
   const navigation = useNavigation();
   const route = useRoute();
   const insets = useSafeAreaInsets();
 
-  // ✅ Ensure this screen uses slide-from-right transitions (native-stack)
+  // ✅ native-stack slide transition
   useLayoutEffect(() => {
     navigation.setOptions?.({
       animation: 'slide_from_right',
       gestureEnabled: true,
       fullScreenGestureEnabled: true,
-      // headerShown: false,
     });
   }, [navigation]);
 
@@ -105,31 +119,37 @@ export default function MenuScreen() {
   const [menus, setMenus] = useState(initialMenus);
   const [categories, setCategories] = useState(initialCategories);
 
-  // API bits (added)
+  // API bits
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Modal state for edit (keep inline editor for existing items)
+  // Modal state for edit
   const [modalVisible, setModalVisible] = useState(false);
   const [form, setForm] = useState({
     id: null,
     name: '',
     category: 'General',
-    price: '',
+    price: '',             // maps to actual_price
+    discount: '',          // discount_percentage
+    taxRate: '',           // tax_rate
     currency: 'Nu',
     inStock: true,
-    image: '',
+    image: '',             // local or remote URI
   });
   const isEditing = !!form?.id;
 
-  // API base (same style as HomeTab)
+  // Endpoints
   const DISPLAY_MENU_ENDPOINT = useMemo(
     () => (ENV_DISPLAY_MENU_ENDPOINT || '').replace(/\/$/, ''),
     []
   );
+  const MENU_ENDPOINT = useMemo(
+    () => (ENV_MENU_ENDPOINT || '').replace(/\/$/, ''),
+    []
+  );
   const API_ORIGIN = useMemo(() => getOrigin(DISPLAY_MENU_ENDPOINT), [DISPLAY_MENU_ENDPOINT]);
 
-  // Normalize + extract like HomeTab
+  // Normalize + extract
   const extractItemsFromResponse = useCallback((raw) => {
     if (Array.isArray(raw)) return raw;
     if (Array.isArray(raw?.data)) return raw.data;
@@ -142,10 +162,14 @@ export default function MenuScreen() {
   }, []);
 
   const normalizeItem = useCallback((x, idx = 0) => {
+    const numericActual = Number(x?.actual_price);
     const numericBase = Number(x?.base_price);
-    const price = Number.isFinite(numericBase)
-      ? numericBase
-      : (typeof x?.base_price === 'number' ? x.base_price : (x?.price ?? ''));
+    const price = Number.isFinite(numericActual)
+      ? numericActual
+      : Number.isFinite(numericBase)
+        ? numericBase
+        : (typeof x?.price === 'number' ? x.price : Number(x?.price ?? 0));
+
     const absImage = toAbsoluteUrl(
       API_ORIGIN,
       x?.image_url ?? x?.item_image_url ?? x?.item_image ?? x?.image ?? ''
@@ -155,6 +179,8 @@ export default function MenuScreen() {
       name: x?.item_name ?? x?.name ?? x?.title ?? 'Unnamed item',
       title: x?.title ?? undefined,
       price,
+      discount: x?.discount_percentage ?? '',
+      taxRate: x?.tax_rate ?? '',
       currency: x?.currency ?? 'Nu',
       inStock: (x?.is_available ?? x?.inStock ?? 1) ? true : false,
       category: x?.category_name ?? x?.category ?? x?.categoryName ?? '',
@@ -165,7 +191,6 @@ export default function MenuScreen() {
 
   const buildUrl = useCallback(() => {
     if (!DISPLAY_MENU_ENDPOINT || !businessId) return null;
-    // Your backend already supports GET by business id at DISPLAY_MENU_ENDPOINT/{id}
     return `${DISPLAY_MENU_ENDPOINT}/${encodeURIComponent(businessId)}`;
   }, [DISPLAY_MENU_ENDPOINT, businessId]);
 
@@ -178,6 +203,87 @@ export default function MenuScreen() {
     const arr = Array.from(uniq);
     return ['All', ...arr];
   }, []);
+
+  // ───────── API: UPDATE (PUT MENU_ENDPOINT/:id) ─────────
+  const apiUpdateMenu = useCallback(
+    async (foodId, data) => {
+      if (!MENU_ENDPOINT) throw new Error('Missing MENU_ENDPOINT in .env');
+      if (!foodId) throw new Error('Missing food id for update');
+
+      const token = (await SecureStore.getItemAsync('auth_token')) || '';
+      const url = `${MENU_ENDPOINT}/${encodeURIComponent(foodId)}`;
+
+      // Choose between multipart (file upload) vs JSON (remote URL/no change)
+      const shouldUploadFile = isLocalUri(data.image_local_uri);
+
+      if (shouldUploadFile) {
+        /** multipart/form-data */
+        const formData = new FormData();
+
+        formData.append('business_id', String(data.business_id ?? ''));
+        formData.append('item_name', data.item_name ?? '');
+        formData.append('category', data.category ?? '');
+        if (data.actual_price != null) formData.append('actual_price', String(data.actual_price));
+        if (data.discount_percentage != null) formData.append('discount_percentage', String(data.discount_percentage));
+        if (data.tax_rate != null) formData.append('tax_rate', String(data.tax_rate));
+        formData.append('currency', data.currency ?? 'Nu');
+        formData.append('is_available', data.is_available ? '1' : '0');
+
+        // IMPORTANT: field name must match your multer handler (e.g., multer.single('image'))
+        formData.append('image', buildFilePart(data.image_local_uri));
+
+        const res = await fetch(url, {
+          method: 'PUT',
+          headers: {
+            Accept: 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            // Do not set Content-Type, fetch sets correct boundary
+          },
+          body: formData,
+        });
+
+        const text = await res.text();
+        let parsed = null; try { parsed = text ? JSON.parse(text) : null; } catch { }
+        if (!res.ok) {
+          const msg = parsed?.message || `Update failed (HTTP ${res.status})`;
+          throw new Error(msg);
+        }
+        return parsed || {};
+      } else {
+        /** JSON (no new local file to upload) */
+        const jsonPayload = {
+          business_id: data.business_id,
+          item_name: data.item_name,
+          category: data.category,
+          actual_price: data.actual_price,
+          discount_percentage: data.discount_percentage,
+          tax_rate: data.tax_rate,
+          currency: data.currency,
+          is_available: data.is_available ? 1 : 0,
+          ...(data.image_url ? { image_url: data.image_url } : {}),
+        };
+
+        const res = await fetch(url, {
+          method: 'PUT',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(jsonPayload),
+        });
+
+        const text = await res.text();
+        let parsed = null; try { parsed = text ? JSON.parse(text) : null; } catch { }
+        if (!res.ok) {
+          const msg = parsed?.message || `Update failed (HTTP ${res.status})`;
+          throw new Error(msg);
+        }
+        return parsed || {};
+      }
+    },
+    [MENU_ENDPOINT]
+  );
 
   // 🔌 Fetch menus from API
   const fetchMenus = useCallback(async () => {
@@ -232,7 +338,7 @@ export default function MenuScreen() {
     }, [fetchMenus])
   );
 
-  // Filtered list (unchanged)
+  // Filtered list
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return menus.filter((m) => {
@@ -247,14 +353,16 @@ export default function MenuScreen() {
     });
   }, [menus, query, activeCat]);
 
-  // Edit existing item (unchanged)
+  // Edit existing item
   const openEdit = (item) => {
     const firstRealCat = categories.find((c) => c !== 'All');
     setForm({
       id: item.id,
       name: item.name,
       category: item.category || firstRealCat || 'General',
-      price: String(item.price ?? ''),
+      price: String(item.price ?? ''),                       // actual_price
+      discount: item.discount !== undefined && item.discount !== null ? String(item.discount) : '',
+      taxRate: item.taxRate !== undefined && item.taxRate !== null ? String(item.taxRate) : '',
       currency: item.currency || 'Nu',
       inStock: !!item.inStock,
       image: item.image || '',
@@ -262,16 +370,7 @@ export default function MenuScreen() {
     setModalVisible(true);
   };
 
-  // Persist context so Home can always hydrate the header (unchanged)
-  const persistCtx = async (payload) => {
-    try {
-      await SecureStore.setItemAsync(KEY_LAST_CTX, JSON.stringify(payload));
-    } catch (e) {
-      if (__DEV__) console.warn('[MenuScreen] persistCtx failed:', e?.message);
-    }
-  };
-
-  // Open Add Menu on the EXISTING Home (unchanged)
+  // Open Add Menu on the EXISTING Home
   const openAddTab = async () => {
     const payload = {
       openTab: 'Add Menu',
@@ -292,59 +391,148 @@ export default function MenuScreen() {
     }
 
     DeviceEventEmitter.emit('open-tab', { key: 'Add Menu', params: payload });
-    navigation.goBack(); // pop with the configured animation
+    navigation.goBack();
   };
 
-  // Save handler for inline edit (local only here)
-  const saveItem = () => {
+  // 📸 Image pickers for EDIT (local-only)
+  const pickFromLibraryEdit = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Allow photo library access to select an image.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: false,
+      quality: 0.9,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    });
+    if (!result.canceled && result.assets?.[0]) {
+      setForm((f) => ({ ...f, image: result.assets[0].uri }));
+    }
+  };
+
+  const takePhotoEdit = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Allow camera access to take a photo.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: false,
+      quality: 0.9,
+    });
+    if (!result.canceled && result.assets?.[0]) {
+      setForm((f) => ({ ...f, image: result.assets[0].uri }));
+    }
+  };
+
+  // Save handler (calls PUT /menus/:id when editing). Sends multipart if a new local image is present.
+  const saveItem = async () => {
     const priceNum = Number(form.price);
-    if (!form.name.trim()) {
-      Alert.alert('Name required', 'Please enter a menu name.');
-      return;
-    }
-    if (Number.isNaN(priceNum)) {
-      Alert.alert('Invalid price', 'Please enter a numeric price.');
-      return;
-    }
-    if (!form.category) {
-      Alert.alert('Category required', 'Please choose a category.');
-      return;
-    }
+    const discountNum = form.discount === '' ? '' : Number(form.discount);
+    const taxNum = form.taxRate === '' ? '' : Number(form.taxRate);
 
-    if (isEditing) {
-      setMenus((prev) =>
-        prev.map((m) =>
-          m.id === form.id
-            ? {
+    if (!form.name.trim()) return Alert.alert('Name required', 'Please enter a menu name.');
+    if (Number.isNaN(priceNum)) return Alert.alert('Invalid price', 'Please enter a numeric price.');
+    if (discountNum !== '' && Number.isNaN(discountNum)) return Alert.alert('Invalid discount', 'Please enter a numeric discount percentage.');
+    if (taxNum !== '' && Number.isNaN(taxNum)) return Alert.alert('Invalid tax', 'Please enter a numeric tax rate.');
+    if (!form.category) return Alert.alert('Category required', 'Please choose a category.');
+
+    // Decide image fields
+    const image_local_uri = isLocalUri(form.image) ? form.image : null;
+    const image_url = !isLocalUri(form.image) ? (form.image || null) : null;
+
+    const payload = {
+      business_id: businessId,
+      item_name: form.name.trim(),
+      category: form.category,
+      actual_price: priceNum,
+      discount_percentage: discountNum === '' ? null : discountNum,
+      tax_rate: taxNum === '' ? null : taxNum,
+      currency: form.currency || 'Nu',
+      is_available: !!form.inStock ? 1 : 0,
+      image_local_uri, // used to trigger multipart
+      image_url,       // used for JSON path
+    };
+
+    try {
+      if (isEditing) {
+        const resp = await apiUpdateMenu(form.id, payload);
+
+        // Use server-returned canonical image URL if provided
+        const updatedImage =
+          resp?.image_url || resp?.item_image_url || resp?.image || image_url || form.image;
+
+        // Optimistic UI update
+        setMenus((prev) =>
+          prev.map((m) =>
+            m.id === form.id
+              ? {
                 ...m,
-                name: form.name.trim(),
-                category: form.category,
-                price: priceNum,
-                currency: form.currency || 'Nu',
-                inStock: !!form.inStock,
-                image: form.image?.trim() || '',
+                name: payload.item_name,
+                category: payload.category,
+                price: payload.actual_price,
+                discount: payload.discount_percentage ?? '',
+                taxRate: payload.tax_rate ?? '',
+                currency: payload.currency,
+                inStock: !!payload.is_available,
+                image: updatedImage,
               }
-            : m
-        )
-      );
-      if (!categories.includes(form.category)) {
-        setCategories((prev) => ['All', ...new Set([...prev.filter(c => c !== 'All'), form.category])]);
+              : m
+          )
+        );
+        if (!categories.includes(form.category)) {
+          setCategories((prev) => ['All', ...new Set([...prev.filter(c => c !== 'All'), form.category])]);
+        }
       }
+      setModalVisible(false);
+    } catch (e) {
+      Alert.alert('Update failed', String(e?.message || 'Could not update the item.'));
     }
-
-    setModalVisible(false);
   };
 
-  const deleteItem = (id) => {
+  const deleteItem = async (id) => {
     Alert.alert('Delete item', 'Are you sure you want to delete this item?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: () => setMenus((prev) => prev.filter((m) => m.id !== id)),
+        onPress: async () => {
+          try {
+            // Sending DELETE request to backend
+            const token = await SecureStore.getItemAsync('auth_token');
+            const url = `${MENU_ENDPOINT}/${encodeURIComponent(id)}`;
+
+            const res = await fetch(url, {
+              method: 'DELETE',
+              headers: {
+                Accept: 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+            });
+
+            const text = await res.text();
+            let parsed = null;
+            try {
+              parsed = text ? JSON.parse(text) : null;
+            } catch { }
+            if (!res.ok) {
+              const msg = parsed?.message || `Delete failed (HTTP ${res.status})`;
+              throw new Error(msg);
+            }
+
+            // Optimistically update the UI by filtering out the deleted item
+            setMenus((prev) => prev.filter((m) => m.id !== id));
+
+            Alert.alert('Deleted', 'Item has been deleted successfully.');
+          } catch (e) {
+            Alert.alert('Delete failed', String(e?.message || 'Could not delete the item.'));
+          }
+        },
       },
     ]);
   };
+
 
   const toggleStock = (id, v) => {
     setMenus((prev) => prev.map((m) => (m.id === id ? { ...m, inStock: v } : m)));
@@ -386,12 +574,6 @@ export default function MenuScreen() {
       <View style={styles.rightCol}>
         <View style={styles.stockRow}>
           <Text style={styles.stockLabel}>{item.inStock ? 'In stock' : 'Out'}</Text>
-          <Switch
-            value={!!item.inStock}
-            onValueChange={(v) => toggleStock(item.id, v)}
-            trackColor={{ true: '#a7f3d0', false: '#fee2e2' }}
-            thumbColor={item.inStock ? '#10b981' : '#ef4444'}
-          />
         </View>
 
         <View style={styles.actions}>
@@ -518,7 +700,6 @@ export default function MenuScreen() {
 
       {/* Inline Edit Modal */}
       <Modal visible={modalVisible} animationType="slide" transparent>
-        {/* Backdrop (kept as-is; unrelated to opacity-on-press) */}
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.modalWrap}
@@ -560,25 +741,7 @@ export default function MenuScreen() {
                     <Text style={[styles.catChipText, form.category === c && styles.catChipTextActive]}>{c}</Text>
                   </Pressable>
                 ))}
-                {/* Quick add category */}
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.catAdd,
-                    pressed && { transform: [{ scale: 0.98 }] },
-                  ]}
-                  android_ripple={{ color: 'rgba(0,177,79,0.12)', borderless: false }}
-                  onPress={() => {
-                    const nextNum = categories.filter(c => c !== 'All').length + 1;
-                    const newCat = `Category ${nextNum}`;
-                    if (!categories.includes(newCat)) {
-                      setCategories((prev) => [...prev, newCat]);
-                    }
-                    setForm((f) => ({ ...f, category: newCat }));
-                  }}
-                >
-                  <Ionicons name="add" size={16} color="#00b14f" />
-                  <Text style={styles.catAddText}>New</Text>
-                </Pressable>
+                {/* Quick add category — removed as requested */}
               </ScrollView>
 
               <View style={styles.row2}>
@@ -603,14 +766,62 @@ export default function MenuScreen() {
                 </View>
               </View>
 
-              <Text style={styles.label}>Image URL (optional)</Text>
-              <TextInput
-                value={form.image}
-                onChangeText={(t) => setForm((f) => ({ ...f, image: t }))}
-                placeholder="https://example.com/photo.jpg"
-                style={styles.input}
-                autoCapitalize="none"
-              />
+              {/* Added fields — same look/feel */}
+              <View style={styles.row2}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Tax rate (%)</Text>
+                  <TextInput
+                    value={String(form.taxRate)}
+                    onChangeText={(t) => setForm((f) => ({ ...f, taxRate: t.replace(/,/g, '.') }))}
+                    keyboardType="decimal-pad"
+                    placeholder="e.g., 5"
+                    style={styles.input}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.label}>Discount (%)</Text>
+                  <TextInput
+                    value={String(form.discount)}
+                    onChangeText={(t) => setForm((f) => ({ ...f, discount: t.replace(/,/g, '.') }))}
+                    keyboardType="decimal-pad"
+                    placeholder="e.g., 10"
+                    style={styles.input}
+                  />
+                </View>
+              </View>
+
+              {/* Image picker */}
+              <Text style={styles.label}>Image</Text>
+              {form.image ? (
+                <Image
+                  source={{ uri: form.image }}
+                  style={{ width: '100%', height: 160, borderRadius: 12, backgroundColor: '#f1f5f9' }}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={{ width: '100%', height: 160, borderRadius: 12, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' }}>
+                  <Ionicons name="image-outline" size={28} color="#64748b" />
+                  <Text style={{ marginTop: 6, color: '#64748b', fontWeight: '700' }}>No image selected</Text>
+                </View>
+              )}
+              <View style={[styles.saveRow, { marginTop: 10 }]}>
+                <Pressable
+                  style={[styles.btn, styles.btnGhost]}
+                  onPress={takePhotoEdit}
+                  android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: false }}
+                >
+                  <Ionicons name="camera-outline" size={18} color="#0f172a" />
+                  <Text style={styles.btnGhostText}>Take photo</Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.btn, styles.btnPrimary]}
+                  onPress={pickFromLibraryEdit}
+                  android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: false }}
+                >
+                  <Ionicons name="images-outline" size={18} color="#fff" />
+                  <Text style={styles.btnPrimaryText}>Pick photo</Text>
+                </Pressable>
+              </View>
 
               <View style={styles.stockRow2}>
                 <Text style={styles.stockLabel2}>Available</Text>
@@ -753,6 +964,8 @@ const styles = StyleSheet.create({
   catChipActive: { backgroundColor: '#00b14f' },
   catChipText: { color: '#0f172a', fontWeight: '700' },
   catChipTextActive: { color: '#fff' },
+
+  // (styles for removed "add category" button kept harmlessly; delete if you want)
   catAdd: {
     flexDirection: 'row',
     alignItems: 'center',

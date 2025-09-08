@@ -1,4 +1,8 @@
-// screens/food/HomeTab.js
+// @ts-nocheck
+// screens/food/HomeScreen.js
+// A scrolling screen that renders MerchantHeader inside the list header.
+// Set options={{ headerShown: false }} for this screen in your navigator.
+
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
@@ -14,7 +18,24 @@ import {
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
-import { DISPLAY_MENU_ENDPOINT as ENV_DISPLAY_MENU_ENDPOINT } from '@env';
+
+// ❌ DO NOT import '@env' directly. It breaks parsing if not configured.
+// import { DISPLAY_MENU_ENDPOINT as ENV_DISPLAY_MENU_ENDPOINT } from '@env';
+
+// ✅ Safe optional load for @env (works even if plugin not set up)
+let ENV_DISPLAY_MENU_ENDPOINT = '';
+try {
+  // eslint-disable-next-line global-require
+  const e = require('@env');
+  ENV_DISPLAY_MENU_ENDPOINT = e?.DISPLAY_MENU_ENDPOINT || '';
+} catch {
+  ENV_DISPLAY_MENU_ENDPOINT = '';
+}
+
+// If MerchantHeader.js is in the same folder:
+import MerchantHeader from './MerchantHeader';
+// If it's under components/, use:
+// import MerchantHeader from '../../components/MerchantHeader';
 
 /* ---------------- UI bits ---------------- */
 const KpiCard = ({ icon, label, value, sub, isTablet }) => (
@@ -24,7 +45,7 @@ const KpiCard = ({ icon, label, value, sub, isTablet }) => (
     </View>
     <Text style={[styles.kpiLabel, { fontSize: isTablet ? 13 : 12 }]}>{label}</Text>
     <Text style={[styles.kpiValue, { fontSize: isTablet ? 22 : 20 }]}>{value}</Text>
-    {!!sub && <Text style={[styles.kpiSub, { fontSize: isTablet ? 12 : 11 }]}>{sub}</Text>}
+    {sub ? <Text style={[styles.kpiSub, { fontSize: isTablet ? 12 : 11 }]}>{sub}</Text> : null}
   </View>
 );
 
@@ -59,16 +80,21 @@ const MenuItem = ({ item, isTablet, money }) => {
         <Text numberOfLines={1} style={[styles.menuTitle, { fontSize: isTablet ? 15 : 14 }]}>
           {item?.name || item?.title || 'Unnamed item'}
         </Text>
-        {!!cat && (
+        {cat ? (
           <Text numberOfLines={1} style={[styles.menuMeta, { fontSize: isTablet ? 12 : 11 }]}>
             {cat}
           </Text>
-        )}
-        {!!price && <Text style={[styles.menuPrice, { fontSize: isTablet ? 14 : 13 }]}>{price}</Text>}
+        ) : null}
+        {price ? <Text style={[styles.menuPrice, { fontSize: isTablet ? 14 : 13 }]}>{price}</Text> : null}
       </View>
 
       <View style={[styles.stockPill, { backgroundColor: inStock ? '#dcfce7' : '#fee2e2' }]}>
-        <Text style={[styles.stockText, { color: inStock ? '#166534' : '#991b1b', fontSize: isTablet ? 12 : 11 }]}>
+        <Text
+          style={[
+            styles.stockText,
+            { color: inStock ? '#166534' : '#991b1b', fontSize: isTablet ? 12 : 11 },
+          ]}
+        >
           {inStock ? 'In stock' : 'Out of stock'}
         </Text>
       </View>
@@ -95,40 +121,33 @@ function toAbsoluteUrl(origin, pathOrUrl) {
 }
 function safeJoin(base, ...parts) {
   const a = String(base || '').replace(/\/+$/, '');
-  const b = parts.map(p => String(p || '').replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/');
+  const b = parts
+    .map((p) => String(p || '').replace(/^\/+|\/+$/g, ''))
+    .filter(Boolean)
+    .join('/');
   return b ? `${a}/${b}` : a;
 }
 
-// Try to safely extract a merchant/owner id from the stored login blob
 async function getStoredOwnerId() {
   try {
     const raw = await SecureStore.getItemAsync('merchant_login');
     if (!raw) return '';
     const json = JSON.parse(raw);
-    const candidates = [
-      json?.user?.id,
-      json?.merchant?.id,
-      json?.merchant_id,
-      json?.owner_id,
-      json?.id,
-    ];
-    const found = candidates.find(v => v !== undefined && v !== null && String(v).trim() !== '');
+    const candidates = [json?.user?.id, json?.merchant?.id, json?.merchant_id, json?.owner_id, json?.id];
+    const found = candidates.find((v) => v !== undefined && v !== null && String(v).trim() !== '');
     return found ? String(found) : '';
   } catch {
     return '';
   }
 }
 
-// Helper to read error body safely
 async function readErrorBody(res) {
   try {
     const text = await res.text();
     if (!text) return '';
     try {
       const j = JSON.parse(text);
-      return typeof j?.message === 'string'
-        ? j.message
-        : JSON.stringify(j);
+      return typeof j?.message === 'string' ? j.message : JSON.stringify(j);
     } catch {
       return text;
     }
@@ -137,12 +156,11 @@ async function readErrorBody(res) {
   }
 }
 
-export default function HomeTab({
-  isTablet,
+export default function HomeScreen({
+  isTablet = false,
   kpis = {},
   menus = [],
   money: moneyProp,
-  onPressNav = () => {},
 }) {
   const navigation = useNavigation();
   const route = useRoute();
@@ -154,7 +172,6 @@ export default function HomeTab({
       .trim();
   }, [route?.params]);
 
-  // if it's numeric, use integer; avoids NaN issues server-side
   const BUSINESS_ID = useMemo(() => {
     const n = parseInt(BUSINESS_ID_RAW, 10);
     return Number.isFinite(n) ? String(n) : String(BUSINESS_ID_RAW || '');
@@ -165,12 +182,10 @@ export default function HomeTab({
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Load current ownerId
   useEffect(() => {
     (async () => setOwnerId(await getStoredOwnerId()))();
   }, []);
 
-  // Load menus from SecureStore if available
   useEffect(() => {
     (async () => {
       try {
@@ -182,7 +197,6 @@ export default function HomeTab({
     })();
   }, []);
 
-  // Save menus to SecureStore whenever the list changes
   useEffect(() => {
     (async () => {
       try {
@@ -195,7 +209,6 @@ export default function HomeTab({
     })();
   }, [allMenus]);
 
-  // Android back
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS !== 'android') return undefined;
@@ -217,7 +230,6 @@ export default function HomeTab({
   );
   const API_ORIGIN = useMemo(() => getOrigin(DISPLAY_MENU_ENDPOINT), [DISPLAY_MENU_ENDPOINT]);
 
-  /* ------------ extract/normalize ------------ */
   const extractItemsFromResponse = useCallback((raw) => {
     if (Array.isArray(raw)) return raw;
     if (Array.isArray(raw?.data)) return raw.data;
@@ -276,13 +288,6 @@ export default function HomeTab({
     });
   }, [ownerId, BUSINESS_ID]);
 
-  /** Build candidate URLs without duplicating segments and using snake_case `business_id`.
-   *  Shape examples supported:
-   *   1) <base>                + ?business_id=17
-   *   2) <root>/menu           + ?business_id=17
-   *   3) <root>/display        + ?business_id=17
-   *   4) If <base> ends with /business -> <base>/<id>
-   */
   const buildCandidateUrls = useCallback(() => {
     if (!DISPLAY_MENU_ENDPOINT) return [];
     const base = DISPLAY_MENU_ENDPOINT.replace(/\/+$/, '');
@@ -303,32 +308,24 @@ export default function HomeTab({
 
     const urls = [];
 
-    // If base already is ".../business", use /:id only (no extra /business)
     if (hasBusinessSuffix && id) {
-      urls.push(safeJoin(base, id));                // .../business/17
+      urls.push(safeJoin(base, id)); // .../business/17
     }
 
-    // Generic token-scoped or query-based shapes (prefer snake_case key)
     const qsCandidates = [
-      { business_id: id, ownerId: own },         // server wants business_id
-      { businessId: id, ownerId: own },          // camel as fallback
-      { merchant_business_id: id, ownerId: own },// other legacy names
+      { business_id: id, ownerId: own },
+      { businessId: id, ownerId: own },
+      { merchant_business_id: id, ownerId: own },
       { restaurant_id: id, ownerId: own },
-      // owner-only (if server scopes by token/owner)
       own ? { ownerId: own } : null,
     ].filter(Boolean);
 
-    const pathCandidates = [
-      root,                       // /api/food-menu
-      safeJoin(root, 'menu'),     // /api/food-menu/menu
-      safeJoin(root, 'display'),  // /api/food-menu/display
-    ];
+    const pathCandidates = [root, safeJoin(root, 'menu'), safeJoin(root, 'display')];
 
-    pathCandidates.forEach(p => {
-      qsCandidates.forEach(q => urls.push(withQS(p, q)));
+    pathCandidates.forEach((p) => {
+      qsCandidates.forEach((q) => urls.push(withQS(p, q)));
     });
 
-    // De-dup while preserving order
     const dedup = [];
     const seen = new Set();
     for (const u of urls) {
@@ -341,7 +338,6 @@ export default function HomeTab({
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 15000);
     try {
-      // console.warn('[menus] trying:', url);
       const res = await fetch(url, {
         method: 'GET',
         headers: {
@@ -370,7 +366,6 @@ export default function HomeTab({
     }
   }, [extractItemsFromResponse, normalizeItem, BUSINESS_ID, ownerId]);
 
-  // Probe candidates (stop on first 200)
   const fetchMenus = useCallback(async () => {
     if (!DISPLAY_MENU_ENDPOINT) {
       setErrorMsg('Missing DISPLAY_MENU_ENDPOINT in .env');
@@ -417,7 +412,6 @@ export default function HomeTab({
     }
   }, [DISPLAY_MENU_ENDPOINT, buildCandidateUrls, filterMenusForOwner, tryFetchOnce]);
 
-  // 👇 NEW: Guard to avoid duplicate fetch in dev (StrictMode double-invoke / navigation focus)
   const didFetchRef = React.useRef(false);
   useFocusEffect(
     useCallback(() => {
@@ -428,7 +422,6 @@ export default function HomeTab({
     }, [fetchMenus])
   );
 
-  // money / pct helpers
   const fmtMoney = useCallback(
     (n, ccy = 'Nu') =>
       (typeof moneyProp === 'function' ? moneyProp(n, ccy) : `${ccy} ${Number(n || 0).toFixed(2)}`),
@@ -454,18 +447,15 @@ export default function HomeTab({
   const visibleMenus = useMemo(() => allMenus.slice(0, 3), [allMenus]);
   const showCountNote = allMenus.length > 3;
 
-  /* ---------------- Header / Footer / Empty ---------------- */
-  const ListHeaderComponent = useMemo(() => (
+  const HeaderAfterGradient = useMemo(() => (
     <View>
-      {/* KPIs */}
       <View style={[styles.kpiRow, { marginHorizontal: isTablet ? 20 : 12, marginTop: isTablet ? 20 : 16 }]}>
-        <KpiCard isTablet={isTablet} icon="cash-outline" label="Today" value={fmtMoney(salesToday, salesCurrency)} sub="Sales" />
-        <KpiCard isTablet={isTablet} icon="receipt-outline" label="Active" value={String(activeOrders)} sub="Orders" />
-        <KpiCard isTablet={isTablet} icon="trending-up-outline" label="Accept" value={pct(acceptanceRate)} sub="Rate" />
-        <KpiCard isTablet={isTablet} icon="alert-circle-outline" label="Cancel" value={String(cancellations)} sub="Today" />
+        <KpiCard isTablet={isTablet} icon="cash-outline"           label="Today"  value={fmtMoney(salesToday, salesCurrency)} sub="Sales" />
+        <KpiCard isTablet={isTablet} icon="receipt-outline"        label="Active" value={String(activeOrders)}               sub="Orders" />
+        <KpiCard isTablet={isTablet} icon="trending-up-outline"    label="Accept" value={pct(acceptanceRate)}                sub="Rate" />
+        <KpiCard isTablet={isTablet} icon="alert-circle-outline"   label="Cancel" value={String(cancellations)}              sub="Today" />
       </View>
 
-      {/* Shortcuts */}
       <View style={styles.section}>
         <View style={styles.sectionHead}>
           <Text style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}>Quick actions</Text>
@@ -482,13 +472,12 @@ export default function HomeTab({
             label="Menu"
             onPress={() => navigation.navigate('MenuScreen', { businessId: BUSINESS_ID || 'YOUR_BUSINESS_ID' })}
           />
-          <Shortcut isTablet={isTablet} icon="pricetags-outline" label="Promotions" onPress={() => onPressNav('Promos')} />
-          <Shortcut isTablet={isTablet} icon="card-outline" label="Payouts" onPress={() => onPressNav('Payouts')} />
-          <Shortcut isTablet={isTablet} icon="settings-outline" label="Settings" onPress={() => {}} />
+          <Shortcut isTablet={isTablet} icon="pricetags-outline" label="Promotions" onPress={() => navigation.navigate('Promos')} />
+          <Shortcut isTablet={isTablet} icon="card-outline"      label="Payouts"     onPress={() => navigation.navigate('Payouts')} />
+          <Shortcut isTablet={isTablet} icon="settings-outline"  label="Settings"    onPress={() => navigation.navigate('AccountSettings')} />
         </View>
       </View>
 
-      {/* Added Menus header row */}
       <View style={styles.section}>
         <View style={styles.sectionHead}>
           <Text style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}>Added menus</Text>
@@ -500,18 +489,23 @@ export default function HomeTab({
             <Ionicons name="chevron-forward" size={isTablet ? 18 : 16} color="#00b14f" />
           </TouchableOpacity>
         </View>
-        {showCountNote && (
-          <Text style={styles.countNote}>Showing 3 of {allMenus.length} items</Text>
-        )}
+        {showCountNote ? <Text style={styles.countNote}>Showing 3 of {allMenus.length} items</Text> : null}
       </View>
     </View>
   ), [
     isTablet, fmtMoney, salesToday, salesCurrency, activeOrders,
     acceptanceRate, cancellations, pct, navigation, BUSINESS_ID,
-    onPressNav, allMenus.length, showCountNote
+    allMenus.length, showCountNote
   ]);
 
-  const ListFooterComponent = useMemo(() => (
+  const ListHeader = useMemo(() => (
+    <>
+      <MerchantHeader />
+      {HeaderAfterGradient}
+    </>
+  ), [HeaderAfterGradient]);
+
+  const ListFooter = useMemo(() => (
     <View>
       <View style={[styles.section, { marginBottom: 75 }]}>
         <View style={styles.sectionHead}>
@@ -533,7 +527,7 @@ export default function HomeTab({
     </View>
   ), [isTablet]);
 
-  const ListEmptyComponent = useMemo(() => {
+  const Empty = useMemo(() => {
     if (loading) {
       return (
         <View style={[styles.section, styles.emptyBox]}>
@@ -565,23 +559,25 @@ export default function HomeTab({
   }, [loading, errorMsg, fetchMenus, isTablet]);
 
   return (
-    <FlatList
-      data={visibleMenus}
-      keyExtractor={keyExtractor}
-      renderItem={renderItem}
-      ItemSeparatorComponent={() => <View style={{ height: 12, marginHorizontal: 16 }} />}
-      ListHeaderComponent={ListHeaderComponent}
-      ListFooterComponent={ListFooterComponent}
-      ListEmptyComponent={ListEmptyComponent}
-      contentContainerStyle={{ paddingBottom: 12 }}
+    <View style={{ flex: 1, backgroundColor: '#f6f7f8' }}>
+      <FlatList
+        data={visibleMenus}
+        keyExtractor={keyExtractor}
+        renderItem={renderItem}
+        ItemSeparatorComponent={() => <View style={{ height: 12, marginHorizontal: 16 }} />}
 
-      scrollEnabled={false}
-      nestedScrollEnabled={false}
+        ListHeaderComponent={ListHeader}
+        ListFooterComponent={ListFooter}
+        ListEmptyComponent={Empty}
 
-      removeClippedSubviews={false}
-      refreshing={loading}
-      onRefresh={fetchMenus}
-    />
+        contentContainerStyle={{ paddingBottom: 24 }}
+        scrollEnabled
+        nestedScrollEnabled={false}
+        removeClippedSubviews={false}
+        refreshing={loading}
+        onRefresh={fetchMenus}
+      />
+    </View>
   );
 }
 

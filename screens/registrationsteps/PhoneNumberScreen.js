@@ -7,51 +7,27 @@ import {
   SafeAreaView,
   StatusBar,
   TextInput,
-  Modal,
-  TouchableWithoutFeedback,
   Image,
-  Dimensions,
-  FlatList,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import HeaderWithSteps from './HeaderWithSteps';
 
-const { height } = Dimensions.get('window');
-const SHEET_HEIGHT = Math.round(height / 2);
-
-// 🇧🇹 Add/adjust countries & dial codes here
+// 🇧🇹 Only Bhutan
 const COUNTRY_OPTIONS = [
-  { name: 'Bhutan',      code: 'bt', dial: '+975' },
-  { name: 'Singapore',   code: 'sg', dial: '+65'  },
-  { name: 'Malaysia',    code: 'my', dial: '+60'  },
-  { name: 'Indonesia',   code: 'id', dial: '+62'  },
-  { name: 'Philippines', code: 'ph', dial: '+63'  },
-  { name: 'Thailand',    code: 'th', dial: '+66'  },
-  { name: 'Vietnam',     code: 'vn', dial: '+84'  },
-  { name: 'Myanmar',     code: 'mm', dial: '+95'  },
-  { name: 'Cambodia',    code: 'kh', dial: '+855' },
+  { name: 'Bhutan', code: 'bt', dial: '+975' },
 ];
 
-// Required national number lengths per dial (tweak to your rules)
+// Required length
 const DIAL_REQUIRED_LENGTH = {
   '+975': 8,
-  '+65': 8,
-  '+60': 9,
-  '+62': 10,
-  '+63': 10,
-  '+66': 9,
-  '+84': 9,
-  '+95': 9,
-  '+855': 9,
 };
-const getRequiredLength = (dial) => DIAL_REQUIRED_LENGTH[dial] ?? 10;
+const getRequiredLength = (dial) => DIAL_REQUIRED_LENGTH[dial] ?? 8;
 
 export default function PhoneNumberScreen() {
   const navigation = useNavigation();
   const route = useRoute();
 
-  // Bring forward what's already collected
   const {
     merchant: incomingMerchant = {},
     initialPhone = null,
@@ -60,27 +36,17 @@ export default function PhoneNumberScreen() {
     owner_type,
   } = route.params ?? {};
 
-  // Default to Bhutan; change if your funnel should start elsewhere
-  const [country, setCountry] = useState(COUNTRY_OPTIONS[0]); // {name, code, dial}
+  // Fixed to Bhutan only
+  const [country] = useState(COUNTRY_OPTIONS[0]);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isFocused, setIsFocused] = useState(false);
-  const [codeVisible, setCodeVisible] = useState(false);
 
-  // Prefill phone only from params (Edit-from-Review path)
   useEffect(() => {
     const fromParam = (initialPhone ?? incomingMerchant?.phone ?? '').trim();
-    if (fromParam) {
-      const found = COUNTRY_OPTIONS.find((c) => fromParam.startsWith(c.dial));
-      if (found) {
-        setCountry(found);
-        const digits = fromParam.replace(found.dial, '').replace(/\D/g, '');
-        setPhoneNumber(digits.slice(0, getRequiredLength(found.dial)));
-      } else {
-        setPhoneNumber(fromParam.replace(/\D/g, ''));
-      }
+    if (fromParam.startsWith(country.dial)) {
+      const digits = fromParam.replace(country.dial, '').replace(/\D/g, '');
+      setPhoneNumber(digits.slice(0, getRequiredLength(country.dial)));
     }
-    // no SecureStore fallback anymore
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const reqLen = useMemo(() => getRequiredLength(country.dial), [country.dial]);
@@ -88,9 +54,7 @@ export default function PhoneNumberScreen() {
 
   const handleContinue = () => {
     if (!isValid) return;
-
-    const full = `${country.dial}${phoneNumber}`; // keep a space
-
+    const full = `${country.dial}${phoneNumber}`;
     const mergedMerchant = {
       ...incomingMerchant,
       phone: full,
@@ -102,41 +66,11 @@ export default function PhoneNumberScreen() {
       serviceType,
       owner_type: owner_type ?? serviceType,
       merchant: mergedMerchant,
-      // also hydrate business fields if they existed
       initialFullName: mergedMerchant?.full_name ?? null,
       initialBusinessName: mergedMerchant?.business_name ?? null,
       initialCategory: mergedMerchant?.category ?? null,
       returnTo,
     });
-  };
-
-  const renderCodeItem = ({ item }) => {
-    const isActive = item.dial === country.dial;
-    return (
-      <TouchableOpacity
-        style={styles.row}
-        activeOpacity={0.8}
-        onPress={() => {
-          setCountry(item);
-          const newLen = getRequiredLength(item.dial);
-          setPhoneNumber((prev) => prev.replace(/\D/g, '').slice(0, newLen));
-          setCodeVisible(false);
-        }}
-      >
-        <View style={styles.left}>
-          <Image
-            source={{ uri: `https://flagcdn.com/w40/${item.code}.png` }}
-            style={styles.flag}
-          />
-          <Text style={[styles.name, isActive && styles.nameActive]}>
-            {item.name} ({item.dial})
-          </Text>
-        </View>
-        {isActive && (
-          <Icon name="checkmark" size={22} color="#000" style={styles.tickIcon} />
-        )}
-      </TouchableOpacity>
-    );
   };
 
   return (
@@ -148,15 +82,14 @@ export default function PhoneNumberScreen() {
         <Text style={styles.title}>Enter your phone number</Text>
 
         <View style={styles.phoneInputContainer}>
-          {/* Dial code selector */}
-          <TouchableOpacity
-            style={styles.countrySelector}
-            onPress={() => setCodeVisible(true)}
-            activeOpacity={0.8}
-          >
+          {/* Fixed dial code (no dropdown) */}
+          <View style={styles.countrySelector}>
+            <Image
+              source={{ uri: `https://flagcdn.com/w40/${country.code}.png` }}
+              style={styles.flag}
+            />
             <Text style={styles.countryCode}>{country.dial}</Text>
-            <Icon name="chevron-down" size={16} color="#666" />
-          </TouchableOpacity>
+          </View>
 
           {/* National number input */}
           <View
@@ -203,35 +136,6 @@ export default function PhoneNumberScreen() {
           </Text>
         </TouchableOpacity>
       </View>
-
-      {/* Country bottom sheet */}
-      <Modal
-        visible={codeVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setCodeVisible(false)}
-      >
-        <TouchableWithoutFeedback onPress={() => setCodeVisible(false)}>
-          <View style={styles.backdrop} />
-        </TouchableWithoutFeedback>
-
-        <View style={styles.sheet}>
-          <SafeAreaView style={{ flex: 1 }}>
-            <Text style={styles.sheetTitle}>My business is in</Text>
-
-            <FlatList
-              style={{ flex: 1 }}
-              data={COUNTRY_OPTIONS}
-              keyExtractor={(item) => item.code}
-              renderItem={renderCodeItem}
-              ItemSeparatorComponent={() => <View style={styles.sep} />}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 8 }}
-              keyboardShouldPersistTaps="handled"
-            />
-          </SafeAreaView>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -256,6 +160,14 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   countryCode: { fontSize: 16, color: '#1A1D1F', fontWeight: '500' },
+  flag: {
+    width: 26,
+    height: 18,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 3,
+    resizeMode: 'cover',
+  },
 
   phoneInputWrapper: {
     flex: 1,
@@ -298,39 +210,4 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   continueTextDisabled: { color: '#aaa', fontSize: 16, fontWeight: '600' },
-
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sheet: {
-    position: 'absolute',
-    bottom: 0,
-    width: '100%',
-    height: SHEET_HEIGHT,
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 10,
-  },
-  sheetTitle: { fontSize: 22, fontWeight: '700', marginBottom: 16, color: '#111' },
-
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14 },
-  left: { flexDirection: 'row', alignItems: 'center' },
-  flag: {
-    width: 26,
-    height: 18,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 3,
-    marginRight: 12,
-    resizeMode: 'cover',
-  },
-  name: { fontSize: 16, color: '#1a1d1f' },
-  nameActive: { fontWeight: '700' },
-  tickIcon: { alignSelf: 'center', marginRight: 2 },
-  sep: { height: StyleSheet.hairlineWidth, backgroundColor: '#eee' },
 });

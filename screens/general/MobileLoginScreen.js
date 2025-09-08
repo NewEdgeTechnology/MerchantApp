@@ -10,11 +10,6 @@ import {
   TextInput,
   ScrollView,
   KeyboardAvoidingView,
-  Modal,
-  TouchableWithoutFeedback,
-  Image,
-  Dimensions,
-  FlatList,
   ActivityIndicator,
   Keyboard,
   LayoutAnimation,
@@ -24,9 +19,6 @@ import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LOGIN_MERCHANT_ENDPOINT } from '@env';
-
-const { height } = Dimensions.get('window');
-const SHEET_HEIGHT = Math.round(height / 2);
 
 // ✅ Helper: enable LayoutAnimation ONLY on Android + Paper, called once in useEffect
 function enableAndroidLayoutAnimationOnPaper() {
@@ -39,17 +31,8 @@ function enableAndroidLayoutAnimationOnPaper() {
   }
 }
 
-const COUNTRY_OPTIONS = [
-  { name: 'Bhutan', code: 'bt', dial: '+975' },
-  { name: 'Singapore', code: 'sg', dial: '+65' },
-  { name: 'Malaysia', code: 'my', dial: '+60' },
-  { name: 'Indonesia', code: 'id', dial: '+62' },
-  { name: 'Philippines', code: 'ph', dial: '+63' },
-  { name: 'Thailand', code: 'th', dial: '+66' },
-  { name: 'Vietnam', code: 'vn', dial: '+84' },
-  { name: 'Myanmar', code: 'mm', dial: '+95' },
-  { name: 'Cambodia', code: 'kh', dial: '+855' },
-];
+// 🇧🇹 Only Bhutan
+const COUNTRY = { name: 'Bhutan', code: 'bt', dial: '+975' };
 
 /** Safely parse JSON, but also return the raw text for debugging */
 const safeJsonParse = async (res) => {
@@ -73,10 +56,7 @@ const postJson = async (url, body, signal) => {
   return { res, ...parsed };
 };
 
-/** 📏 Simple + stable: bottom offset that follows keyboard height.
- * When keyboard is visible → kbHeight + GAP
- * When hidden → safe-area bottom + BASE_REST
- */
+/** 📏 Simple + stable: bottom offset that follows keyboard height. */
 function useKeyboardBottomOffset(gapPx = 60, insetsBottom = 0, baseRest = 12) {
   const [kbHeight, setKbHeight] = useState(0);
 
@@ -103,9 +83,7 @@ function useKeyboardBottomOffset(gapPx = 60, insetsBottom = 0, baseRest = 12) {
     const s3 = Keyboard.addListener(evtChange, onChange);
 
     return () => {
-      s1.remove();
-      s2.remove();
-      s3.remove();
+      s1.remove(); s2.remove(); s3.remove();
     };
   }, []);
 
@@ -120,12 +98,10 @@ export default function MobileLoginScreen() {
     enableAndroidLayoutAnimationOnPaper();
   }, []);
 
-  const [country, setCountry] = useState(COUNTRY_OPTIONS[0]);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [password, setPassword] = useState('');
   const [hasError, setHasError] = useState(true);
   const [touched, setTouched] = useState(false);
-  const [codeVisible, setCodeVisible] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -134,41 +110,16 @@ export default function MobileLoginScreen() {
   const phoneRef = useRef(null);
   const passwordRef = useRef(null);
 
-  // 👇 Constant 60px visual gap above the keyboard (adjust gapPx to taste)
+  // 👇 Constant 60px visual gap above the keyboard
   const bottomOffset = useKeyboardBottomOffset(60, insets.bottom, 12);
 
   const handlePhoneChange = (text) => {
     setPhoneNumber(text);
     const digits = text.replace(/\D/g, '');
-    setHasError(digits.length < 8);
+    setHasError(digits.length < 8); // Bhutan mobile length: 8 digits
   };
 
   const isButtonEnabled = !hasError && password.trim().length >= 6 && !loading;
-
-  const renderCodeItem = ({ item }) => {
-    const isActive = item.dial === country.dial;
-    return (
-      <TouchableOpacity
-        style={styles.row}
-        activeOpacity={0.8}
-        onPress={() => {
-          setCountry(item);
-          setCodeVisible(false);
-        }}
-      >
-        <View style={styles.left}>
-          <Image
-            source={{ uri: `https://flagcdn.com/w40/${item.code}.png` }}
-            style={styles.flag}
-          />
-          <Text style={[styles.name, isActive && styles.nameActive]}>
-            {item.name} ({item.dial})
-          </Text>
-        </View>
-        {isActive && <Icon name="checkmark" size={22} color="#000" style={styles.tickIcon} />}
-      </TouchableOpacity>
-    );
-  };
 
   const handleLogin = async () => {
     setTouched(true);
@@ -186,7 +137,7 @@ export default function MobileLoginScreen() {
     }
 
     const payload = {
-      phone: `${country.dial}${phoneNumber}`,
+      phone: `${COUNTRY.dial}${phoneNumber}`,
       password: password.trim(),
     };
 
@@ -256,10 +207,10 @@ export default function MobileLoginScreen() {
               <Text style={styles.title}>Log in with mobile number</Text>
 
               <View style={[styles.phoneRow, { zIndex: 2 }]}>
-                <TouchableOpacity style={styles.countrySelector} onPress={() => setCodeVisible(true)} activeOpacity={0.8}>
-                  <Text style={styles.countryCode}>{country.dial}</Text>
-                  <Icon name="chevron-down" size={16} color="#666" />
-                </TouchableOpacity>
+                {/* Fixed dial code (no dropdown, no overlay) */}
+                <View style={styles.countrySelector}>
+                  <Text style={styles.countryCode}>{COUNTRY.dial}</Text>
+                </View>
 
                 <View
                   style={[styles.phoneInputWrapper, hasError && touched && styles.phoneInputError]}
@@ -320,12 +271,7 @@ export default function MobileLoginScreen() {
         <View
           style={[
             styles.bottomSticky,
-            {
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              bottom: bottomOffset,
-            },
+            { position: 'absolute', left: 0, right: 0, bottom: bottomOffset },
           ]}
         >
           <TouchableOpacity
@@ -344,33 +290,6 @@ export default function MobileLoginScreen() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
-
-      <Modal
-        visible={codeVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setCodeVisible(false)}
-      >
-        <TouchableWithoutFeedback onPress={() => setCodeVisible(false)}>
-          <View style={styles.backdrop} />
-        </TouchableWithoutFeedback>
-
-        <View style={styles.sheet}>
-          <SafeAreaView style={{ flex: 1 }}>
-            <Text style={styles.sheetTitle}>Select your country</Text>
-            <FlatList
-              style={{ flex: 1 }}
-              data={COUNTRY_OPTIONS}
-              keyExtractor={(item) => item.code}
-              renderItem={renderCodeItem}
-              ItemSeparatorComponent={() => <View style={styles.sep} />}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 8 }}
-              keyboardShouldPersistTaps="handled"
-            />
-          </SafeAreaView>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
@@ -403,6 +322,8 @@ const styles = StyleSheet.create({
   },
 
   phoneRow: { flexDirection: 'row', marginBottom: 12, gap: 8 },
+
+  // Pill showing the fixed "+975"
   countrySelector: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -411,10 +332,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#E5E7EB',
-    gap: 8,
     height: 50,
   },
   countryCode: { fontSize: 16, fontWeight: '500', color: '#1A1D1F' },
+
   phoneInputWrapper: {
     flex: 1,
     flexDirection: 'row',
@@ -478,26 +399,4 @@ const styles = StyleSheet.create({
   },
   continueButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   continueTextDisabled: { color: '#aaa', fontSize: 16, fontWeight: '600' },
-
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sheet: {
-    position: 'absolute',
-    bottom: 0,
-    width: '100%',
-    height: SHEET_HEIGHT,
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    elevation: 10,
-  },
-  sheetTitle: { fontSize: 22, fontWeight: '700', marginBottom: 16, color: '#111' },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14 },
-  left: { flexDirection: 'row', alignItems: 'center' },
-  flag: { width: 26, height: 18, borderWidth: 1, borderColor: '#ddd', borderRadius: 3, marginRight: 12 },
-  name: { fontSize: 16, color: '#1a1d1f' },
-  nameActive: { fontWeight: '700' },
-  tickIcon: { marginRight: 2 },
-  sep: { height: StyleSheet.hairlineWidth, backgroundColor: '#eee' },
 });
