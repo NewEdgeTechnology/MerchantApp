@@ -1,42 +1,67 @@
 // screens/general/LoginScreen.js
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  Keyboard,
-  ActivityIndicator,
-  Alert,
-  Modal,
-  LayoutAnimation,
-  UIManager,
-  DeviceEventEmitter,
-  Pressable,
+  View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView,
+  Platform, ScrollView, Keyboard, ActivityIndicator, Alert, Modal,
+  LayoutAnimation, UIManager, DeviceEventEmitter, Pressable, AppState,
 } from 'react-native';
 import CheckBox from 'expo-checkbox';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { useNavigation } from '@react-navigation/native';
-import { CommonActions } from '@react-navigation/native';
+import { useNavigation, CommonActions, StackActions, useFocusEffect } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
+import * as LocalAuthentication from 'expo-local-authentication';
 import {
   LOGIN_USERNAME_MERCHANT_ENDPOINT as ENV_LOGIN_USERNAME_MERCHANT_ENDPOINT,
   PROFILE_ENDPOINT,
 } from '@env';
 
-const KEY_SAVED_USERNAME = 'saved_username';
+const KEY_SAVED_USERNAME = 'saved_username'; // stores FULL NAME here
 const KEY_SAVED_PASSWORD = 'saved_password';
 const KEY_LAST_LOGIN_USERNAME = 'last_login_username';
-const KEY_AUTH_TOKEN = 'auth_token';
-const KEY_MERCHANT_LOGIN = 'merchant_login';
+const KEY_AUTH_TOKEN      = 'auth_token';
+const KEY_MERCHANT_LOGIN  = 'merchant_login';
+
+// ✅ Align with SecuritySettings
+const KEY_BIOMETRIC_ENABLED = 'security_biometric_login';
+// (optional) legacy flag — read-only fallback
+const KEY_BIOMETRIC_ENABLED_LEGACY = 'biometric_enabled_v1';
+
+const KEY_REFRESH_TOKEN   = 'refresh_token_v1'; // optional if your backend supports refresh
 
 const endpoint = (ENV_LOGIN_USERNAME_MERCHANT_ENDPOINT ?? '').trim();
 
-// ===== Helpers for image URL normalization (match AccountSettings / Home) =====
+/* ───────── Navigation helpers ───────── */
+const WELCOME_ROUTE = 'WelcomeScreen';
+const AUTH_STACK    = 'AuthStack';
+
+const routeExists = (nav, name) => {
+  try { return !!nav?.getState?.()?.routeNames?.includes(name); } catch { return false; }
+};
+const tryResetTo = (nav, name) => {
+  if (!nav) return false;
+  if (routeExists(nav, name)) {
+    nav.dispatch(CommonActions.reset({ index: 0, routes: [{ name }] }));
+    return true;
+  }
+  return tryResetTo(nav.getParent?.(), name);
+};
+const goToWelcome = (navigation) => {
+  if (tryResetTo(navigation, WELCOME_ROUTE)) return;
+  if (routeExists(navigation, AUTH_STACK)) {
+    navigation.dispatch(
+      CommonActions.reset({
+        index: 0,
+        routes: [{ name: AUTH_STACK, state: { index: 0, routes: [{ name: WELCOME_ROUTE }] } }],
+      })
+    );
+    return;
+  }
+  try { navigation.dispatch(StackActions.replace(WELCOME_ROUTE)); return; } catch {}
+  navigation.navigate(WELCOME_ROUTE);
+};
+/* ────────────────────────────────────── */
+
+/* ===== Image URL normalization (unchanged) ===== */
 const DEFAULT_DEV_ORIGIN = Platform.select({
   android: 'http://10.0.2.2:3000',
   ios: 'http://localhost:3000',
@@ -57,12 +82,9 @@ const collapsePathSlashes = (url) => {
     return u.toString();
   } catch { return url; }
 };
-// Prefer PROFILE_ENDPOINT, then login base, then dev
 const getImageBaseOrigin = () => {
   const candidates = [PROFILE_ENDPOINT, ENV_LOGIN_USERNAME_MERCHANT_ENDPOINT, DEFAULT_DEV_ORIGIN].filter(Boolean);
-  for (const c of candidates) {
-    try { return androidLoopback(new URL(c).origin); } catch {}
-  }
+  for (const c of candidates) { try { return androidLoopback(new URL(c).origin); } catch {} }
   return DEFAULT_DEV_ORIGIN;
 };
 const toAbsoluteUrl = (raw) => {
@@ -71,14 +93,8 @@ const toAbsoluteUrl = (raw) => {
   const origin = getImageBaseOrigin();
   return collapsePathSlashes(androidLoopback(`${origin}${raw.startsWith('/') ? '' : '/'}${raw}`));
 };
-// ============================================================================
-
-/** NEW: Guard the experimental toggle on Old Architecture only */
-const isNewArch =
-  !!global?.nativeFabricUIManager ||
-  !!global?.__turboModuleProxy ||
-  !!global?.RN$Bridgeless;
-
+/** Guard LayoutAnimation on old arch only */
+const isNewArch = !!global?.nativeFabricUIManager || !!global?.__turboModuleProxy || !!global?.RN$Bridgeless;
 if (Platform.OS === 'android' && !isNewArch && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
@@ -88,7 +104,7 @@ function useKeyboardGap(minGap = 8) {
   useEffect(() => {
     const onShow = (e) => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      const h = e?.endCoordinates?.height ?? 0;
+      const h = e?.endCoordinates?.height ?? 0;    
       setGap(Math.max(minGap, h + 8));
     };
     const onHide = () => {
@@ -104,71 +120,125 @@ function useKeyboardGap(minGap = 8) {
   return gap;
 }
 
+/* Helpers */
+const collapseInnerSpaces = (s = '') => s.replace(/\s+/g, ' ');
+
+// Title-case (strict)
+const toTitleCase = (s = '') =>
+  s
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b([A-Za-zÀ-ÖØ-öø-ÿ])([A-Za-zÀ-ÖØ-öø-ÿ']*)/g, (_, a, b) => a.toUpperCase() + b.toLowerCase());
+
+// Title-case while typing (live): PRESERVES spaces
+const toTitleCaseLive = (s = '') => {
+  return s
+    .split(/(\s+)/)
+    .map(part =>
+      /\s+/.test(part)
+        ? part
+        : part
+          ? part[0].toUpperCase() + part.slice(1).toLowerCase()
+          : part
+    )
+    .join('');
+};
+
+/* ===== Biometrics helpers (inline) ===== */
+async function deviceSupportsBiometrics() {
+  try {
+    const has = await LocalAuthentication.hasHardwareAsync();
+    const enrolled = await LocalAuthentication.isEnrolledAsync();
+    const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
+    return { ok: !!(has && enrolled && types?.length), types: types || [] };
+  } catch {
+    return { ok: false, types: [] };
+  }
+}
+function labelForTypes(types = []) {
+  const map = { 1: 'Fingerprint', 2: 'Face ID', 3: 'Iris' };
+  const names = [...new Set(types.map(t => map[t] || 'Biometric'))];
+  return names.length ? names.join(' / ') : 'Biometric';
+}
+async function biometricPrompt(reason = 'Authenticate') {
+  try {
+    const res = await LocalAuthentication.authenticateAsync({
+      promptMessage: reason,
+      cancelLabel: 'Cancel',
+      fallbackEnabled: true,
+      disableDeviceFallback: false,
+    });
+    return { success: !!res.success, error: res.error };
+  } catch (e) {
+    return { success: false, error: e?.message || 'ERROR' };
+  }
+}
+/* ======================================= */
+
 const LoginScreen = () => {
   const navigation = useNavigation();
 
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [savePassword, setSavePassword] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [isUsernameFocused, setIsUsernameFocused] = useState(false);
-  const [isPasswordFocused, setIsPasswordFocused] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [fullName, setFullName]           = useState(''); // FULL NAME (username)
+  const [password, setPassword]           = useState('');
+  const [savePassword, setSavePassword]   = useState(false);
+  const [showPassword, setShowPassword]   = useState(false);
+  const [isNameFocused, setIsNameFocused] = useState(false);
+  const [isPwFocused, setIsPwFocused]     = useState(false);
+  const [loading, setLoading]             = useState(false);
+  const [errorText, setErrorText]         = useState('');
 
-  const canSubmit = username.trim().length > 0 && password.length > 0 && !loading;
+  // Biometrics state
+  const [bioAvail, setBioAvail]             = useState(false);
+  const [bioEnabled, setBioEnabled]         = useState(false);
+  const [bioLabel, setBioLabel]             = useState('Biometric');
+  const [hasSavedSecret, setHasSavedSecret] = useState(false); // saved password OR refresh token
+
+  const canSubmit = fullName.length > 0 && password.length > 0 && !loading;
   const bottomGap = useKeyboardGap(8);
 
-  // Focus refs
-  const usernameRef = useRef(null);
-  const pwdRef = useRef(null);
-
-  // caret control to prevent jumping
+  const nameRef = useRef(null);
+  const pwdRef  = useRef(null);
   const [pwdSelection, setPwdSelection] = useState({ start: 0, end: 0 });
 
-  const persistSavedCreds = async (u, p) => {
-    if (savePassword && u && p) {
-      await SecureStore.setItemAsync(KEY_SAVED_USERNAME, u);
-      await SecureStore.setItemAsync(KEY_SAVED_PASSWORD, p);
-    } else {
-      await SecureStore.deleteItemAsync(KEY_SAVED_USERNAME);
-      await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
-    }
+  /** Load saved creds + biometric flags */
+  const loadBiometricAndSavedState = async () => {
+    try {
+      const [u, p, enabledFlagResolved, refreshTok] = await Promise.all([
+        SecureStore.getItemAsync(KEY_SAVED_USERNAME),
+        SecureStore.getItemAsync(KEY_SAVED_PASSWORD),
+        (async () => {
+          const v = await SecureStore.getItemAsync(KEY_BIOMETRIC_ENABLED);
+          const legacy = await SecureStore.getItemAsync(KEY_BIOMETRIC_ENABLED_LEGACY);
+          return v ?? legacy ?? '0';
+        })(),
+        SecureStore.getItemAsync(KEY_REFRESH_TOKEN),
+      ]);
+
+      if (u || p) {
+        setFullName(toTitleCase(u || ''));  // strict title-case prefill
+        setPassword(p || '');
+        setSavePassword(!!p);
+      } else {
+        const lastU = await SecureStore.getItemAsync(KEY_LAST_LOGIN_USERNAME);
+        if (lastU) setFullName(toTitleCase(lastU)); // strict title-case prefill
+      }
+
+      const sup = await deviceSupportsBiometrics();
+      setBioAvail(!!sup.ok);
+      setBioLabel(labelForTypes(sup.types));
+      setBioEnabled(enabledFlagResolved === '1');
+      setHasSavedSecret(!!(p || refreshTok));
+    } catch {}
   };
 
+  useEffect(() => { loadBiometricAndSavedState(); }, []);
+  useFocusEffect(React.useCallback(() => { loadBiometricAndSavedState(); return () => {}; }, []));
   useEffect(() => {
-    (async () => {
-      try {
-        const [u, p] = await Promise.all([
-          SecureStore.getItemAsync(KEY_SAVED_USERNAME),
-          SecureStore.getItemAsync(KEY_SAVED_PASSWORD),
-        ]);
-        if (u || p) {
-          setUsername(u || '');
-          setPassword(p || '');
-          setSavePassword(true);
-        } else {
-          const lastU = await SecureStore.getItemAsync(KEY_LAST_LOGIN_USERNAME);
-          if (lastU) setUsername(lastU);
-        }
-      } catch {}
-    })();
+    const sub = AppState.addEventListener('change', (s) => { if (s === 'active') loadBiometricAndSavedState(); });
+    return () => sub.remove();
   }, []);
 
-  useEffect(() => {
-    if (!savePassword) return;
-    const t = setTimeout(() => {
-      persistSavedCreds(username.trim(), password);
-    }, 250);
-    return () => clearTimeout(t);
-  }, [username, password, savePassword]);
-
-  const handleToggleSave = async (val) => {
-    setSavePassword(val);
-    if (val) await persistSavedCreds(username.trim(), password);
-    else await persistSavedCreds('', '');
-  };
-
-  const getOwnerType = (data) => {
+  const getOwnerTypeFrom = (data) => {
     const pick = (...paths) => {
       for (const p of paths) { try { const v = p(); if (v !== undefined && v !== null && v !== '') return v; } catch {} }
       return '';
@@ -195,55 +265,88 @@ const LoginScreen = () => {
     return mapCodeToType(v).trim().toLowerCase();
   };
 
+  // Core login routine — **case-sensitive** username (use raw value only)
+  const loginWithCredentials = async (userNameVal, pwdVal) => {
+    const variants = [{ val: userNameVal, _hint: 'raw' }];
+
+    let tokenStr = '';
+    let success = null;
+    let lastErr = '';
+
+    for (let i = 0; i < variants.length; i++) {
+      const { val } = variants[i];
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ user_name: val, password: pwdVal }),
+      });
+
+      const txt = await res.text();
+      let data = {};
+      try { data = txt ? JSON.parse(txt) : {}; } catch {}
+      const serverMsg = (data?.message ?? data?.error ?? txt ?? '').toString().trim();
+
+      const ok =
+        res.ok &&
+        (data?.success === true ||
+         typeof data?.token === 'string' ||
+         (data?.token && typeof data?.token?.access_token === 'string') ||
+         (data?.status && String(data.status).toLowerCase() === 'ok') ||
+         /login\s*successful/i.test(serverMsg));
+
+      if (ok) {
+        success = { data, usedName: val };
+        tokenStr = typeof data?.token === 'string'
+          ? data.token
+          : (data?.token?.access_token ?? '');
+        if (tokenStr) await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(tokenStr));
+        break;
+      } else {
+        lastErr = serverMsg || `HTTP ${res.status}`;
+        if (res.status >= 500) break;
+      }
+    }
+
+    if (!success) throw new Error(lastErr || 'Invalid full name or password');
+
+    return { success, tokenStr };
+  };
+
+  const navigateHome = (extras = {}) => {
+    navigation.dispatch(
+      CommonActions.reset({
+        index: 0,
+        routes: [{ name: 'GrabMerchantHomeScreen', params: { openTab: 'Home', nonce: Date.now(), ...extras } }],
+      })
+    );
+  };
+
   const handleLogin = async () => {
-    if (!canSubmit) return;
     if (!endpoint) {
       Alert.alert('Configuration error', 'LOGIN_USERNAME_MERCHANT_ENDPOINT is not set in your .env file.');
       return;
     }
+    if (!(fullName && password)) return;
 
+    setErrorText('');
     setLoading(true);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
+      const { success, tokenStr } = await loginWithCredentials(String(fullName), String(password));
 
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_name: username.trim(), password }),
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      const raw = await res.text();
-      let data = {};
-      try { data = raw ? JSON.parse(raw) : {}; } catch (e) { console.log('❌ JSON parse error:', e); }
-
-      const msg = (data?.message ?? data?.error ?? raw ?? '').toString().trim();
-
-      const looksLikeSuccess =
-        res.ok &&
-        (data?.success === true ||
-          typeof data?.token === 'string' ||
-          (data?.token && typeof data?.token?.access_token === 'string') ||
-          (data?.status && String(data.status).toLowerCase() === 'ok') ||
-          /login\s*successful/i.test(msg));
-
-      if (!looksLikeSuccess) {
-        const errText = msg || `Request failed with ${res.status}`;
-        throw new Error(errText);
+      // Persist “remember me”
+      await SecureStore.setItemAsync(KEY_LAST_LOGIN_USERNAME, success.usedName);
+      if (savePassword) {
+        await SecureStore.setItemAsync(KEY_SAVED_USERNAME, success.usedName);
+        await SecureStore.setItemAsync(KEY_SAVED_PASSWORD, String(password));
+        setHasSavedSecret(true);
+      } else {
+        await SecureStore.deleteItemAsync(KEY_SAVED_USERNAME);
+        await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
+        const refreshTok = await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
+        setHasSavedSecret(!!refreshTok);
       }
 
-      let tokenStr = '';
-      if (data?.token) {
-        tokenStr = typeof data.token === 'string' ? data.token : (data.token?.access_token ?? '');
-        if (tokenStr) await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(tokenStr));
-      }
-
-      await SecureStore.setItemAsync(KEY_LAST_LOGIN_USERNAME, username.trim());
-      await persistSavedCreds(username.trim(), password);
-
+      // Optional: profile fetch
       let profile = null;
       if (tokenStr) {
         try {
@@ -260,11 +363,11 @@ const LoginScreen = () => {
         } catch {}
       }
 
-      const ownerType = getOwnerType(data);
-      const userInfo = data?.merchant || data?.user || {};
+      const ownerType = getOwnerTypeFrom(success.data);
+      const userInfo = success.data?.merchant || success.data?.user || {};
 
       const user_id =
-        profile?.user_id ?? data?.user_id ?? userInfo?.user_id ?? data?.id ?? userInfo?.id ?? null;
+        profile?.user_id ?? success.data?.user_id ?? userInfo?.user_id ?? success.data?.id ?? userInfo?.id ?? null;
 
       const business_name =
         profile?.business_name ?? userInfo?.business_name ?? userInfo?.businessName ?? '';
@@ -280,30 +383,29 @@ const LoginScreen = () => {
 
       const business_address =
         profile?.business_address ?? userInfo?.business_address ?? userInfo?.businessAddress ??
-        userInfo?.address ?? userInfo?.location ?? data?.business_address ?? data?.address ?? '';
+        userInfo?.address ?? userInfo?.location ?? success.data?.business_address ?? success.data?.address ?? '';
 
       const email =
         profile?.email ?? userInfo?.email ?? userInfo?.owner_email ?? userInfo?.contact_email ??
-        userInfo?.contact?.email ?? data?.email ?? data?.user?.email ?? data?.merchant?.email ?? '';
+        userInfo?.contact?.email ?? success.data?.email ?? success.data?.user?.email ?? success.data?.merchant?.email ?? '';
 
       const phone =
         profile?.phone ?? userInfo?.phone ?? userInfo?.phone_number ?? userInfo?.mobile ??
         userInfo?.contact_phone ?? userInfo?.contact?.phone ?? userInfo?.contact?.mobile ??
-        data?.phone ?? data?.user?.phone ?? data?.merchant?.phone ?? '';
+        success.data?.phone ?? success.data?.user?.phone ?? success.data?.merchant?.phone ?? '';
 
       const business_id =
         profile?.business_id ?? userInfo?.business_id ?? userInfo?.businessId ??
-        userInfo?.id ?? data?.business_id ?? data?.id ?? '';
+        userInfo?.id ?? success.data?.business_id ?? success.data?.id ?? '';
 
       const business_license =
         profile?.business_license_number ??
         userInfo?.business_license_number ??
         userInfo?.license_number ??
         userInfo?.license ??
-        data?.business_license_number ??
-        data?.license_number ??
-        data?.license ??
-        '';
+        success.data?.business_license_number ??
+        success.data?.license_number ??
+        success.data?.license ?? '';
 
       const userPayload = {
         user_id,
@@ -313,79 +415,71 @@ const LoginScreen = () => {
         business_logo,
         business_address,
         business_license,
-        username: username.trim(),
+        username: success.usedName,
         email,
         phone,
-        token: data?.token || null,
+        token: success.data?.token || null,
         owner_type: ownerType || null,
         profile_image,
       };
 
-      try { await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(userPayload)); } catch (e) {
-        console.log('⚠️ Failed to persist merchant_login:', e?.message);
-      }
+      try { await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(userPayload)); } catch {}
 
       DeviceEventEmitter.emit('profile-updated', { profile_image, business_name });
 
-      const routeParams = {
-        openTab: 'Home',
-        nonce: Date.now(),
-        business_name,
-        business_logo,
-        profile_image,
-        business_address,
-        business_id,
-        owner_type: ownerType,
-        authContext: { token: tokenStr || null, profile: profile || null, rawLogin: data, userPayload },
-      };
-
-      if (ownerType === 'mart') {
-        navigation.dispatch(
-          CommonActions.reset({
-            index: 0,
-            routes: [{ name: 'MartServiceSetupScreen', params: routeParams }],
-          })
-        );
-        return;
-      }
-      if (ownerType === 'food') {
-        navigation.dispatch(
-          CommonActions.reset({
-            index: 0,
-            routes: [{ name: 'GrabMerchantHomeScreen', params: routeParams }],
-          })
-        );
-        return;
-      }
-
-      Alert.alert('Cannot route', `Owner type missing or unknown.\nGot: ${JSON.stringify(ownerType)}\nPlease check the API response.`);
-      console.log('⚠️ No owner_type match; full payload:', data);
+      // No 2FA flow — navigate straight home
+      navigateHome({ business_name, business_logo, profile_image, business_address, business_id, owner_type: ownerType, ownerType });
     } catch (err) {
-      const msg = err?.name === 'AbortError' ? 'Request timed out. Please try again.' : err?.message?.toString() ?? 'Login failed';
+      const msg = err?.message?.toString() ?? 'Login failed';
       Alert.alert('Login failed', msg);
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Toggle visibility without jumping caret, and keep focus on password
-  const handleTogglePasswordVisibility = () => {
-    const end = (pwdSelection?.end ?? password.length);
-    const nextPos = Number.isFinite(end) ? end : (password || '').length;
+  // Biometric button appears only if: device supports + enabled in SecuritySettings + we have a saved secret
+  const canShowBiometricUnlock = useMemo(
+    () => bioAvail && bioEnabled && hasSavedSecret && !loading,
+    [bioAvail, bioEnabled, hasSavedSecret, loading]
+  );
 
-    setShowPassword((prev) => !prev);
+  const onBiometricUnlock = async () => {
+    const res = await biometricPrompt(`Unlock with ${bioLabel}`);
+    if (!res.success) {
+      Alert.alert('Failed', 'Authentication failed or cancelled.');
+      return;
+    }
 
-    requestAnimationFrame(() => {
-      pwdRef.current?.focus?.();
-      setTimeout(() => {
-        const len = (password || '').length;
-        const pos = Math.min(nextPos, len);
-        setPwdSelection({ start: pos, end: pos });
-      }, 0);
-    });
+    const [savedU, savedP, refreshTok] = await Promise.all([
+      SecureStore.getItemAsync(KEY_SAVED_USERNAME),
+      SecureStore.getItemAsync(KEY_SAVED_PASSWORD),
+      SecureStore.getItemAsync(KEY_REFRESH_TOKEN),
+    ]);
+
+    try {
+      setLoading(true);
+
+      if (refreshTok) {
+        // TODO: call your refresh endpoint here...
+      }
+
+      if (savedU && savedP) {
+        setFullName(toTitleCase(savedU)); // strict title-case on biometric prefill
+        setPassword(savedP);
+        await handleLogin();
+      } else {
+        Alert.alert(
+          'Setup required',
+          'Saved credentials are missing. Please log in once with password and enable “Save password”, or implement a refresh token login.'
+        );
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <KeyboardAvoidingView style={styles.container}>
-      {/* Removed outer TouchableWithoutFeedback to prevent focus hijack */}
       <View style={styles.inner}>
         {loading && (
           <Modal transparent>
@@ -398,7 +492,7 @@ const LoginScreen = () => {
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity
-            onPress={() => navigation.goBack()}
+            onPress={() => goToWelcome(navigation)}
             style={styles.iconButton}
             activeOpacity={0.7}
             disabled={loading}
@@ -416,74 +510,73 @@ const LoginScreen = () => {
           </TouchableOpacity>
         </View>
 
+        {/* Biometric quick unlock CTA (shows above form if available) */}
+        {canShowBiometricUnlock && (
+          <TouchableOpacity onPress={onBiometricUnlock} activeOpacity={0.9} style={styles.bioUnlockBtn}>
+            <Icon name="finger-print-outline" size={18} color="#0f172a" style={{ marginRight: 8 }} />
+            <Text style={styles.bioUnlockText}>Unlock with {bioLabel}</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Form */}
-        <ScrollView
-          contentContainerStyle={{ paddingBottom: 24 }}
-          keyboardShouldPersistTaps="always"
-        >
+        <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="always">
           <View style={styles.form}>
-            <Text style={styles.label}>Enter your username</Text>
-            <View
-              style={[
-                styles.inputWrapper,
-                { borderColor: isUsernameFocused ? '#00b14f' : '#ccc' },
-              ]}
-            >
+            <Text style={styles.label}>Full Name (username)</Text>
+            <Text style={styles.tip}>Use the exact full name you entered during signup.</Text>
+            <View style={[styles.inputWrapper, { borderColor: isNameFocused ? '#00b14f' : '#ccc' }]}>
               <TextInput
-                ref={usernameRef}
+                ref={nameRef}
                 style={styles.inputField}
-                placeholder={isUsernameFocused ? '' : 'Enter your username'}
-                autoCapitalize="none"
+                placeholder={isNameFocused ? '' : 'e.g. Sonam Dorji'}
+                autoCapitalize="words"
                 autoCorrect={false}
-                value={username}
+                value={fullName}
                 editable={!loading}
-                onChangeText={setUsername}
-                onFocus={() => setIsUsernameFocused(true)}
-                onBlur={() => setIsUsernameFocused(false)}
+                onChangeText={(t) => {
+                  setFullName(toTitleCaseLive(t)); // LIVE title case — preserves spaces
+                  setErrorText('');
+                }}
+                onFocus={() => setIsNameFocused(true)}
+                onBlur={() => setIsNameFocused(false)}
                 returnKeyType="next"
                 blurOnSubmit={false}
                 onSubmitEditing={() => pwdRef.current?.focus()}
+                textContentType="username"
               />
-              {username.length > 0 && !loading && (
-                <TouchableOpacity onPress={() => setUsername('')} style={styles.clearButton}>
-                  <View style={styles.clearCircle}>
-                    <Icon name="close" size={14} color="#fff" />
-                  </View>
+              {fullName.length > 0 && !loading && (
+                <TouchableOpacity onPress={() => setFullName('')} style={styles.clearButton}>
+                  <View style={styles.clearCircle}><Icon name="close" size={14} color="#fff" /></View>
                 </TouchableOpacity>
               )}
             </View>
 
             <Text style={styles.label}>Password</Text>
-
-            {/* Pressable row: focuses password on any tap in the row, without blocking eye */}
             <Pressable
-              onPress={() => {
-                setIsPasswordFocused(true);
-                requestAnimationFrame(() => pwdRef.current?.focus?.());
-              }}
+              onPress={() => { setIsPwFocused(true); requestAnimationFrame(() => pwdRef.current?.focus?.()); }}
               style={({ pressed }) => ([
                 styles.passwordContainer,
-                { borderColor: isPasswordFocused ? '#00b14f' : '#ccc' },
-                isPasswordFocused && styles.shadowGreen,
-                pressed ? { opacity: 0.98 } : null,
+                { borderColor: isPwFocused ? '#00b14f' : '#ccc' },
+                isPwFocused && styles.shadowGreen,
+                pressed ? { opacity: 0.98 } : null
               ])}
             >
               <TextInput
                 ref={pwdRef}
-                key={showPassword ? 'pwd-visible' : 'pwd-hidden'}  // reliable secureTextEntry flip on Android
+                key={showPassword ? 'pwd-visible' : 'pwd-hidden'}
                 style={styles.passwordInput}
-                placeholder={isPasswordFocused ? '' : 'Enter password'}
+                placeholder={isPwFocused ? '' : 'Enter password'}
                 value={password}
                 editable={!loading}
                 onChangeText={(t) => {
                   setPassword(t);
+                  setErrorText('');
                   const pos = (pwdSelection?.end ?? t.length);
-                  const next = Math.min(pos, t.length);
+                  const next = Math.max(0, Math.min(pos, t.length));
                   setPwdSelection({ start: next, end: next });
                 }}
                 secureTextEntry={!showPassword}
-                onFocus={() => setIsPasswordFocused(true)}
-                onBlur={() => setIsPasswordFocused(false)}
+                onFocus={() => setIsPwFocused(true)}
+                onBlur={() => setIsPwFocused(false)}
                 returnKeyType="done"
                 onSubmitEditing={handleLogin}
                 disableFullscreenUI
@@ -493,9 +586,20 @@ const LoginScreen = () => {
                 selection={pwdSelection}
                 onSelectionChange={(e) => setPwdSelection(e.nativeEvent.selection)}
               />
-
               <TouchableOpacity
-                onPress={handleTogglePasswordVisibility}
+                onPress={() => {
+                  const end = (pwdSelection?.end ?? password.length);
+                  const nextPos = Number.isFinite(end) ? end : (password || '').length;
+                  setShowPassword((prev) => !prev);
+                  requestAnimationFrame(() => {
+                    pwdRef.current?.focus?.();
+                    setTimeout(() => {
+                      const len = (password || '').length;
+                      const pos = Math.min(nextPos, len);
+                      setPwdSelection({ start: pos, end: pos });
+                    }, 0);
+                  });
+                }}
                 style={styles.eyeIcon}
                 disabled={loading}
               >
@@ -503,17 +607,18 @@ const LoginScreen = () => {
               </TouchableOpacity>
             </Pressable>
 
+            {!!errorText && <Text style={styles.inlineError}>{errorText}</Text>}
+
             <View style={styles.checkboxContainer}>
               <CheckBox
                 value={savePassword}
-                onValueChange={async (val) => {
-                  setSavePassword(val);
-                  if (val) {
-                    await SecureStore.setItemAsync(KEY_SAVED_USERNAME, username.trim());
-                    await SecureStore.setItemAsync(KEY_SAVED_PASSWORD, password);
+                onValueChange={async (v) => {
+                  setSavePassword(v);
+                  if (!v) {
+                    const refreshTok = await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
+                    setHasSavedSecret(!!refreshTok);
                   } else {
-                    await SecureStore.deleteItemAsync(KEY_SAVED_USERNAME);
-                    await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
+                    // will be persisted after next successful login
                   }
                 }}
                 disabled={loading}
@@ -525,16 +630,12 @@ const LoginScreen = () => {
         </ScrollView>
 
         {/* Footer */}
-        <View style={[styles.footer, { paddingBottom: bottomGap }]}>
+        <View style={[styles.footer, { paddingBottom: bottomGap }]} >
           <Text style={styles.forgotText}>
             Forgot your{' '}
-            <Text style={styles.link} onPress={() => !loading && navigation.navigate('ForgotUsername')}>
-              username
-            </Text>{' '}
+            <Text style={styles.link} onPress={() => !loading && navigation.navigate('ForgotUsername')}>username</Text>{' '}
             or{' '}
-            <Text style={styles.link} onPress={() => !loading && navigation.navigate('ForgotPassword')}>
-              password
-            </Text>
+            <Text style={styles.link} onPress={() => !loading && navigation.navigate('ForgotPassword')}>password</Text>
             ?
           </Text>
 
@@ -571,23 +672,32 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 },
   iconButton: { padding: 8 },
   headerTitle: { fontSize: 22, fontWeight: '600', color: '#1A1D1F', marginRight: 180 },
+
+  bioUnlockBtn: {
+    marginHorizontal: 8,
+    marginBottom: 12,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f8fafc',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  bioUnlockText: { fontWeight: '700', color: '#0f172a' },
+
   form: { flexGrow: 1, padding: 8 },
   label: { marginBottom: 6, fontSize: 14, color: '#333' },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderRadius: 15,
-    paddingHorizontal: 10,
-    marginBottom: 16,
-    height: 50,
-  },
+  tip: { marginTop: -4, marginBottom: 10, fontSize: 12, color: '#6B7280' },
+  inputWrapper: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 15, paddingHorizontal: 10, marginBottom: 16, height: 50 },
   inputField: { flex: 1, fontSize: 14, paddingVertical: 10 },
   clearButton: { paddingLeft: 8 },
   clearCircle: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#000', opacity: 0.7, justifyContent: 'center', alignItems: 'center' },
-  passwordContainer: { flexDirection: 'row', borderWidth: 1, borderRadius: 15, alignItems: 'center', paddingHorizontal: 10, paddingRight: 14, marginBottom: 16, height: 50 },
+  passwordContainer: { flexDirection: 'row', borderWidth: 1, borderRadius: 15, alignItems: 'center', paddingHorizontal: 10, paddingRight: 14, marginBottom: 8, height: 50 },
   passwordInput: { flex: 1, fontSize: 14, paddingVertical: 10, paddingRight: 8 },
   eyeIcon: { padding: 4 },
+  inlineError: { color: '#DC2626', fontSize: 13, fontWeight: '600', marginTop: 6, marginBottom: 8 },
   checkboxContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 24, marginTop: 10 },
   checkboxLabel: { marginLeft: 8, fontSize: 14, opacity: 0.7 },
   forgotText: { textAlign: 'center', fontSize: 14, color: '#333', opacity: 0.7, marginBottom: 16 },

@@ -1,6 +1,5 @@
 import React from 'react';
 import { 
-  SafeAreaView, 
   ScrollView, 
   View, 
   Text, 
@@ -10,7 +9,8 @@ import {
   Dimensions
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import Icon from 'react-native-vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width, height } = Dimensions.get('window');
 
@@ -42,17 +42,16 @@ const OnboardingScreen = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['left','right','bottom']}>
       <View style={styles.header}>
         {/* back button copied from HeaderWithSteps */}
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton} activeOpacity={0.7}>
-          <Icon name="arrow-back" size={24} color="#1A1D1F" />
+          <Ionicons name="arrow-back" size={24} color="#1A1D1F" />
         </TouchableOpacity>
 
         <TouchableOpacity onPress={() => navigation.navigate('HelpScreen')} style={styles.iconButton}>
-          <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
+          <Ionicons name="help-circle-outline" size={24} color="#1A1D1F" />
         </TouchableOpacity>
-
       </View>
 
       <ScrollView 
@@ -65,11 +64,11 @@ const OnboardingScreen = () => {
           
           {steps.map((step, index) => (
             <View key={index} style={styles.stepContainer}>
-            <Image
+              <Image
                 source={stepImages[index]}
                 style={styles.stepImage}
                 resizeMode="contain"
-            />
+              />
               <View style={styles.textContainer}>
                 <Text style={styles.stepTitle}>{step.title}</Text>
                 <Text style={styles.stepDescription}>{step.description}</Text>
@@ -107,7 +106,6 @@ const styles = StyleSheet.create({
   iconButton: {
     padding: 8,
   },
-
   icon: {
     fontSize: 24,
     color: '#1A1D1F',
@@ -128,7 +126,6 @@ const styles = StyleSheet.create({
     color: '#00',
     marginBottom: 2,
     lineHeight: 32,
-    // textAlign: 'center',
   },
   subHeader: {
     fontSize: 14,
@@ -136,7 +133,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Regular',
     marginBottom: 10,
     lineHeight: 20,
-    // textAlign: 'center',
   },
   stepContainer: {
     backgroundColor: '#FFFFFF',
@@ -153,7 +149,7 @@ const styles = StyleSheet.create({
     height: 60,
     borderRadius: 42/2,
     marginRight:8,
-    },
+  },
   textContainer: {
     flex: 1,
   },

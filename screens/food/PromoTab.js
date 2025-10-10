@@ -24,7 +24,8 @@ import {
   BANNERS_ENDPOINT,
   CREATE_BANNER_ENDPOINT,
   UPDATE_BANNER_ENDPOINT,
-  BANNERS_BY_BUSINESS_ENDPOINT, // not used here, but kept for easy swap
+  BANNERS_BY_BUSINESS_ENDPOINT, 
+  BANNERS_IMAGE_ENDPOINT,
 } from '@env';
 
 /** ====== Helpers ====== */
@@ -38,13 +39,86 @@ const toYMD = (dateLike) => {
   const dd = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${dd}`;
 };
+const addDaysYMD = (dateLike, days=0) => {
+  const d = typeof dateLike === 'string' ? new Date(dateLike) : new Date(dateLike);
+  const base = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  base.setDate(base.getDate() + days);
+  return toYMD(base);
+};
+const todayISO = () => new Date().toISOString().slice(0, 10);
 function originFrom(url) { try { return new URL(url).origin; } catch { return ''; } }
-const ORIGIN = originFrom(BANNERS_ENDPOINT || CREATE_BANNER_ENDPOINT || UPDATE_BANNER_ENDPOINT || 'http://localhost:8080');
-const joinImg = (p='') => (isHttpLike(p) ? p : `${ORIGIN}${p || ''}`);
+const hostOnly = (u='') => { try { return new URL(u).origin; } catch { return ''; } };
 
-const emptyForm = (business_id = 0) => ({
+// collapse duplicate /uploads and double slashes (not after http:)
+const sanitizePath = (p='') =>
+  String(p)
+    .replace(/^\/(merchant\/)?uploads\/uploads\//i, '/$1uploads/')
+    .replace(/([^:]\/)\/+/g, '$1');
+
+// encode only path segments, not the protocol/host
+const encodePathSegments = (p='') =>
+  String(p).split('/').map(seg => (seg ? encodeURIComponent(seg) : '')).join('/');
+
+// join base + path safely
+const absJoin = (base='', raw='') => {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (isHttpLike(s)) return s;
+
+  const baseNorm = String((base || '').replace(/\/+$/, ''));
+  let path = s.startsWith('/') ? s : `/${s}`;
+
+  // If base already ends with /merchant/uploads and path starts with it too, drop duplicate from path
+  if (/\/merchant\/uploads$/i.test(baseNorm) && /^\/merchant\/uploads\//i.test(path)) {
+    path = path.replace(/^\/merchant\/uploads/i, '');
+  }
+  path = sanitizePath(path);
+  const encoded = encodePathSegments(path);
+  return `${baseNorm}${encoded.startsWith('/') ? '' : '/'}${encoded}`.replace(/([^:]\/)\/+/g, '$1');
+};
+
+/**
+ * Build a correct banner image URL:
+ * - Prefer BANNERS_IMAGE_ENDPOINT if provided
+ * - Else fall back to origin of BANNERS_BY_BUSINESS_ENDPOINT or BANNERS_ENDPOINT
+ * - If API returns "/uploads/..." but server serves under "/merchant/uploads/...", prefix "/merchant" once
+ */
+const buildBannerImg = (rawPath) => {
+  if (!rawPath) return '';
+  if (isHttpLike(rawPath)) return rawPath;
+
+  const baseHost =
+    hostOnly(BANNERS_IMAGE_ENDPOINT) ||
+    originFrom(BANNERS_BY_BUSINESS_ENDPOINT || '') ||
+    originFrom(BANNERS_ENDPOINT || '') ||
+    '';
+
+  // decide if we need `/merchant` prefix by inspecting endpoints
+  const needsMerchant =
+    /\/merchant(\/|$)/i.test(String(BANNERS_BY_BUSINESS_ENDPOINT || '')) ||
+    /\/merchant(\/|$)/i.test(String(BANNERS_ENDPOINT || ''));
+
+  let path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+
+  // If server expects /merchant/uploads but API gave /uploads, add /merchant once
+  if (needsMerchant && /^\/uploads\//i.test(path) && !/^\/merchant\//i.test(path)) {
+    path = `/merchant${path}`;
+  }
+
+  return absJoin(baseHost, path);
+};
+
+// Inactive = explicitly disabled OR expired (end_date <= today)
+const isInactive = (b) => {
+  const disabled = Number(b.is_active) !== 1;
+  const expired = b?.end_date ? String(b.end_date).slice(0,10) <= todayISO() : false;
+  return disabled || expired;
+};
+
+const emptyForm = (business_id = 0, ownerType='food') => ({
   id: null,
   business_id,
+  owner_type: ownerType,
   title: '',
   description: '',
   banner_image: '',
@@ -65,43 +139,115 @@ const fetchWithTimeout = (url, options = {}, ms = 10000) =>
 const baseUpdate = (UPDATE_BANNER_ENDPOINT || BANNERS_ENDPOINT).replace(/\/$/, '');
 const baseCreate = (CREATE_BANNER_ENDPOINT || BANNERS_ENDPOINT).replace(/\/$/, '');
 
+// majority helper
+function mostCommonOwnerType(arr) {
+  const counts = arr.reduce((m, b) => {
+    const ot = String(b?.owner_type || '').trim().toLowerCase();
+    if (!ot) return m;
+    m[ot] = (m[ot] || 0) + 1;
+    return m;
+  }, {});
+  let best = '';
+  let n = -1;
+  Object.entries(counts).forEach(([k, v]) => { if (v > n) { best = k; n = v; }});
+  return best || '';
+}
+
 /** ====== Main ====== */
-export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
+export default function PromosTab({
+  businessId: businessIdProp,   // ← pass from parent if you have it
+  ownerType: ownerTypeProp,     // ← pass from parent to force owner type
+  isTablet
+}) {
   const [banners, setBanners] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Dynamic business id (toolbar switcher). Seed with prop or 0.
+  const [businessId, setBusinessId] = useState(Number(businessIdProp ?? 0) || 0);
+  const [businessIdDraft, setBusinessIdDraft] = useState(String(Number(businessIdProp ?? 0) || 0));
+
+  // Resolved owner type for this business
+  const [resolvedOwnerType, setResolvedOwnerType] = useState(
+    String(ownerTypeProp || '').trim().toLowerCase() || 'food'
+  );
+
   const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState(() => emptyForm(defaultBusinessId));
+  const [form, setForm] = useState(() => emptyForm(Number(businessIdProp ?? 0) || 0, resolvedOwnerType));
   const [query, setQuery] = useState('');
 
-  // Date pickers
+  // Enable-with-dates sheet
+  const [enableSheetOpen, setEnableSheetOpen] = useState(false);
+  const [enableTarget, setEnableTarget] = useState(null); // banner being enabled
+  const [enableStart, setEnableStart] = useState('');
+  const [enableEnd, setEnableEnd] = useState('');
+  const [showEnableStartPicker, setShowEnableStartPicker] = useState(false);
+  const [showEnableEndPicker, setShowEnableEndPicker] = useState(false);
+
+  // Date pickers for create/edit
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
 
   const textSizeTitle = isTablet ? 18 : 16;
   const textSizeSub = isTablet ? 13 : 12;
 
-  /** ====== LOAD ALL (NO BUSINESS FILTER) ====== */
+  /** ====== LOAD for current business ====== */
   const loadAll = useCallback(async () => {
+    if (!businessId) {
+      setBanners([]);
+      return;
+    }
     setLoading(true);
     try {
-      const res = await fetchWithTimeout(BANNERS_ENDPOINT);
-      const raw = await res.text();
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${raw || 'Failed to load banners'}`);
-      const json = raw ? JSON.parse(raw) : [];
-      setBanners(Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []));
+      const base = (BANNERS_BY_BUSINESS_ENDPOINT || '').replace(/\/$/, '');
+      if (base) {
+        // Prefer server endpoint if provided
+        const url = `${base}/${encodeURIComponent(businessId)}`;
+        const res = await fetchWithTimeout(url);
+        const raw = await res.text();
+        if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${raw || 'Failed to load banners'}`);
+        const json = raw ? JSON.parse(raw) : [];
+        const arr = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
+        setBanners(arr);
+        // Infer owner type if not forced by prop
+        if (!ownerTypeProp) {
+          const inferred = mostCommonOwnerType(arr) || 'food';
+          setResolvedOwnerType(inferred);
+        }
+      } else {
+        // Fallback: fetch all and filter client-side
+        const res = await fetchWithTimeout(BANNERS_ENDPOINT);
+        const raw = await res.text();
+        if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${raw || 'Failed to load banners'}`);
+        const json = raw ? JSON.parse(raw) : [];
+        const arr = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
+        const filtered = arr.filter(b => Number(b.business_id) === Number(businessId));
+        setBanners(filtered);
+        if (!ownerTypeProp) {
+          const inferred = mostCommonOwnerType(filtered) || 'food';
+          setResolvedOwnerType(inferred);
+        }
+      }
     } catch (e) {
       console.error(e);
       Alert.alert(
         'Network error',
-        `${String(e.message || e)}\n\n• Can the device reach ${BANNERS_ENDPOINT} in a browser?\n• Is the server bound to 0.0.0.0 and firewall open?\n• For Android emulator use 10.0.2.2 if needed.`
+        `${String(e.message || e)}\n\n• Can the device reach the API in a browser?\n• Is the server bound to 0.0.0.0 and firewall open?\n• For Android emulator use 10.0.2.2 if needed.`
       );
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [businessId, ownerTypeProp]);
 
+  // initial load + whenever businessId changes
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // keep form in sync if businessId or ownerType changes while modal closed
+  useEffect(() => {
+    if (!modalOpen) {
+      setForm(emptyForm(businessId, resolvedOwnerType));
+    }
+  }, [businessId, resolvedOwnerType, modalOpen]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -111,8 +257,9 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return banners;
-    return banners.filter(
+    const arr = banners;
+    if (!q) return arr;
+    return arr.filter(
       b =>
         (b.title || '').toLowerCase().includes(q) ||
         (b.description || '').toLowerCase().includes(q)
@@ -121,14 +268,16 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
 
   /** ====== CRUD ====== */
   const openCreate = () => {
-    setForm(emptyForm(defaultBusinessId));
+    // owner_type prefilled from resolvedOwnerType
+    setForm(emptyForm(businessId, resolvedOwnerType));
     setModalOpen(true);
   };
 
   const openEdit = (b) => {
     setForm({
       id: b.id,
-      business_id: b.business_id ?? defaultBusinessId,
+      business_id: Number(b.business_id ?? businessId),
+      owner_type: String(b.owner_type || resolvedOwnerType).toLowerCase(),
       title: b.title ?? '',
       description: b.description ?? '',
       banner_image: b.banner_image ?? '',
@@ -140,16 +289,20 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
     setModalOpen(true);
   };
 
+  // Make dates OPTIONAL, and title OPTIONAL
   const validate = () => {
     if (!form.business_id) return 'Missing business_id';
-    if (!form.title.trim()) return 'Title is required';
-    if (!(form.banner_image || form._localImage)) return 'Please pick an image';
-    if (!form.start_date) return 'Start date (YYYY-MM-DD) is required';
-    if (!form.end_date) return 'End date (YYYY-MM-DD) is required';
+    if (!String(form.owner_type || '').trim()) return 'owner_type is required (food/mart)';
+    // Need either server path or picked image on CREATE (edit can keep existing)
+    const isEdit = !!form.id;
+    if (!isEdit && !(form.banner_image || form._localImage)) return 'Provide banner_image path or pick an image';
+    // If both dates provided, ensure order
+    if (form.start_date && form.end_date) {
+      if (new Date(form.start_date) > new Date(form.end_date)) return 'Start date must be before or equal to End date';
+    }
     return null;
   };
 
-  // CREATE (POST) and UPDATE (PUT)
   const save = async () => {
     const err = validate();
     if (err) return Alert.alert('Missing', err);
@@ -159,35 +312,57 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
 
     try {
       if (!isEdit) {
-        // CREATE: always multipart (image required)
-        const fd = new FormData();
-        fd.append('business_id', String(form.business_id));
-        fd.append('title', form.title.trim());
-        fd.append('description', form.description.trim());
-        fd.append('is_active', String(Number(form.is_active) ? 1 : 0));
-        fd.append('start_date', form.start_date);
-        fd.append('end_date', form.end_date);
+        // CREATE: multipart if picking file, else JSON
+        if (form._localImage) {
+          const fd = new FormData();
+          fd.append('business_id', String(form.business_id));
+          fd.append('owner_type', String(form.owner_type || ''));
+          if (form.title) fd.append('title', form.title.trim());
+          if (form.description) fd.append('description', form.description.trim());
+          fd.append('is_active', String(Number(form.is_active) ? 1 : 0));
+          if (form.start_date) fd.append('start_date', form.start_date);
+          if (form.end_date) fd.append('end_date', form.end_date);
 
-        const asset = form._localImage;
-        const filename = asset?.fileName || asset?.uri?.split('/').pop() || `banner_${Date.now()}.jpg`;
-        const ext = /\.(\w+)$/.exec(filename || '')?.[1]?.toLowerCase() || 'jpg';
-        const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-        fd.append('banner_image', { uri: asset.uri, name: filename, type: mime });
+          const asset = form._localImage;
+          const filename = asset?.fileName || asset?.uri?.split('/').pop() || `banner_${Date.now()}.jpg`;
+          const ext = /\.(\w+)$/.exec(filename || '')?.[1]?.toLowerCase() || 'jpg';
+          const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+          fd.append('banner_image', { uri: asset.uri, name: filename, type: mime });
 
-        const res = await fetchWithTimeout(url, { method: 'POST', body: fd }, 15000);
-        const text = await res.text();
-        if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Create failed'}`);
+          const res = await fetchWithTimeout(url, { method: 'POST', body: fd }, 15000);
+          const text = await res.text();
+          if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Create failed'}`);
+        } else {
+          // JSON create with a server path
+          const payload = {
+            business_id: Number(form.business_id),
+            owner_type: String(form.owner_type || ''),
+            title: (form.title || '').trim(),
+            description: (form.description || '').trim(),
+            banner_image: form.banner_image || '',
+            is_active: Number(form.is_active) ? 1 : 0,
+            start_date: form.start_date || '',
+            end_date: form.end_date || '',
+          };
+          const res = await fetchWithTimeout(
+            url,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
+            12000
+          );
+          const text = await res.text();
+          if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Create failed'}`);
+        }
       } else {
         // UPDATE:
         if (form._localImage) {
-          // Image changed → PUT multipart
           const fd = new FormData();
           fd.append('business_id', String(form.business_id));
-          fd.append('title', form.title.trim());
-          fd.append('description', form.description.trim());
+          fd.append('owner_type', String(form.owner_type || ''));
+          if (form.title) fd.append('title', form.title.trim());
+          if (form.description) fd.append('description', form.description.trim());
           fd.append('is_active', String(Number(form.is_active) ? 1 : 0));
-          fd.append('start_date', form.start_date);
-          fd.append('end_date', form.end_date);
+          if (form.start_date) fd.append('start_date', form.start_date);
+          if (form.end_date) fd.append('end_date', form.end_date);
 
           const asset = form._localImage;
           const filename = asset?.fileName || asset?.uri?.split('/').pop() || `banner_${Date.now()}.jpg`;
@@ -199,15 +374,15 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
           const text = await res.text();
           if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Update failed'}`);
         } else {
-          // Image unchanged → PUT JSON
           const payload = {
             business_id: Number(form.business_id),
-            title: form.title.trim(),
-            description: form.description.trim(),
-            banner_image: form.banner_image || '', // keep existing path
+            owner_type: String(form.owner_type || ''),
+            title: (form.title || '').trim(),
+            description: (form.description || '').trim(),
+            banner_image: form.banner_image || '',
             is_active: Number(form.is_active) ? 1 : 0,
-            start_date: form.start_date,
-            end_date: form.end_date,
+            start_date: form.start_date || '',
+            end_date: form.end_date || '',
           };
           const res = await fetchWithTimeout(
             url,
@@ -220,7 +395,7 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
       }
 
       setModalOpen(false);
-      setForm(emptyForm(form.business_id));
+      setForm(emptyForm(form.business_id, resolvedOwnerType));
       await loadAll();
     } catch (e) {
       console.error(e);
@@ -250,18 +425,29 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
     ]);
   };
 
+  // When turning ON, ask for dates then PUT; when turning OFF, just PUT is_active=0
   const toggleActive = async (b) => {
     const next = Number(b.is_active) ? 0 : 1;
-    const url = `${baseUpdate}/${encodeURIComponent(b.id)}`;
+    if (next === 1) {
+      // open enable sheet with default dates
+      setEnableTarget(b);
+      setEnableStart(toYMD(b.start_date) || todayISO());
+      setEnableEnd(toYMD(b.end_date) || addDaysYMD(new Date(), 7));
+      setEnableSheetOpen(true);
+      return;
+    }
 
+    // turning OFF: keep dates, set is_active=0
+    const url = `${baseUpdate}/${encodeURIComponent(b.id)}`;
     const payload = {
-      business_id: Number(b.business_id ?? defaultBusinessId),
+      business_id: Number(b.business_id ?? businessId),
+      owner_type: String((b.owner_type || '').toLowerCase() || resolvedOwnerType),
       title: b.title ?? '',
       description: b.description ?? '',
-      banner_image: b.banner_image ?? '', // keep existing
-      is_active: next,
-      start_date: toYMD(b.start_date),
-      end_date: toYMD(b.end_date),
+      banner_image: b.banner_image ?? '',
+      is_active: 0,
+      start_date: toYMD(b.start_date) || '',
+      end_date: toYMD(b.end_date) || '',
     };
 
     try {
@@ -272,6 +458,46 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
       );
       const text = await res.text();
       if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Failed to update status'}`);
+      await loadAll();
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Error', String(e.message || e));
+    }
+  };
+
+  // Confirm from enable sheet
+  const confirmEnable = async () => {
+    const b = enableTarget;
+    if (!b) return;
+
+    // Validate ordering if both set
+    if (enableStart && enableEnd && new Date(enableStart) > new Date(enableEnd)) {
+      Alert.alert('Invalid dates', 'Start date must be before or equal to End date');
+      return;
+    }
+
+    const url = `${baseUpdate}/${encodeURIComponent(b.id)}`;
+    const payload = {
+      business_id: Number(b.business_id ?? businessId),
+      owner_type: String((b.owner_type || '').toLowerCase() || resolvedOwnerType),
+      title: b.title ?? '',
+      description: b.description ?? '',
+      banner_image: b.banner_image ?? '',
+      is_active: 1,
+      start_date: enableStart || '',
+      end_date: enableEnd || '',
+    };
+
+    try {
+      const res = await fetchWithTimeout(
+        url,
+        { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
+        10000
+      );
+      const text = await res.text();
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Failed to activate'}`);
+      setEnableSheetOpen(false);
+      setEnableTarget(null);
       await loadAll();
     } catch (e) {
       console.error(e);
@@ -307,20 +533,12 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
     setForm((s) => ({ ...s, _localImage: null, banner_image: '' }));
   };
 
-  /** ====== Date pickers ====== */
-  const onPickStart = (event, date) => {
-    setShowStartPicker(false);
-    if (date) setForm((s) => ({ ...s, start_date: toYMD(date) }));
-  };
-  const onPickEnd = (event, date) => {
-    setShowEndPicker(false);
-    if (date) setForm((s) => ({ ...s, end_date: toYMD(date) }));
-  };
-
   /** ====== Render row ====== */
   const renderBanner = ({ item }) => {
-    const img = joinImg(item.banner_image);
+    const img = buildBannerImg(item.banner_image);
     const active = Number(item.is_active) === 1;
+    const showInactive = isInactive(item);
+    const owner = String(item.owner_type || '').toLowerCase();
 
     return (
       <View style={styles.card}>
@@ -330,10 +548,21 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
             <Text style={styles.cardTitle} numberOfLines={1}>{item.title || '—'}</Text>
             <Text style={styles.meta} numberOfLines={2}>{item.description || '—'}</Text>
           </View>
-          <View style={[styles.badge, { backgroundColor: active ? '#e8f5e9' : '#f3f4f6' }]}>
-            <Text style={[styles.badgeText, { color: active ? '#166534' : '#334155' }]}>
-              {active ? 'Active' : 'Paused'}
-            </Text>
+
+          {/* Badges */}
+          <View>
+            {!!owner && (
+              <View style={[styles.badge, { backgroundColor: owner === 'food' ? '#bae6fd' : '#bbf7d0', marginBottom: 6 }]}>
+                <Text style={[styles.badgeText, { color: owner === 'food' ? '#0c4a6e' : '#14532d' }]}>
+                  {owner}
+                </Text>
+              </View>
+            )}
+            <View style={[styles.badge, { backgroundColor: showInactive ? '#f3f4f6' : '#e8f5e9' }]}>
+              <Text style={[styles.badgeText, { color: showInactive ? '#334155' : '#166534' }]}>
+                {showInactive ? 'Inactive' : 'Active'}
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -353,6 +582,18 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
             />
           </View>
           <View style={styles.row}>
+            {showInactive && (
+              <TouchableOpacity style={[styles.iconBtn, { marginRight: 10 }]} onPress={() => {
+                // quick reactivate: default +7 days relative to end or today
+                setEnableTarget(item);
+                setEnableStart(toYMD(item.start_date) || todayISO());
+                setEnableEnd(toYMD(item.end_date) || addDaysYMD(new Date(), 7));
+                setEnableSheetOpen(true);
+              }}>
+                <Feather name="rotate-ccw" size={16} color="#a16207" />
+                <Text style={[styles.iconBtnText, { color: '#a16207' }]}>Reactivate</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.iconBtn} onPress={() => openEdit(item)}>
               <Feather name="edit-2" size={16} color="#334155" />
               <Text style={styles.iconBtnText}>Edit</Text>
@@ -372,7 +613,9 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
     <View style={styles.wrap}>
       {/* Header */}
       <Text style={[styles.title, { fontSize: textSizeTitle }]}>Promo Banners</Text>
-      <Text style={[styles.sub, { fontSize: textSizeSub }]}>All banners from the server.</Text>
+      <Text style={[styles.sub, { fontSize: textSizeSub }]}>
+        {businessId ? `Banners for business #${businessId}` : 'Select a business to view banners'}
+      </Text>
 
       {/* Toolbar */}
       <View style={styles.toolbar}>
@@ -393,10 +636,24 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
           ) : null}
         </View>
 
-        <TouchableOpacity style={styles.newBtn} onPress={openCreate}>
+        <TouchableOpacity
+          style={[styles.newBtn, { opacity: businessId ? 1 : 0.4 }]}
+          onPress={openCreate}
+          disabled={!businessId}
+        >
           <Ionicons name="add" size={18} color="#fff" />
           <Text style={styles.newBtnText}>New</Text>
         </TouchableOpacity>
+      </View>
+
+      {/* Owner type hint */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 8 }}>
+        <Text style={styles.meta}>Owner type:</Text>
+        <View style={[styles.badge, { backgroundColor: resolvedOwnerType === 'food' ? '#bae6fd' : '#bbf7d0' }]}>
+          <Text style={[styles.badgeText, { color: resolvedOwnerType === 'food' ? '#0c4a6e' : '#14532d' }]}>
+            {resolvedOwnerType}
+          </Text>
+        </View>
       </View>
 
       {/* List */}
@@ -417,7 +674,11 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
               <Ionicons name="image-outline" size={28} color="#94a3b8" />
               <Text style={styles.emptyTitle}>No banners yet</Text>
               <Text style={styles.emptySub}>Create your first banner to promote offers.</Text>
-              <TouchableOpacity style={[styles.newBtn, { marginTop: 10 }]} onPress={openCreate}>
+              <TouchableOpacity
+                style={[styles.newBtn, { marginTop: 10, opacity: businessId ? 1 : 0.4 }]}
+                onPress={openCreate}
+                disabled={!businessId}
+              >
                 <Ionicons name="add" size={18} color="#fff" />
                 <Text style={styles.newBtnText}>Create Banner</Text>
               </TouchableOpacity>
@@ -439,9 +700,9 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
                   <Text style={styles.cancelText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.saveBtn, { opacity: (form.banner_image || form._localImage) ? 1 : 0.6 }]}
+                  style={[styles.saveBtn, { opacity: (form.banner_image || form._localImage || form.id) ? 1 : 0.6 }]}
                   onPress={save}
-                  disabled={!(form.banner_image || form._localImage)}
+                  disabled={!(form.banner_image || form._localImage || form.id)}
                 >
                   <Ionicons name="checkmark" size={16} color="#fff" />
                   <Text style={styles.saveText}>{form.id ? 'Update' : 'Save'}</Text>
@@ -464,7 +725,7 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
                 {(form._localImage || form.banner_image) ? (
                   <>
                     <Image
-                      source={{ uri: form._localImage ? form._localImage.uri : joinImg(form.banner_image) }}
+                      source={{ uri: form._localImage ? form._localImage.uri : buildBannerImg(form.banner_image) }}
                       style={styles.previewImage}
                     />
                     {/* Remove button over the image */}
@@ -493,7 +754,30 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
               />
             </Field>
 
-            <Field label="Title">
+            {/* Owner Type selector (no typing) */}
+            <Field label="Owner Type">
+              <View style={styles.ownerTypeSwitch}>
+                {['food','mart'].map((opt) => {
+                  const active = form.owner_type === opt;
+                  return (
+                    <TouchableOpacity
+                      key={opt}
+                      style={[styles.ownerPill, active && styles.ownerPillActive]}
+                      onPress={() => setForm((s)=>({ ...s, owner_type: opt }))}
+                    >
+                      <Text style={[styles.ownerPillText, active && styles.ownerPillTextActive]}>
+                        {opt.toUpperCase()}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <Text style={[styles.meta, { marginTop: 6 }]}>
+                Prefilled from current business: <Text style={{ fontWeight: '800', color: '#065f46' }}>{resolvedOwnerType}</Text>
+              </Text>
+            </Field>
+
+            <Field label="Title (optional)">
               <TextInput
                 value={form.title}
                 onChangeText={(t) => setForm((s) => ({ ...s, title: t }))}
@@ -503,7 +787,7 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
               />
             </Field>
 
-            <Field label="Description">
+            <Field label="Description (optional)">
               <TextInput
                 value={form.description}
                 onChangeText={(t) => setForm((s) => ({ ...s, description: t }))}
@@ -542,13 +826,13 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
             </Field>
 
             <View style={styles.grid2}>
-              <Field label="Start date">
+              <Field label="Start date (optional)">
                 <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowStartPicker(true)}>
                   <Ionicons name="calendar" size={14} color="#065f46" />
                   <Text style={styles.dateBtnTextGreen}>{form.start_date || 'Pick a date'}</Text>
                 </TouchableOpacity>
               </Field>
-              <Field label="End date">
+              <Field label="End date (optional)">
                 <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowEndPicker(true)}>
                   <Ionicons name="calendar" size={14} color="#065f46" />
                   <Text style={styles.dateBtnTextGreen}>{form.end_date || 'Pick a date'}</Text>
@@ -562,10 +846,8 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
                 value={form.start_date ? new Date(form.start_date) : new Date()}
                 mode="date"
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={onPickStart}
+                onChange={(e, d) => { setShowStartPicker(false); if (d) setForm((s)=>({ ...s, start_date: toYMD(d) })); }}
                 themeVariant="light"
-                accentColor="#16a34a"
-                textColor="#16a34a"
               />
             )}
             {showEndPicker && (
@@ -573,10 +855,64 @@ export default function PromosTab({ defaultBusinessId = 4, isTablet }) {
                 value={form.end_date ? new Date(form.end_date) : new Date()}
                 mode="date"
                 display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={onPickEnd}
+                onChange={(e, d) => { setShowEndPicker(false); if (d) setForm((s)=>({ ...s, end_date: toYMD(d) })); }}
                 themeVariant="light"
-                accentColor="#16a34a"
-                textColor="#16a34a"
+              />
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Enable with dates sheet */}
+      <Modal visible={enableSheetOpen} animationType="slide" transparent onRequestClose={() => setEnableSheetOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setEnableSheetOpen(false)} />
+        <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.modalWrap}>
+          <View style={styles.sheet}>
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Activate Banner</Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setEnableSheetOpen(false)}>
+                  <Ionicons name="close" size={16} color="#111827" />
+                  <Text style={styles.cancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.saveBtn} onPress={confirmEnable}>
+                  <Ionicons name="checkmark" size={16} color="#fff" />
+                  <Text style={styles.saveText}>Activate</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.grid2}>
+              <Field label="Start date">
+                <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowEnableStartPicker(true)}>
+                  <Ionicons name="calendar" size={14} color="#065f46" />
+                  <Text style={styles.dateBtnTextGreen}>{enableStart || 'Pick a date'}</Text>
+                </TouchableOpacity>
+              </Field>
+              <Field label="End date">
+                <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowEnableEndPicker(true)}>
+                  <Ionicons name="calendar" size={14} color="#065f46" />
+                  <Text style={styles.dateBtnTextGreen}>{enableEnd || 'Pick a date'}</Text>
+                </TouchableOpacity>
+              </Field>
+            </View>
+
+            {showEnableStartPicker && (
+              <DateTimePicker
+                value={enableStart ? new Date(enableStart) : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(e, d) => { setShowEnableStartPicker(false); if (d) setEnableStart(toYMD(d)); }}
+                themeVariant="light"
+              />
+            )}
+            {showEnableEndPicker && (
+              <DateTimePicker
+                value={enableEnd ? new Date(enableEnd) : new Date()}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(e, d) => { setShowEnableEndPicker(false); if (d) setEnableEnd(toYMD(d)); }}
+                themeVariant="light"
               />
             )}
           </View>
@@ -610,7 +946,13 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, color: '#0f172a', paddingVertical: 8 },
 
-  // GREEN primary
+  applyBtn: {
+    backgroundColor: '#0891b2',
+    height: 40, width: 40, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  // GREEN primary  
   newBtn: {
     backgroundColor: '#16a34a', height: 40, paddingHorizontal: 12, borderRadius: 12,
     flexDirection: 'row', alignItems: 'center', gap: 6,
@@ -667,7 +1009,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 6,
     right: 6,
-    backgroundColor: 'rgba(185,28,28,0.95)', // red-700
+    backgroundColor: 'rgba(185,28,28,0.95)',
     paddingHorizontal: 8,
     height: 26,
     borderRadius: 13,
@@ -728,4 +1070,25 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   saveText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+
+  // Owner type pills
+  ownerTypeSwitch: {
+    flexDirection: 'row',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 10,
+    padding: 4,
+    gap: 6,
+  },
+  ownerPill: {
+    paddingHorizontal: 12,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ownerPillActive: {
+    backgroundColor: '#16a34a',
+  },
+  ownerPillText: { fontSize: 12, fontWeight: '800', color: '#0f172a' },
+  ownerPillTextActive: { color: '#fff' },
 });

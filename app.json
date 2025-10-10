@@ -16,7 +16,9 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "We need access to your photo library to upload business logo.",
-        "NSCameraUsageDescription": "We need access to your camera to take a business logo photo."
+        "NSCameraUsageDescription": "We need access to your camera to take a business logo photo.",
+        "NSFaceIDUsageDescription": "Allow Face ID/Touch ID to unlock your account."
+      
       }
     },
     "android": {

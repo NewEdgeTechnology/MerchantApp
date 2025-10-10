@@ -8,11 +8,11 @@ import {
   TouchableOpacity,
   ScrollView,
   Dimensions,
-  SafeAreaView,
   Platform,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import HeaderWithSteps from './HeaderWithSteps'; // Adjust the path if needed
+import HeaderWithSteps from './HeaderWithSteps';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
 
@@ -24,7 +24,7 @@ const SellingTypeScreen = () => {
     navigation.navigate('SignupScreen', {
       ...(route.params ?? {}),
       serviceType: 'food',
-      owner_type: 'food', // if your flow expects this too
+      owner_type: 'food',
     });
   };
 
@@ -32,14 +32,21 @@ const SellingTypeScreen = () => {
     navigation.navigate('SignupScreen', {
       ...(route.params ?? {}),
       serviceType: 'mart',
-      owner_type: 'mart', // if your flow expects this too
+      owner_type: 'mart',
     });
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    // ✅ Include top safe area so spacing matches other screens
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+      {/* No StatusBar override needed; SafeArea handles the top inset */}
       <HeaderWithSteps step="Step 1 of 7" />
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
         <Text style={styles.title}>What are you selling?</Text>
 
         {/* Food */}
@@ -73,9 +80,13 @@ const SellingTypeScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FFFFFF' },
-  scrollView: { paddingHorizontal: 24 },
+  scrollView: { flex: 1 },
+  content: { paddingHorizontal: 24, paddingBottom: 16 }, // 🔁 matches SignupScreen padding
   title: {
-    fontSize: 24, fontWeight: 'bold', marginBottom: 16, fontFamily: 'Inter-Bold',
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    fontFamily: 'Inter-Bold',
   },
   card: {
     backgroundColor: '#f9f9f9',

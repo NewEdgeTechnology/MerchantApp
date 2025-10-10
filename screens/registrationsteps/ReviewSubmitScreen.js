@@ -5,26 +5,28 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   Alert,
   ActivityIndicator,
   Modal,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import HeaderWithSteps from "./HeaderWithSteps";
 import { SEND_OTP_ENDPOINT } from "@env";
 
 // ✨ Explicit edit targets
-const EDIT_SIGNUP_ROUTE = "SignupScreen"; // Email + Password
-const EDIT_PHONE_ROUTE = "PhoneNumberScreen"; // Phone
+const EDIT_SIGNUP_ROUTE = "SignupScreen";             // Email + Password
+const EDIT_PHONE_ROUTE = "PhoneNumberScreen";         // Phone
 const EDIT_BUSINESS_ROUTE = "MerchantRegistrationScreen"; // Business Details
-const EDIT_BANK_ROUTE = "BankPaymentInfoScreen"; // Bank (Step 4)
-const EDIT_DELIVERY_ROUTE = "DeliveryOptionsScreen"; // Delivery (Step 5)
+const EDIT_BANK_ROUTE = "BankPaymentInfoScreen";      // Bank (Step 4)
+const EDIT_DELIVERY_ROUTE = "DeliveryOptionsScreen";  // Delivery (Step 5)
 
 // ⬇️ redirect to email OTP screen after submit
 const NEXT_ROUTE = "EmailOtpVerificationScreen";
+
+/* ---------------- Normalizers ---------------- */
 
 const normalizeCategoryIds = (v) => {
   if (!v) return [];
@@ -52,15 +54,52 @@ const normalizeCategoryIds = (v) => {
   return [];
 };
 
+// Map many possible inputs → strict enum expected by DB
+const DELIVERY_ENUMS = ["self", "grab", "both"];
+
+const normalizeDeliveryOption = (val) => {
+  if (val == null) return null;
+
+  // object like {value:'grab', label:'Grab Delivery'}
+  if (typeof val === "object") {
+    const raw = val.value ?? val.id ?? val.key ?? val.code ?? val.type ?? null;
+    if (raw != null) return normalizeDeliveryOption(raw);
+  }
+
+  // numeric codes (in case earlier screen used 0/1/2 or 1/2/3)
+  if (typeof val === "number") {
+    const by0 = { 0: "self", 1: "grab", 2: "both" }[val];
+    const by1 = { 1: "self", 2: "grab", 3: "both" }[val];
+    return by0 || by1 || null;
+  }
+
+  // strings / labels
+  const s = String(val).toLowerCase().trim();
+  if (DELIVERY_ENUMS.includes(s)) return s;
+
+  // label variants
+  if (/^self/.test(s)) return "self";
+  if (/^grab/.test(s)) return "grab";
+  if (/^both|^self\s*\+\s*grab|^grab\s*\+\s*self/.test(s)) return "both";
+
+  return null; // unknown → let server reject clearly instead of truncation
+};
+
+const deliveryDisplay = (norm) =>
+  norm === "self" ? "Self Delivery" :
+  norm === "grab" ? "Grab Delivery" :
+  norm === "both" ? "Both" : "—";
+
+/* ---------------- Component ---------------- */
+
 export default function ReviewSubmitScreen() {
   const navigation = useNavigation();
   const route = useRoute();
 
   const {
     serviceType = "food",
-    deliveryOption = null,
+    deliveryOption: incomingDelivery = null,
     merchant = {},
-    // 👇 may be forwarded by earlier screens
     owner_type: incomingOwnerType = null,
   } = route.params ?? {};
 
@@ -69,6 +108,12 @@ export default function ReviewSubmitScreen() {
       .trim()
       .toLowerCase();
   }, [incomingOwnerType, merchant?.owner_type, serviceType]);
+
+  // ✅ delivery option normalized once here
+  const deliveryOption = useMemo(
+    () => normalizeDeliveryOption(incomingDelivery),
+    [incomingDelivery]
+  );
 
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -153,13 +198,12 @@ export default function ReviewSubmitScreen() {
       const review = {
         serviceType,
         owner_type: effectiveOwnerType,
-        deliveryOption,
+        deliveryOption, // already normalized: 'self' | 'grab' | 'both' | null
         agreeTerms: true,
         displayCategory,
         normalizedCategoryIds: business.category,
-        business, // full normalized business block
-        bank,     // full bank block
-        // keep a normalized merchant for later steps/submit
+        business,
+        bank,
         merchantNormalized: {
           ...(merchant ?? {}),
           category: business.category,
@@ -173,26 +217,26 @@ export default function ReviewSubmitScreen() {
           email: business.email,
           phone: business.phone,
           password: business.password,
-          bank, // embed full bank data here as well
+          delivery_option: deliveryOption, // ✅ normalized for backend insert
+          bank,
         },
       };
 
       // ➡️ Navigate to the OTP verification screen with ALL data
       navigation.navigate(NEXT_ROUTE, {
-        ...(route.params ?? {}),   // preserve any incoming data
-        email: business.email,     // explicit for OTP screen
+        ...(route.params ?? {}),
+        email: business.email,
         otpType: "email_verification",
         serviceType,
         owner_type: effectiveOwnerType,
-        deliveryOption,
-        // legacy keys used by some downstream screens
+        deliveryOption,                  // ✅ normalized
         initialCategory: business.category,
         merchant: {
           ...(merchant ?? {}),
           category: business.category,
           owner_type: effectiveOwnerType,
+          delivery_option: deliveryOption, // ✅ normalized
         },
-        // NEW: a single object carrying the entire review state
         review,
       });
     } catch (e) {
@@ -206,16 +250,16 @@ export default function ReviewSubmitScreen() {
   const jumpTo = (routeName) => {
     const common = {
       ...(route.params ?? {}),
-      // ✅ always pass normalized **IDs** and owner_type
       merchant: {
         ...(merchant ?? {}),
         category: business.category,
         owner_type: effectiveOwnerType,
+        delivery_option: deliveryOption, // keep normalized in edits too
       },
       initialCategory: business.category,
-      deliveryOption,
-      serviceType, // keep for compatibility
-      owner_type: effectiveOwnerType, // expose at root for next screens
+      deliveryOption, // normalized
+      serviceType,
+      owner_type: effectiveOwnerType,
       returnTo: "ReviewSubmitScreen",
     };
 
@@ -238,7 +282,7 @@ export default function ReviewSubmitScreen() {
         ...common,
         initialFullName: business.fullName,
         initialBusinessName: business.businessName,
-        initialCategory: business.category, // ✅ array of IDs
+        initialCategory: business.category,
         initialEmail: business.email,
         initialPhone: business.phone,
         initialPassword: business.password,
@@ -266,7 +310,7 @@ export default function ReviewSubmitScreen() {
     if (routeName === EDIT_DELIVERY_ROUTE) {
       navigation.navigate(routeName, {
         ...common,
-        initialDeliveryOption: deliveryOption ?? null,
+        initialDeliveryOption: deliveryOption, // normalized seed
       });
       return;
     }
@@ -348,7 +392,7 @@ export default function ReviewSubmitScreen() {
         <Section
           title="Delivery Option"
           onEdit={() => jumpTo(EDIT_DELIVERY_ROUTE)}
-          rows={[["Selected option", deliveryOption || "—"]]}
+          rows={[["Selected option", deliveryDisplay(deliveryOption)]]}
         />
 
         {/* Bank & Payment */}

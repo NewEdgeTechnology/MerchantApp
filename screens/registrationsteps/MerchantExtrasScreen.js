@@ -9,7 +9,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
-  SafeAreaView,
   Keyboard,
   Image,
   ActivityIndicator,
@@ -20,7 +19,7 @@ import * as ImagePicker from "expo-image-picker";
 import MapView, { Marker } from "react-native-maps";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import HeaderWithSteps from "./HeaderWithSteps";
-
+import { SafeAreaView } from 'react-native-safe-area-context';
 const NEXT_ROUTE = "BankPaymentInfoScreen";
 
 export default function MerchantExtrasScreen() {
@@ -59,7 +58,7 @@ export default function MerchantExtrasScreen() {
   const effectiveOwnerType = String(
     owner_type ?? incomingMerchant?.owner_type ?? serviceType ?? "food"
   )
-    .trim()      
+    .trim()
     .toLowerCase();
 
   // files
@@ -77,7 +76,7 @@ export default function MerchantExtrasScreen() {
     longitudeDelta: 0.05,
   });
 
-  // Business License number
+  // Business License number (OPTIONAL now)
   const [regNo, setRegNo] = useState("");
 
   const [focusedField, setFocusedField] = useState(null);
@@ -149,10 +148,10 @@ export default function MerchantExtrasScreen() {
     };
   }, []);
 
+  // CHANGED: regNo no longer required
   const validate = () => {
     if (!toSafeString(address).trim()) return false;
     if (!logo?.uri) return false;
-    if (!toSafeString(regNo).trim()) return false;
     return true;
   };
 
@@ -223,10 +222,7 @@ export default function MerchantExtrasScreen() {
         Alert.alert("Missing address", "Please add your business address.");
         return;
       }
-      if (!toSafeString(regNo).trim()) {
-        Alert.alert("Missing license number", "Please enter your Business License number.");
-        return;
-      }
+      // CHANGED: no more alert for missing license number
       return;
     }
 
@@ -237,6 +233,11 @@ export default function MerchantExtrasScreen() {
       const normalizedCategoryIds = normalizeCategoryIds(
         (incomingMerchant && incomingMerchant.category) ?? initialCategory
       );
+
+      // Build registration number only if provided
+      const normalizedRegNo = toSafeString(regNo).trim();
+      const maybeRegNo =
+        normalizedRegNo.length > 0 ? normalizedRegNo : undefined; // CHANGED: undefined if blank
 
       // Merge with latest values while keeping previously captured info
       const mergedMerchant = {
@@ -257,25 +258,26 @@ export default function MerchantExtrasScreen() {
         category: normalizedCategoryIds,
         categories: incomingMerchant?.categories ?? route.params?.merchant?.categories ?? [],
 
-        registration_no: toSafeString(regNo).trim(),
+        // CHANGED: only include if user typed one
+        ...(maybeRegNo !== undefined ? { registration_no: maybeRegNo } : {}),
+
         address: toSafeString(address).trim(),
         latitude: pickedCoord?.latitude ?? null,
         longitude: pickedCoord?.longitude ?? null,
 
-        logo, // { uri, name, mimeType, size }
-        license: licenseFile, // may be null
+        logo, // { uri, name, mimeType, size } — still REQUIRED
+        license: licenseFile, // OPTIONAL
 
         owner_type: effectiveOwnerType,
       };
 
       navigation.navigate(NEXT_ROUTE, {
-        ...(route.params ?? {}),                       // keep everything (returnTo, etc.)
-        merchant: mergedMerchant,                      // ✅ latest merged snapshot
-        serviceType: serviceType ?? "food",            // preserve incoming serviceType
-        owner_type: effectiveOwnerType,                // 👈 forward it explicitly as well
-        initialDeliveryOption: deliveryOption ?? null, // preselect later
-        returnTo,                                      // so later steps can bounce back to Review
-        // Also pass along initialCategory as array of IDs for downstream screens
+        ...(route.params ?? {}),
+        merchant: mergedMerchant,
+        serviceType: serviceType ?? "food",
+        owner_type: effectiveOwnerType,
+        initialDeliveryOption: deliveryOption ?? null,
+        returnTo,
         initialCategory: normalizedCategoryIds,
       });
     } catch (e) {
@@ -366,11 +368,11 @@ export default function MerchantExtrasScreen() {
             </Text>
             <LogoUploader value={logo} onChange={setLogo} />
 
-            {/* ===== Business License number ===== */}
+            {/* ===== Business License number (OPTIONAL) ===== */}
             <Field
-              label={
+              label={ // CHANGED: removed asterisk
                 <Text>
-                  Business License number <Text style={{ color: "red" }}>*</Text>
+                  Business License number
                 </Text>
               }
               placeholder="e.g., BRN-12345"
@@ -470,7 +472,7 @@ export default function MerchantExtrasScreen() {
 
           <View style={styles.modalFooter}>
             <Text style={styles.modalHint}>
-              Long‑press to drop a pin. Drag to adjust. Press Confirm when done.
+              Long-press to drop a pin. Drag to adjust. Press Confirm when done.
             </Text>
             <TouchableOpacity style={styles.btnPrimary} onPress={confirmPickedLocation}>
               <Text style={styles.btnPrimaryText}>Confirm</Text>

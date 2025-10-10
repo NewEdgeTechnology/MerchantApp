@@ -1,7 +1,7 @@
 import 'react-native-gesture-handler';
 import React, { useState, useRef } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Image, StatusBar, Dimensions,
+  View, Text, TouchableOpacity, StyleSheet, Image, StatusBar, Dimensions, Linking,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Carousel from 'react-native-reanimated-carousel';
@@ -10,7 +10,7 @@ import { useNavigation } from '@react-navigation/native';
 const { width } = Dimensions.get('window');
 
 const slides = [
-  { image: require('../../assets/shop.png'), title: 'Reach millions of customers',
+  { image: require('../../assets/shop.png'), title: 'Reach Thousands of customers',
     description: 'Expand your business offering with delivery, pickup, cashless payments, and more.' },
   { image: require('../../assets/business.png'), title: 'Accelerate your business growth',
     description: 'Get access to all the tools to run and grow your business, in one place.' },
@@ -23,8 +23,6 @@ const DOT_MARGIN = 5;
 
 export default function WelcomeScreen() {
   const [activeIndex, setActiveIndex] = useState(0);
-
-  // Fixed to Bhutan only
   const [selectedCountry] = useState({
     name: 'Bhutan',
     code: 'bt',
@@ -35,23 +33,20 @@ export default function WelcomeScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
 
+  // 👉 Add link handlers (only addition)
+  const openTerms = () => navigation.navigate('TermsOfService');
+  const openPrivacy = () => navigation.navigate('PrivacyPolicy');
+
   return (
     <SafeAreaView style={styles.container} edges={['left','right']}>
-      {/* Translucent, transparent status bar for real edge-to-edge */}
-      <StatusBar
-        translucent
-        backgroundColor="transparent"
-        barStyle="dark-content"
-      />
+      <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
 
-      {/* Header (pad by safe area top instead of fixed) */}
       <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
         <Text style={styles.logo}>
           <Text style={{ color: '#00b14f', fontWeight: 'bold' }}>Grab</Text>
           <Text style={{ color: '#00b14f' }}>Merchant</Text>
         </Text>
 
-        {/* Country pill (no dropdown, no onPress) */}
         <TouchableOpacity style={styles.countrySelector} activeOpacity={1}>
           <Image
             source={{ uri: `https://flagcdn.com/w40/${selectedCountry.code}.png?ts=${selectedCountry.timestamp}` }}
@@ -59,7 +54,6 @@ export default function WelcomeScreen() {
             key={selectedCountry.code}
           />
           <Text style={styles.countryText}>{selectedCountry.name}</Text>
-          {/* dropdown icon removed */}
         </TouchableOpacity>
       </View>
 
@@ -102,11 +96,12 @@ export default function WelcomeScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Footer (pad by safe area bottom so it sits above home indicator) */}
+      {/* Footer with tappable links */}
       <View style={[styles.bottomContent, { paddingBottom: (insets.bottom || 0) + 30 }]}>
         <Text style={styles.terms}>
-          I have read, understood and accepted the <Text style={styles.link}>Terms of Service</Text> and the{' '}
-          <Text style={styles.link}>Privacy Policy</Text>.
+          I have read, understood and accepted the{' '}
+          <Text style={styles.link} onPress={openTerms}>Terms of Service</Text> and the{' '}
+          <Text style={styles.link} onPress={openPrivacy}>Privacy Policy</Text>.
         </Text>
       </View>
     </SafeAreaView>
@@ -114,32 +109,15 @@ export default function WelcomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  // ===== Page =====
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    // no global padding → real full-bleed
-  },
-
+  container: { flex: 1, backgroundColor: '#fff' },
   header: {
-    paddingHorizontal: 20, // local spacing
+    paddingHorizontal: 20,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-
-  logo: {
-    fontSize: 20,
-  },
-
-  version: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: -5,
-    paddingHorizontal: 20,
-  },
-
-  // ===== Country pill =====
+  logo: { fontSize: 20 },
+  version: { fontSize: 12, color: '#888', marginTop: -5, paddingHorizontal: 20 },
   countrySelector: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -151,68 +129,15 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: '#fff',
   },
-
-  flag: {
-    width: 24,
-    height: 16,
-    borderColor: '#ccc',
-    borderRadius: 3,
-    borderWidth: 1,
-  },
-
-  countryText: {
-    fontSize: 14,
-  },
-
-  // ===== Carousel =====
-  carouselContainer: {
-    flex: 1, // expands to fill
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  slide: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 240,
-    marginTop: 30,
-  },
-
-  image: {
-    width: 320,
-    height: 220,
-    marginBottom: 15,
-  },
-
-  title: {
-    fontSize: 17,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginTop: -5,
-  },
-
-  description: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginTop: 9,
-    paddingHorizontal: 10,
-    lineHeight: 20,
-  },
-
-  // ===== Dots =====
-  dotWrapper: {
-    marginTop: -10,
-    marginBottom: 60,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  dots: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-  },
-
+  flag: { width: 24, height: 16, borderColor: '#ccc', borderRadius: 3, borderWidth: 1 },
+  countryText: { fontSize: 14 },
+  carouselContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  slide: { alignItems: 'center', justifyContent: 'center', height: 240, marginTop: 30 },
+  image: { width: 320, height: 220, marginBottom: 15 },
+  title: { fontSize: 17, fontWeight: '600', textAlign: 'center', marginTop: -5 },
+  description: { fontSize: 14, color: '#666', textAlign: 'center', marginTop: 9, paddingHorizontal: 10, lineHeight: 20 },
+  dotWrapper: { marginTop: -10, marginBottom: 60, alignItems: 'center', justifyContent: 'center' },
+  dots: { flexDirection: 'row', justifyContent: 'center' },
   dot: {
     width: DOT_SIZE,
     height: DOT_SIZE,
@@ -222,58 +147,13 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     backgroundColor: 'white',
   },
-
-  activeDot: {
-    backgroundColor: '#ccc',
-    borderColor: '#ccc',
-  },
-
-  // ===== Buttons =====
-  buttonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-evenly',
-    gap: 20,
-    marginTop: 10,
-    paddingHorizontal: 20,
-  },
-
-  signUpBtn: {
-    backgroundColor: '#edf8faff',
-    paddingVertical: 16,
-    paddingHorizontal: 50,
-    borderRadius: 30,
-  },
-
-  logInBtn: {
-    backgroundColor: '#00b14f',
-    paddingVertical: 16,
-    paddingHorizontal: 50,
-    borderRadius: 30,
-  },
-
-  signUpText: {
-    color: '#000',
-    fontSize: 16,
-  },
-
-  logInText: {
-    color: '#fff',
-    fontSize: 16,
-  },
-
-  // ===== Footer =====
-  bottomContent: {
-    marginTop: 20,
-    paddingHorizontal: 20,
-  },
-
-  terms: {
-    fontSize: 12.5,
-    textAlign: 'center',
-    color: '#888',
-  },
-
-  link: {
-    color: '#417fa2ff',
-  },
+  activeDot: { backgroundColor: '#ccc', borderColor: '#ccc' },
+  buttonContainer: { flexDirection: 'row', justifyContent: 'space-evenly', gap: 20, marginTop: 10, paddingHorizontal: 20 },
+  signUpBtn: { backgroundColor: '#edf8faff', paddingVertical: 16, paddingHorizontal: 50, borderRadius: 30 },
+  logInBtn: { backgroundColor: '#00b14f', paddingVertical: 16, paddingHorizontal: 50, borderRadius: 30 },
+  signUpText: { color: '#000', fontSize: 16 },
+  logInText: { color: '#fff', fontSize: 16 },
+  bottomContent: { marginTop: 20, paddingHorizontal: 20 },
+  terms: { fontSize: 12.5, textAlign: 'center', color: '#888' },
+  link: { color: '#417fa2ff' },
 });

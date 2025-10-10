@@ -1,4 +1,4 @@
-// screens/food/MenuTab.js
+// screens/food/AddMenuTab.js
 import React, { useEffect, useMemo, useState, useLayoutEffect, useCallback, useRef } from 'react';
 import {
   View,
@@ -18,18 +18,19 @@ import {
   DeviceEventEmitter,
   FlatList,
   Pressable,
-  Keyboard,                 // ← added
-  KeyboardAvoidingView,     // ← added
+  Keyboard,
+  KeyboardAvoidingView,
 } from 'react-native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as SecureStore from 'expo-secure-store';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import { useHeaderHeight } from '@react-navigation/elements';  // ← added
+import { useHeaderHeight } from '@react-navigation/elements';
 
 import {
   CATEGORY_ENDPOINT as ENV_CATEGORY_ENDPOINT,
   MENU_ENDPOINT as ENV_ADD_MENU_ENDPOINT,
+  ITEM_ENDPOINT as ENV_ITEM_ENDPOINT, // mart add-item endpoint (exact)
 } from '@env';
 
 // ───────────────────────── Theme ─────────────────────────
@@ -38,41 +39,22 @@ const PLACEHOLDER_COLOR = '#94a3b8';
 const TEXT_COLOR = '#0f172a';
 const INPUT_HEIGHT = 46;
 
-// ───────────────────────── Custom Select (overlay flush with input) ─────────────────────────
-function Select({
-  value,
-  options,               // [{label, value}]
-  onChange,
-  placeholder = 'None',
-  fontSize = 14,
-  testID,
-  maxVisible = 3,        // how many rows before scrolling
-}) {
+// ───────────────────────── Custom Select ─────────────────────────
+function Select({ value, options, onChange, placeholder = 'None', fontSize = 14, testID, maxVisible = 3 }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const wrapRef = useRef(null);
 
   const isNone = value === undefined || value === null || value === '' || value === 'None';
-  const shown = isNone
-    ? placeholder
-    : (options.find(o => String(o.value) === String(value))?.label ?? placeholder);
+  const shown = isNone ? placeholder : (options.find(o => String(o.value) === String(value))?.label ?? placeholder);
 
   const measure = () => {
     if (!wrapRef.current) return;
-    wrapRef.current.measureInWindow((x, y, w, h) => {
-      setAnchor({ x, y, w, h });
-    });
+    wrapRef.current.measureInWindow((x, y, w, h) => setAnchor({ x, y, w, h }));
   };
 
-  const openMenu = () => {
-    measure();
-    setOpen(true);
-  };
-
-  const selectAndClose = (v) => {
-    onChange?.(v);
-    setOpen(false);
-  };
+  const openMenu = () => { measure(); setOpen(true); };
+  const selectAndClose = (v) => { onChange?.(v); setOpen(false); };
 
   const itemHeight = INPUT_HEIGHT;
   const visibleCount = Math.min(options.length, maxVisible);
@@ -80,23 +62,11 @@ function Select({
 
   return (
     <>
-      <Pressable
-        ref={wrapRef}
-        onPress={openMenu}
-        testID={testID}
-        style={styles.pickerWrap}
-        onLayout={measure}
-      >
+      <Pressable ref={wrapRef} onPress={openMenu} testID={testID} style={styles.pickerWrap} onLayout={measure}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text
             numberOfLines={1}
-            style={[
-              styles.pickerText,
-              {
-                color: isNone ? PLACEHOLDER_COLOR : TEXT_COLOR,
-                fontSize,
-              },
-            ]}
+            style={[styles.pickerText, { color: isNone ? PLACEHOLDER_COLOR : TEXT_COLOR, fontSize }]}
             testID={testID ? `${testID}-text` : undefined}
           >
             {shown}
@@ -112,12 +82,7 @@ function Select({
               <View
                 style={[
                   styles.dropdownCard,
-                  {
-                    left: anchor.x,
-                    top: anchor.y + anchor.h,
-                    width: anchor.w,
-                    height: dropdownHeight,
-                  },
+                  { left: anchor.x, top: anchor.y + anchor.h, width: anchor.w, height: dropdownHeight },
                 ]}
               >
                 <FlatList
@@ -131,12 +96,7 @@ function Select({
                           numberOfLines={1}
                           style={[
                             styles.dropdownText,
-                            {
-                              fontSize,
-                              color: selected ? '#00b14f' : TEXT_COLOR,
-                              fontFamily: FONT_FAMILY,
-                              fontWeight: selected ? '700' : '500',
-                            },
+                            { fontSize, color: selected ? '#00b14f' : TEXT_COLOR, fontFamily: FONT_FAMILY, fontWeight: selected ? '700' : '500' },
                           ]}
                         >
                           {item.label}
@@ -157,10 +117,10 @@ function Select({
   );
 }
 
-export default function MenuTab({ isTablet }) {
+export default function AddMenuTab({ isTablet }) {
   const navigation = useNavigation();
   const route = useRoute();
-  const headerHeight = useHeaderHeight(); // for iOS keyboard offset
+  const headerHeight = useHeaderHeight();
 
   // Unified font sizes
   const FS = useMemo(() => {
@@ -188,10 +148,7 @@ export default function MenuTab({ isTablet }) {
   useFocusEffect(
     useCallback(() => {
       const onBackPress = () => {
-        if (navigation.canGoBack()) {
-          navigation.goBack();
-          return true;
-        }
+        if (navigation.canGoBack()) { navigation.goBack(); return true; }
         return false;
       };
       const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
@@ -199,17 +156,59 @@ export default function MenuTab({ isTablet }) {
     }, [navigation])
   );
 
-  // Config / URL
+  // Owner type
+  const ownerType = useMemo(() => {
+    const raw = String(route?.params?.ownerType ?? route?.params?.ownertype ?? route?.params?.owner_type ?? 'food')
+      .toLowerCase().trim();
+    if (raw.startsWith('mart')) return 'mart';
+    if (raw.startsWith('food') || raw === 'restaurant' || raw === 'merchant') return 'food';
+    return 'food';
+  }, [route?.params]);
+
+  const IS_MART = ownerType === 'mart';
+
+  // Business and categories
   const BUSINESS_ID = useMemo(() => {
     const p = route?.params ?? {};
     return (p.businessId || p.business_id || p.merchant?.businessId || p.merchant?.id || '').toString().trim();
   }, [route?.params]);
 
-  const CATEGORY_ENDPOINT = useMemo(() => (ENV_CATEGORY_ENDPOINT || '').replace(/\/$/, ''), []);
+  // ── CATEGORY URL: one API for both owner types + owner_type hint + always include "None"
+  const CATEGORY_BASE = useMemo(() => (ENV_CATEGORY_ENDPOINT || '').replace(/\/$/, ''), []);
   const CATEGORIES_URL = useMemo(() => {
-    if (!CATEGORY_ENDPOINT || !BUSINESS_ID) return null;
-    return `${CATEGORY_ENDPOINT}/${encodeURIComponent(BUSINESS_ID)}`;
-  }, [CATEGORY_ENDPOINT, BUSINESS_ID]);
+    if (!CATEGORY_BASE || !BUSINESS_ID) return null;
+
+    // Support both forms your backend might provide:
+    //   - /categories/:businessId
+    //   - /categories?business_id=...
+    const hasPlaceholder = /\{businessId\}/i.test(CATEGORY_BASE);
+    const pathStyle = hasPlaceholder
+      ? CATEGORY_BASE.replace(/\{businessId\}/ig, encodeURIComponent(BUSINESS_ID))
+      : `${CATEGORY_BASE}/${encodeURIComponent(BUSINESS_ID)}`;
+
+    const queryStyle = `${CATEGORY_BASE}?business_id=${encodeURIComponent(BUSINESS_ID)}`;
+
+    // Prefer path style unless the base already has '?'
+    const baseUrl = CATEGORY_BASE.includes('?') ? queryStyle : pathStyle;
+
+    // Always tell backend which owner type we’re asking for
+    const sep = baseUrl.includes('?') ? '&' : '?';
+    return `${baseUrl}${sep}owner_type=${IS_MART ? 'mart' : 'food'}`;
+  }, [CATEGORY_BASE, BUSINESS_ID, IS_MART]);
+
+  // Optional hard override via nav params
+  const addItemEndpointOverride = useMemo(() => {
+    const p = route?.params ?? {};
+    return String(p.addItemEndpoint ?? p.add_item_endpoint ?? '').trim();
+  }, [route?.params]);
+
+  // Choose add-item endpoint — exact, no mutation
+  const ADD_ITEM_ENDPOINT = useMemo(() => {
+    if (addItemEndpointOverride) return addItemEndpointOverride.trim();
+    const foodUrl = (ENV_ADD_MENU_ENDPOINT || '').trim();
+    const martUrl = (ENV_ITEM_ENDPOINT || '').trim(); // exact value from .env
+    return IS_MART ? martUrl : foodUrl;
+  }, [IS_MART, addItemEndpointOverride]);
 
   // Local state
   const [itemName, setItemName] = useState('');
@@ -222,23 +221,23 @@ export default function MenuTab({ isTablet }) {
 
   const [basePrice, setBasePrice] = useState('');
   const [taxRate, setTaxRate] = useState('');
-  const [discount, setDiscount] = useState('');     // ← NEW: discount %
+  const [discount, setDiscount] = useState('');
 
+  // These are food-only controls
   const [isVeg, setIsVeg] = useState(false);
-
   const SPICE_OPTIONS = ['None', 'Mild', 'Medium', 'Hot'];
   const [spiceLevel, setSpiceLevel] = useState('None');
 
   const [isAvailable, setIsAvailable] = useState(true);
   const [stockLimit, setStockLimit] = useState('');
 
-  const [sortPriority, setSortPriority] = useState('None'); // 'None' | 'high' | 'medium' | 'low'
-  const [category, setCategory] = useState('None');         // will map to null for backend
-  const [categories, setCategories] = useState([]);         // [{id, name}]
+  const [sortPriority, setSortPriority] = useState('None');
+  const [category, setCategory] = useState('None');
+  const [categories, setCategories] = useState([]);
   const [loadingCats, setLoadingCats] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // ↓↓↓ keyboard height padding (NO UI changes) ↓↓↓
+  // keyboard padding
   const [kbHeight, setKbHeight] = useState(0);
   const KB_EXTRA = -8;
 
@@ -249,9 +248,8 @@ export default function MenuTab({ isTablet }) {
     const hh = Keyboard.addListener(hideEvt, () => setKbHeight(0));
     return () => { sh.remove(); hh.remove(); };
   }, []);
-  // ↑↑↑ keyboard height padding ↑↑↑
 
-  // Helpers
+  // helpers
   const formatBytes = (bytes) => {
     if (!bytes || bytes <= 0) return '';
     const sizes = ['B', 'KB', 'MB', 'GB'];
@@ -266,7 +264,6 @@ export default function MenuTab({ isTablet }) {
     setImageSize(asset.fileSize || asset.fileSize == 0 ? asset.fileSize : asset.size || 0);
   };
 
-  // Extract categories from various backend shapes
   const extractCategoriesFromResponse = (raw) => {
     if (Array.isArray(raw)) return raw;
     if (raw && Array.isArray(raw.types)) {
@@ -280,14 +277,14 @@ export default function MenuTab({ isTablet }) {
     return [];
   };
 
-  // Fetch categories from API (no local caching)
+  // fetch categories (same API for food & mart) + always include "None"
   const loadCategories = useCallback(async (opts = { showErrors: true }) => {
     if (!BUSINESS_ID) {
       setLoadingCats(false);
       if (opts.showErrors) Alert.alert('Config', 'Missing businessId. Pass it via route params.');
       return;
     }
-    if (!CATEGORY_ENDPOINT) {
+    if (!CATEGORY_BASE) {
       setLoadingCats(false);
       if (opts.showErrors) Alert.alert('Config', 'Missing CATEGORY_ENDPOINT in .env');
       return;
@@ -323,19 +320,15 @@ export default function MenuTab({ isTablet }) {
         name: c.category_name ?? c.name ?? c.title ?? c.label ?? 'Unnamed',
       }));
 
-      // Prepend "None"
       const withNone = [{ id: 'None', name: 'None' }, ...normalized];
-
       setCategories(withNone);
-
-      // Default to "None" unless already chosen
       if (!category) setCategory('None');
     } catch (e) {
       if (opts.showErrors) Alert.alert('Categories', `Failed to load categories.\n${String(e?.message || e)}`);
     } finally {
       setLoadingCats(false);
     }
-  }, [BUSINESS_ID, CATEGORY_ENDPOINT, CATEGORIES_URL, category]);
+  }, [BUSINESS_ID, CATEGORY_BASE, CATEGORIES_URL, category]);
 
   useEffect(() => { loadCategories({ showErrors: true }); }, [loadCategories]);
 
@@ -345,7 +338,7 @@ export default function MenuTab({ isTablet }) {
     setRefreshing(false);
   }, [loadCategories]);
 
-  // Image actions
+  // image actions
   const pickFromLibrary = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -371,30 +364,26 @@ export default function MenuTab({ isTablet }) {
   };
 
   const removeImage = () => {
-    setImageUri('');
-    setImageName('');
-    setImageSize(0);
-    setPreviewOpen(false);
+    setImageUri(''); setImageName(''); setImageSize(0); setPreviewOpen(false);
   };
 
-  // Map UI sort priority to backend numeric sort_order
   const mapSortPriority = (priority) => {
-    if (!priority || priority === 'None') return 2; // default neutral
+    if (!priority || priority === 'None') return 2;
     return priority === 'high' ? 3 : priority === 'low' ? 1 : 2;
   };
 
-  // Backend POST (returns created item if possible)
+  // POST to backend — EXACT endpoint, no auto-retry, no suffix changes
   async function postToBackend(payload) {
-    if (!ENV_ADD_MENU_ENDPOINT) throw new Error('ADD_MENU_ENDPOINT is not set');
-
+    if (!ADD_ITEM_ENDPOINT) throw new Error('ADD_ITEM_ENDPOINT is not set');
     const token = (await SecureStore.getItemAsync('auth_token')) || '';
-
-    // If there's a local image URI, prefer multipart so the file is actually uploaded
     const hasLocalImage = !!payload.item_image;
 
+    const url = ADD_ITEM_ENDPOINT; // EXACT as provided
+    // console.log(`[AddMenuTab] POST (exact) → ${url} (ownerType=${ownerType})`);
+
     if (!hasLocalImage) {
-      // JSON is fine when no image file to upload
-      const res = await fetch(ENV_ADD_MENU_ENDPOINT, {
+      // JSON request
+      const res = await fetch(url, {
         method: 'POST',
         headers: {
           Accept: 'application/json',
@@ -403,69 +392,62 @@ export default function MenuTab({ isTablet }) {
         },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`Server error ${res.status}: ${txt}`);
-      }
-      try { return await res.json(); } catch { return null; }
+      const text = await res.text();
+      if (!res.ok) throw new Error(`HTTP ${res.status} • ${text.slice(0, 200)}`);
+      try { return text ? JSON.parse(text) : null; } catch { return null; }
     }
 
-    // Multipart for image upload
+    // multipart request
     const fd = new FormData();
     fd.append('business_id', String(payload.business_id));
     if (payload.category_name != null) fd.append('category_name', String(payload.category_name));
     fd.append('item_name', payload.item_name);
     fd.append('description', payload.description ?? '');
-
-    // numeric fields
     fd.append('actual_price', String(payload.actual_price));
     if (payload.discount_percentage != null) fd.append('discount_percentage', String(payload.discount_percentage));
     if (payload.tax_rate != null) fd.append('tax_rate', String(payload.tax_rate));
-    fd.append('is_veg', String(payload.is_veg));
-    fd.append('spice_level', payload.spice_level);
+
+    // FOOD-only fields
+    if (!IS_MART) {
+      fd.append('is_veg', String(payload.is_veg));
+      fd.append('spice_level', payload.spice_level);
+    }
+
     fd.append('is_available', String(payload.is_available));
     if (payload.stock_limit != null) fd.append('stock_limit', String(payload.stock_limit));
     fd.append('sort_order', String(payload.sort_order));
 
-    // ✅ send the file under the key your backend expects: item_image
     if (payload.item_image) {
       const uri = String(payload.item_image);
-      const filenameGuess = uri.split('/').pop() || 'image.jpg';
-      const lower = filenameGuess.toLowerCase();
-      const type =
-        lower.endsWith('.png') ? 'image/png'
-        : (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) ? 'image/jpeg'
+      const filename = (uri.split('/').pop() || 'image.jpg').toLowerCase();
+      const type = filename.endsWith('.png') ? 'image/png'
+        : (filename.endsWith('.jpg') || filename.endsWith('.jpeg')) ? 'image/jpeg'
         : 'application/octet-stream';
-
-      fd.append('item_image', { uri, name: filenameGuess, type });
-      // ⚠️ Do NOT also append a string 'item_image' – that can confuse the backend
+      fd.append('item_image', { uri, name: filename, type });
     }
 
-    const res2 = await fetch(ENV_ADD_MENU_ENDPOINT, {
+    const res2 = await fetch(url, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
-        // Important: don't set Content-Type manually; let fetch set the multipart boundary
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: fd,
     });
-    if (!res2.ok) {
-      const txt2 = await res2.text();
-      throw new Error(`Server error ${res2.status}: ${txt2}`);
-    }
-    try { return await res2.json(); } catch { return null; }
+    const text2 = await res2.text();
+    if (!res2.ok) throw new Error(`HTTP ${res2.status} • ${text2.slice(0, 200)}`);
+    try { return text2 ? JSON.parse(text2) : null; } catch { return null; }
   }
 
-  // Save: VALIDATE -> POST ONLY (no local persistence)
+  // Save
   const onSave = async () => {
     if (!BUSINESS_ID) return Alert.alert('Config', 'Missing businessId. Pass it via route params.');
     if (!itemName.trim()) return Alert.alert('Validation', 'Please enter item name.');
-    // Category may be "None" now → allowed
     if (!basePrice || isNaN(Number(basePrice))) return Alert.alert('Validation', 'Enter a valid base price.');
     if (taxRate !== '' && isNaN(Number(taxRate))) return Alert.alert('Validation', 'Enter a valid tax rate.');
-    if (discount !== '' && isNaN(Number(discount))) return Alert.alert('Validation', 'Enter a valid discount.'); // ← NEW
-    if (!SPICE_OPTIONS.includes(spiceLevel)) {
+    if (discount !== '' && isNaN(Number(discount))) return Alert.alert('Validation', 'Enter a valid discount.');
+
+    if (!IS_MART && !SPICE_OPTIONS.includes(spiceLevel)) {
       return Alert.alert('Validation', `Spice level must be one of: ${SPICE_OPTIONS.join(', ')}`);
     }
     if (stockLimit !== '' && (isNaN(Number(stockLimit)) || Number(stockLimit) < 0)) {
@@ -474,7 +456,6 @@ export default function MenuTab({ isTablet }) {
 
     const selectedCat = categories.find((x) => x.id === category);
 
-    // 🔁 payload keys adjusted to your backend
     const payload = {
       business_id: Number(BUSINESS_ID),
       category_name: (category === 'None') ? null : (selectedCat?.name ?? null),
@@ -482,26 +463,29 @@ export default function MenuTab({ isTablet }) {
       description: description.trim(),
       item_image: imageUri || null,
 
-      actual_price: Number(basePrice),              // was base_price
-      discount_percentage: discount === '' ? null : Number(discount), // ← NEW
+      actual_price: Number(basePrice),
+      discount_percentage: discount === '' ? null : Number(discount),
       tax_rate: taxRate === '' ? null : Number(taxRate),
 
-      is_veg: isVeg ? 1 : 0,
-      spice_level: spiceLevel,
       is_available: isAvailable ? 1 : 0,
       stock_limit: stockLimit === '' ? null : Number(stockLimit),
       sort_order: mapSortPriority(sortPriority),
     };
 
+    // Only add to payload for food
+    if (!IS_MART) {
+      payload.is_veg = isVeg ? 1 : 0;
+      payload.spice_level = spiceLevel;
+    }
+
     try {
       const created = await postToBackend(payload);
 
-      // normalize what HomeTab expects
       const newItem = {
         id: String(created?.id ?? created?._id ?? created?.menu_id ?? Date.now()),
         name: created?.item_name ?? payload.item_name,
         title: created?.title ?? undefined,
-        price: created?.actual_price ?? payload.actual_price, // ← prefer actual_price
+        price: created?.actual_price ?? payload.actual_price,
         currency: created?.currency ?? 'Nu',
         inStock: (created?.is_available ?? payload.is_available) ? true : false,
         category: created?.category_name ?? payload.category_name ?? '',
@@ -510,10 +494,8 @@ export default function MenuTab({ isTablet }) {
         description: created?.description ?? payload.description ?? '',
       };
 
-      // broadcast so HomeTab updates instantly
       DeviceEventEmitter.emit('menu:item:added', newItem);
 
-      // reset form on success
       setItemName('');
       setDescription('');
       setImageUri('');
@@ -521,7 +503,7 @@ export default function MenuTab({ isTablet }) {
       setImageSize(0);
       setBasePrice('');
       setTaxRate('');
-      setDiscount('');              // ← NEW
+      setDiscount('');
       setIsVeg(false);
       setSpiceLevel('None');
       setIsAvailable(true);
@@ -529,7 +511,7 @@ export default function MenuTab({ isTablet }) {
       setSortPriority('None');
       setCategory('None');
 
-      Alert.alert('Saved', 'Menu item added Successfully.');
+      Alert.alert('Saved', IS_MART ? 'Item added successfully.' : 'Menu item added successfully.');
     } catch (e) {
       Alert.alert('Error', e?.message || 'Failed to save.');
     }
@@ -538,13 +520,17 @@ export default function MenuTab({ isTablet }) {
   const PREVIEW_W = isTablet ? 320 : 270;
   const PREVIEW_H = isTablet ? 180 : 150;
 
-  // ───────────────────────── Header and Form renderers (UI unchanged) ─────────────────────────
-  const ListHeaderComponent = useMemo(() => (
-    <View style={{ marginBottom: 12 }}>
-      <Text style={[styles.title, { fontSize: FS.title }]}>Menu</Text>
-      <Text style={[styles.sub, { fontSize: FS.sub }]}>Manage your menu items and availability.</Text>
-    </View>
-  ), [FS.title, FS.sub]);
+  // Header and form (mart-specific labels/placeholders)
+  const ListHeaderComponent = useMemo(() => {
+    const titleText = IS_MART ? 'Items' : 'Menu';
+    const subText = IS_MART ? 'Manage your items and availability.' : 'Manage your menu items and availability.';
+    return (
+      <View style={{ marginBottom: 12 }}>
+        <Text style={[styles.title, { fontSize: FS.title }]}>{titleText}</Text>
+        <Text style={[styles.sub, { fontSize: FS.sub }]}>{subText}</Text>
+      </View>
+    );
+  }, [FS.title, FS.sub, IS_MART]);
 
   const renderForm = useCallback(() => (
     <View>
@@ -554,7 +540,7 @@ export default function MenuTab({ isTablet }) {
         <TextInput
           value={itemName}
           onChangeText={setItemName}
-          placeholder="e.g., Chicken Fried Rice"
+          placeholder={IS_MART ? 'e.g., Toothpaste 200g' : 'e.g., Chicken Fried Rice'}
           placeholderTextColor={PLACEHOLDER_COLOR}
           style={[styles.input, { fontSize: FS.base, fontFamily: FONT_FAMILY, height: INPUT_HEIGHT }]}
         />
@@ -566,7 +552,7 @@ export default function MenuTab({ isTablet }) {
         <TextInput
           value={description}
           onChangeText={setDescription}
-          placeholder="Short description"
+          placeholder={IS_MART ? 'Short description (brand, size, etc.)' : 'Short description'}
           placeholderTextColor={PLACEHOLDER_COLOR}
           style={[styles.input, styles.inputMultiline, { fontSize: FS.base, fontFamily: FONT_FAMILY }]}
           multiline
@@ -625,15 +611,15 @@ export default function MenuTab({ isTablet }) {
         )}
       </View>
 
-      {/* Base Price / Tax Rate */}
+      {/* Price / Tax */}
       <View style={[styles.row, { gap: 12 }]}>
         <View style={[styles.col, { flex: 1 }]}>
-          <Text style={[styles.label, { fontSize: FS.label }]}>Base price</Text>
+          <Text style={[styles.label, { fontSize: FS.label }]}>{IS_MART ? 'Price' : 'Base price'}</Text>
           <TextInput
             value={basePrice}
             onChangeText={setBasePrice}
             keyboardType={Platform.OS === 'ios' ? 'decimal-pad' : 'numeric'}
-            placeholder="e.g., 9.99"
+            placeholder={IS_MART ? 'e.g., 99.00' : 'e.g., 9.99'}
             placeholderTextColor={PLACEHOLDER_COLOR}
             style={[styles.input, { fontSize: FS.base, fontFamily: FONT_FAMILY, height: INPUT_HEIGHT }]}
           />
@@ -664,61 +650,38 @@ export default function MenuTab({ isTablet }) {
         />
       </View>
 
-      {/* Switches */}
+      {/* Switches row (Is veg hidden for mart) */}
       <View style={[styles.row, { alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }]}>
-        <View style={styles.switchRow}>
-          <Text style={[styles.label, { marginRight: 8, fontSize: FS.label }]}>Is veg</Text>
-          <Switch value={isVeg} onValueChange={setIsVeg} />
-        </View>
+        {!IS_MART && (
+          <View style={styles.switchRow}>
+            <Text style={[styles.label, { marginRight: 8, fontSize: FS.label }]}>Is veg</Text>
+            <Switch value={isVeg} onValueChange={setIsVeg} />
+          </View>
+        )}
         <View style={styles.switchRow}>
           <Text style={[styles.label, { marginRight: 8, fontSize: FS.label }]}>Is available</Text>
           <Switch value={isAvailable} onValueChange={setIsAvailable} />
         </View>
       </View>
 
-      {/* Category (now with None) */}
-      <View style={styles.field}>
-        <Text style={[styles.label, { fontSize: FS.label }]}>Category</Text>
-        {loadingCats ? (
-          <View style={[styles.pickerWrap, styles.catLoading]}>
-            <ActivityIndicator />
-            <Text style={[styles.catLoadingText, { fontFamily: FONT_FAMILY, fontSize: FS.small }]}>Loading categories…</Text>
-          </View>
-        ) : categories.length === 0 ? (
-          <View style={[styles.pickerWrap, styles.catLoading]}>
-            <Ionicons name="warning-outline" size={16} color="#ef4444" />
-            <Text style={[styles.catLoadingText, { color: '#ef4444', fontFamily: FONT_FAMILY, fontSize: FS.small }]}>
-              No categories found for this business.
-            </Text>
-          </View>
-        ) : (
-          <Select
-            value={category}
-            onChange={setCategory}
-            options={categories.map((c) => ({ label: c.name, value: c.id }))}
-            placeholder="None"
-            testID="category"
-            fontSize={FS.base}
-          />
-        )}
-      </View>
-
-      {/* Spice / Stock / Sort (Sort now has None) */}
+      {/* Spice / Stock / Sort (Spice hidden for mart) */}
       <View style={[styles.row, { gap: 12 }]}>
-        <View style={[styles.col, { flex: 1 }]}>
-          <Text style={[styles.label, { fontSize: FS.label }]}>Spice level</Text>
-          <Select
-            value={spiceLevel}
-            onChange={setSpiceLevel}
-            options={SPICE_OPTIONS.map((x) => ({ label: x, value: x }))}
-            placeholder="None"
-            testID="spice"
-            fontSize={FS.base}
-          />
-        </View>
+        {!IS_MART && (
+          <View style={[styles.col, { flex: 1 }]}>
+            <Text style={[styles.label, { fontSize: FS.label }]}>Spice level</Text>
+            <Select
+              value={spiceLevel}
+              onChange={setSpiceLevel}
+              options={SPICE_OPTIONS.map((x) => ({ label: x, value: x }))}
+              placeholder="None"
+              testID="spice"
+              fontSize={FS.base}
+            />
+          </View>
+        )}
 
         <View style={[styles.col, { flex: 1 }]}>
-          <Text style={[styles.label, { fontSize: FS.label }]}>Stock limit</Text>
+          <Text style={[styles.label, { fontSize: FS.label }]}>{IS_MART ? 'Stock' : 'Stock limit'}</Text>
           <TextInput
             value={stockLimit}
             onChangeText={setStockLimit}
@@ -747,11 +710,40 @@ export default function MenuTab({ isTablet }) {
         </View>
       </View>
 
+      {/* Category */}
+      <View style={styles.field}>
+        <Text style={[styles.label, { fontSize: FS.label }]}>Category</Text>
+        {loadingCats ? (
+          <View style={[styles.pickerWrap, styles.catLoading]}>
+            <ActivityIndicator />
+            <Text style={[styles.catLoadingText, { fontFamily: FONT_FAMILY, fontSize: FS.small }]}>Loading categories…</Text>
+          </View>
+        ) : categories.length === 0 ? (
+          <View style={[styles.pickerWrap, styles.catLoading]}>
+            <Ionicons name="warning-outline" size={16} color="#ef4444" />
+            <Text style={[styles.catLoadingText, { color: '#ef4444', fontFamily: FONT_FAMILY, fontSize: FS.small }]}>
+              No categories found for this business.
+            </Text>
+          </View>
+        ) : (
+          <Select
+            value={category}
+            onChange={setCategory}
+            options={categories.map((c) => ({ label: c.name, value: c.id }))}
+            placeholder="None"
+            testID="category"
+            fontSize={FS.base}
+          />
+        )}
+      </View>
+
       {/* Buttons */}
       <View style={[styles.row, { marginTop: 16, gap: 12 }]}>
         <TouchableOpacity style={[styles.primaryBtn, { paddingVertical: isTablet ? 14 : 12 }]} onPress={onSave} activeOpacity={0.9}>
           <Ionicons name="save-outline" size={isTablet ? 20 : 18} color="#fff" />
-          <Text style={[styles.primaryBtnText, { fontSize: FS.base, fontFamily: FONT_FAMILY }]}>Save item</Text>
+          <Text style={[styles.primaryBtnText, { fontSize: FS.base, fontFamily: FONT_FAMILY }]}>
+            {IS_MART ? 'Save item' : 'Save item'}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -760,19 +752,20 @@ export default function MenuTab({ isTablet }) {
           activeOpacity={0.9}
         >
           <Ionicons name="list-outline" size={isTablet ? 20 : 18} color={TEXT_COLOR} />
-          <Text style={[styles.secondaryBtnText, { fontSize: FS.base, fontFamily: FONT_FAMILY }]}>Open menu</Text>
+          <Text style={[styles.secondaryBtnText, { fontSize: FS.base, fontFamily: FONT_FAMILY }]}>
+            {IS_MART ? 'Open items' : 'Open menu'}
+          </Text>
         </TouchableOpacity>
       </View>
     </View>
   ), [
     FS, itemName, description, imageUri, imageName, imageSize, isTablet,
     basePrice, taxRate, discount, isVeg, isAvailable, category, categories, loadingCats,
-    spiceLevel, stockLimit, sortPriority
+    spiceLevel, stockLimit, sortPriority, IS_MART
   ]);
 
   return (
     <>
-      {/* Keyboard-safe wrapper — keeps your UI, just allows full scroll with keyboard */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -784,36 +777,28 @@ export default function MenuTab({ isTablet }) {
           renderItem={() => renderForm()}
           ListHeaderComponent={ListHeaderComponent}
           ItemSeparatorComponent={() => <View style={{ height: 0 }} />}
-
           contentContainerStyle={{
             paddingBottom: (kbHeight ? kbHeight + KB_EXTRA : 32),
             paddingHorizontal: isTablet ? 20 : 16,
             paddingTop: 16,
           }}
-
-          // Let RN adjust scroll insets automatically when keyboard appears (RN >= 0.72)
           automaticallyAdjustKeyboardInsets
           keyboardShouldPersistTaps="handled"
-
-          // Pull to refresh
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           removeClippedSubviews={false}
           nestedScrollEnabled={false}
-
-          // Also push scroll indicators up when keyboard is visible (iOS)
           scrollIndicatorInsets={{ bottom: Math.max(0, kbHeight + KB_EXTRA) }}
-          contentInset={{ bottom: 0 }} // keep content inset predictable
+          contentInset={{ bottom: 0 }}
         />
       </KeyboardAvoidingView>
 
-      {/* Modal overlay (image preview) */}
       <Modal visible={previewOpen} animationType="fade" transparent>
-        <TouchableWithoutFeedback onPress={() => setPreviewOpen(false)}> 
+        <TouchableWithoutFeedback onPress={() => setPreviewOpen(false)}>
           <View style={styles.modalBackdrop}>
             <TouchableWithoutFeedback>
               <View style={styles.modalCard}>
                 <View style={styles.modalHeader}>
-                  <Text style={[styles.modalTitle, { fontFamily: FONT_FAMILY }]}>{'Preview'}</Text>
+                  <Text style={styles.modalTitle}>{'Preview'}</Text>
                   <TouchableOpacity onPress={() => setPreviewOpen(false)}>
                     <Ionicons name="close" size={22} color={TEXT_COLOR} />
                   </TouchableOpacity>
@@ -929,10 +914,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
-  pickerText: {
-    fontFamily: FONT_FAMILY,
-    includeFontPadding: false,
-  },
+  pickerText: { fontFamily: FONT_FAMILY, includeFontPadding: false },
 
   catLoading: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: INPUT_HEIGHT, gap: 10 },
   catLoadingText: { color: '#475569' },
@@ -957,7 +939,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#f1f59',
+    backgroundColor: '#f1f5f9',
     paddingHorizontal: 16,
     borderRadius: 999,
     alignSelf: 'flex-start',
@@ -1000,10 +982,7 @@ const styles = StyleSheet.create({
   },
 
   // Dropdown overlay
-  overlayBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.12)',
-  },
+  overlayBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.12)' },
   dropdownCard: {
     position: 'absolute',
     backgroundColor: '#fff',
@@ -1024,11 +1003,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  dropdownSeparator: {
-    height: 1,
-    backgroundColor: '#e2e8f0',
-  },
-  dropdownText: {
-    fontFamily: FONT_FAMILY,
-  },
+  dropdownSeparator: { height: 1, backgroundColor: '#e2e8f0' },
+  dropdownText: { fontFamily: FONT_FAMILY },
 });

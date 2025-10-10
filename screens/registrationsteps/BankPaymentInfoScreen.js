@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   Image,
   Alert,
@@ -13,29 +12,70 @@ import {
   KeyboardAvoidingView,
   Platform,
   Keyboard,
+  Modal,
+  Pressable,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 import HeaderWithSteps from "./HeaderWithSteps";
+
+/* ───────── BANKS (logos only; no branches) ─────────
+   Account length per your table:
+   BDBL 12, BNBL 9, BOBL 9, DPNBL 12, TBank 9, DK 12
+*/
+const BANKS = [
+  {
+    code: "bdb",
+    name: "Bhutan Development Bank Ltd.",
+    accountLength: 12,
+    logoSource: require("../../assets/bdb.png"),
+  },
+  {
+    code: "bnb",
+    name: "Bhutan National Bank Limited",
+    accountLength: 9,
+    logoSource: require("../../assets/bnb.png"),
+  },
+  {
+    code: "bob",
+    name: "Bank of Bhutan Limited",
+    accountLength: 9,
+    logoSource: require("../../assets/bob.png"),
+  },
+  {
+    code: "drukpnb",
+    name: "Druk PNB",
+    accountLength: 12,
+    logoSource: require("../../assets/drukpnb.png"),
+  },
+  {
+    code: "tbank",
+    name: "T Bank Ltd.",
+    accountLength: 9,
+    logoSource: require("../../assets/tbank.png"),
+  },
+  {
+    code: "dk",
+    name: "DK Limited Bank",
+    accountLength: 12,
+    logoSource: require("../../assets/dk.png"),
+  },
+];
 
 export default function BankPaymentInfoScreen() {
   const navigation = useNavigation();
   const route = useRoute();
-  const insets = useSafeAreaInsets();
 
-  // Pull through anything we might need to preserve during edit → review round-trips
   const {
     merchant,
     serviceType = "food",
-    deliveryOption = null,           // for preselecting later screen when editing
-    initialDeliveryOption = null,    // alt name supported
-    returnTo = null,                 // e.g., "ReviewSubmitScreen" when editing
-    // 👇 NEW: accept owner_type if provided by previous screens
+    deliveryOption = null,
+    initialDeliveryOption = null,
+    returnTo = null,
     owner_type = null,
   } = route.params ?? {};
 
-  // 👇 NEW: derive an effective owner type (food/mart/...)
   const effectiveOwnerType = String(
     owner_type ?? merchant?.owner_type ?? serviceType ?? "food"
   )
@@ -44,58 +84,19 @@ export default function BankPaymentInfoScreen() {
 
   const existingBank = merchant?.bank ?? {};
 
-  const [accountName, setAccountName] = useState("");
+  const [bankCode, setBankCode] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
-  const [bankName, setBankName] = useState("");
+  const [accountName, setAccountName] = useState("");
+  const [qrImage, setQrImage] = useState(null);
 
-  // Bank card images (front/back)
-  const [bankCardFront, setBankCardFront] = useState(null);
-  const [bankCardBack, setBankCardBack] = useState(null);
+  // Simple modal (no search / no recent)
+  const [bankModalVisible, setBankModalVisible] = useState(false);
 
-  // Bank QR image
-  const [qrCodeImage, setQrCodeImage] = useState(null);
-  const [pickingQR, setPickingQR] = useState(false);
-
-  // Prefill state if merchant.bank exists (supports both edit and resume flows)
-  useEffect(() => {
-    if (existingBank) {
-      if (existingBank.account_name) setAccountName(existingBank.account_name);
-      if (existingBank.account_number) setAccountNumber(String(existingBank.account_number));
-      if (existingBank.bank_name) setBankName(existingBank.bank_name);
-
-      // Coerce possible incoming image values to { uri, name, mimeType, size }
-      const normalizeImg = (img, fallbackName) => {
-        if (!img) return null;
-        if (typeof img === "string") {
-          return { uri: img, name: fallbackName, mimeType: "image/jpeg", size: 0 };
-        }
-        return {
-          uri: img.uri ?? "",
-          name: img.name ?? fallbackName,
-          mimeType: img.mimeType ?? "image/jpeg",
-          size: img.size ?? 0,
-        };
-      };
-
-      if (existingBank.bank_card_front) {
-        setBankCardFront(normalizeImg(existingBank.bank_card_front, "bank-card-front.jpg"));
-      }
-      if (existingBank.bank_card_back) {
-        setBankCardBack(normalizeImg(existingBank.bank_card_back, "bank-card-back.jpg"));
-      }
-      if (existingBank.bank_qr) {
-        setQrCodeImage(normalizeImg(existingBank.bank_qr, "bank-qr.jpg"));
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once on mount
-
-  // keyboard tracking → overlay sticky bar with uniform spacing
+  // keyboard spacing for sticky bar
   const [kbHeight, setKbHeight] = useState(0);
   useEffect(() => {
     const onShow = (e) => setKbHeight(e.endCoordinates?.height ?? 0);
     const onHide = () => setKbHeight(0);
-
     const showSub =
       Platform.OS === "ios"
         ? Keyboard.addListener("keyboardWillShow", onShow)
@@ -104,110 +105,61 @@ export default function BankPaymentInfoScreen() {
       Platform.OS === "ios"
         ? Keyboard.addListener("keyboardWillHide", onHide)
         : Keyboard.addListener("keyboardDidHide", onHide);
-
     return () => {
       showSub.remove();
       hideSub.remove();
     };
   }, []);
 
-  // keep spacing uniform across keyboards & devices
-  const bottomSpace = Math.max(kbHeight, insets.bottom, 16);
+  // Prefill (edit mode)
+  useEffect(() => {
+    if (!existingBank) return;
+    const incomingCode =
+      existingBank.bank_code ||
+      BANKS.find(
+        (b) =>
+          b.name.toLowerCase() === String(existingBank.bank_name || "").toLowerCase()
+      )?.code ||
+      "";
+    if (incomingCode) setBankCode(incomingCode);
+    if (existingBank.account_number) setAccountNumber(String(existingBank.account_number));
+    if (existingBank.account_name) setAccountName(existingBank.account_name);
+
+    const normalizeImg = (img, fallbackName) => {
+      if (!img) return null;
+      if (typeof img === "string") {
+        return { uri: img, name: fallbackName, mimeType: "image/jpeg", size: 0 };
+      }
+      return {
+        uri: img.uri ?? "",
+        name: img.name ?? fallbackName,
+        mimeType: img.mimeType ?? "image/jpeg",
+        size: img.size ?? 0,
+      };
+    };
+    if (existingBank.bank_qr) setQrImage(normalizeImg(existingBank.bank_qr, "bank-qr.jpg"));
+  }, []);
+
+  const selectedBank = useMemo(
+    () => BANKS.find((b) => b.code === bankCode) || null,
+    [bankCode]
+  );
+
+  // Account length validation (per bank)
+  const requiredLen = selectedBank?.accountLength ?? null;
+  const accountRegex = requiredLen ? new RegExp(`^\\d{${requiredLen}}$`) : /^\d{8,20}$/;
+  const accountNumberValid =
+    accountNumber.trim().length === 0 ? true : accountRegex.test(accountNumber.trim());
 
   const validate = () => {
+    if (!bankCode) return false;
+    if (!accountNumber.trim() || !accountRegex.test(accountNumber.trim())) return false;
     if (!accountName.trim()) return false;
-    if (!accountNumber.trim()) return false;
-    if (!bankName.trim()) return false;
-    if (!bankCardFront?.uri) return false; // require front image
-    if (!bankCardBack?.uri) return false;  // require back image
-    if (!qrCodeImage?.uri) return false;   // require QR
+    if (!qrImage?.uri) return false;
     return true;
   };
 
-  // --- pickers
-  const pickBankCardFront = async () => {
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Permission needed", "Allow photo access to upload the bank card.");
-        return;
-      }
-      const img = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 1,
-      });
-      if (!img.canceled) {
-        const a = img.assets?.[0];
-        setBankCardFront({
-          name: a?.fileName ?? "bank-card-front.jpg",
-          uri: a?.uri,
-          mimeType: a?.mimeType ?? "image/jpeg",
-          size: a?.fileSize ?? 0,
-        });
-      }
-    } catch (e) {
-      Alert.alert("Front card upload failed", e?.message || "Try again.");
-    }
-  };
-
-  const pickBankCardBack = async () => {
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Permission needed", "Allow photo access to upload the bank card.");
-        return;
-      }
-      const img = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 1,
-      });
-      if (!img.canceled) {
-        const a = img.assets?.[0];
-        setBankCardBack({
-          name: a?.fileName ?? "bank-card-back.jpg",
-          uri: a?.uri,
-          mimeType: a?.mimeType ?? "image/jpeg",
-          size: a?.fileSize ?? 0,
-        });
-      }
-    } catch (e) {
-      Alert.alert("Back card upload failed", e?.message || "Try again.");
-    }
-  };
-
-  const onPickQrCodeImage = async () => {
-    try {
-      setPickingQR(true);
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Permission needed", "Allow photo access to upload the QR code.");
-        return;
-      }
-      const img = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 1,
-      });
-      if (!img.canceled) {
-        const a = img.assets?.[0];
-        setQrCodeImage({
-          name: a?.fileName ?? "bank-qr.jpg",
-          uri: a?.uri,
-          mimeType: a?.mimeType ?? "image/jpeg",
-          size: a?.fileSize ?? 0,
-        });
-      }
-    } catch (e) {
-      Alert.alert("QR upload failed", e?.message || "Try again.");
-    } finally {
-      setPickingQR(false);
-    }
-  };
-
-  const removeFront = () => setBankCardFront(null);
-  const removeBack = () => setBankCardBack(null);
-  const removeQR = () => setQrCodeImage(null);
-
-  // ✅ Normalize category to an array of **IDs** (strings)
+  // Submit
   const normalizeCategoryIds = (v) => {
     if (!v) return [];
     if (Array.isArray(v)) {
@@ -222,11 +174,7 @@ export default function BankPaymentInfoScreen() {
         .filter(Boolean);
     }
     if (typeof v === "string") {
-      // supports CSV of IDs: "2,5,8"
-      return v
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
+      return v.split(",").map((s) => s.trim()).filter(Boolean);
     }
     if (typeof v === "object") {
       const id = v.id ?? v.value ?? v.business_type_id ?? null;
@@ -241,7 +189,6 @@ export default function BankPaymentInfoScreen() {
       return;
     }
 
-    // normalize whatever category we already have → array of IDs
     const normalizedCategoryIds = normalizeCategoryIds(
       (route.params?.merchant && route.params?.merchant.category) ??
         route.params?.initialCategory ??
@@ -251,36 +198,28 @@ export default function BankPaymentInfoScreen() {
 
     const payload = {
       ...merchant,
-      // ensure category is carried inside merchant as an array of IDs
       category: normalizedCategoryIds,
       categories: merchant?.categories ?? route.params?.merchant?.categories ?? [],
       bank: {
-        account_name: accountName.trim(),
+        bank_name: selectedBank?.name ?? "",
+        bank_code: selectedBank?.code ?? "",
         account_number: accountNumber.trim(),
-        bank_name: bankName.trim(),
-        bank_card_front: bankCardFront, // { uri, name, mimeType, size }
-        bank_card_back: bankCardBack,   // { uri, name, mimeType, size }
-        bank_qr: qrCodeImage,           // { uri, name, mimeType, size }
+        account_name: accountName.trim(),
+        bank_qr: qrImage,
       },
       serviceType,
-      // 👇 NEW: persist the effective owner type into the merchant snapshot
       owner_type: effectiveOwnerType,
     };
 
-    // IMPORTANT: spread FIRST, then override with the updated merchant payload
     navigation.navigate("DeliveryOptionsScreen", {
-      ...(route.params ?? {}), // keep everything coming in
-      merchant: payload,       // ensure the new bank data + category + owner_type wins
-      // also pass business type at root for easy access by other screens
+      ...(route.params ?? {}),
+      merchant: payload,
       initialCategory: normalizedCategoryIds,
       category: normalizedCategoryIds,
       serviceType,
-      // 👇 NEW: forward owner type explicitly at the root as well
       owner_type: effectiveOwnerType,
-      // keep any existing choice to preselect on next screen (if present)
       initialDeliveryOption: deliveryOption ?? initialDeliveryOption ?? null,
-      // if we came here from Review, let DeliveryOptions send us back there after saving
-      returnTo, // e.g., "ReviewSubmitScreen"
+      returnTo,
     });
   };
 
@@ -289,8 +228,6 @@ export default function BankPaymentInfoScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
       <HeaderWithSteps step="Step 4 of 7" />
-
-      {/* Fixed page title, same pattern as MerchantExtrasScreen */}
       <View style={styles.fixedTitle}>
         <Text style={styles.h1}>Bank & Payment Information</Text>
       </View>
@@ -303,139 +240,85 @@ export default function BankPaymentInfoScreen() {
           <ScrollView
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
-            // constant padding; sticky bar overlays for consistent spacing
             contentContainerStyle={[styles.container, { paddingBottom: 120 }]}
           >
-            {/* Title moved out of ScrollView into fixed header */}
+            {/* 1) Bank (simple list dropdown) */}
+            <Text style={styles.label}>
+              Bank <Text style={{ color: "red" }}>*</Text>
+            </Text>
+            <Pressable style={styles.selectWrapper} onPress={() => setBankModalVisible(true)}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
+                {selectedBank?.logoSource ? (
+                  <Image source={selectedBank.logoSource} style={styles.logoSm} />
+                ) : (
+                  <View style={[styles.logoSm, { backgroundColor: "#f3f4f6" }]} />
+                )}
+                <Text
+                  style={[styles.selectText, !selectedBank && { color: "#9aa0a6" }]}
+                  numberOfLines={1}
+                >
+                  {selectedBank?.name || "Select bank"}
+                </Text>
+              </View>
+              {/* Bigger dropdown icon */}
+              <View style={styles.dropdownIcon}>
+                <Text allowFontScaling={false} style={styles.dropdownIconText}>▾</Text>
+              </View>
+            </Pressable>
+            {!!requiredLen && (
+              <Text style={styles.helperText}>Must be exactly {requiredLen} digits.</Text>
+            )}
 
+            {/* 2) Account Number */}
+            <View style={{ marginBottom: 6 }}>
+              <Text style={styles.label}>
+                Bank Account Number <Text style={{ color: "red" }}>*</Text>
+              </Text>
+              <View style={[styles.inputWrapper, !accountNumberValid && styles.inputErrorBorder]}>
+                <TextInput
+                  style={styles.inputField}
+                  placeholder={
+                    requiredLen
+                      ? `Enter ${requiredLen}-digit account number`
+                      : "Enter account number"
+                  }
+                  value={accountNumber}
+                  onChangeText={(t) => setAccountNumber(t.replace(/[^0-9]/g, ""))}
+                  keyboardType="number-pad"
+                  autoCapitalize="none"
+                  placeholderTextColor="#9aa0a6"
+                  returnKeyType="next"
+                  maxLength={requiredLen || 20}
+                />
+              </View>
+            </View>
+            {!accountNumberValid && accountNumber.length > 0 && (
+              <Text style={styles.errorText}>
+                Account number must be exactly {requiredLen} digits.
+              </Text>
+            )}
+
+            {/* 3) Account Holder Name */}
             <Field
-              label={<Text>Bank Account Name <Text style={{ color: "red" }}>*</Text></Text>}
+              label={
+                <Text>
+                  Account Holder Name <Text style={{ color: "red" }}>*</Text>
+                </Text>
+              }
               placeholder="Enter account holder name"
               value={accountName}
               onChangeText={setAccountName}
               autoCapitalize="words"
             />
 
-            <Field
-              label={<Text>Bank Account Number <Text style={{ color: "red" }}>*</Text></Text>}
-              placeholder="Enter account number"
-              value={accountNumber}
-              onChangeText={(text) => setAccountNumber(text.replace(/[^0-9]/g, ""))}
-              // keyboardType="number-pad"
-            />
-
-            <Field
-              label={<Text>Bank Name <Text style={{ color: "red" }}>*</Text></Text>}
-              placeholder="Enter bank name"
-              value={bankName}
-              onChangeText={setBankName}
-              autoCapitalize="words"
-            />
-
-            {/* Bank Card Front & Back (Images) */}
+            {/* 4) Bank QR — same style as Business Logo section */}
             <Text style={styles.label}>
-              Upload Bank Card Both Back and Front <Text style={{ color: "red" }}>*</Text>
+              Bank QR Code <Text style={{ color: "red" }}>*</Text>
             </Text>
-
-            {/* Front */}
-            <View style={styles.row}>
-              <TouchableOpacity style={styles.btnSecondary} onPress={pickBankCardFront}>
-                <Text style={styles.btnSecondaryText}>Choose Front Image</Text>
-              </TouchableOpacity>
-              <View style={{ flex: 1 }}>
-                {bankCardFront ? (
-                  <View>
-                    <Text numberOfLines={1} style={styles.fileName}>{bankCardFront.name}</Text>
-                    <Text style={styles.metaText}>
-                      {(bankCardFront.mimeType || "image")} · {formatSize(bankCardFront.size)}
-                    </Text>
-
-                    <View style={styles.previewWrap}>
-                      <Image source={{ uri: bankCardFront.uri }} style={styles.previewImage} />
-                      <TouchableOpacity style={styles.crossBtn} onPress={removeFront}>
-                        <Text style={styles.crossText}>×</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ) : (
-                  <Text numberOfLines={1} style={styles.fileName}>No front image selected</Text>
-                )}
-              </View>
-            </View>
-
-            {/* Back */}
-            <View style={styles.row}>
-              <TouchableOpacity style={styles.btnSecondary} onPress={pickBankCardBack}>
-                <Text style={styles.btnSecondaryText}>Choose Back Image</Text>
-              </TouchableOpacity>
-              <View style={{ flex: 1 }}>
-                {bankCardBack ? (
-                  <View>
-                    <Text numberOfLines={1} style={styles.fileName}>{bankCardBack.name}</Text>
-                    <Text style={styles.metaText}>
-                      {(bankCardBack.mimeType || "image")} · {formatSize(bankCardBack.size)}
-                    </Text>
-
-                    <View style={styles.previewWrap}>
-                      <Image source={{ uri: bankCardBack.uri }} style={styles.previewImage} />
-                      <TouchableOpacity style={styles.crossBtn} onPress={removeBack}>
-                        <Text style={styles.crossText}>×</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ) : (
-                  <Text numberOfLines={1} style={styles.fileName}>No back image selected</Text>
-                )}
-              </View>
-            </View>
-
-            {/* QR Code */}
-            <Text style={styles.label}>
-              Upload Bank QR Code <Text style={{ color: "red" }}>*</Text>
-            </Text>
-            {!qrCodeImage ? (
-              <View style={styles.logoCard}>
-                <Text style={styles.logoCardIcon}>＋</Text>
-                <Text style={styles.logoCardTitle}>Add Bank QR</Text>
-                <Text style={styles.logoCardHint}>Upload a clear, square QR image.</Text>
-                <View style={styles.logoActionsRow}>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, pickingQR && styles.btnDisabled]}
-                    onPress={onPickQrCodeImage}
-                    disabled={pickingQR}
-                  >
-                    {pickingQR ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionBtnText}>Choose Image</Text>}
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <View style={styles.logoSelectedWrap}>
-                <View style={styles.logoPreviewLargeWrap}>
-                  <Image source={{ uri: qrCodeImage.uri }} style={styles.logoPreviewLarge} />
-                  <TouchableOpacity style={styles.crossBtnLarge} onPress={removeQR}>
-                    <Text style={styles.crossText}>×</Text>
-                  </TouchableOpacity>
-                </View>
-                <View style={{ marginTop: 8 }}>
-                  <Text numberOfLines={1} style={styles.fileName}>{qrCodeImage.name}</Text>
-                  <Text style={styles.metaText}>
-                    {formatSize(qrCodeImage.size)} · {qrCodeImage.mimeType || "image"}
-                  </Text>
-                </View>
-                <View style={styles.logoActionsRow}>
-                  <TouchableOpacity
-                    style={[styles.actionBtn, pickingQR && styles.btnDisabled]}
-                    onPress={onPickQrCodeImage}
-                    disabled={pickingQR}
-                  >
-                    {pickingQR ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionBtnText}>Change</Text>}
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
+            <QRUploader value={qrImage} onChange={setQrImage} />
           </ScrollView>
 
-          {/* Sticky action bar that follows keyboard/safe-area with consistent spacing */}
+          {/* Sticky action bar */}
           <View pointerEvents="box-none" style={[styles.fabWrap, { bottom: kbHeight }]}>
             <View style={styles.submitContainer}>
               <TouchableOpacity
@@ -451,10 +334,57 @@ export default function BankPaymentInfoScreen() {
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      {/* ───────── Simple Bank Picker Modal (no search, no recent) ───────── */}
+      <Modal
+        transparent
+        animationType="fade"
+        visible={bankModalVisible}
+        onRequestClose={() => setBankModalVisible(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setBankModalVisible(false)} />
+        <View style={styles.modalSheet}>
+          {/* Close × button */}
+          <TouchableOpacity
+            onPress={() => setBankModalVisible(false)}
+            style={styles.modalCloseX}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Close"
+          >
+            <Text style={styles.modalCloseXText}>×</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.modalTitle}>Select Bank</Text>
+          <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 440 }}>
+            {BANKS.map((b) => {
+              const active = bankCode === b.code;
+              return (
+                <TouchableOpacity
+                  key={b.code}
+                  style={[styles.bankRow, active && styles.bankRowActive]}
+                  onPress={() => {
+                    setBankCode(b.code);
+                    setBankModalVisible(false);
+                  }}
+                >
+                  <View style={styles.bankRowLeft}>
+                    <Image source={b.logoSource} style={styles.logoLg} />
+                    <Text style={[styles.bankText, active && { fontWeight: "700" }]} numberOfLines={2}>
+                      {b.name}
+                    </Text>
+                  </View>
+                  {active ? <Text style={styles.checkMark}>✓</Text> : null}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
 
+/* ---------- Reusable Field ---------- */
 function Field({ label, value, onChangeText, placeholder, keyboardType, autoCapitalize }) {
   return (
     <View style={{ marginBottom: 16 }}>
@@ -475,37 +405,103 @@ function Field({ label, value, onChangeText, placeholder, keyboardType, autoCapi
   );
 }
 
-function formatSize(bytes = 0) {
-  if (!bytes || bytes <= 0) return "—";
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  const mb = kb / 1024;
-  return `${mb.toFixed(2)} MB`;
+/* ---------- QR Uploader (matches logo style) ---------- */
+function QRUploader({ value, onChange }) {
+  const [busy, setBusy] = useState(false);
+  const maxBytes = 5 * 1024 * 1024;
+
+  const pickImage = async (fromCamera = false) => {
+    try {
+      setBusy(true);
+      const permission = fromCamera
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permission.status !== "granted") {
+        Alert.alert("Permission needed", "Please allow access.");
+        return;
+      }
+      const img = fromCamera
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.9,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.9,
+          });
+      if (!img.canceled) {
+        const a = img.assets?.[0];
+        if (a?.fileSize && a.fileSize > maxBytes) {
+          Alert.alert("Too large", "File must be under 5MB.");
+          return;
+        }
+        onChange({
+          name: a?.fileName ?? "bank-qr.jpg",
+          uri: a?.uri,
+          mimeType: a?.mimeType ?? "image/jpeg",
+          size: a?.fileSize ?? 0,
+        });
+      }
+    } catch (e) {
+      Alert.alert("Upload failed", e?.message || "Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!value) {
+    return (
+      <View style={styles.logoCard}>
+        <Text style={[styles.logoCardIcon, { color: "#9ca3af" }]}>＋</Text>
+        <Text style={styles.logoCardTitle}>Add Bank QR</Text>
+        <Text style={styles.logoCardHint}>Square image works best (1:1). Max 5MB.</Text>
+        <View style={styles.logoActionsRow}>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => pickImage(false)} disabled={busy}>
+            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionBtnText}>Choose Image</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionBtnGhost} onPress={() => pickImage(true)} disabled={busy}>
+            <Text style={styles.actionBtnGhostText}>Take Photo</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.logoSelectedWrap}>
+      <View style={styles.logoPreviewLargeWrap}>
+        <Image source={{ uri: value.uri }} style={styles.logoPreviewLarge} />
+      </View>
+      <View style={{ marginTop: 8 }}>
+        <Text numberOfLines={1} style={styles.fileName}>{value.name}</Text>
+        <Text style={styles.metaText}>
+          {(value.size / 1024).toFixed(1)} KB · {value.mimeType || "image"}
+        </Text>
+      </View>
+      <View style={styles.logoActionsRow}>
+        <TouchableOpacity style={styles.actionBtn} onPress={() => pickImage(false)} disabled={busy}>
+          <Text style={styles.actionBtnText}>Change</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.actionBtnGhost} onPress={() => onChange(null)} disabled={busy}>
+          <Text style={styles.actionBtnGhostText}>Remove</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
 }
 
+/* ---------- Styles ---------- */
 const styles = StyleSheet.create({
-  // NEW: fixed header title like MerchantExtrasScreen
-  fixedTitle: {
-    backgroundColor: "#fff",
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "#fff",
-  },
+  fixedTitle: { backgroundColor: "#fff", paddingHorizontal: 20 },
+  container: { paddingHorizontal: 20, backgroundColor: "#fff" },
+  h1: { fontSize: 22, fontWeight: "bold", color: "#1A1D1F", marginBottom: 16 },
 
-  container: {
-    paddingHorizontal: 20,
-    backgroundColor: "#fff",
-  },
-  h1: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#1A1D1F",
-    marginBottom: 16,
-  },
   label: { fontSize: 14, marginBottom: 6, color: "#333" },
-  fileName: { fontSize: 13, color: "#374151" },
-  metaText: { fontSize: 12, color: "#6b7280", marginTop: 2 },
-  removeText: { marginTop: 4, fontSize: 12, color: "#ef4444", fontWeight: "600" },
+  helperText: { fontSize: 12, color: "#6b7280", marginBottom: 8 },
 
   inputWrapper: {
     flexDirection: "row",
@@ -513,28 +509,48 @@ const styles = StyleSheet.create({
     height: 50,
     borderWidth: 1.5,
     borderRadius: 15,
-    backgroundColor: "#fff",
     borderColor: "#ccc",
     paddingHorizontal: 10,
+    backgroundColor: "#fff",
   },
-  inputField: { flex: 1, fontSize: 14, paddingVertical: 10 },
+  inputField: { flex: 1, fontSize: 14, color: "#111827", paddingVertical: 10 },
+  inputErrorBorder: { borderColor: "#ef4444" },
+  errorText: { color: "#ef4444", fontSize: 12, marginBottom: 8 },
 
-  row: {
+  /* Select (simple) */
+  selectWrapper: {
+    height: 50,
+    borderWidth: 1.5,
+    borderRadius: 15,
+    borderColor: "#ccc",
+    paddingHorizontal: 12,
+    backgroundColor: "#fff",
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    marginBottom: 16,
+    justifyContent: "space-between",
+    marginBottom: 12,
   },
-  btnSecondary: {
-    backgroundColor: "#f3f4f6",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
+  selectText: { fontSize: 14, color: "#111827", flex: 1, paddingRight: 10 },
+
+  // Bigger dropdown icon (fix for tiny triangle)
+  dropdownIcon: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  btnSecondaryText: { fontWeight: "700" },
-  btnDisabled: { opacity: 0.6 },
+  dropdownIconText: {
+    fontSize: 24,
+    lineHeight: 24,
+    color: "#6b7280",
+  },
+
+  /* Logos / QR card */
+  logoSm: { width: 24, height: 24, borderRadius: 6, resizeMode: "contain" },
+  logoLg: { width: 42, height: 42, borderRadius: 10, resizeMode: "contain", backgroundColor: "#fff" },
+
+  fileName: { fontSize: 13, color: "#374151" },
+  metaText: { fontSize: 12, color: "#6b7280", marginTop: 2 },
 
   logoCard: {
     borderWidth: 1.5,
@@ -547,11 +563,10 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     backgroundColor: "#fafafa",
   },
-  logoCardIcon: { fontSize: 32, color: "#9ca3af" },
+  logoCardIcon: { fontSize: 32, lineHeight: 32 },
   logoCardTitle: { marginTop: 8, fontSize: 15, fontWeight: "700", color: "#111827" },
   logoCardHint: { marginTop: 4, fontSize: 12, color: "#6b7280" },
   logoActionsRow: { marginTop: 12, flexDirection: "row", gap: 10 },
-
   actionBtn: {
     backgroundColor: "#00b14f",
     paddingVertical: 10,
@@ -578,50 +593,10 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
     overflow: "hidden",
     backgroundColor: "#fff",
-    position: "relative",
   },
   logoPreviewLarge: { width: "100%", height: "100%", resizeMode: "cover" },
 
-  // small preview wrapper for card images
-  previewWrap: {
-    width: 120,
-    height: 72,
-    marginTop: 6,
-    borderRadius: 8,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    position: "relative",
-    backgroundColor: "#fff",
-  },
-  previewImage: { width: "100%", height: "100%", resizeMode: "cover" },
-
-  // cross buttons
-  crossBtn: {
-    position: "absolute",
-    top: 4,
-    right: 4,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "rgba(17,24,39,0.85)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  crossBtnLarge: {
-    position: "absolute",
-    top: 6,
-    right: 6,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: "rgba(17,24,39,0.85)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  crossText: { color: "#fff", fontSize: 16, lineHeight: 16, fontWeight: "700" },
-
-  // sticky bar that overlays and follows keyboard/safe-area
+  /* Sticky submit bar */
   fabWrap: { position: "absolute", left: 0, right: 0 },
   submitContainer: {
     height: 100,
@@ -649,4 +624,53 @@ const styles = StyleSheet.create({
   },
   btnPrimaryText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   btnPrimaryTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
+
+  /* Modal (simple list) */
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
+  modalSheet: {
+    position: "absolute",
+    left: 20,
+    right: 20,
+    top: 100,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  modalTitle: { color: "#111827", fontSize: 16, fontWeight: "700", marginBottom: 10 },
+
+  /* Floating close × on overlay */
+  modalCloseX: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: "rgba(17,24,39,0.85)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+  },
+  modalCloseXText: {
+    color: "#fff",
+    fontSize: 18,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
+
+  bankRow: {
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  bankRowActive: { backgroundColor: "#f9fafb" },
+  bankRowLeft: { flexDirection: "row", alignItems: "center", gap: 12, flex: 1 },
+  bankText: { color: "#111827", fontSize: 14, flex: 1, paddingRight: 8 },
+  checkMark: { fontSize: 16, color: "#00b14f", fontWeight: "700" },
 });

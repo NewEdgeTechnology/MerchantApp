@@ -1,38 +1,31 @@
-// PersonalInformation.js — header matches ProfileBusinessDetails (back button + centered title + extra top space)
+// PersonalInformation.js — header matches ProfileBusinessDetails (back + centered title)
+// Uses PROFILE_IMAGE base for avatar URLs; minimized helpers.
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  StyleSheet,
-  TouchableOpacity,
-  Dimensions,
-  Alert,
-  Image,
-  ActivityIndicator,
-  Platform,
-  DeviceEventEmitter,
-  ScrollView,
+  View, Text, TextInput, StyleSheet, TouchableOpacity, Dimensions,
+  Alert, Image, ActivityIndicator, Platform, DeviceEventEmitter, ScrollView,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { PROFILE_ENDPOINT } from '@env';
+import { PROFILE_ENDPOINT, PROFILE_IMAGE as PROFILE_IMAGE_ENDPOINT } from '@env';
 
 const { width } = Dimensions.get('window');
 const KEY_MERCHANT_LOGIN = 'merchant_login';
 
-/** Normalize localhost for Android emulator */
+/** ───────── Phone rules (Bhutan) ───────── */
+const COUNTRY_CODE = '+975';
+const LOCAL_MAX_LEN = 8;               // typical 8-digit local number
+const ALLOWED_PREFIXES = ['77','17','16']; // first two digits must be one of these
+
+/** Android emulator localhost normalization */
 function normalizeHost(url) {
   if (!url) return '';
   try {
     const u = new URL(url);
-    if (
-      Platform.OS === 'android' &&
-      (u.hostname === 'localhost' || u.hostname === '127.0.0.1')
-    ) {
+    if (Platform.OS === 'android' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')) {
       u.hostname = '10.0.2.2';
     }
     return u.toString();
@@ -40,28 +33,33 @@ function normalizeHost(url) {
     return url;
   }
 }
-function getOrigin(url) {
-  try { return new URL(url).origin; } catch { return ''; }
-}
-function cacheBust(u) {
-  if (!u) return u;
+
+const isLocalFileUri = (src) =>
+  !!src && (/^file:\/\//i.test(src) || /^content:\/\//i.test(src) || /^asset:\/\//i.test(src) || /^ph:\/\//i.test(src));
+
+const isHttpOrRelativePath = (src) =>
+  !!src && (/^https?:\/\//i.test(src) || src.startsWith('/'));
+
+const makeAbsolute = (maybeRelative, base = PROFILE_IMAGE_ENDPOINT) => {
+  if (!maybeRelative) return '';
+  const s = String(maybeRelative);
+  if (/^https?:\/\//i.test(s)) return s;
+  const b = (base || '').replace(/\/+$/, '');
+  const p = s.startsWith('/') ? s.slice(1) : s;
+  return `${b}/${p}`;
+};
+
+const withVersion = (url, version) => {
+  if (!url || !version) return url;
   try {
-    const url = new URL(u);
-    url.searchParams.set('t', String(Date.now()));
-    return url.toString();
+    const u = new URL(url);
+    u.searchParams.set('v', String(version));
+    return u.toString();
   } catch {
-    const sep = u.includes('?') ? '&' : '?';
-    return `${u}${sep}t=${Date.now()}`;
+    return url.includes('?') ? `${url}&v=${version}` : `${url}?v=${version}`;
   }
-}
-function isHttpOrRelativePath(src) {
-  if (!src) return false;
-  return /^https?:\/\//i.test(src) || src.startsWith('/');
-}
-function isLocalFileUri(src) {
-  if (!src) return false;
-  return /^file:\/\//i.test(src) || /^content:\/\//i.test(src) || /^asset:\/\//i.test(src) || /^ph:\/\//i.test(src);
-}
+};
+
 async function fetchJSON(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), timeoutMs);
@@ -79,23 +77,42 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
     clearTimeout(tid);
   }
 }
+
 async function discoverUserIdFromStore() {
   try {
     const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
     if (!raw) return null;
     const data = JSON.parse(raw);
     const candidates = [
-      data?.user?.user_id,
-      data?.user?.id,
-      data?.user_id,
-      data?.id,
-      data?.merchant?.user_id,
-      data?.merchant?.id,
+      data?.user?.user_id, data?.user?.id, data?.user_id, data?.id, data?.merchant?.user_id, data?.merchant?.id,
     ].filter(v => v !== undefined && v !== null && v !== '');
     if (candidates.length) return String(candidates[0]);
   } catch {}
   return null;
 }
+
+/** ───────── Phone helpers ───────── */
+const digitsOnly = (s='') => String(s).replace(/\D+/g, '');
+
+const stripCountry = (raw='') => {
+  const s = String(raw).trim();
+  if (s.startsWith(COUNTRY_CODE)) return digitsOnly(s.slice(COUNTRY_CODE.length));
+  if (s.startsWith('00975')) return digitsOnly(s.slice(5));
+  if (s.startsWith('975')) return digitsOnly(s.slice(3));
+  return digitsOnly(s);
+};
+
+const buildE164 = (local='') => {
+  const d = digitsOnly(local);
+  return d ? `${COUNTRY_CODE}${d}` : '';
+};
+
+const isLocalValid = (local='') => {
+  const d = digitsOnly(local);
+  if (d.length < 2) return false;                            // need first two to check prefix
+  if (!ALLOWED_PREFIXES.includes(d.slice(0, 2))) return false;
+  return d.length === LOCAL_MAX_LEN;                         // require full length
+};
 
 export default function PersonalInformation() {
   const navigation = useNavigation();
@@ -103,18 +120,20 @@ export default function PersonalInformation() {
   const route = useRoute();
   const params = route?.params || {};
 
-  const [name, setName] = useState('');
+  const [name, setName]   = useState('');
   const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
+  const [localPhone, setLocalPhone] = useState(''); // <- store only local digits (no +975)
   const [avatar, setAvatar] = useState('');
   const [userId, setUserId] = useState(params?.user_id ? String(params.user_id) : '');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError]     = useState(null);
+
+  const [phoneError, setPhoneError] = useState('');
 
   const endpoint = useMemo(() => {
     if (!PROFILE_ENDPOINT || !userId) return '';
-    const base = normalizeHost(PROFILE_ENDPOINT.trim()); // e.g. http://localhost:3000/api/profile
-    return `${base.replace(/\/+$/, '')}/${encodeURIComponent(userId)}`; // /:user_id
+    const base = normalizeHost(PROFILE_ENDPOINT.trim());
+    return `${base.replace(/\/+$/, '')}/${encodeURIComponent(userId)}`;
   }, [userId]);
 
   useEffect(() => {
@@ -132,14 +151,20 @@ export default function PersonalInformation() {
   const hydrateFromPayload = (payload) => {
     setName(payload?.user_name || '');
     setEmail(payload?.email || '');
-    setPhone(payload?.phone || '');
 
-    const origin = getOrigin(normalizeHost(PROFILE_ENDPOINT));
+    // Accept phone returned as +975XXXXXXXX or 975XXXXXXXX or raw digits.
+    const rawPhone = payload?.phone || '';
+    setLocalPhone(stripCountry(rawPhone).slice(0, LOCAL_MAX_LEN));
+
+    const version =
+      payload?.profile_image_version ||
+      payload?.updated_at ||
+      payload?.user_updated_at ||
+      null;
+
     if (payload?.profile_image) {
-      const src = String(payload.profile_image);
-      const isAbsolute = /^https?:\/\//i.test(src);
-      const resolved = isAbsolute ? src : origin ? `${origin}${src.startsWith('/') ? '' : '/'}${src}` : src;
-      setAvatar(cacheBust(resolved));
+      const abs = makeAbsolute(String(payload.profile_image), PROFILE_IMAGE_ENDPOINT);
+      setAvatar(withVersion(abs, version));
     } else {
       setAvatar('');
     }
@@ -162,13 +187,16 @@ export default function PersonalInformation() {
 
   const handleChangePhoto = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) { Alert.alert('Permission required', 'We need permission to access your gallery.'); return; }
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'We need permission to access your gallery.');
+      return;
+    }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1,1], quality: 1,
     });
     if (!result.cancelled && !result.canceled) {
       const uri = result?.assets?.[0]?.uri || result?.uri;
-      if (uri) setAvatar(uri); // local preview; backend will receive file via multipart
+      if (uri) setAvatar(uri); // local preview
     }
   };
 
@@ -181,7 +209,7 @@ export default function PersonalInformation() {
         ...blob,
         user_name: payload?.user_name ?? name,
         email: payload?.email ?? email,
-        phone: payload?.phone ?? phone,
+        phone: payload?.phone ?? buildE164(localPhone),
         profile_image: payload?.profile_image ?? avatar,
         user: {
           ...(blob.user || {}),
@@ -189,7 +217,7 @@ export default function PersonalInformation() {
           user_name: payload?.user_name ?? name,
           display_name: payload?.user_name ?? name,
           email: payload?.email ?? email,
-          phone: payload?.phone ?? phone,
+          phone: payload?.phone ?? buildE164(localPhone),
           profile_image: payload?.profile_image ?? avatar,
         },
       };
@@ -202,7 +230,12 @@ export default function PersonalInformation() {
   };
 
   const putJson = async () => {
-    const body = { user_name: name, email, phone, profile_image: avatar };
+    const body = {
+      user_name: name,
+      email,
+      phone: buildE164(localPhone),      // <- send +975XXXXXXXX
+      profile_image: avatar
+    };
     return fetchJSON(endpoint, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -214,23 +247,17 @@ export default function PersonalInformation() {
     const form = new FormData();
     form.append('user_name', String(name ?? ''));
     form.append('email', String(email ?? ''));
-    form.append('phone', String(phone ?? ''));
-    // Attach the file only if avatar is a local file URI
+    form.append('phone', buildE164(localPhone)); // <- send +975XXXXXXXX
     if (isLocalFileUri(avatar)) {
-      const filename = `avatar_${Date.now()}.jpg`;
       form.append('profile_image', {
         uri: avatar,
-        name: filename,
+        name: `avatar_${Date.now()}.jpg`,
         type: 'image/jpeg',
       });
     } else if (isHttpOrRelativePath(avatar)) {
       form.append('profile_image', String(avatar));
     }
-    const res = await fetch(endpoint, {
-      method: 'PUT',
-      body: form,
-      // Do NOT set Content-Type; fetch sets multipart boundary
-    });
+    const res = await fetch(endpoint, { method: 'PUT', body: form });
     const text = await res.text();
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch {}
@@ -242,41 +269,44 @@ export default function PersonalInformation() {
   };
 
   const handleSave = async () => {
+    // Validate local phone before request
+    const valid = isLocalValid(localPhone);
+    setPhoneError(valid ? '' : 'Enter 8 digits starting with 77, 17 or 16.');
+    if (!valid) {
+      Alert.alert('Invalid phone', 'Phone must be 8 digits and start with 77, 17 or 16.');
+      return;
+    }
+
     if (!endpoint) return;
     try {
       setLoading(true);
 
-      // Decide how to send the payload:
       try {
-        if (isLocalFileUri(avatar)) {
-          await putMultipart();
-        } else {
-          await putJson();
-        }
+        if (isLocalFileUri(avatar)) await putMultipart();
+        else await putJson();
       } catch (firstErr) {
-        // Fallback: try multipart if JSON failed and avatar is URL/path
-        if (!isLocalFileUri(avatar)) {
-          await putMultipart();
-        } else {
-          throw firstErr;
-        }
+        if (!isLocalFileUri(avatar)) await putMultipart();
+        else throw firstErr;
       }
 
-      // Re-fetch the canonical record
       const fresh = await fetchJSON(endpoint, { method: 'GET' });
       hydrateFromPayload(fresh);
 
-      // Persist & notify
-      const origin = getOrigin(normalizeHost(PROFILE_ENDPOINT));
-      const src = fresh?.profile_image ? String(fresh.profile_image) : avatar;
-      const resolved = src
-        ? (/^https?:\/\//i.test(src) ? src : (origin ? `${origin}${src.startsWith('/') ? '' : '/'}${src}` : src))
-        : '';
+      const version =
+        fresh?.profile_image_version ||
+        fresh?.updated_at ||
+        fresh?.user_updated_at ||
+        null;
+
+      const resolved = fresh?.profile_image
+        ? withVersion(makeAbsolute(String(fresh.profile_image), PROFILE_IMAGE_ENDPOINT), version)
+        : (avatar ? makeAbsolute(String(avatar), PROFILE_IMAGE_ENDPOINT) : '');
+
       await persistLocalAndNotify({
         user_name: fresh?.user_name ?? name,
         email: fresh?.email ?? email,
-        phone: fresh?.phone ?? phone,
-        profile_image: resolved ? cacheBust(resolved) : '',
+        phone: buildE164(stripCountry(fresh?.phone || localPhone)),
+        profile_image: resolved || '',
       });
 
       Alert.alert('Saved', 'Profile updated successfully.');
@@ -288,8 +318,22 @@ export default function PersonalInformation() {
     }
   };
 
-  // ── Header top padding like ProfileBusinessDetails
+  /** Handle local phone typing */
+  const onLocalPhoneChange = (txt) => {
+    const d = digitsOnly(txt).slice(0, LOCAL_MAX_LEN);
+    setLocalPhone(d);
+    // Live validate prefix & length
+    if (d.length >= 2 && !ALLOWED_PREFIXES.includes(d.slice(0,2))) {
+      setPhoneError('Number must start with 77, 17 or 16.');
+    } else if (d.length && d.length < LOCAL_MAX_LEN) {
+      setPhoneError('Enter all 8 digits.');
+    } else {
+      setPhoneError('');
+    }
+  };
+
   const headerTopPad = Math.max(insets.top, 8) + 18;
+  const canSave = isLocalValid(localPhone) && !loading;
 
   if (loading) return (
     <View style={styles.centerWrap}>
@@ -310,7 +354,7 @@ export default function PersonalInformation() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['left','right','bottom']}>
-      {/* Header matches the “above” style */}
+      {/* Header */}
       <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
@@ -345,15 +389,27 @@ export default function PersonalInformation() {
         />
 
         <Text style={styles.label}>Phone</Text>
-        <TextInput
-          style={styles.input}
-          value={phone}
-          onChangeText={setPhone}
-          keyboardType="phone-pad"
-          placeholder="Your phone number"
-        />
+        <View style={styles.phoneRow}>
+          <View style={styles.ccBox}>
+            <Text style={styles.ccText}>{COUNTRY_CODE}</Text>
+          </View>
+          <TextInput
+            style={[styles.input, styles.localInput]}
+            value={localPhone}
+            onChangeText={onLocalPhoneChange}
+            keyboardType="number-pad"
+            placeholder="77xxxxxx / 17xxxxxx / 16xxxxxx"
+            maxLength={LOCAL_MAX_LEN}
+          />
+        </View>
+        {!!phoneError && <Text style={styles.helperError}>{phoneError}</Text>}
 
-        <TouchableOpacity style={styles.saveButton} onPress={handleSave} activeOpacity={0.9}>
+        <TouchableOpacity
+          style={[styles.saveButton, !canSave && { opacity: 0.6 }]}
+          onPress={handleSave}
+          activeOpacity={0.9}
+          disabled={!canSave}
+        >
           <Text style={styles.saveButtonText}>Save Changes</Text>
         </TouchableOpacity>
 
@@ -366,7 +422,6 @@ export default function PersonalInformation() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#fff' },
 
-  // Header bar like ProfileBusinessDetails
   headerBar: {
     minHeight: 52,
     paddingHorizontal: 12,
@@ -392,6 +447,17 @@ const styles = StyleSheet.create({
     borderWidth:1, borderColor:'#e2e8f0', padding:12, borderRadius:8, marginBottom:20,
     fontSize:width>400?18:16, backgroundColor:'#fff'
   },
+
+  /** phone row */
+  phoneRow:{ flexDirection:'row', alignItems:'center', gap:10, marginBottom:8 },
+  ccBox:{
+    borderWidth:1, borderColor:'#e2e8f0', borderRadius:8, paddingHorizontal:12, paddingVertical:12,
+    backgroundColor:'#f8fafc'
+  },
+  ccText:{ fontWeight:'700', color:'#0f172a', fontSize: width>400?16:15 },
+  localInput:{ flex:1, marginBottom:0 },
+
+  helperError:{ color:'#b91c1c', marginBottom:14 },
 
   saveButton:{ backgroundColor:'#16a34a', padding:15, borderRadius:10, alignItems:'center', elevation:1 },
   saveButtonText:{ color:'#fff', fontSize:width>400?18:16, fontWeight:'700' },

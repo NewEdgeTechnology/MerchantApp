@@ -12,12 +12,12 @@ import {
   TouchableWithoutFeedback,
   Keyboard,
   Switch,
-  SafeAreaView,
 } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import HeaderWithSteps from './HeaderWithSteps';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function SignupScreen() {
   const navigation = useNavigation();
@@ -56,32 +56,24 @@ export default function SignupScreen() {
   // 3) SecureStore (ONLY if BOTH saved_email and saved_password exist)
   useEffect(() => {
     (async () => {
-      // 1 & 2
       const seededEmail = (initialEmail ?? incomingMerchant?.email ?? '').trim();
       const seededPassword = initialPassword ?? incomingMerchant?.password ?? '';
 
       if (seededEmail) setEmail(seededEmail);
-      if (seededPassword) {
-        setPassword(seededPassword);
-        // don't auto-enable saving; let user decide unless SecureStore has both
-      }
+      if (seededPassword) setPassword(seededPassword);
 
-      // 3) Only read from secure store if we still miss either value
       if (!seededEmail || !seededPassword) {
         try {
           const [savedEmail, savedPw] = await Promise.all([
             SecureStore.getItemAsync('saved_email'),
             SecureStore.getItemAsync('saved_password'),
           ]);
-          // Use SecureStore only when BOTH exist (means user explicitly saved before)
           if (!seededEmail && savedEmail && savedPw) setEmail(savedEmail);
           if (!seededPassword && savedEmail && savedPw) {
             setPassword(savedPw);
-            setSavePassword(true); // reflect previously saved choice
+            setSavePassword(true);
           }
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,15 +101,11 @@ export default function SignupScreen() {
         await SecureStore.setItemAsync('saved_email', email.trim());
         await SecureStore.setItemAsync('saved_password', password);
       } else {
-        // User chose not to save → clear any old saved creds so it won't reappear next launch
         await SecureStore.deleteItemAsync('saved_email');
         await SecureStore.deleteItemAsync('saved_password');
       }
-    } catch {
-      // ignore; not critical to block flow
-    }
+    } catch {}
 
-    // Always pass forward so Review + Edit can prefill without SecureStore
     const mergedMerchant = {
       ...incomingMerchant,
       email: email.trim(),
@@ -136,8 +124,11 @@ export default function SignupScreen() {
   };
 
   return (
+    // Same shell as SellingTypeScreen: SafeAreaView without edges override,
+    // HeaderWithSteps placed directly at the top, no extra margins.
     <SafeAreaView style={styles.safeArea}>
       <HeaderWithSteps step="Step 1 of 7" />
+
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -297,7 +288,8 @@ const styles = StyleSheet.create({
   },
   continueButton: {
     backgroundColor: '#00b14f', paddingVertical: 14, borderRadius: 30,
-    alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: 6, elevation: 15,
+    alignItems: 'center', justifyContent: 'center', width: '100%', marginBottom: 6,
+    elevation: 15,
   },
   continueButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   continueButtonDisabled: {

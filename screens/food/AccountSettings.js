@@ -1,4 +1,4 @@
-// AccountSettings.js — resilient avatar/logo resolution with silent 404 fallback (no ASSETS_BASE)
+// AccountSettings.js — simple avatar resolution using PROFILE_IMAGE base; minimal helpers
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Dimensions,
@@ -9,16 +9,21 @@ import * as ImagePicker from 'expo-image-picker';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
-import { PROFILE_ENDPOINT, LOGIN_USERNAME_MERCHANT_ENDPOINT } from '@env';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// ✅ Use legacy API to avoid deprecation warnings in SDK 54+
+// (Keeps getInfoAsync/deleteAsync semantics the same)
+import * as FileSystem from 'expo-file-system/legacy';
+
+import { PROFILE_ENDPOINT, PROFILE_IMAGE as PROFILE_IMAGE_ENDPOINT } from '@env';
 
 const { width } = Dimensions.get('window');
 const KEY_MERCHANT_LOGIN = 'merchant_login';
-const KEY_AUTH_TOKEN = 'auth_token';
 
 const DEFAULT_AVATAR =
   'https://images.unsplash.com/photo-1612198182421-3f5dff0c9b40?q=80&w=400&auto=format&fit=crop';
 
-// ───────────────────────── URL helpers ─────────────────────────
+// ───────────────────────── URL helpers (minimal) ─────────────────────────
 const DEFAULT_DEV_ORIGIN = Platform.select({
   android: 'http://10.0.2.2:3000',
   ios: 'http://localhost:3000',
@@ -39,9 +44,8 @@ function normalizeHost(url) {
     return url;
   }
 }
-function originOf(url) { try { return new URL(url).origin; } catch { return ''; } }
 
-// Use a stable version key only when server-side image actually changed.
+// add ?v=version once server-side image actually changes (cache-bust)
 function withVersion(url, version) {
   if (!url || !version) return url;
   try {
@@ -53,117 +57,15 @@ function withVersion(url, version) {
   }
 }
 
-// Build a small set of origins that are likely in dev/local
-function candidateOrigins() {
-  const primary = originOf(normalizeHost(PROFILE_ENDPOINT || DEFAULT_DEV_ORIGIN)) || DEFAULT_DEV_ORIGIN;
-  const login = originOf(normalizeHost(LOGIN_USERNAME_MERCHANT_ENDPOINT || '')) || '';
-  const out = new Set([primary]);
-  if (login) out.add(login);
-  // same host, common dev ports
-  try {
-    const p = new URL(primary);
-    ['3000', '8080', '8000', '9009', ''].forEach((port) => {
-      const u = new URL(primary);
-      u.port = port;
-      out.add(u.origin);
-    });
-  } catch {}
-  return Array.from(out);
-}
-
-// Expand common path variants servers use: /api, /public, /storage, etc.
-function expandPathVariants(p) {
-  const path = p.startsWith('/') ? p : `/${p}`;
-  const prefixes = ['', '/api', '/public', '/storage', '/static', '/files'];
-  const out = new Set();
-  prefixes.forEach((pre) => {
-    const combined = `${pre}${path}`.replace(/\/{2,}/g, '/');
-    out.add(combined.startsWith('/') ? combined : `/${combined}`);
-  });
-  return Array.from(out);
-}
-
-// HEAD/GET probe (HEAD first; GET with Range as fallback)
-async function urlExists(url, timeoutMs = 4000) {
-  const controller = new AbortController();
-  const tid = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const h = await fetch(url, { method: 'HEAD', signal: controller.signal });
-    if (h.ok) return true;
-  } catch {}
-  try {
-    const g = await fetch(url, { method: 'GET', headers: { Range: 'bytes=0-0' }, signal: controller.signal });
-    return g.ok;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(tid);
-  }
-}
-
-// Cache resolved working URLs per original input (avoid re-probing)
-const resolvedUrlCache = new Map();
-
-/**
- * Robust resolver:
- * - data:/file:/content: → return as-is
- * - absolute http(s) → try the exact URL, then path-prefix variants on same origin
- * - protocol-relative // → attach current PROFILE_ENDPOINT protocol+host
- * - relative → try across candidate origins and path-prefix variants
- */
-async function findWorkingImageUrl(input) {
-  if (!input) return null;
-  if (resolvedUrlCache.has(input)) return resolvedUrlCache.get(input);
-
-  const src = String(input).trim();
-  if (isLocalOrData(src)) {
-    resolvedUrlCache.set(input, src);
-    return src;
-  }
-
-  // protocol-relative
-  if (/^\/\//.test(src)) {
-    const base = originOf(normalizeHost(PROFILE_ENDPOINT || DEFAULT_DEV_ORIGIN)) || DEFAULT_DEV_ORIGIN;
-    const b = new URL(base);
-    const u = `${b.protocol}${src}`;
-    resolvedUrlCache.set(input, u);
-    return u;
-  }
-
-  const candidates = [];
-
-  if (/^https?:\/\//i.test(src)) {
-    // absolute: try as-is first, then try with common API/public prefixes on same origin
-    const abs = normalizeHost(src);
-    candidates.push(abs);
-    try {
-      const u = new URL(abs);
-      expandPathVariants(u.pathname).forEach((pv) => candidates.push(`${u.origin}${pv}`));
-    } catch {
-      // ignore
-    }
-  } else {
-    // relative path: test across likely origins + path variants
-    const variants = expandPathVariants(src);
-    candidateOrigins().forEach((o) => {
-      variants.forEach((pv) => candidates.push(`${o}${pv}`));
-    });
-  }
-
-  // De-dup
-  const uniq = Array.from(new Set(candidates));
-
-  for (const u of uniq) {
-    const ok = await urlExists(u, 3500);
-    if (ok) {
-      resolvedUrlCache.set(input, u);
-      return u;
-    }
-  }
-
-  resolvedUrlCache.set(input, null);
-  return null;
-}
+// Convert relative -> absolute using PROFILE_IMAGE_ENDPOINT base
+const makeAbsolute = (maybeRelative, base = PROFILE_IMAGE_ENDPOINT) => {
+  if (!maybeRelative) return null;
+  const s = String(maybeRelative);
+  if (/^https?:\/\//i.test(s)) return s; // already absolute
+  const b = (base || '').replace(/\/+$/, '');
+  const p = s.startsWith('/') ? s.slice(1) : s;
+  return `${b}/${p}`;
+};
 
 async function fetchJSON(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
@@ -181,6 +83,58 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
   } finally {
     clearTimeout(tid);
   }
+}
+
+// ───────────────────────── Logout helpers ─────────────────────────
+const SECURE_KEYS = [
+  KEY_MERCHANT_LOGIN,
+  'auth_token',
+  'refresh_token',
+  'user_profile',
+  'session',
+];
+
+async function clearCredentialStores() {
+  try {
+    await Promise.allSettled(SECURE_KEYS.map(k => SecureStore.deleteItemAsync(k)));
+  } catch {}
+  try {
+    await AsyncStorage.clear();
+  } catch {}
+}
+
+async function clearImageCacheAsync() {
+  try {
+    const dirs = [
+      `${FileSystem.cacheDirectory}ImagePicker/`,
+      `${FileSystem.cacheDirectory}Image/`,
+      `${FileSystem.cacheDirectory}ExpoImage/`,
+    ];
+    for (const dir of dirs) {
+      const info = await FileSystem.getInfoAsync(dir);
+      if (info.exists) {
+        await FileSystem.deleteAsync(dir, { idempotent: true });
+      }
+    }
+  } catch {}
+}
+
+function resetLocalState(setters) {
+  const { setName, setImageUri, setImgVersion, setBiz, setBusinessLicense } = setters;
+  setName('Pema Chozom');
+  setImageUri(null);
+  setImgVersion(null);
+  setBiz({
+    business_name: '',
+    business_license_number: '',
+    business_logo: '',
+    delivery_option: '',
+    address: '',
+    latitude: '',
+    longitude: '',
+  });
+  setBusinessLicense('');
+  DeviceEventEmitter.emit('logged-out');
 }
 
 // ───────────────────────── Component ─────────────────────────
@@ -214,36 +168,30 @@ const AccountSettings = () => {
 
   const buildProfileUrl = useCallback((uid) => {
     if (!uid || !PROFILE_ENDPOINT) return '';
-    const base = normalizeHost((PROFILE_ENDPOINT || '').trim());
-    return `${base.replace(/\/+$/, '')}/${encodeURIComponent(String(uid))}`;
+    const base = normalizeHost((PROFILE_ENDPOINT || '').trim()).replace(/\/+$/, '');
+    return `${base}/${encodeURIComponent(String(uid))}`;
   }, []);
 
-  // Centralized: resolve with probing; add version when known
+  // Centralized: resolve with PROFILE_IMAGE base; add version when known
   const setAvatarFrom = useCallback(async (raw, version = null) => {
     if (!raw) {
-      setImageUri(null);
+      setImageUri(DEFAULT_AVATAR);
       setImgError(null);
       return;
     }
     try {
-      const working = await findWorkingImageUrl(raw);
-      if (working) {
-        const final = isLocalOrData(working) ? working : withVersion(working, version);
-        setImageUri(final);
-        setImgError(null);
-        if (version) setImgVersion(String(version));
-      } else {
-        // hard fallback to default avatar (silent)
-        setImageUri(DEFAULT_AVATAR);
-        setImgError(null);
-      }
+      const abs = isLocalOrData(raw) ? raw : makeAbsolute(String(raw), PROFILE_IMAGE_ENDPOINT);
+      const final = isLocalOrData(abs) ? abs : withVersion(abs, version);
+      setImageUri(final || DEFAULT_AVATAR);
+      setImgError(null);
+      if (version) setImgVersion(String(version));
     } catch {
       setImageUri(DEFAULT_AVATAR);
       setImgError(null);
     }
   }, []);
 
-  // Warm cache for http(s) images
+  // Optional warm-cache
   useEffect(() => {
     if (imageUri && /^https?:\/\//i.test(imageUri)) {
       RNImage.prefetch(imageUri).catch(() => {});
@@ -368,7 +316,6 @@ const AccountSettings = () => {
       };
       setBiz(mergedBiz);
 
-      // Persist snapshot (including version) for faster next boot
       try {
         const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
         let blob = {};
@@ -471,6 +418,7 @@ const AccountSettings = () => {
       business_name: biz.business_name || name,
       business_logo: biz.business_logo || imageUri || '',
       business_license: businessLicense,
+      profile_image_url: imageUri || '', // pass resolved profile URL forward if needed
       authContext,
     });
   };
@@ -484,10 +432,29 @@ const AccountSettings = () => {
     });
   };
 
-  const logOut = () => {
-    Alert.alert("Logged Out", "You have successfully logged out.");
-    navigation.navigate('LoginScreen');
-  };
+  // Hard logout: clear caches, reset state, and reset navigation stack
+  const logOut = useCallback(() => {
+    Alert.alert(
+      'Log out',
+      'Are you sure you want to log out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Log out',
+          style: 'destructive',
+          onPress: async () => {
+            await clearCredentialStores();
+            await clearImageCacheAsync();
+            resetLocalState({ setName, setImageUri, setImgVersion, setBiz, setBusinessLicense });
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'LoginScreen' }],
+            });
+          },
+        },
+      ]
+    );
+  }, [navigation, setName, setImageUri, setImgVersion, setBiz, setBusinessLicense]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -505,7 +472,6 @@ const AccountSettings = () => {
               <RNImage
                 source={{ uri: imageUri }}
                 style={styles.profileImage}
-                // Silent fallback to default avatar on any error (no console warn)
                 onError={() => {
                   setImageUri(DEFAULT_AVATAR);
                   setImgError(null);
@@ -525,6 +491,7 @@ const AccountSettings = () => {
 
           <View style={styles.nameContainer}>
             <Text style={styles.name}>{name}</Text>
+            {/* <Text style={{ color: '#666', fontSize: 12 }} numberOfLines={1}>{imageUri}</Text> */}
           </View>
 
           <TouchableOpacity style={styles.editButton} onPress={goToPersonalInformation}>
@@ -555,10 +522,15 @@ const AccountSettings = () => {
           <Ionicons name="chevron-forward" size={24} color="#16a34a" />
         </TouchableOpacity>
 
-        {/* Removed Linked Devices section as requested */}
+        {/* Wallet */}
+        <TouchableOpacity style={styles.section} onPress={() => navigation.navigate('WalletScreen', { authContext })}>
+          <Text style={styles.text}>Wallet</Text>
+          <Ionicons name="chevron-forward" size={24} color="#16a34a" />
+        </TouchableOpacity>
 
-        <TouchableOpacity style={styles.section} onPress={() => navigation.navigate('NotificationSettings', { authContext })}>
-          <Text style={styles.text}>Notification Settings</Text>
+        {/* Feedback */}
+        <TouchableOpacity style={styles.section} onPress={() => navigation.navigate('FeedbackScreen', { authContext })}>
+          <Text style={styles.text}>Feedback</Text>
           <Ionicons name="chevron-forward" size={24} color="#16a34a" />
         </TouchableOpacity>
 
