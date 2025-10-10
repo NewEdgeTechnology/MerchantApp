@@ -154,12 +154,11 @@ export default function ReviewSubmitScreen() {
     password: merchant?.password ?? "",
   };
 
+  // ⬇️ Updated: removed card_front / card_back
   const bank = merchant?.bank ?? {
     account_name: "",
     account_number: "",
     bank_name: "",
-    bank_card_front: null,
-    bank_card_back: null,
     bank_qr: null,
   };
 
@@ -295,13 +294,12 @@ export default function ReviewSubmitScreen() {
     }
 
     if (routeName === EDIT_BANK_ROUTE) {
+      // ⬇️ Updated: removed initialBankCardFront / initialBankCardBack
       navigation.navigate(routeName, {
         ...common,
         initialAccountName: bank?.account_name ?? "",
         initialAccountNumber: bank?.account_number ?? "",
         initialBankName: bank?.bank_name ?? "",
-        initialBankCardFront: bank?.bank_card_front ?? null,
-        initialBankCardBack: bank?.bank_card_back ?? null,
         initialQrCodeImage: bank?.bank_qr ?? null,
       });
       return;
@@ -424,8 +422,7 @@ export default function ReviewSubmitScreen() {
               ),
             ],
             ["Bank name", bank?.bank_name || "—"],
-            ["Card (front)", bank?.bank_card_front?.uri ? "Uploaded" : "—"],
-            ["Card (back)", bank?.bank_card_back?.uri ? "Uploaded" : "—"],
+            // ⬇️ Updated: removed Card (front) and Card (back) rows
             ["Bank QR", bank?.bank_qr?.uri ? "Uploaded" : "—"],
           ]}
         />
@@ -667,8 +664,8 @@ function PrivacyContent() {
 
       <Text style={styles.h3}>Images &amp; Documents</Text>
       <Text style={styles.p}>
-        When you upload logos, licenses, bank cards, or QR codes, we store them to verify your
-        merchant account and to facilitate payouts and compliance checks.
+        When you upload logos, licenses, or bank QR codes, we store them to verify your merchant
+        account and to facilitate payouts and compliance checks.
       </Text>
 
       <Text style={styles.h2}>How We Use Information</Text>
