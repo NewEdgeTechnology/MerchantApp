@@ -1,9 +1,9 @@
-// ProfileBusinessDetails.js — editable times, map picker, user-friendly image picker, safe multipart PUT
+// ProfileBusinessDetails.js — uses MERCHANT_LOGO for business logo URLs; OpenStreetMap tiles
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity,
   Image, Dimensions, Linking, Platform, ActivityIndicator, TextInput,
-  KeyboardAvoidingView, Keyboard, Pressable, Modal, Alert, SafeAreaView as RNSafeAreaView
+  KeyboardAvoidingView, Keyboard, Pressable, Modal, Alert
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,15 +11,14 @@ import * as SecureStore from 'expo-secure-store';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import { BUSINESS_DETAILS, PROFILE_ENDPOINT } from '@env';
+import MapView, { Marker, UrlTile, PROVIDER_DEFAULT } from 'react-native-maps';
+import { BUSINESS_DETAILS, MERCHANT_LOGO } from '@env';
 
 const { width } = Dimensions.get('window');
 const THEME_GREEN = '#16a34a';
 const KEY_AUTH_TOKEN = 'auth_token';
-const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-/* ───────── helpers ───────── */
+/* ───────── helpers (trimmed) ───────── */
 function normalizeHost(url) {
   if (!url) return '';
   try {
@@ -30,19 +29,6 @@ function normalizeHost(url) {
     return u.toString();
   } catch { return url; }
 }
-function originOf(url) { try { return new URL(url).origin; } catch { return ''; } }
-function resolveImageUrl(maybeRelative, bases = []) {
-  if (!maybeRelative) return null;
-  const src = String(maybeRelative).trim();
-  if (/^https?:\/\//i.test(src)) return normalizeHost(src);
-  for (const b of bases) {
-    if (!b) continue;
-    const base = originOf(normalizeHost(b)) || '';
-    if (!base) continue;
-    return `${base.replace(/\/+$/, '')}/${src.replace(/^\/+/, '')}`;
-  }
-  return `http://localhost:8080/${src.replace(/^\/+/, '')}`;
-}
 async function fetchJSON(url, options = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), timeoutMs);
@@ -50,7 +36,7 @@ async function fetchJSON(url, options = {}, timeoutMs = 30000) {
     const res = await fetch(url, { ...options, signal: controller.signal });
     const text = await res.text();
     let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch { }
+    try { json = text ? JSON.parse(text) : null; } catch {}
     if (!res.ok) throw new Error((json && (json.message || json.error)) || text || `HTTP ${res.status}`);
     return json;
   } finally { clearTimeout(tid); }
@@ -67,12 +53,11 @@ async function putJSON(url, body, headers = {}, timeoutMs = 30000) {
     });
     const text = await res.text();
     let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch { }
+    try { json = text ? JSON.parse(text) : null; } catch {}
     if (!res.ok) throw new Error((json && (json.message || json.error)) || text || `HTTP ${res.status}`);
     return json;
   } finally { clearTimeout(tid); }
 }
-// PUT multipart (exactly one file field to avoid Multer "Unexpected field")
 async function putMultipart(url, bodyObj, fileField, file, headers = {}, timeoutMs = 30000) {
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), timeoutMs);
@@ -90,13 +75,13 @@ async function putMultipart(url, bodyObj, fileField, file, headers = {}, timeout
     }
     const res = await fetch(url, {
       method: 'PUT',
-      headers: { Accept: 'application/json', ...(headers || {}) }, // do not set Content-Type
+      headers: { Accept: 'application/json', ...(headers || {}) },
       body: form,
       signal: controller.signal,
     });
     const text = await res.text();
     let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch { }
+    try { json = text ? JSON.parse(text) : null; } catch {}
     if (!res.ok) throw new Error((json && (json.message || json.error)) || text || `HTTP ${res.status}`);
     return json;
   } finally { clearTimeout(tid); }
@@ -125,7 +110,7 @@ function shapeFromParams(params = {}) {
 function to12hText(hhmmss) {
   if (!hhmmss) return { text: '', ampm: 'AM' };
   const [hh, mm = '00'] = String(hhmmss).split(':');
-  const h = Math.max(0, Math.min(23, Number(hh) || 0));
+  const h = Math.max(0, Math.min(23, Number(h) || Number(hh) || 0)); // robust
   const ampm = h >= 12 ? 'PM' : 'AM';
   const h12 = ((h + 11) % 12) + 1;
   return { text: `${String(h12)}:${String(mm).padStart(2, '0')}`, ampm };
@@ -150,7 +135,7 @@ function guessMimeFromUri(uri = '') {
 function haversine(a, b) {
   if (!a || !b) return null;
   const toRad = d => (d * Math.PI) / 180;
-  const R = 6371; // km
+  const R = 6371;
   const dLat = toRad(b.latitude - a.latitude);
   const dLon = toRad(b.longitude - a.longitude);
   const lat1 = toRad(a.latitude);
@@ -174,6 +159,25 @@ async function reverseGeocode({ latitude, longitude }) {
   } catch { return ''; }
 }
 
+// Build absolute URL using MERCHANT_LOGO for logos, and origin of BUSINESS_DETAILS for license image
+const makeLogoUrl = (raw) => {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  if (/^https?:\/\//i.test(s)) return normalizeHost(s);
+  const b = (MERCHANT_LOGO || '').replace(/\/+$/, '');
+  const p = s.replace(/^\/+/, '');
+  return b ? `${b}/${p}` : p;
+};
+const makeFromOrigin = (raw, base) => {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  if (/^https?:\/\//i.test(s)) return normalizeHost(s);
+  let origin = '';
+  try { origin = new URL(normalizeHost(base)).origin; } catch {}
+  const p = s.replace(/^\/+/, '');
+  return origin ? `${origin}/${p}` : p;
+};
+
 /* ───────── component ───────── */
 export default function ProfileBusinessDetails() {
   const navigation = useNavigation();
@@ -194,7 +198,6 @@ export default function ProfileBusinessDetails() {
   const [error, setError] = useState('');
   const [editMode, setEditMode] = useState(false);
   const [lastUrl, setLastUrl] = useState('');
-  const [imgError, setImgError] = useState('');
 
   // keyboard height for footer lifting
   const [kbHeight, setKbHeight] = useState(0);
@@ -265,14 +268,14 @@ export default function ProfileBusinessDetails() {
     const t = authContext?.token;
     if (t) tokenStr = typeof t === 'string' ? t : (t?.access_token ?? null);
     if (!tokenStr) {
-      try { tokenStr = await SecureStore.getItemAsync(KEY_AUTH_TOKEN); } catch { }
+      try { tokenStr = await SecureStore.getItemAsync(KEY_AUTH_TOKEN); } catch {}
     }
     return tokenStr ? { Authorization: `Bearer ${tokenStr}` } : {};
   }, [authContext?.token]);
 
   const load = useCallback(async () => {
     if (!endpoint) { setError('Missing business_id or BUSINESS_DETAILS base URL.'); return; }
-    setError(''); setImgError(''); setLoading(true); setLastUrl(endpoint);
+    setError(''); setLoading(true); setLastUrl(endpoint);
     try {
       const headers = { Accept: 'application/json', ...(await getAuthHeader()) };
       const json = await fetchJSON(endpoint, { method: 'GET', headers }, 30000);
@@ -369,7 +372,7 @@ export default function ProfileBusinessDetails() {
 
   const cancelEdit = () => { setForm(data); setEditMode(false); setLogoFile(null); };
 
-  // preview urls
+  // preview urls (logo via MERCHANT_LOGO; license via BUSINESS_DETAILS origin)
   const logoRaw =
     data?.business_logo || route?.params?.business_logo || route?.params?.logo || '';
   const licenseRaw =
@@ -378,9 +381,8 @@ export default function ProfileBusinessDetails() {
     route?.params?.business?.license_image ||
     route?.params?.files?.license_image ||
     '';
-  const imageBases = [BUSINESS_DETAILS, PROFILE_ENDPOINT].filter(Boolean);
-  const logoUri = resolveImageUrl(logoRaw, imageBases);
-  const licenseUri = resolveImageUrl(licenseRaw, imageBases);
+  const logoUri = makeLogoUrl(logoRaw);
+  const licenseUri = makeFromOrigin(licenseRaw, BUSINESS_DETAILS);
 
   const openMapsApp = () => {
     const lat = pickedCoord?.latitude, lng = pickedCoord?.longitude;
@@ -394,7 +396,6 @@ export default function ProfileBusinessDetails() {
     Linking.openURL(scheme).catch(() => { });
   };
 
-  // Directions with origin -> destination (pickedCoord)
   const openTurnByTurn = () => {
     if (!pickedCoord) { Alert.alert('Pick a location', 'Long-press on the map to drop a pin.'); return; }
     const dest = `${pickedCoord.latitude},${pickedCoord.longitude}`;
@@ -533,7 +534,6 @@ export default function ProfileBusinessDetails() {
             <View style={styles.card}>
               {editMode ? (
                 <>
-                  {/* Logo on top, larger */}
                   <View style={styles.logoTopWrap}>
                     <LogoPicker
                       editable
@@ -640,9 +640,13 @@ export default function ProfileBusinessDetails() {
                       style={styles.mapPreview}
                       region={mapRegion}
                       pointerEvents="none"
-                      provider={PROVIDER_GOOGLE}
+                      provider={PROVIDER_DEFAULT}
                       mapType={mapType}
                     >
+                      <UrlTile
+                        urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                        maximumZ={19}
+                      />
                       {pickedCoord && <Marker coordinate={pickedCoord} />}
                     </MapView>
                     <TouchableOpacity
@@ -721,16 +725,9 @@ export default function ProfileBusinessDetails() {
                 <Image
                   source={{ uri: licenseUri }}
                   style={styles.licenseImg}
-                  onError={() => setImgError(`Failed to load license image.`)}
                 />
               ) : (
                 <Text style={styles.muted}>No license image uploaded</Text>
-              )}
-              {!!imgError && (
-                <View style={{ marginTop: 8 }}>
-                  <Text style={[styles.muted, { fontSize: 12 }]}>Raw: {String(licenseRaw || '—')}</Text>
-                  <Text style={[styles.muted, { fontSize: 12 }]}>URL: {String(licenseUri || '—')}</Text>
-                </View>
               )}
             </View>
 
@@ -742,7 +739,7 @@ export default function ProfileBusinessDetails() {
             <View
               style={[
                 styles.footer,
-                { paddingBottom: Math.max(insets.bottom, 32), bottom: footerBottom },
+                { paddingBottom: Math.max(insets.bottom, 32), bottom: Math.max(kbHeight - insets.bottom, 0) },
               ]}
             >
               <Pressable
@@ -756,83 +753,38 @@ export default function ProfileBusinessDetails() {
           )}
         </KeyboardAvoidingView>
       )}
-
-      {/* Map Picker Modal */}
-      <Modal
-        visible={locationModalVisible}
-        onRequestClose={() => setLocationModalVisible(false)}
-        animationType="slide"
-        presentationStyle="fullScreen"
-      >
-        <RNSafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Select Location</Text>
-            <TouchableOpacity onPress={() => setLocationModalVisible(false)}>
-              <Text style={[styles.modalClose, { color: '#ef4444' }]}>Close</Text>
-            </TouchableOpacity>
-          </View>
-
-          <MapView
-            ref={mapRef}
-            style={{ flex: 1 }}
-            initialRegion={mapRegion}
-            onRegionChangeComplete={setMapRegion}
-            onLongPress={(e) => {
-              const { latitude, longitude } = e.nativeEvent.coordinate;
-              setPickedCoord({ latitude, longitude });
-            }}
-            provider={PROVIDER_GOOGLE}
-            mapType={mapType}
-            showsUserLocation={false}
-            showsMyLocationButton={false}
-            toolbarEnabled={false}
-          >
-            {pickedCoord && (
-              <Marker
-                coordinate={pickedCoord}
-                draggable
-                onDragEnd={(e) => setPickedCoord(e.nativeEvent.coordinate)}
-              />
-            )}
-          </MapView>
-
-          {/* Minimal footer */}
-          <View
-            style={[
-              styles.minFooterWrap,
-              { paddingBottom: (insets?.bottom ?? 0) + 12 }
-            ]}
-          >
-            <Text style={styles.minHint}>
-              Long-press to drop a pin. Drag to adjust. Press Confirm when done.
-            </Text>
-
-            <TouchableOpacity
-              style={styles.minConfirmBtn}
-              onPress={() => {
-                if (!pickedCoord) {
-                  Alert.alert('Pick a location', 'Long-press on the map to drop a pin.');
-                  return;
-                }
-                setForm(p => ({
-                  ...p,
-                  latitude: pickedCoord.latitude,
-                  longitude: pickedCoord.longitude
-                }));
-                setMapRegion(r => ({
-                  ...r,
-                  latitude: pickedCoord.latitude,
-                  longitude: pickedCoord.longitude
-                }));
-                setLocationModalVisible(false);
-              }}
-            >
-              <Text style={styles.minConfirmText}>Confirm</Text>
-            </TouchableOpacity>
-          </View>
-        </RNSafeAreaView>
+      {/* Location Picker Modal */}
+      <Modal visible={locationModalVisible} transparent={false} animationType="slide" onRequestClose={() => setLocationModalVisible(false)}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Pick Location</Text>
+          <Pressable onPress={() => setLocationModalVisible(false)}>
+            <Text style={styles.modalClose}>Close</Text>
+          </Pressable>
+        </View>
+        <MapView
+          style={{ flex: 1 }}
+          initialRegion={mapRegion}
+          provider={PROVIDER_DEFAULT}
+          onLongPress={(e) => setPickedCoord(e.nativeEvent.coordinate)}
+        >
+          <UrlTile
+            urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            maximumZ={19}
+          />
+          {pickedCoord && <Marker coordinate={pickedCoord} />}
+        </MapView>
+        <View style={{ padding: 12 }}>
+          <Text style={styles.muted}>
+            Long-press anywhere on the map to drop a pin.
+          </Text>
+          {pickedCoord ? (
+            <Pressable onPress={() => setLocationModalVisible(false)} style={({ pressed }) => [styles.btn, { marginTop: 12 }, pressed && styles.btnPressed]}>
+              <Ionicons name="checkmark" size={16} color="#fff" />
+              <Text style={[styles.btnText, { marginLeft: 8 }]}>Use This Location</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </Modal>
-
     </SafeAreaView>
   );
 }
@@ -871,14 +823,6 @@ function ItemRow({ label, value, multiline = false }) {
       <Text style={[styles.itemValue, multiline && { lineHeight: 20 }]} numberOfLines={multiline ? 0 : 1}>
         {value ?? '—'}
       </Text>
-    </View>
-  );
-}
-function Row({ label, value }) {
-  return (
-    <View style={{ flexDirection: 'row' }}>
-      <Text style={{ width: 120, color: '#6b7280', fontSize: 12 }}>{label}</Text>
-      <Text style={{ flex: 1, color: '#111827', fontSize: 13, fontWeight: '600' }}>{value}</Text>
     </View>
   );
 }
@@ -1041,9 +985,8 @@ function LogoPicker({ editable, previewUri, onPick, onRemove, size = 64 }) {
     }
   };
 
-  const radius = Math.round(size * 0.1875); // ~12 when size=64
+  const radius = Math.round(size * 0.1875);
 
-  // Static (view) mode
   if (!editable) {
     return hasImage ? (
       <Image source={{ uri: previewUri }} style={[styles.logo, { width: size, height: size, borderRadius: radius }]} />
@@ -1054,7 +997,6 @@ function LogoPicker({ editable, previewUri, onPick, onRemove, size = 64 }) {
     );
   }
 
-  // Editable: big tap target with pencil overlay
   return (
     <>
       {hasImage ? (
@@ -1072,7 +1014,6 @@ function LogoPicker({ editable, previewUri, onPick, onRemove, size = 64 }) {
         </Pressable>
       )}
 
-      {/* Bottom Action Sheet */}
       <Modal visible={sheetOpen} transparent animationType="fade" onRequestClose={() => setSheetOpen(false)}>
         <Pressable style={styles.sheetBackdrop} onPress={() => setSheetOpen(false)} />
         <View style={styles.sheet}>
@@ -1177,20 +1118,15 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center' },
   rowWrap: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
 
-  // Logo area (view mode left)
   logoWrap: { marginRight: 12 },
-
-  // New: top logo container (edit mode)
   logoTopWrap: { alignItems: 'center', marginBottom: 12 },
 
-  // Static logo (view mode)
   logo: { width: 64, height: 64, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb' },
   logoFallback: {
     width: 64, height: 64, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb',
     alignItems: 'center', justifyContent: 'center', backgroundColor: '#f1f5f9',
   },
 
-  // Editable logo (preview + pencil)
   logoEditableBox: {
     width: 64, height: 64, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#e5e7eb',
   },
@@ -1201,7 +1137,6 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 3, shadowOffset: { width: 0, height: 1 }, elevation: 2,
   },
 
-  // Add logo (no preview)
   logoUploadCard: {
     width: 64, height: 64, borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed',
     borderColor: '#cbd5e1', backgroundColor: '#f8fafc',
@@ -1246,7 +1181,6 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 12, color: '#0f172a', fontWeight: '700' },
   chipTextActive: { color: '#065f46' },
 
-  // AM/PM buttons
   ampmWrap: {
     flexDirection: 'row', backgroundColor: '#f1f5f9', borderRadius: 10, borderWidth: 1, borderColor: '#e5e7eb',
   },
@@ -1255,16 +1189,13 @@ const styles = StyleSheet.create({
   ampmText: { fontWeight: '700', color: '#0f172a', fontSize: 12 },
   ampmTextActive: { color: '#065f46' },
 
-  // Highlight states
   pressed: { opacity: 0.9 },
   btnPressed: { transform: [{ scale: 0.99 }] },
 
-  // License image
   licenseImg: {
     width: '100%', aspectRatio: 16 / 9, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb', resizeMode: 'cover'
   },
 
-  // Footer bar
   footer: {
     position: 'absolute', left: 0, right: 0,
     backgroundColor: '#fff', padding: 14, borderTopWidth: 1, borderTopColor: '#e5e7eb'
@@ -1274,7 +1205,6 @@ const styles = StyleSheet.create({
   },
   saveText: { color: '#fff', fontWeight: '800', fontSize: 16 },
 
-  // Accent button
   btn: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: THEME_GREEN, borderRadius: 12,
     paddingHorizontal: 14, paddingVertical: 10, alignSelf: 'flex-start',
@@ -1282,7 +1212,6 @@ const styles = StyleSheet.create({
   },
   btnText: { color: '#fff', fontWeight: '800' },
 
-  // Map preview
   mapPreviewWrapperLarge: {
     borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: '#e5e7eb', height: 180, marginBottom: 8, position: 'relative',
   },
@@ -1298,7 +1227,6 @@ const styles = StyleSheet.create({
   coordsLabel: { fontSize: 12, color: '#6B7280' },
   coordsValue: { fontSize: 14, color: '#111827', fontWeight: '600' },
 
-  // Bottom Action Sheet
   sheetBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.25)' },
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
@@ -1315,40 +1243,10 @@ const styles = StyleSheet.create({
   sheetCancel: { marginTop: 8, alignItems: 'center', paddingVertical: 10 },
   sheetCancelText: { fontSize: 15, fontWeight: '700', color: '#111827' },
 
-  /* Modal (Map) UI */
   modalHeader: {
     paddingHorizontal: 14, paddingTop: 8, paddingBottom: 10, flexDirection: 'row',
     alignItems: 'center', justifyContent: 'space-between', borderBottomColor: '#e5e7eb', borderBottomWidth: 1
   },
   modalTitle: { fontSize: 16, fontWeight: '800', color: '#111827' },
   modalClose: { fontSize: 14, fontWeight: '700', color: THEME_GREEN },
-
-  fabWrap: {
-    position: 'absolute', right: 12, top: 12, gap: 10,
-  },
-  fabBtn: {
-    width: 40, height: 40, borderRadius: 12, backgroundColor: '#fff',
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 4,
-  },
-  fabPressed: { transform: [{ scale: 0.98 }] },
-
-  modalFooterCard: {
-    backgroundColor: '#fff', padding: 14, borderTopLeftRadius: 16, borderTopRightRadius: 16,
-    borderTopWidth: 1, borderTopColor: '#e5e7eb',
-  },
-  modalHint: { marginLeft: 6, color: '#374151', fontSize: 12 },
-
-  btnPrimary: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#111827', paddingVertical: 10, borderRadius: 12, gap: 6
-  },
-  btnPrimaryText: { color: '#fff', fontWeight: '800' },
-
-  btnHollow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#f3f4f6', paddingVertical: 10, borderRadius: 12, gap: 6,
-    borderWidth: 1, borderColor: '#e5e7eb',
-  },
-  btnHollowText: { color: '#111827', fontWeight: '800' },
 });

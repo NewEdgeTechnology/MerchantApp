@@ -1,5 +1,5 @@
 // screens/settings/SecuritySettings.js
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,72 +13,78 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
 
 const { width } = Dimensions.get('window');
 const THEME_GREEN = '#16a34a';
 
+// Primary keys
 const KEY_BIOMETRIC_LOGIN = 'security_biometric_login';
-const KEY_TWO_FACTOR_AUTH = 'security_two_factor_auth';
+// Legacy (read/write for backward-compat)
+const KEY_BIOMETRIC_LOGIN_LEGACY = 'biometric_enabled_v1';
 
 export default function SecuritySettings() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
 
   const [biometricLogin, setBiometricLogin] = useState(false);
-  const [twoFactorAuth, setTwoFactorAuth] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [biometricSupported, setBiometricSupported] = useState(null); // null = unknown, true/false when resolved
+  const [biometricSupported, setBiometricSupported] = useState(null); // null = unknown
   const [biometricTypes, setBiometricTypes] = useState([]);
 
   const goBack = () => navigation.goBack();
 
-  // Load persisted settings & check device biometric capability
+  // ---- Helpers ----
+  const readStore = useCallback(async (key, def = '0') => {
+    try {
+      const v = await SecureStore.getItemAsync(key);
+      return v ?? def;
+    } catch {
+      return def;
+    }
+  }, []);
+
+  const writeStore = useCallback(async (key, val) => {
+    await SecureStore.setItemAsync(key, val);
+  }, []);
+
+  const checkBiometricCapability = useCallback(async () => {
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
+      setBiometricSupported(Boolean(hasHardware && isEnrolled));
+      setBiometricTypes(types || []);
+    } catch {
+      setBiometricSupported(false);
+      setBiometricTypes([]);
+    }
+  }, []);
+
+  // Load persisted settings & capability
   useEffect(() => {
     (async () => {
       try {
-        const savedBio = await SecureStore.getItemAsync(KEY_BIOMETRIC_LOGIN);
-        const saved2fa = await SecureStore.getItemAsync(KEY_TWO_FACTOR_AUTH);
-        if (savedBio != null) setBiometricLogin(savedBio === '1');
-        if (saved2fa != null) setTwoFactorAuth(saved2fa === '1');
-
-        const hasHardware = await LocalAuthentication.hasHardwareAsync();
-        const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-        const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
-
-        setBiometricSupported(Boolean(hasHardware && isEnrolled));
-        setBiometricTypes(types || []);
-      } catch (e) {
-        // Non-fatal: show a friendly toast/alert if you like
+        const [bioPrimary, bioLegacy] = await Promise.all([
+          readStore(KEY_BIOMETRIC_LOGIN),
+          readStore(KEY_BIOMETRIC_LOGIN_LEGACY),
+        ]);
+        const bioFlag = (bioPrimary ?? '0') !== '0' ? bioPrimary : bioLegacy;
+        setBiometricLogin(bioFlag === '1');
+        await checkBiometricCapability();
       } finally {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [readStore, checkBiometricCapability]);
 
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await SecureStore.setItemAsync(KEY_BIOMETRIC_LOGIN, biometricLogin ? '1' : '0');
-      await SecureStore.setItemAsync(KEY_TWO_FACTOR_AUTH, twoFactorAuth ? '1' : '0');
-
-      Alert.alert('Saved', 'Your security settings have been updated.');
-      navigation.goBack();
-    } catch (e) {
-      Alert.alert('Save Failed', 'Could not save your settings. Please try again.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
+  // Friendlier label
   const biometricLabel = useMemo(() => {
     if (biometricTypes?.length) {
-      // Map expo enum to friendly
-      // 1: FINGERPRINT, 2: FACIAL_RECOGNITION, 3: IRIS
       const map = { 1: 'Fingerprint', 2: 'Face ID', 3: 'Iris' };
       const names = biometricTypes.map((t) => map[t] || 'Biometric');
       return [...new Set(names)].join(' / ');
@@ -87,12 +93,83 @@ export default function SecuritySettings() {
   }, [biometricTypes]);
 
   const canToggleBiometric = biometricSupported === true;
-  const changed = useMemo(() => !loading, [loading]); // enable save once loaded
-  const saveDisabled = !changed || saving;
+  const saveDisabled = saving || loading;
+
+  // Authenticate now when turning ON
+  const onToggleBiometric = async (val) => {
+    if (!canToggleBiometric) return;
+    if (val === false) {
+      setBiometricLogin(false);
+      return;
+    }
+
+    try {
+      const res = await LocalAuthentication.authenticateAsync({
+        promptMessage: `Enable ${biometricLabel} Login`,
+        cancelLabel: 'Cancel',
+        fallbackEnabled: true,
+        disableDeviceFallback: false,
+      });
+
+      if (res.success) {
+        setBiometricLogin(true);
+        Alert.alert('Enabled', `${biometricLabel} login is now on.`);
+      } else {
+        setBiometricLogin(false);
+        Alert.alert('Not enabled', 'Authentication was cancelled or failed.');
+      }
+    } catch {
+      setBiometricLogin(false);
+      Alert.alert('Error', 'Could not complete biometric authentication.');
+    }
+  };
+
+  const testBiometricNow = async () => {
+    if (!canToggleBiometric) {
+      Alert.alert('Unavailable', 'No enrolled biometrics on this device.');
+      return;
+    }
+    try {
+      const res = await LocalAuthentication.authenticateAsync({
+        promptMessage: `Authenticate with ${biometricLabel}`,
+        cancelLabel: 'Cancel',
+        fallbackEnabled: true,
+        disableDeviceFallback: false,
+      });
+      if (res.success) Alert.alert('Success', 'Authentication passed.');
+      else Alert.alert('Failed', 'Authentication failed or was cancelled.');
+    } catch {
+      Alert.alert('Error', 'Could not start biometric prompt.');
+    }
+  };
+
+  const handleSave = async () => {
+    if (biometricLogin && !canToggleBiometric) {
+      Alert.alert(
+        'Unavailable',
+        `Your device doesn’t have ${biometricLabel.toLowerCase()} set up. Please enroll it in Settings first.`
+      );
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const bioVal = biometricLogin ? '1' : '0';
+      await writeStore(KEY_BIOMETRIC_LOGIN, bioVal);
+      await writeStore(KEY_BIOMETRIC_LOGIN_LEGACY, bioVal);
+
+      Alert.alert('Saved', 'Your security settings have been updated.');
+      navigation.goBack();
+    } catch {
+      Alert.alert('Save Failed', 'Could not save your settings. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right']}>
-      {/* Header (same layout style as PasswordManagement) */}
+      {/* Header */}
       <View style={[styles.header, { paddingTop: Math.max(insets.top, 8) + 10 }]}>
         <TouchableOpacity onPress={goBack} style={styles.backBtn} activeOpacity={0.7}>
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
@@ -116,7 +193,7 @@ export default function SecuritySettings() {
                 Use your device’s {biometricLabel.toLowerCase()} to quickly and securely log in.
               </Text>
 
-              {!canToggleBiometric && (
+              {biometricSupported === false && (
                 <View style={styles.infoBox}>
                   <Ionicons name="information-circle-outline" size={16} color="#64748b" />
                   <Text style={styles.infoText}>
@@ -131,42 +208,19 @@ export default function SecuritySettings() {
                 <Text style={styles.rowLabel}>Enable {biometricLabel} Login</Text>
                 <Switch
                   value={biometricLogin && canToggleBiometric}
-                  onValueChange={(v) => setBiometricLogin(v)}
+                  onValueChange={onToggleBiometric}
                   disabled={!canToggleBiometric}
                 />
               </View>
-            </View>
 
-            {/* Two-Factor Authentication */}
-            <View style={styles.card}>
-              <Text style={styles.sectionTitle}>Two-Factor Authentication (2FA)</Text>
-              <Text style={styles.muted}>
-                Add an extra layer of protection to your account. When 2FA is on, you’ll confirm your
-                identity using a second step after your password.
-              </Text>
-
-              <View style={styles.row}>
-                <Text style={styles.rowLabel}>Enable 2FA</Text>
-                <Switch value={twoFactorAuth} onValueChange={setTwoFactorAuth} />
-              </View>
-
-              <View style={styles.helperRow}>
-                <Ionicons name="shield-checkmark-outline" size={16} color="#64748b" />
-                <Text style={styles.helperText}>
-                  Recommended for admins and business owners. You can add SMS/Email codes later in
-                  “Manage 2FA Methods”.
-                </Text>
-              </View>
-
-              {/* Optional manage button (placeholder for future screen) */}
               <TouchableOpacity
                 activeOpacity={0.85}
-                style={[styles.secondaryBtn, !twoFactorAuth && { opacity: 0.6 }]}
-                disabled={!twoFactorAuth}
-                onPress={() => Alert.alert('Coming soon', 'Manage 2FA methods screen')}
+                style={[styles.secondaryBtn, !canToggleBiometric && { opacity: 0.5 }]}
+                disabled={!canToggleBiometric}
+                onPress={testBiometricNow}
               >
-                <Ionicons name="key-outline" size={16} color="#0f172a" style={{ marginRight: 8 }} />
-                <Text style={styles.secondaryBtnText}>Manage 2FA Methods</Text>
+                <Ionicons name="finger-print-outline" size={16} color="#0f172a" style={{ marginRight: 8 }} />
+                <Text style={styles.secondaryBtnText}>Test {biometricLabel} Now</Text>
               </TouchableOpacity>
             </View>
 
@@ -196,7 +250,6 @@ export default function SecuritySettings() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#f6f8fa' },
 
-  /* Header (aligned with PasswordManagement) */
   header: {
     minHeight: 52,
     paddingHorizontal: 12,
@@ -253,14 +306,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   rowLabel: { fontSize: width > 400 ? 15 : 14, color: '#0f172a' },
-
-  helperRow: {
-    marginTop: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  helperText: { flex: 1, fontSize: 12, color: '#64748b', lineHeight: 16 },
 
   infoBox: {
     flexDirection: 'row',

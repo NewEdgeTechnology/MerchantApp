@@ -8,11 +8,10 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   Keyboard,
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useSafeAreaInsets, SafeAreaView } from "react-native-safe-area-context";
 import HeaderWithSteps from "./HeaderWithSteps";
 
 // use .env for admin business type APIs (no fallbacks)
@@ -35,6 +34,10 @@ export default function MerchantRegistrationScreen() {
     initialBusinessName,
     initialCategory,
     returnTo = null,
+
+    // NEW: make license fields optional by default; pass along to next screens
+    requireLicense = false,
+    requireLicenseImage = false,
   } = route.params ?? {};
 
   const [fullName, setFullName] = useState(
@@ -167,6 +170,7 @@ export default function MerchantRegistrationScreen() {
     return () => controller.abort();
   }, [effectiveServiceType]);
 
+  // Only validate required fields: fullName + businessName
   const isValid = fullName.trim().length > 0 && businessName.trim().length > 0;
 
   const toggleCategory = (id) => {
@@ -207,6 +211,10 @@ export default function MerchantRegistrationScreen() {
       initialFullName: fullName.trim(),
       initialBusinessName: businessName.trim(),
       initialCategory: selectedCategories, // IDs
+
+      // NEW: propagate optionality flags forward
+      requireLicense,
+      requireLicenseImage,
     });
   };
 

@@ -2,7 +2,7 @@
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, Platform, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Ionicons from 'react-native-vector-icons/Ionicons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 
 export default function MerchantBottomBar({
   items = [],

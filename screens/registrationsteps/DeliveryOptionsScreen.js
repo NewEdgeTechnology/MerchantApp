@@ -4,12 +4,12 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   Alert,
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import HeaderWithSteps from "./HeaderWithSteps";
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const NEXT_ROUTE = "ReviewSubmitScreen";
 const DELIVERY_OPTIONS = ["Self Delivery", "Grab Delivery", "Both"];

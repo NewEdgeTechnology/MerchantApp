@@ -1,5 +1,12 @@
 // screens/food/MenuScreen.js
-import React, { useMemo, useState, useEffect, useLayoutEffect, useCallback } from 'react';
+import React, {
+  useMemo,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useRef,
+} from 'react';
 import {
   View,
   Text,
@@ -19,47 +26,71 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import Ionicons from 'react-native-vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import * as ImagePicker from 'expo-image-picker';
-import { DISPLAY_MENU_ENDPOINT as ENV_DISPLAY_MENU_ENDPOINT, MENU_ENDPOINT as ENV_MENU_ENDPOINT } from '@env';
+import {
+  DISPLAY_MENU_ENDPOINT as ENV_DISPLAY_MENU_ENDPOINT,
+  DISPLAY_ITEM_ENDPOINT as ENV_DISPLAY_ITEM_ENDPOINT,
+  MENU_ENDPOINT as ENV_MENU_ENDPOINT,
+  ITEM_ENDPOINT as ENV_ITEM_ENDPOINT,
+  MENU_IMAGE_ENDPOINT as ENV_MENU_IMAGE_ENDPOINT,
+  ITEM_IMAGE_ENDPOINT as ENV_ITEM_IMAGE_ENDPOINT,
+} from '@env';
 
 const money = (n, c = 'Nu') => `${c} ${Number(n ?? 0).toFixed(2)}`;
 
-// Minimal default: just "All"
+/* ---------------- helpers ---------------- */
 const DEFAULT_CATEGORIES = ['All'];
 const KEY_LAST_CTX = 'last_ctx_payload';
 
 function getOrigin(url) {
+  try { const u = new URL(url); return `${u.protocol}//${u.host}`; }
+  catch { const m = String(url).match(/^(https?:\/\/[^/]+)/i); return m ? m[1] : ''; }
+}
+const sanitizePath = (p) =>
+  String(p || '').replace(/^\/uploads\/uploads\//i, '/uploads/').replace(/([^:]\/)\/+/g, '$1');
+const encodePathSegments = (p) =>
+  String(p || '').split('/').map(seg => (seg ? encodeURIComponent(seg) : '')).join('/');
+const absJoin = (base, raw) => {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  const baseNorm = String((base || '').replace(/\/+$/, ''));
+  let path = s.startsWith('/') ? s : `/${s}`;
+  if (/\/uploads$/i.test(baseNorm) && /^\/uploads\//i.test(path)) path = path.replace(/^\/uploads/i, '');
+  const encodedPath = encodePathSegments(sanitizePath(path));
+  return `${baseNorm}${encodedPath.startsWith('/') ? '' : '/'}${encodedPath}`.replace(/([^:]\/)\/+/g, '$1');
+};
+const isLocalUri = (u) => !!u && !/^https?:\/\//i.test(String(u));
+
+// Always give backend a real filename + mime (fixes Android content:// with no ext)
+const buildImagePart = (uri) => {
+  const lower = (uri || '').toLowerCase();
+  const isPng = lower.endsWith('.png');
+  return {
+    uri,
+    name: `upload_${Date.now()}.${isPng ? 'png' : 'jpg'}`,
+    type: isPng ? 'image/png' : 'image/jpeg',
+  };
+};
+const addCacheBuster = (url) => {
+  if (!url) return url;
   try {
     const u = new URL(url);
-    return `${u.protocol}//${u.host}`;
+    u.searchParams.set('v', String(Date.now()));
+    return u.toString();
   } catch {
-    const m = String(url).match(/^(https?:\/\/[^/]+)/i);
-    return m ? m[1] : '';
+    return url.includes('?') ? `${url}&v=${Date.now()}` : `${url}?v=${Date.now()}`;
   }
-}
-function toAbsoluteUrl(origin, pathOrUrl) {
-  if (!pathOrUrl) return '';
-  const s = String(pathOrUrl);
-  if (/^https?:\/\//i.test(s)) return s;
-  const rel = s.startsWith('/') ? s : `/${s}`;
-  return origin ? `${origin}${rel}` : rel;
-}
-
-/** ───────── Image helpers for multipart ───────── */
-const isLocalUri = (u) => !!u && !/^https?:\/\//i.test(String(u)); // file:// or content://
-const guessMimeFromName = (name) => {
-  const ext = (name || '').split('.').pop()?.toLowerCase();
-  if (ext === 'png') return 'image/png';
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-  if (ext === 'heic') return 'image/heic';
-  return 'application/octet-stream';
 };
-const buildFilePart = (uri) => {
-  const name = (uri?.split('/')?.pop() || 'photo.jpg');
-  return { uri, name, type: guessMimeFromName(name) };
+
+const normalizeOwnerType = (v) => {
+  const s = String(v ?? '').trim().toLowerCase();
+  if (s === '2' || s === 'mart') return 'mart';
+  if (s === '1' || s === 'food') return 'food';
+  return s || 'food';
 };
 
 export default function MenuScreen() {
@@ -67,7 +98,6 @@ export default function MenuScreen() {
   const route = useRoute();
   const insets = useSafeAreaInsets();
 
-  // ✅ native-stack slide transition
   useLayoutEffect(() => {
     navigation.setOptions?.({
       animation: 'slide_from_right',
@@ -76,85 +106,69 @@ export default function MenuScreen() {
     });
   }, [navigation]);
 
-  // Pull business identifiers + display fields from params (with fallbacks)
+  const ownerType = useMemo(
+    () => normalizeOwnerType(route?.params?.owner_type ?? route?.params?.ownerType ?? 'food'),
+    [route?.params?.owner_type, route?.params?.ownerType]
+  );
+  const isMart = ownerType === 'mart';
+
+  const IMAGE_BASE = useMemo(
+    () => String((isMart ? ENV_ITEM_IMAGE_ENDPOINT : ENV_MENU_IMAGE_ENDPOINT) || '').replace(/\/+$/, ''),
+    [isMart]
+  );
+
+  const nouns = useMemo(() => {
+    const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+    const base = isMart ? 'item' : 'menu';
+    const plural = isMart ? 'items' : 'menu items';
+    return {
+      headerTitle: isMart ? 'Items' : 'Menu',
+      searchPH: isMart ? 'Search items' : 'Search menu items',
+      emptyTitle: 'No items yet',
+      emptySub: 'Tap “Add item” to create your first one.',
+      editTitle: 'Edit item',
+      addFab: 'Add item',
+      noun: base, plural, cap, baseCap: cap(base),
+    };
+  }, [isMart]);
+
   const businessId = useMemo(() => {
     const p = route?.params ?? {};
-    return (
-      p.businessId ||
-      p.business_id ||
-      p.merchant?.businessId ||
-      p.merchant?.id ||
-      p.user?.business_id ||
-      p.user?.id ||
-      ''
-    );
+    return p.businessId || p.business_id || p.merchant?.businessId || p.merchant?.id || p.user?.business_id || p.user?.id || '';
   }, [route?.params]);
 
-  const businessName = useMemo(() => {
-    const p = route?.params ?? {};
-    return (
-      p.business_name ||
-      p.merchant?.business_name ||
-      p.user?.business_name ||
-      ''
-    );
-  }, [route?.params]);
-
-  const businessLogo = useMemo(() => {
-    const p = route?.params ?? {};
-    return (
-      p.business_logo ||
-      p.merchant?.business_logo ||
-      p.user?.business_logo ||
-      ''
-    );
-  }, [route?.params]);
-
-  // Start with NO predefined menus; only what is passed in (or empty).
-  const initialMenus = route?.params?.menus ?? [];
-  const initialCategories = route?.params?.categories ?? DEFAULT_CATEGORIES;
+  const businessName = route?.params?.business_name || route?.params?.merchant?.business_name || route?.params?.user?.business_name || '';
+  const businessLogo = route?.params?.business_logo || route?.params?.merchant?.business_logo || route?.params?.user?.business_logo || '';
 
   const [query, setQuery] = useState('');
   const [activeCat, setActiveCat] = useState('All');
-  const [menus, setMenus] = useState(initialMenus);
-  const [categories, setCategories] = useState(initialCategories);
-
-  // API bits
+  const [menus, setMenus] = useState(route?.params?.menus ?? []);
+  const [categories, setCategories] = useState(route?.params?.categories ?? DEFAULT_CATEGORIES);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-
-  // Modal state for edit
   const [modalVisible, setModalVisible] = useState(false);
   const [form, setForm] = useState({
-    id: null,
-    name: '',
-    category: 'General',
-    price: '',             // maps to actual_price
-    discount: '',          // discount_percentage
-    taxRate: '',           // tax_rate
-    currency: 'Nu',
-    inStock: true,
-    image: '',             // local or remote URI
+    id: null, name: '', category: 'General', price: '', discount: '', taxRate: '', currency: 'Nu', inStock: true, image: '',
   });
   const isEditing = !!form?.id;
+  const autoOpenRef = useRef(false);
 
-  // Endpoints
-  const DISPLAY_MENU_ENDPOINT = useMemo(
-    () => (ENV_DISPLAY_MENU_ENDPOINT || '').replace(/\/$/, ''),
-    []
+  const DISPLAY_LIST_ENDPOINT = useMemo(
+    () => ((isMart ? ENV_DISPLAY_ITEM_ENDPOINT : ENV_DISPLAY_MENU_ENDPOINT) || '').replace(/\/$/, ''),
+    [isMart]
   );
-  const MENU_ENDPOINT = useMemo(
-    () => (ENV_MENU_ENDPOINT || '').replace(/\/$/, ''),
-    []
+  const MODIFY_ENDPOINT = useMemo(
+    () => ((isMart ? ENV_ITEM_ENDPOINT : ENV_MENU_ENDPOINT) || '').replace(/\/$/, ''),
+    [isMart]
   );
-  const API_ORIGIN = useMemo(() => getOrigin(DISPLAY_MENU_ENDPOINT), [DISPLAY_MENU_ENDPOINT]);
+  const API_ORIGIN = useMemo(() => getOrigin(DISPLAY_LIST_ENDPOINT), [DISPLAY_LIST_ENDPOINT]);
 
-  // Normalize + extract
   const extractItemsFromResponse = useCallback((raw) => {
     if (Array.isArray(raw)) return raw;
     if (Array.isArray(raw?.data)) return raw.data;
-    const candidates = ['items', 'rows', 'result', 'payload', 'list', 'menus', 'menu'];
-    for (const k of candidates) if (Array.isArray(raw?.[k])) return raw[k];
+    for (const k of ['items', 'rows', 'result', 'payload', 'list', 'menus', 'menu']) {
+      if (Array.isArray(raw?.[k])) return raw[k];
+    }
     if (raw && typeof raw === 'object') {
       for (const v of Object.values(raw)) if (Array.isArray(v)) return v;
     }
@@ -170,12 +184,11 @@ export default function MenuScreen() {
         ? numericBase
         : (typeof x?.price === 'number' ? x.price : Number(x?.price ?? 0));
 
-    const absImage = toAbsoluteUrl(
-      API_ORIGIN,
-      x?.image_url ?? x?.item_image_url ?? x?.item_image ?? x?.image ?? ''
-    );
+    const rawImg = x?.image_url ?? x?.item_image_url ?? x?.item_image ?? x?.image ?? '';
+    const absImage = absJoin(IMAGE_BASE || API_ORIGIN, rawImg);
+
     return {
-      id: String(x?.id ?? x?._id ?? x?.menu_id ?? idx),
+      id: String(x?.id ?? x?._id ?? x?.menu_id ?? x?.item_id ?? idx),
       name: x?.item_name ?? x?.name ?? x?.title ?? 'Unnamed item',
       title: x?.title ?? undefined,
       price,
@@ -187,180 +200,197 @@ export default function MenuScreen() {
       image: absImage,
       description: x?.description ?? '',
     };
-  }, [API_ORIGIN]);
+  }, [API_ORIGIN, IMAGE_BASE]);
 
-  const buildUrl = useCallback(() => {
-    if (!DISPLAY_MENU_ENDPOINT || !businessId) return null;
-    return `${DISPLAY_MENU_ENDPOINT}/${encodeURIComponent(businessId)}`;
-  }, [DISPLAY_MENU_ENDPOINT, businessId]);
+  /* ---------- List URL: always send owner_type ---------- */
+  const buildListUrl = useCallback(() => {
+    if (!DISPLAY_LIST_ENDPOINT || !businessId) return null;
+    const base = DISPLAY_LIST_ENDPOINT.replace(/\/+$/, '');
+    const service = isMart ? 'mart' : 'food';
+
+    if (/\/business$/i.test(base)) {
+      return `${base}/${encodeURIComponent(businessId)}?owner_type=${encodeURIComponent(service)}`;
+    }
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}business_id=${encodeURIComponent(businessId)}&owner_type=${encodeURIComponent(service)}`;
+  }, [DISPLAY_LIST_ENDPOINT, businessId, isMart]);
 
   const hydrateCategories = useCallback((list) => {
     const uniq = new Set();
-    for (const it of list) {
-      const c = String(it?.category || '').trim();
-      if (c) uniq.add(c);
-    }
-    const arr = Array.from(uniq);
-    return ['All', ...arr];
+    for (const it of list) { const c = String(it?.category || '').trim(); if (c) uniq.add(c); }
+    return ['All', ...Array.from(uniq)];
   }, []);
 
-  // ───────── API: UPDATE (PUT MENU_ENDPOINT/:id) ─────────
-  const apiUpdateMenu = useCallback(
-    async (foodId, data) => {
-      if (!MENU_ENDPOINT) throw new Error('Missing MENU_ENDPOINT in .env');
-      if (!foodId) throw new Error('Missing food id for update');
+  /* ---------- Update endpoints ---------- */
 
-      const token = (await SecureStore.getItemAsync('auth_token')) || '';
-      const url = `${MENU_ENDPOINT}/${encodeURIComponent(foodId)}`;
+  // JSON update (no local file; keep it minimal & compatible)
+  const apiUpdateJson = useCallback(async (id, data) => {
+    if (!MODIFY_ENDPOINT) throw new Error('Missing modify endpoint');
+    const token = (await SecureStore.getItemAsync('auth_token')) || '';
+    const url = `${MODIFY_ENDPOINT.replace(/\/+$/, '')}/${encodeURIComponent(id)}`;
 
-      // Choose between multipart (file upload) vs JSON (remote URL/no change)
-      const shouldUploadFile = isLocalUri(data.image_local_uri);
+    const payload = {
+      business_id: data.business_id,
+      item_name: data.item_name,
+      category: data.category,
+      category_name: data.category,
+      actual_price: data.actual_price,
+      discount_percentage: data.discount_percentage ?? null,
+      tax_rate: data.tax_rate ?? null,
+      currency: data.currency,
+      is_available: data.is_available ? 1 : 0,
+      ...(data.image_url ? { image_url: data.image_url, item_image_url: data.image_url } : {}),
+      owner_type: isMart ? '2' : '1',
+      service: isMart ? 'mart' : 'food',
+    };
 
-      if (shouldUploadFile) {
-        /** multipart/form-data */
-        const formData = new FormData();
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
 
-        formData.append('business_id', String(data.business_id ?? ''));
-        formData.append('item_name', data.item_name ?? '');
-        formData.append('category', data.category ?? '');
-        if (data.actual_price != null) formData.append('actual_price', String(data.actual_price));
-        if (data.discount_percentage != null) formData.append('discount_percentage', String(data.discount_percentage));
-        if (data.tax_rate != null) formData.append('tax_rate', String(data.tax_rate));
-        formData.append('currency', data.currency ?? 'Nu');
-        formData.append('is_available', data.is_available ? '1' : '0');
+    const text = await res.text();
+    let json = null; try { json = text ? JSON.parse(text) : null; } catch { }
+    if (!res.ok) throw new Error(json?.message || text || `HTTP ${res.status}`);
+    return json || {};
+  }, [MODIFY_ENDPOINT, isMart]);
 
-        // IMPORTANT: field name must match your multer handler (e.g., multer.single('image'))
-        formData.append('image', buildFilePart(data.image_local_uri));
+  // Multipart update for local content:// file (Android-safe)
+  const apiUpdateMultipart = useCallback(async (id, data) => {
+    if (!MODIFY_ENDPOINT) throw new Error('Missing modify endpoint');
+    const token = (await SecureStore.getItemAsync('auth_token')) || '';
 
-        const res = await fetch(url, {
-          method: 'PUT',
-          headers: {
-            Accept: 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            // Do not set Content-Type, fetch sets correct boundary
-          },
-          body: formData,
-        });
+    const url = `${MODIFY_ENDPOINT.replace(/\/+$/, '')}/${encodeURIComponent(id)}`;
 
-        const text = await res.text();
-        let parsed = null; try { parsed = text ? JSON.parse(text) : null; } catch { }
-        if (!res.ok) {
-          const msg = parsed?.message || `Update failed (HTTP ${res.status})`;
-          throw new Error(msg);
-        }
-        return parsed || {};
-      } else {
-        /** JSON (no new local file to upload) */
-        const jsonPayload = {
-          business_id: data.business_id,
-          item_name: data.item_name,
-          category: data.category,
-          actual_price: data.actual_price,
-          discount_percentage: data.discount_percentage,
-          tax_rate: data.tax_rate,
-          currency: data.currency,
-          is_available: data.is_available ? 1 : 0,
-          ...(data.image_url ? { image_url: data.image_url } : {}),
-        };
+    const fd = new FormData();
 
-        const res = await fetch(url, {
-          method: 'PUT',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify(jsonPayload),
-        });
+    // ids / aliases
+    fd.append('id', String(id));
+    fd.append('item_id', String(id));
+    fd.append('menu_id', String(id));
+    if (data.business_id != null) fd.append('business_id', String(data.business_id));
 
-        const text = await res.text();
-        let parsed = null; try { parsed = text ? JSON.parse(text) : null; } catch { }
-        if (!res.ok) {
-          const msg = parsed?.message || `Update failed (HTTP ${res.status})`;
-          throw new Error(msg);
-        }
-        return parsed || {};
-      }
-    },
-    [MENU_ENDPOINT]
-  );
+    // owner hints
+    fd.append('owner_type', isMart ? '2' : '1');
+    fd.append('service', isMart ? 'mart' : 'food');
 
-  // 🔌 Fetch menus from API
+    // fields
+    const nm = data.item_name ?? '';
+    const cat = data.category ?? '';
+    fd.append('item_name', nm);
+    fd.append('name', nm);
+    fd.append('title', nm);
+    fd.append('category', cat);
+    fd.append('category_name', cat);
+
+    const priceStr = data.actual_price != null ? String(data.actual_price) : '';
+    if (priceStr) {
+      fd.append('price', priceStr);
+      fd.append('actual_price', priceStr);
+      fd.append('base_price', priceStr);
+    }
+    if (data.discount_percentage !== '' && data.discount_percentage != null) {
+      const d = String(data.discount_percentage);
+      fd.append('discount', d);
+      fd.append('discount_percentage', d);
+    }
+    if (data.tax_rate !== '' && data.tax_rate != null) {
+      fd.append('tax_rate', String(data.tax_rate));
+    }
+
+    fd.append('currency', data.currency || 'Nu');
+    const avail = data.is_available ? '1' : '0';
+    fd.append('is_available', avail);
+    fd.append('in_stock', avail);
+
+    // optional current remote url
+    if (data.image_url) {
+      const u = String(data.image_url);
+      fd.append(isMart ? 'item_image_url' : 'image_url', u);
+    }
+
+    // *** file last, correct field name ***
+    if (!data.image_local_uri) throw new Error('Missing image_local_uri');
+    const fileField = isMart ? 'item_image' : 'image';
+    const lower = (data.image_local_uri || '').toLowerCase();
+    const isPng = lower.endsWith('.png');
+    fd.append(fileField, {
+      uri: data.image_local_uri,
+      name: `upload_${Date.now()}.${isPng ? 'png' : 'jpg'}`,
+      type: isPng ? 'image/png' : 'image/jpeg',
+    });
+
+    const headers = {
+      Accept: 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      // don't set Content-Type; RN adds the boundary
+    };
+
+    const res = await fetch(url, { method: 'PUT', headers, body: fd });
+    const text = await res.text();
+    let json = null; try { json = text ? JSON.parse(text) : null; } catch { }
+    if (!res.ok) throw new Error(json?.message || text || `HTTP ${res.status}`);
+    return json || {};
+  }, [MODIFY_ENDPOINT, isMart]);
+
+
+  /* ---------- Fetch list ---------- */
   const fetchMenus = useCallback(async () => {
-    if (!DISPLAY_MENU_ENDPOINT) {
-      setErrorMsg('Missing DISPLAY_MENU_ENDPOINT in .env');
-      return;
-    }
-    if (!businessId) {
-      setErrorMsg('Missing businessId in route params');
-      return;
-    }
+    if (!DISPLAY_LIST_ENDPOINT) { setErrorMsg('Missing list endpoint in .env'); return; }
+    if (!businessId) { setErrorMsg('Missing businessId in route params'); return; }
 
-    setLoading(true);
-    setErrorMsg('');
+    setLoading(true); setErrorMsg('');
     try {
       const token = (await SecureStore.getItemAsync('auth_token')) || '';
-      const url = buildUrl();
+      const url = buildListUrl();
       const controller = new AbortController();
       const tid = setTimeout(() => controller.abort(), 15000);
 
       const res = await fetch(url, {
         method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         signal: controller.signal,
       });
       clearTimeout(tid);
 
       const text = await res.text();
       if (!res.ok) {
-        setErrorMsg(`Failed to load items (HTTP ${res.status}).`);
+        setErrorMsg(`Failed to load ${isMart ? 'items' : 'menu items'} (HTTP ${res.status}).`);
       } else {
-        let parsed;
-        try { parsed = text ? JSON.parse(text) : []; } catch { parsed = []; }
+        let parsed; try { parsed = text ? JSON.parse(text) : []; } catch { parsed = []; }
         const list = extractItemsFromResponse(parsed).map((x, i) => normalizeItem(x, i));
-        setMenus(list);
-        setCategories(hydrateCategories(list));
+        setMenus(list); setCategories(hydrateCategories(list));
       }
     } catch (e) {
-      setErrorMsg(String(e?.message || 'Failed to load items.'));
-    } finally {
-      setLoading(false);
-    }
-  }, [DISPLAY_MENU_ENDPOINT, businessId, buildUrl, extractItemsFromResponse, normalizeItem, hydrateCategories]);
+      setErrorMsg(String(e?.message || `Failed to load ${isMart ? 'items' : 'menu items'}.`));
+    } finally { setLoading(false); }
+  }, [DISPLAY_LIST_ENDPOINT, businessId, buildListUrl, extractItemsFromResponse, normalizeItem, hydrateCategories, isMart]);
 
-  // Auto-load on focus/param change
-  useFocusEffect(
-    useCallback(() => {
-      fetchMenus();
-    }, [fetchMenus])
-  );
+  useFocusEffect(useCallback(() => { fetchMenus(); }, [fetchMenus]));
 
-  // Filtered list
+  /* ---------- Filtering ---------- */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return menus.filter((m) => {
-      const matchesCat =
-        activeCat === 'All' ||
-        String(m.category || '').toLowerCase() === activeCat.toLowerCase();
-      const matchesText =
-        !q ||
-        String(m.name || '').toLowerCase().includes(q) ||
-        String(m.category || '').toLowerCase().includes(q);
+      const matchesCat = activeCat === 'All' || String(m.category || '').toLowerCase() === activeCat.toLowerCase();
+      const matchesText = !q || String(m.name || '').toLowerCase().includes(q) || String(m.category || '').toLowerCase().includes(q);
       return matchesCat && matchesText;
     });
   }, [menus, query, activeCat]);
 
-  // Edit existing item
+  /* ---------- Edit / Add ---------- */
   const openEdit = (item) => {
     const firstRealCat = categories.find((c) => c !== 'All');
     setForm({
       id: item.id,
       name: item.name,
       category: item.category || firstRealCat || 'General',
-      price: String(item.price ?? ''),                       // actual_price
+      price: String(item.price ?? ''),
       discount: item.discount !== undefined && item.discount !== null ? String(item.discount) : '',
       taxRate: item.taxRate !== undefined && item.taxRate !== null ? String(item.taxRate) : '',
       currency: item.currency || 'Nu',
@@ -370,77 +400,41 @@ export default function MenuScreen() {
     setModalVisible(true);
   };
 
-  // Open Add Menu on the EXISTING Home
   const openAddTab = async () => {
     const payload = {
       openTab: 'Add Menu',
-      businessId,
-      business_id: businessId,
-      business_name: businessName,
-      business_logo: businessLogo,
-      owner_type:
-        route?.params?.owner_type ||
-        route?.params?.user?.owner_type ||
-        'food',
+      businessId, business_id: businessId,
+      business_name: businessName, business_logo: businessLogo,
+      owner_type: ownerType,
     };
-
-    try {
-      await SecureStore.setItemAsync(KEY_LAST_CTX, JSON.stringify(payload));
-    } catch (e) {
-      if (__DEV__) console.warn('[MenuScreen] persistCtx failed:', e?.message);
-    }
-
+    try { await SecureStore.setItemAsync(KEY_LAST_CTX, JSON.stringify(payload)); } catch { }
     DeviceEventEmitter.emit('open-tab', { key: 'Add Menu', params: payload });
     navigation.goBack();
   };
 
-  // 📸 Image pickers for EDIT (local-only)
   const pickFromLibraryEdit = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow photo library access to select an image.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      allowsEditing: false,
-      quality: 0.9,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    });
-    if (!result.canceled && result.assets?.[0]) {
-      setForm((f) => ({ ...f, image: result.assets[0].uri }));
-    }
+    if (status !== 'granted') { Alert.alert('Permission needed', 'Allow photo library access to select an image.'); return; }
+    const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: false, quality: 0.9, mediaTypes: ImagePicker.MediaTypeOptions.Images });
+    if (!result.canceled && result.assets?.[0]) setForm((f) => ({ ...f, image: result.assets[0].uri }));
   };
 
   const takePhotoEdit = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow camera access to take a photo.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: false,
-      quality: 0.9,
-    });
-    if (!result.canceled && result.assets?.[0]) {
-      setForm((f) => ({ ...f, image: result.assets[0].uri }));
-    }
+    if (status !== 'granted') { Alert.alert('Permission needed', 'Allow camera access to take a photo.'); return; }
+    const result = await ImagePicker.launchCameraAsync({ allowsEditing: false, quality: 0.9 });
+    if (!result.canceled && result.assets?.[0]) setForm((f) => ({ ...f, image: result.assets[0].uri }));
   };
 
-  // Save handler (calls PUT /menus/:id when editing). Sends multipart if a new local image is present.
   const saveItem = async () => {
     const priceNum = Number(form.price);
     const discountNum = form.discount === '' ? '' : Number(form.discount);
     const taxNum = form.taxRate === '' ? '' : Number(form.taxRate);
-
-    if (!form.name.trim()) return Alert.alert('Name required', 'Please enter a menu name.');
+    if (!form.name.trim()) return Alert.alert('Name required', `Please enter a ${isMart ? 'item' : 'menu'} name.`);
     if (Number.isNaN(priceNum)) return Alert.alert('Invalid price', 'Please enter a numeric price.');
     if (discountNum !== '' && Number.isNaN(discountNum)) return Alert.alert('Invalid discount', 'Please enter a numeric discount percentage.');
     if (taxNum !== '' && Number.isNaN(taxNum)) return Alert.alert('Invalid tax', 'Please enter a numeric tax rate.');
     if (!form.category) return Alert.alert('Category required', 'Please choose a category.');
-
-    // Decide image fields
-    const image_local_uri = isLocalUri(form.image) ? form.image : null;
-    const image_url = !isLocalUri(form.image) ? (form.image || null) : null;
 
     const payload = {
       business_id: businessId,
@@ -450,20 +444,27 @@ export default function MenuScreen() {
       discount_percentage: discountNum === '' ? null : discountNum,
       tax_rate: taxNum === '' ? null : taxNum,
       currency: form.currency || 'Nu',
-      is_available: !!form.inStock ? 1 : 0,
-      image_local_uri, // used to trigger multipart
-      image_url,       // used for JSON path
+      is_available: form.inStock ? 1 : 0,
+      image_local_uri: isLocalUri(form.image) ? form.image : null,
+      image_url: !isLocalUri(form.image) ? (form.image || null) : null,
     };
 
     try {
       if (isEditing) {
-        const resp = await apiUpdateMenu(form.id, payload);
+        // choose path based on local vs remote
+        const resp = payload.image_local_uri
+          ? await apiUpdateMultipart(form.id, payload)
+          : await apiUpdateJson(form.id, payload);
 
-        // Use server-returned canonical image URL if provided
-        const updatedImage =
-          resp?.image_url || resp?.item_image_url || resp?.image || image_url || form.image;
+        // server image hint (if returned)
+        const serverImg = resp?.image_url || resp?.item_image_url || resp?.image || '';
+        const updatedImage = addCacheBuster(
+          serverImg
+            ? absJoin(IMAGE_BASE || API_ORIGIN, serverImg)
+            : (payload.image_url ? absJoin(IMAGE_BASE || API_ORIGIN, payload.image_url) : form.image)
+        );
 
-        // Optimistic UI update
+        // optimistic local update
         setMenus((prev) =>
           prev.map((m) =>
             m.id === form.id
@@ -492,50 +493,24 @@ export default function MenuScreen() {
   };
 
   const deleteItem = async (id) => {
-    Alert.alert('Delete item', 'Are you sure you want to delete this item?', [
+    Alert.alert(`Delete ${isMart ? 'item' : 'menu item'}`, 'Are you sure you want to delete this?', [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Delete',
-        style: 'destructive',
+        text: 'Delete', style: 'destructive',
         onPress: async () => {
           try {
-            // Sending DELETE request to backend
+            if (!MODIFY_ENDPOINT) throw new Error('Missing modify endpoint');
             const token = await SecureStore.getItemAsync('auth_token');
-            const url = `${MENU_ENDPOINT}/${encodeURIComponent(id)}`;
-
-            const res = await fetch(url, {
-              method: 'DELETE',
-              headers: {
-                Accept: 'application/json',
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
-              },
-            });
-
-            const text = await res.text();
-            let parsed = null;
-            try {
-              parsed = text ? JSON.parse(text) : null;
-            } catch { }
-            if (!res.ok) {
-              const msg = parsed?.message || `Delete failed (HTTP ${res.status})`;
-              throw new Error(msg);
-            }
-
-            // Optimistically update the UI by filtering out the deleted item
+            const url = `${MODIFY_ENDPOINT}/${encodeURIComponent(id)}`;
+            const res = await fetch(url, { method: 'DELETE', headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
+            const text = await res.text(); let parsed = null; try { parsed = text ? JSON.parse(text) : null; } catch { }
+            if (!res.ok) throw new Error(parsed?.message || `Delete failed (HTTP ${res.status})`);
             setMenus((prev) => prev.filter((m) => m.id !== id));
-
             Alert.alert('Deleted', 'Item has been deleted successfully.');
-          } catch (e) {
-            Alert.alert('Delete failed', String(e?.message || 'Could not delete the item.'));
-          }
+          } catch (e) { Alert.alert('Delete failed', String(e?.message || 'Could not delete the item.')); }
         },
       },
     ]);
-  };
-
-
-  const toggleStock = (id, v) => {
-    setMenus((prev) => prev.map((m) => (m.id === id ? { ...m, inStock: v } : m)));
   };
 
   const renderChip = ({ item }) => {
@@ -544,11 +519,7 @@ export default function MenuScreen() {
       <Pressable
         onPress={() => setActiveCat(item)}
         android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: false }}
-        style={({ pressed }) => [
-          styles.chip,
-          active && styles.chipActive,
-          pressed && { transform: [{ scale: 0.98 }] },
-        ]}
+        style={({ pressed }) => [styles.chip, active && styles.chipActive, pressed && { transform: [{ scale: 0.98 }] }]}
       >
         <Text style={[styles.chipText, active && styles.chipTextActive]}>{item}</Text>
       </Pressable>
@@ -557,38 +528,21 @@ export default function MenuScreen() {
 
   const renderMenu = ({ item }) => (
     <View style={styles.card}>
-      {item.image ? (
-        <Image source={{ uri: item.image }} style={styles.thumb} />
-      ) : (
-        <View style={[styles.thumb, styles.thumbFallback]}>
-          <Ionicons name="image-outline" size={18} color="#64748b" />
-        </View>
+      {item.image ? <Image source={{ uri: item.image }} style={styles.thumb} /> : (
+        <View style={[styles.thumb, styles.thumbFallback]}><Ionicons name="image-outline" size={18} color="#64748b" /></View>
       )}
-
       <View style={{ flex: 1 }}>
         <Text numberOfLines={1} style={styles.title}>{item.name}</Text>
         <Text numberOfLines={1} style={styles.meta}>{item.category || '—'}</Text>
         <Text style={styles.price}>{money(item.price, item.currency || 'Nu')}</Text>
       </View>
-
       <View style={styles.rightCol}>
-        <View style={styles.stockRow}>
-          <Text style={styles.stockLabel}>{item.inStock ? 'In stock' : 'Out'}</Text>
-        </View>
-
+        <View style={styles.stockRow}><Text style={styles.stockLabel}>{item.inStock ? 'In stock' : 'Out'}</Text></View>
         <View style={styles.actions}>
-          <Pressable
-            onPress={() => openEdit(item)}
-            style={styles.iconBtn}
-            android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}
-          >
+          <Pressable onPress={() => openEdit(item)} style={styles.iconBtn} android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}>
             <Ionicons name="create-outline" size={20} color="#0f172a" />
           </Pressable>
-          <Pressable
-            onPress={() => deleteItem(item.id)}
-            style={styles.iconBtn}
-            android_ripple={{ color: 'rgba(185,28,28,0.12)', borderless: true }}
-          >
+          <Pressable onPress={() => deleteItem(item.id)} style={styles.iconBtn} android_ripple={{ color: 'rgba(185,28,28,0.12)', borderless: true }}>
             <Ionicons name="trash-outline" size={20} color="#b91c1c" />
           </Pressable>
         </View>
@@ -596,71 +550,51 @@ export default function MenuScreen() {
     </View>
   );
 
-  // Optional: send menus back when leaving (if parent manages state)
-  useEffect(() => {
-    return () => {
-      if (route?.params?.onSaveMenus) {
-        route.params.onSaveMenus(menus);
-      }
-    };
+  useEffect(() => () => {
+    if (route?.params?.onSaveMenus) route.params.onSaveMenus(menus);
   }, [menus, route?.params]);
+
+  useEffect(() => {
+    if (autoOpenRef.current) return;
+    const edit = route?.params?.editItem; if (!edit) return;
+    const found = menus.find(m => String(m.id) === String(edit.id)) || edit;
+    if (categories.length > 0) { openEdit(found); autoOpenRef.current = true; }
+  }, [route?.params?.editItem, menus, categories]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right']}>
       <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
 
-      {/* Header */}
       <View style={[styles.header, { paddingTop: (insets.top || 0) + 6 }]}>
-        <Pressable
-          onPress={() => navigation.goBack()}
-          style={styles.iconBtn}
-          android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}
-        >
+        <Pressable onPress={() => navigation.goBack()} style={styles.iconBtn} android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}>
           <Ionicons name="arrow-back" size={24} color="#0f172a" />
         </Pressable>
-        <Text style={styles.headerTitle}>Menu</Text>
-        {/* spacer to keep title centered */}
+        <Text style={styles.headerTitle}>{nouns.headerTitle}</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      {/* Search */}
       <View style={styles.searchWrap}>
         <Ionicons name="search-outline" size={18} color="#64748b" />
         <TextInput
-          placeholder="Search menu items"
-          placeholderTextColor="#94a3b8"
-          style={styles.searchInput}
-          value={query}
-          onChangeText={setQuery}
+          placeholder={nouns.searchPH} placeholderTextColor="#94a3b8" style={styles.searchInput}
+          value={query} onChangeText={setQuery}
         />
-        {query ? (
-          <Pressable
-            onPress={() => setQuery('')}
-            style={styles.clearBtn}
-            android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: true }}
-          >
+        {!!query && (
+          <Pressable onPress={() => setQuery('')} style={styles.clearBtn} android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: true }}>
             <Ionicons name="close-circle" size={18} color="#94a3b8" />
           </Pressable>
-        ) : null}
+        )}
       </View>
 
-      {/* Category chips */}
       <View style={styles.chipsRow}>
-        <FlatList
-          horizontal
-          data={categories}
-          keyExtractor={(c, i) => `${c}-${i}`}
-          renderItem={renderChip}
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingRight: 12 }}
-        />
+        <FlatList horizontal data={categories} keyExtractor={(c, i) => `${c}-${i}`} renderItem={renderChip}
+          showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 12 }} />
       </View>
 
-      {/* List */}
       {loading ? (
         <View style={{ paddingTop: 40, alignItems: 'center' }}>
           <ActivityIndicator />
-          <Text style={{ marginTop: 8, color: '#64748b' }}>Loading items…</Text>
+          <Text style={{ marginTop: 8, color: '#64748b' }}>Loading {isMart ? 'items' : 'menu items'}…</Text>
         </View>
       ) : errorMsg ? (
         <View style={{ paddingTop: 40, alignItems: 'center' }}>
@@ -680,124 +614,77 @@ export default function MenuScreen() {
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           ListEmptyComponent={
             <View style={styles.emptyBox}>
-              <Ionicons name="fast-food-outline" size={30} color="#64748b" />
-              <Text style={styles.emptyTitle}>No items yet</Text>
-              <Text style={styles.emptySub}>Tap “Add item” to create your first one.</Text>
+              <Ionicons name={isMart ? 'cube-outline' : 'fast-food-outline'} size={30} color="#64748b" />
+              <Text style={styles.emptyTitle}>{nouns.emptyTitle}</Text>
+              <Text style={styles.emptySub}>{nouns.emptySub}</Text>
             </View>
           }
         />
       )}
 
-      {/* FAB — opens Add Menu TAB */}
-      <Pressable
-        style={[styles.fab, { bottom: (insets.bottom || 0) + 24 }]}
-        onPress={openAddTab}
-        android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: false }}
-      >
+      <Pressable style={[styles.fab, { bottom: (insets.bottom || 0) + 24 }]} onPress={openAddTab}
+        android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: false }}>
         <Ionicons name="add" size={22} color="#fff" />
-        <Text style={styles.fabText}>Add item</Text>
+        <Text style={styles.fabText}>{nouns.addFab}</Text>
       </Pressable>
 
-      {/* Inline Edit Modal */}
       <Modal visible={modalVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalWrap}
-        >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalWrap}>
           <View style={[styles.sheet, { paddingBottom: (insets.bottom || 0) + 16 }]}>
             <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Edit item</Text>
-              <Pressable
-                onPress={() => setModalVisible(false)}
-                style={styles.iconBtn}
-                android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}
-              >
+              <Text style={styles.sheetTitle}>{nouns.editTitle}</Text>
+              <Pressable onPress={() => setModalVisible(false)} style={styles.iconBtn}
+                android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}>
                 <Ionicons name="close" size={24} color="#0f172a" />
               </Pressable>
             </View>
 
             <ScrollView contentContainerStyle={{ paddingBottom: 12 }}>
               <Text style={styles.label}>Name</Text>
-              <TextInput
-                value={form.name}
-                onChangeText={(t) => setForm((f) => ({ ...f, name: t }))}
-                placeholder="e.g., Chicken Rice"
-                style={styles.input}
-              />
+              <TextInput value={form.name} onChangeText={(t) => setForm((f) => ({ ...f, name: t }))}
+                placeholder={isMart ? 'e.g., Toothpaste 200g' : 'e.g., Chicken Rice'} style={styles.input} />
 
               <Text style={styles.label}>Category</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                 {categories.filter(c => c !== 'All').map((c) => (
-                  <Pressable
-                    key={c}
-                    style={({ pressed }) => [
-                      styles.catChip,
-                      form.category === c && styles.catChipActive,
-                      pressed && { transform: [{ scale: 0.98 }] },
-                    ]}
+                  <Pressable key={c}
+                    style={({ pressed }) => [styles.catChip, form.category === c && styles.catChipActive, pressed && { transform: [{ scale: 0.98 }] }]}
                     android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: false }}
-                    onPress={() => setForm((f) => ({ ...f, category: c }))}
-                  >
+                    onPress={() => setForm((f) => ({ ...f, category: c }))}>
                     <Text style={[styles.catChipText, form.category === c && styles.catChipTextActive]}>{c}</Text>
                   </Pressable>
                 ))}
-                {/* Quick add category — removed as requested */}
               </ScrollView>
 
               <View style={styles.row2}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.label}>Price</Text>
-                  <TextInput
-                    value={String(form.price)}
-                    onChangeText={(t) => setForm((f) => ({ ...f, price: t.replace(/,/g, '.') }))}
-                    keyboardType="decimal-pad"
-                    placeholder="0.00"
-                    style={styles.input}
-                  />
+                  <TextInput value={String(form.price)} onChangeText={(t) => setForm((f) => ({ ...f, price: t.replace(/,/g, '.') }))}
+                    keyboardType="decimal-pad" placeholder="0.00" style={styles.input} />
                 </View>
                 <View style={{ width: 100 }}>
                   <Text style={styles.label}>Currency</Text>
-                  <TextInput
-                    value={form.currency}
-                    onChangeText={(t) => setForm((f) => ({ ...f, currency: t.trim().slice(0, 4) || 'Nu' }))}
-                    placeholder="Nu"
-                    style={styles.input}
-                  />
+                  <TextInput value={form.currency}
+                    onChangeText={(t) => setForm((f) => ({ ...f, currency: t.trim().slice(0, 4) || 'Nu' }))} placeholder="Nu" style={styles.input} />
                 </View>
               </View>
 
-              {/* Added fields — same look/feel */}
               <View style={styles.row2}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.label}>Tax rate (%)</Text>
-                  <TextInput
-                    value={String(form.taxRate)}
-                    onChangeText={(t) => setForm((f) => ({ ...f, taxRate: t.replace(/,/g, '.') }))}
-                    keyboardType="decimal-pad"
-                    placeholder="e.g., 5"
-                    style={styles.input}
-                  />
+                  <TextInput value={String(form.taxRate)} onChangeText={(t) => setForm((f) => ({ ...f, taxRate: t.replace(/,/g, '.') }))}
+                    keyboardType="decimal-pad" placeholder="e.g., 5" style={styles.input} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.label}>Discount (%)</Text>
-                  <TextInput
-                    value={String(form.discount)}
-                    onChangeText={(t) => setForm((f) => ({ ...f, discount: t.replace(/,/g, '.') }))}
-                    keyboardType="decimal-pad"
-                    placeholder="e.g., 10"
-                    style={styles.input}
-                  />
+                  <TextInput value={String(form.discount)} onChangeText={(t) => setForm((f) => ({ ...f, discount: t.replace(/,/g, '.') }))}
+                    keyboardType="decimal-pad" placeholder="e.g., 10" style={styles.input} />
                 </View>
               </View>
 
-              {/* Image picker */}
               <Text style={styles.label}>Image</Text>
               {form.image ? (
-                <Image
-                  source={{ uri: form.image }}
-                  style={{ width: '100%', height: 160, borderRadius: 12, backgroundColor: '#f1f5f9' }}
-                  resizeMode="cover"
-                />
+                <Image source={{ uri: form.image }} style={{ width: '100%', height: 160, borderRadius: 12, backgroundColor: '#f1f5f9' }} resizeMode="cover" />
               ) : (
                 <View style={{ width: '100%', height: 160, borderRadius: 12, backgroundColor: '#f1f5f9', alignItems: 'center', justifyContent: 'center' }}>
                   <Ionicons name="image-outline" size={28} color="#64748b" />
@@ -805,19 +692,13 @@ export default function MenuScreen() {
                 </View>
               )}
               <View style={[styles.saveRow, { marginTop: 10 }]}>
-                <Pressable
-                  style={[styles.btn, styles.btnGhost]}
-                  onPress={takePhotoEdit}
-                  android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: false }}
-                >
+                <Pressable style={[styles.btn, styles.btnGhost]} onPress={takePhotoEdit}
+                  android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: false }}>
                   <Ionicons name="camera-outline" size={18} color="#0f172a" />
                   <Text style={styles.btnGhostText}>Take photo</Text>
                 </Pressable>
-                <Pressable
-                  style={[styles.btn, styles.btnPrimary]}
-                  onPress={pickFromLibraryEdit}
-                  android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: false }}
-                >
+                <Pressable style={[styles.btn, styles.btnPrimary]} onPress={pickFromLibraryEdit}
+                  android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: false }}>
                   <Ionicons name="images-outline" size={18} color="#fff" />
                   <Text style={styles.btnPrimaryText}>Pick photo</Text>
                 </Pressable>
@@ -825,33 +706,20 @@ export default function MenuScreen() {
 
               <View style={styles.stockRow2}>
                 <Text style={styles.stockLabel2}>Available</Text>
-                <Switch
-                  value={form.inStock}
-                  onValueChange={(v) => setForm((f) => ({ ...f, inStock: v }))}
-                  trackColor={{ true: '#a7f3d0', false: '#fee2e2' }}
-                  thumbColor={form.inStock ? '#10b981' : '#ef4444'}
-                />
+                <Switch value={form.inStock} onValueChange={(v) => setForm((f) => ({ ...f, inStock: v }))}
+                  trackColor={{ true: '#a7f3d0', false: '#fee2e2' }} thumbColor={form.inStock ? '#10b981' : '#ef4444'} />
               </View>
 
               <View style={styles.saveRow}>
                 {isEditing && (
-                  <Pressable
-                    style={[styles.btn, styles.btnGhost]}
-                    onPress={() => {
-                      setModalVisible(false);
-                      deleteItem(form.id);
-                    }}
-                    android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: false }}
-                  >
+                  <Pressable style={[styles.btn, styles.btnGhost]} onPress={() => { setModalVisible(false); deleteItem(form.id); }}
+                    android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: false }}>
                     <Ionicons name="trash-outline" size={18} color="#b91c1c" />
                     <Text style={[styles.btnGhostText, { color: '#b91c1c' }]}>Delete</Text>
                   </Pressable>
                 )}
-                <Pressable
-                  style={[styles.btn, styles.btnPrimary]}
-                  onPress={saveItem}
-                  android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: false }}
-                >
+                <Pressable style={[styles.btn, styles.btnPrimary]} onPress={saveItem}
+                  android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: false }}>
                   <Ionicons name="save-outline" size={18} color="#fff" />
                   <Text style={styles.btnPrimaryText}>Save changes</Text>
                 </Pressable>
@@ -864,53 +732,24 @@ export default function MenuScreen() {
   );
 }
 
-// ───────────────────────── Styles ─────────────────────────
+/* ---------------- styles ---------------- */
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#ffffff' },
-
-  header: {
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
+  header: { paddingHorizontal: 16, paddingBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 12 },
   headerTitle: { flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '800', color: '#0f172a' },
   iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 999 },
 
-  searchWrap: {
-    marginHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 15,
-    borderRadius: 12,
-    backgroundColor: '#f1f5f9',
-  },
+  searchWrap: { marginHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 15, borderRadius: 12, backgroundColor: '#f1f5f9' },
   searchInput: { flex: 1, color: '#0f172a', paddingVertical: 0 },
   clearBtn: { padding: 4, borderRadius: 999 },
 
   chipsRow: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 2 },
-
   chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: '#e2e8f0', marginHorizontal: 4 },
   chipActive: { backgroundColor: '#00b14f' },
   chipText: { color: '#0f172a', fontWeight: '700' },
   chipTextActive: { color: 'white' },
 
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
+  card: { backgroundColor: '#fff', borderRadius: 16, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
   thumb: { width: 54, height: 54, borderRadius: 10, backgroundColor: '#e2e8f0' },
   thumbFallback: { alignItems: 'center', justifyContent: 'center' },
   title: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
@@ -921,39 +760,16 @@ const styles = StyleSheet.create({
   stockRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   stockLabel: { fontSize: 12, color: '#0f172a', fontWeight: '700' },
   actions: { flexDirection: 'row', gap: 6 },
-  iconBtnSmall: { padding: 6 },
 
   emptyBox: { alignItems: 'center', paddingTop: 40, gap: 8 },
   emptyTitle: { fontWeight: '800', color: '#0f172a' },
   emptySub: { color: '#64748b' },
 
-  fab: {
-    position: 'absolute',
-    right: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#00b14f',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 999,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 5,
-  },
+  fab: { position: 'absolute', right: 16, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#00b14f', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 999, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 5 },
   fabText: { color: '#fff', fontWeight: '800' },
 
   modalWrap: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
-  sheet: {
-    backgroundColor: 'white',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    maxHeight: '90%',
-  },
+  sheet: { backgroundColor: 'white', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 16, paddingTop: 12, maxHeight: '90%' },
   sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
   sheetTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
 
@@ -964,18 +780,6 @@ const styles = StyleSheet.create({
   catChipActive: { backgroundColor: '#00b14f' },
   catChipText: { color: '#0f172a', fontWeight: '700' },
   catChipTextActive: { color: '#fff' },
-
-  // (styles for removed "add category" button kept harmlessly; delete if you want)
-  catAdd: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#ecfeff',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  catAddText: { color: '#00b14f', fontWeight: '800' },
 
   stockRow2: { marginTop: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   stockLabel2: { fontSize: 14, color: '#0f172a', fontWeight: '700' },

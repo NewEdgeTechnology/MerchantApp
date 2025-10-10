@@ -12,7 +12,7 @@ import {
   TouchableWithoutFeedback,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
-import Ionicons from 'react-native-vector-icons/Ionicons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 
 const { height } = Dimensions.get('window');
 

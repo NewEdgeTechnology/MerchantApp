@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import Ionicons from 'react-native-vector-icons/Ionicons';
+import { Ionicons, Feather } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 import { PASSWORD_CHANGE_ENDPOINT } from '@env';
 

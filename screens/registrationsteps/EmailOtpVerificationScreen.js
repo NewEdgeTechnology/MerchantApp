@@ -5,7 +5,6 @@ import {
   Keyboard,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,7 +16,7 @@ import { useNavigation, useRoute } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "react-native-vector-icons/Ionicons";
 import HeaderWithSteps from "./HeaderWithSteps";
-
+import { SafeAreaView } from 'react-native-safe-area-context';
 // .env:
 // SEND_OTP_ENDPOINT=...
 // VERIFY_OTP_ENDPOINT=...

@@ -64,9 +64,9 @@ export default function PayoutsTab({ isTablet }) {
             <View key={statement.id} style={styles.statementItem}>
               <Text style={styles.date}>{statement.date}</Text>
               <Text style={styles.status}>{statement.status}</Text>
-              <Text style={styles.total}>Total: ${statement.total}</Text>
-              <Text style={styles.fees}>Fees: -${statement.fees}</Text>
-              <Text style={styles.netPayout}>Net Payout: ${statement.netPayout}</Text>
+              <Text style={styles.total}>Total: Nu {statement.total}</Text>
+              <Text style={styles.fees}>Fees: -Nu {statement.fees}</Text>
+              <Text style={styles.netPayout}>Net Payout: Nu {statement.netPayout}</Text>
               <TouchableOpacity 
                 style={styles.statusButton} 
                 onPress={() => updatePayoutStatus(statement.id, 'Paid')}

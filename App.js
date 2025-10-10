@@ -47,56 +47,78 @@ import MenuScreen from './screens/food/MenuScreen';
 import AccountSettings from './screens/food/AccountSettings';
 import PasswordManagement from './screens/food/PasswordManagement';
 import SecuritySettings from './screens/food/SecuritySettings';
-import LinkedDevices from './screens/food/LinkedDevices';
 import NotificationSettings from './screens/food/NotificationSettings';
 import PersonalInformation from './screens/food/PersonalInformation';
 import ProfileBusinessDetails from './screens/food/ProfileBusinessDetails';
 import './screens/food/secureStorePatch';
-
+import ManageQuickActionsScreen from './screens/food/ManageQuickActionsScreen';
+import OrderDetails from './screens/food/OrderDetails';
+import WalletScreen from './screens/food/WalletScreen';
+import FeedbackScreen from './screens/food/FeedbackScreen';
+import AppLockGate from './AppLockGate';
+import TwoFactorPromptScreen from './screens/food/TwoFactorPromptScreen';
+import TermsOfService from './screens/food/TermsOfService';
+import PrivacyPolicy from './screens/general/PrivacyPolicy';
+import HelpScreen from './screens/general/HelpScreen';
 const Stack = createStackNavigator();
 
 export default function App() {
   return (
     <SafeAreaProvider>
       <NavigationContainer>
-        <Stack.Navigator initialRouteName="Welcome" screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="Welcome" component={WelcomeScreen} />
-          {/* <Stack.Screen
-            name="CountrySelect"
-            component={CountrySelectScreen}
-            options={{ presentation: 'modal', headerShown: false }}
-          /> */}
-          <Stack.Screen name="LoginScreen" component={LoginScreen} />
-          <Stack.Screen name="OnboardingScreen" component={OnboardingScreen} />
-          <Stack.Screen name="SellingTypeScreen" component={SellingTypeScreen} />
-          <Stack.Screen name="GrabFoodScreen" component={GrabFoodScreen} />
-          <Stack.Screen name="GrabMartScreen" component={GrabMartScreen} />
-          <Stack.Screen name="SignupScreen" component={SignupScreen} />
-          <Stack.Screen name="PhoneNumberScreen" component={PhoneNumberScreen} />
-          <Stack.Screen name="MobileLoginScreen" component={MobileLoginScreen} />
-          <Stack.Screen name="ForgotUsername" component={ForgotUsername} />
-          <Stack.Screen name="EmailSentScreen" component={EmailSentScreen} />
-          <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
-          <Stack.Screen name="PasswordSentScreen" component={PasswordSentScreen} />
-          <Stack.Screen name="ResetPasswordNumber" component={ResetPasswordNumber} />
-          <Stack.Screen name="MerchantRegistrationScreen" component={MerchantRegistrationScreen} />
-          <Stack.Screen name="MerchantExtrasScreen" component={MerchantExtrasScreen} />
-          <Stack.Screen name="BankPaymentInfoScreen" component={BankPaymentInfoScreen} />
-          <Stack.Screen name="DeliveryOptionsScreen" component={DeliveryOptionsScreen} />
-          <Stack.Screen name="ReviewSubmitScreen" component={ReviewSubmitScreen} />
-          <Stack.Screen name="EmailOtpVerificationScreen" component={EmailOtpVerificationScreen} />
-          <Stack.Screen name="MartServiceSetupScreen" component={MartServiceSetupScreen} />
-          <Stack.Screen name="FoodMenuSetupScreen" component={FoodMenuSetupScreen} />
-          <Stack.Screen name="GrabMerchantHomeScreen" component={GrabMerchantHomeScreen} />
-          <Stack.Screen name="MenuScreen" component={MenuScreen} />
-          <Stack.Screen name="AccountSettings" component={AccountSettings} />
-          <Stack.Screen name="PersonalInformation" component={PersonalInformation} />
-          <Stack.Screen name="PasswordManagement" component={PasswordManagement} />
-          <Stack.Screen name="SecuritySettings" component={SecuritySettings} />
-          <Stack.Screen name="LinkedDevices" component={LinkedDevices} />
-          <Stack.Screen name="NotificationSettings" component={NotificationSettings} />
-          <Stack.Screen name="ProfileBusinessDetails" component={ProfileBusinessDetails} />
-        </Stack.Navigator>
+        {/* Gate EVERYTHING behind biometrics when enabled */}
+        <AppLockGate>
+          <Stack.Navigator initialRouteName="Welcome" screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="Welcome" component={WelcomeScreen} />
+            {/* <Stack.Screen
+              name="CountrySelect"
+              component={CountrySelectScreen}
+              options={{ presentation: 'modal', headerShown: false }}
+            /> */}
+            <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} />
+            <Stack.Screen name="LoginScreen" component={LoginScreen} />
+            <Stack.Screen name="OnboardingScreen" component={OnboardingScreen} />
+            <Stack.Screen name="SellingTypeScreen" component={SellingTypeScreen} />
+            <Stack.Screen name="GrabFoodScreen" component={GrabFoodScreen} />
+            <Stack.Screen name="GrabMartScreen" component={GrabMartScreen} />
+            <Stack.Screen name="SignupScreen" component={SignupScreen} />
+            <Stack.Screen name="PhoneNumberScreen" component={PhoneNumberScreen} />
+            <Stack.Screen name="MobileLoginScreen" component={MobileLoginScreen} />
+            <Stack.Screen name="ForgotUsername" component={ForgotUsername} />
+            <Stack.Screen name="EmailSentScreen" component={EmailSentScreen} />
+            <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
+            <Stack.Screen name="PasswordSentScreen" component={PasswordSentScreen} />
+            <Stack.Screen name="ResetPasswordNumber" component={ResetPasswordNumber} />
+            <Stack.Screen name="MerchantRegistrationScreen" component={MerchantRegistrationScreen} />
+            <Stack.Screen name="MerchantExtrasScreen" component={MerchantExtrasScreen} />
+            <Stack.Screen name="BankPaymentInfoScreen" component={BankPaymentInfoScreen} />
+            <Stack.Screen name="DeliveryOptionsScreen" component={DeliveryOptionsScreen} />
+            <Stack.Screen name="ReviewSubmitScreen" component={ReviewSubmitScreen} />
+            <Stack.Screen name="EmailOtpVerificationScreen" component={EmailOtpVerificationScreen} />
+            <Stack.Screen name="MartServiceSetupScreen" component={MartServiceSetupScreen} />
+            <Stack.Screen name="FoodMenuSetupScreen" component={FoodMenuSetupScreen} />
+            <Stack.Screen name="GrabMerchantHomeScreen" component={GrabMerchantHomeScreen} />
+            <Stack.Screen name="MenuScreen" component={MenuScreen} />
+            <Stack.Screen name="AccountSettings" component={AccountSettings} />
+            <Stack.Screen name="PersonalInformation" component={PersonalInformation} />
+            <Stack.Screen name="PasswordManagement" component={PasswordManagement} />
+            <Stack.Screen name="SecuritySettings" component={SecuritySettings} />
+            <Stack.Screen name="NotificationSettings" component={NotificationSettings} />
+            <Stack.Screen name="ProfileBusinessDetails" component={ProfileBusinessDetails} />
+            <Stack.Screen
+              name="ManageQuickActions"
+              component={ManageQuickActionsScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen name="OrderDetails" component={OrderDetails} />
+            <Stack.Screen name="WalletScreen" component={WalletScreen} />
+            <Stack.Screen name="FeedbackScreen" component={FeedbackScreen} />
+            <Stack.Screen name="TwoFactorPromptScreen" component={TwoFactorPromptScreen} />
+            <Stack.Screen name="TermsOfService" component={TermsOfService} />
+            <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicy} />
+            <Stack.Screen name="HelpScreen" component={HelpScreen} />
+          </Stack.Navigator>
+        </AppLockGate>
       </NavigationContainer>
     </SafeAreaProvider>
   );

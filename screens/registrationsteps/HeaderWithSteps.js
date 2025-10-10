@@ -1,5 +1,6 @@
+// screens/registrationsteps/HeaderWithSteps.js
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
 
@@ -9,7 +10,6 @@ const HeaderWithSteps = ({ step = 'Step 1 of 7' }) => {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        {/* Back arrow */}
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.iconButton}
@@ -18,10 +18,8 @@ const HeaderWithSteps = ({ step = 'Step 1 of 7' }) => {
           <Icon name="arrow-back" size={24} color="#1A1D1F" />
         </TouchableOpacity>
 
-        {/* Step text */}
         <Text style={styles.headerTitle}>{step}</Text>
 
-        {/* Help icon */}
         <TouchableOpacity
           onPress={() => navigation.navigate('HelpScreen')}
           style={styles.iconButton}
@@ -38,7 +36,7 @@ export default HeaderWithSteps;
 
 const styles = StyleSheet.create({
   container: {
-    paddingTop: Platform.OS === 'android' ? 40 : 0,
+    // ❗ No paddingTop here — SafeAreaView on the screen handles top inset
     paddingHorizontal: 12,
     marginBottom: 20,
   },
@@ -55,6 +53,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#1A1D1F',
     opacity: 0.7,
-    paddingRight:180, // moved closer to arrow
+    paddingRight: 180,
   },
 });

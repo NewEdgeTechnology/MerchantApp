@@ -14,7 +14,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 
 const STORAGE_KEY = '@notifications_v1';
-
+  
 const seedNotifications = () => ([
   {
     id: 'n-1005',

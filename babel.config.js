@@ -1,17 +1,21 @@
-// babel.config.js
+// babel.config.js (CommonJS)
 module.exports = function (api) {
   api.cache(true);
   return {
-    presets: ['babel-preset-expo'], // 👈 required for Expo; includes TS/JS transforms
+    presets: ['babel-preset-expo'],
     plugins: [
-      // dotenv (your .env -> @env)
+      // .env -> import { KEY } from '@env'
       ['module:react-native-dotenv', {
         moduleName: '@env',
         path: '.env',
         allowUndefined: true,
       }],
+
+      // If you actually use Flow types; otherwise remove this line.
       '@babel/plugin-transform-flow-strip-types',
-      'react-native-reanimated/plugin',
+
+      // MUST be last:
+      'react-native-worklets/plugin',
     ],
   };
 };
