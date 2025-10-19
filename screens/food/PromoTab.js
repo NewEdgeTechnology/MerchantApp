@@ -744,14 +744,10 @@ export default function PromosTab({
 
             {/* Fields */}
             <Field label="Business ID">
-              <TextInput
-                value={String(form.business_id)}
-                onChangeText={(t) => setForm((s) => ({ ...s, business_id: t.replace(/[^0-9]/g, '') }))}
-                placeholder="e.g., 4"
-                placeholderTextColor="#94a3b8"
-                keyboardType="numeric"
-                style={styles.input}
-              />
+              {/* READ-ONLY: show like a disabled input */}
+              <View style={styles.disabledInput}>
+                <Text style={styles.disabledInputText}>{String(form.business_id || '')}</Text>
+              </View>
             </Field>
 
             {/* Owner Type selector (no typing) */}
@@ -990,6 +986,18 @@ const styles = StyleSheet.create({
   input: {
     height: 40, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 10, color: '#0f172a', backgroundColor: '#fff',
   },
+
+  // NEW: disabled input look
+  disabledInput: {
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    paddingHorizontal: 10,
+    backgroundColor: '#f1f5f9',
+    justifyContent: 'center',
+  },
+  disabledInputText: { color: '#475569', fontWeight: '700' },
 
   grid2: { flexDirection: 'row', gap: 8 },
 

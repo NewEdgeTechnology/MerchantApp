@@ -5,13 +5,13 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
-  SafeAreaView,
   StatusBar,
   TextInput,
   ScrollView,
   KeyboardAvoidingView,
 } from 'react-native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 
 const ForgotUsername = () => {
@@ -23,14 +23,8 @@ const ForgotUsername = () => {
   const isValidEmail = (email) =>
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
-  const handleEmailChange = (text) => {
-    setEmail(text);
-  };
-
-  const handleClear = () => {
-    setEmail('');
-  };
-
+  const handleEmailChange = (text) => setEmail(text);
+  const handleClear = () => setEmail('');
   const handleLogin = () => {
     console.log('Login with:', email);
     navigation.navigate('EmailSentScreen');
@@ -51,14 +45,27 @@ const ForgotUsername = () => {
           contentContainerStyle={{ flexGrow: 1 }}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
-              <Text style={styles.icon}>←</Text>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => navigation.navigate('HelpScreen')} style={styles.iconButton}>
-              <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
-            </TouchableOpacity>
+          {/* Header (matching HeaderWithSteps style) */}
+          <View style={styles.headerContainer}>
+            <View style={styles.header}>
+              <TouchableOpacity
+                onPress={() => navigation.goBack()}
+                style={styles.iconButton}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="arrow-back" size={24} color="#1A1D1F" />
+              </TouchableOpacity>
+
+              <Text style={styles.headerTitle}>Forgot Username</Text>
+
+              <TouchableOpacity
+                onPress={() => navigation.navigate('HelpScreen')}
+                style={styles.iconButton}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="help-circle-outline" size={24} color="#1A1D1F" />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Content */}
@@ -85,6 +92,7 @@ const ForgotUsername = () => {
                   onChangeText={handleEmailChange}
                   keyboardType="email-address"
                   autoCapitalize="none"
+                  placeholder="you@example.com"
                   onFocus={() => {
                     setTouched(true);
                     setIsFocused(true);
@@ -93,7 +101,7 @@ const ForgotUsername = () => {
                 />
                 {email.length > 0 && (
                   <TouchableOpacity onPress={handleClear} style={styles.clearButton}>
-                    <Icon name="close-circle" size={20} color="#aaa" />
+                    <Ionicons name="close-circle" size={20} color="#aaa" />
                   </TouchableOpacity>
                 )}
               </View>
@@ -125,22 +133,29 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8f9fa',
   },
+
+  /* ---------- Header (copied from HeaderWithSteps.js) ---------- */
+  headerContainer: {
+    paddingHorizontal: 12,
+    marginBottom: 20,
+  },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 15,
-    marginTop: 24,
+    justifyContent: 'space-between',
   },
   iconButton: {
     padding: 8,
   },
-  icon: {
-    fontSize: 24,
+  headerTitle: {
+    fontSize: 19,
+    fontWeight: '600',
     color: '#1A1D1F',
-    fontFamily: 'Inter-Regular',
-    paddingLeft: 10,
+    opacity: 0.7,
+    paddingRight: 180,
   },
+  /* ------------------------------------------------------------- */
+
   content: {
     flex: 1,
     paddingHorizontal: 20,
@@ -183,7 +198,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingBottom: Platform.OS === 'android' ? 20 : 20,
     borderRadius: 15,
-    marginBottom:8,
+    marginBottom: 8,
   },
   submitButton: {
     backgroundColor: '#00b14f',

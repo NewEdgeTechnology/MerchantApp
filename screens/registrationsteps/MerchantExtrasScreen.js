@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -14,12 +14,13 @@ import {
   ActivityIndicator,
   Modal,
 } from "react-native";
-import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import MapView, { Marker } from "react-native-maps";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import HeaderWithSteps from "./HeaderWithSteps";
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from "react-native-safe-area-context";
+
 const NEXT_ROUTE = "BankPaymentInfoScreen";
 
 export default function MerchantExtrasScreen() {
@@ -29,29 +30,18 @@ export default function MerchantExtrasScreen() {
   // received from previous page
   const {
     merchant: incomingMerchant = null,
-
-    // business basics from previous page (Step: Business Details)
     initialFullName = "",
     initialBusinessName = "",
-    initialCategory = "", // can be string, comma-separated, array of IDs, or array of objects
-
-    // optional prefill when editing from Review
+    initialCategory = "",
     initialAddress = "",
     initialRegNo = "",
     initialPickedCoord = null, // { latitude, longitude }
     initialLogo = null,
     initialLicenseFile = null,
-
-    // delivery + flow control
     deliveryOption = null,
     returnTo = null,
-
-    // contact that might have been sent loosely (older flow)
     phoneNumber = null,
-
-    // keep whatever serviceType the funnel is using, fallback to "food"
     serviceType = "food",
-
     owner_type = null,
   } = route.params ?? {};
 
@@ -85,7 +75,6 @@ export default function MerchantExtrasScreen() {
 
   // ---- Prefill from merchant, or fall back to initial* params when editing ----
   useEffect(() => {
-    // Prefer values from merchant snapshot if present
     if (incomingMerchant) {
       if (incomingMerchant.registration_no) setRegNo(String(incomingMerchant.registration_no));
       if (incomingMerchant.address) setAddress(incomingMerchant.address);
@@ -108,12 +97,11 @@ export default function MerchantExtrasScreen() {
           mimeType: img.mimeType ?? "image/jpeg",
           size: img.size ?? 0,
         };
-      };
+        };
       if (incomingMerchant.logo) setLogo(normalizeImg(incomingMerchant.logo, "logo.jpg"));
       if (incomingMerchant.license) setLicenseFile(normalizeImg(incomingMerchant.license, "license"));
     }
 
-    // Fallbacks from initial* if merchant didn’t carry them
     if (!incomingMerchant?.address && initialAddress) setAddress(initialAddress);
     if (!incomingMerchant?.registration_no && initialRegNo) setRegNo(String(initialRegNo));
     if (!incomingMerchant?.latitude && !incomingMerchant?.longitude && initialPickedCoord) {
@@ -155,6 +143,110 @@ export default function MerchantExtrasScreen() {
     return true;
   };
 
+  // ===== Map picking (full screen modal) =====
+  const openMapPicker = () => setLocationModalVisible(true);
+  const closeMapPicker = () => setLocationModalVisible(false);
+
+  const onMapLongPress = useCallback((e) => {
+    const { latitude, longitude } = e.nativeEvent.coordinate;
+    setPickedCoord({ latitude, longitude });
+  }, []);
+
+  const reverseGeocode = async (latitude, longitude) => {
+    try {
+      const results = await Location.reverseGeocodeAsync({ latitude, longitude });
+      if (results?.length) {
+        const r = results[0];
+        const line = [
+          r.name,
+          r.street,
+          r.subregion || r.city,
+          r.region,
+          r.postalCode,
+          r.country,
+        ]
+          .filter(Boolean)
+          .join(", ");
+        return line;
+      }
+    } catch {
+      // ignore
+    }
+    return "";
+  };
+
+  const confirmPickedLocation = async () => {
+    if (!pickedCoord) {
+      Alert.alert("Pick a location", "Long-press on the map to drop a pin.");
+      return;
+    }
+    const line = await reverseGeocode(pickedCoord.latitude, pickedCoord.longitude);
+    setAddress(line || `Located at: ${pickedCoord.latitude.toFixed(5)}, ${pickedCoord.longitude.toFixed(5)}`);
+    setMapRegion((r) => ({
+      ...r,
+      latitude: pickedCoord.latitude,
+      longitude: pickedCoord.longitude,
+    }));
+    closeMapPicker();
+  };
+
+  // ===== CURRENT LOCATION (INSIDE MODAL ONLY) =====
+  const [modalLocLoading, setModalLocLoading] = useState(false);
+  const [modalLocError, setModalLocError] = useState("");
+  const mapRef = useRef(null);
+
+  const animateTo = (latitude, longitude) => {
+    const region = {
+      latitude,
+      longitude,
+      latitudeDelta: 0.01,
+      longitudeDelta: 0.01,
+    };
+    setMapRegion((r) => ({ ...r, ...region }));
+    if (mapRef.current?.animateToRegion) {
+      mapRef.current.animateToRegion(region, 600);
+    }
+  };
+
+  const useCurrentLocationInModal = async () => {
+    setModalLocError("");
+    setModalLocLoading(true);
+    try {
+      const svc = await Location.hasServicesEnabledAsync();
+      if (!svc) {
+        setModalLocError("Location services are turned off. Please enable GPS.");
+        return;
+      }
+      let { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== "granted") {
+        const req = await Location.requestForegroundPermissionsAsync();
+        status = req?.status ?? status;
+      }
+      if (status !== "granted") {
+        setModalLocError("Location permission denied. Enable it in Settings.");
+        return;
+      }
+
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+        maximumAge: 5000,
+        mayShowUserSettingsDialog: true,
+      });
+      const { latitude, longitude } = pos.coords || {};
+      if (latitude == null || longitude == null) {
+        setModalLocError("Current location unavailable. Try again.");
+        return;
+      }
+
+      setPickedCoord({ latitude, longitude }); // drop/update pin
+      animateTo(latitude, longitude); // recenter/zoom map
+    } catch {
+      setModalLocError("Unable to fetch current location. Try again.");
+    } finally {
+      setModalLocLoading(false);
+    }
+  };
+
   // ===== Upload: License (Image only) — OPTIONAL
   const onPickLicense = async () => {
     try {
@@ -187,30 +279,6 @@ export default function MerchantExtrasScreen() {
 
   const onRemoveLicense = () => setLicenseFile(null);
 
-  // ===== Map picking =====
-  const openMapPicker = () => setLocationModalVisible(true);
-  const closeMapPicker = () => setLocationModalVisible(false);
-
-  const onMapLongPress = useCallback((e) => {
-    const { latitude, longitude } = e.nativeEvent.coordinate;
-    setPickedCoord({ latitude, longitude });
-  }, []);
-
-  const confirmPickedLocation = () => {
-    if (!pickedCoord) {
-      Alert.alert("Pick a location", "Long-press on the map to drop a pin.");
-      return;
-    }
-    const label = `Located at: ${pickedCoord.latitude.toFixed(5)}, ${pickedCoord.longitude.toFixed(5)}`;
-    setAddress(label);
-    setMapRegion((r) => ({
-      ...r,
-      latitude: pickedCoord.latitude,
-      longitude: pickedCoord.longitude,
-    }));
-    closeMapPicker();
-  };
-
   // ===== Submit → Redirect to BankPaymentInfoScreen =====
   const onSubmit = async () => {
     if (!validate()) {
@@ -222,50 +290,39 @@ export default function MerchantExtrasScreen() {
         Alert.alert("Missing address", "Please add your business address.");
         return;
       }
-      // CHANGED: no more alert for missing license number
       return;
     }
 
     try {
       setSubmitting(true);
 
-      // ✅ Normalize business type(s) to an array of IDS (strings)
       const normalizedCategoryIds = normalizeCategoryIds(
         (incomingMerchant && incomingMerchant.category) ?? initialCategory
       );
 
-      // Build registration number only if provided
       const normalizedRegNo = toSafeString(regNo).trim();
-      const maybeRegNo =
-        normalizedRegNo.length > 0 ? normalizedRegNo : undefined; // CHANGED: undefined if blank
+      const maybeRegNo = normalizedRegNo.length > 0 ? normalizedRegNo : undefined;
 
-      // Merge with latest values while keeping previously captured info
       const mergedMerchant = {
         ...(incomingMerchant ?? {}),
 
-        // keep email / password if they already exist
         email: incomingMerchant?.email ?? undefined,
         password: incomingMerchant?.password ?? undefined,
-
-        // ensure phone is carried over even if it came as a loose param
         phone: incomingMerchant?.phone ?? phoneNumber ?? undefined,
 
-        // overwrite with latest values from this screen + page 1 basics
         full_name: toSafeString(incomingMerchant?.full_name ?? initialFullName).trim(),
         business_name: toSafeString(incomingMerchant?.business_name ?? initialBusinessName).trim(),
 
-        // ✅ pass selected business type(s) as an array of IDS
         category: normalizedCategoryIds,
         categories: incomingMerchant?.categories ?? route.params?.merchant?.categories ?? [],
 
-        // CHANGED: only include if user typed one
         ...(maybeRegNo !== undefined ? { registration_no: maybeRegNo } : {}),
 
         address: toSafeString(address).trim(),
         latitude: pickedCoord?.latitude ?? null,
         longitude: pickedCoord?.longitude ?? null,
 
-        logo, // { uri, name, mimeType, size } — still REQUIRED
+        logo, // REQUIRED
         license: licenseFile, // OPTIONAL
 
         owner_type: effectiveOwnerType,
@@ -291,7 +348,6 @@ export default function MerchantExtrasScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-      {/* If this is truly Step 4 in your flow, feel free to change this label */}
       <HeaderWithSteps step="Step 3 of 7" />
 
       <View style={styles.fixedTitle}>
@@ -309,6 +365,7 @@ export default function MerchantExtrasScreen() {
           >
             {/* ===== Business location (map) ===== */}
             <Text style={[styles.label, { marginTop: 6 }]}>Business location (map) — optional</Text>
+
             <View style={{ marginBottom: 8 }}>
               <TouchableOpacity style={styles.btnSecondary} onPress={openMapPicker}>
                 <Text style={styles.btnSecondaryText}>Select on full map</Text>
@@ -342,7 +399,7 @@ export default function MerchantExtrasScreen() {
               </>
             ) : (
               <Text style={styles.fileName}>
-                No location selected yet. Tap “Select on full map” to drop a pin.
+                No location selected yet. Tap “Select on full map” to drop a pin, then Confirm.
               </Text>
             )}
 
@@ -359,7 +416,7 @@ export default function MerchantExtrasScreen() {
               onFocus={() => setFocusedField("address")}
               onBlur={() => setFocusedField(null)}
               isFocused={focusedField === "address"}
-              hint={pickedCoord ? "Auto-filled from map; you can edit." : undefined}
+              hint={pickedCoord ? "Auto-filled from GPS/map; you can edit." : undefined}
             />
 
             {/* ===== Logo Upload (REQUIRED) ===== */}
@@ -370,11 +427,7 @@ export default function MerchantExtrasScreen() {
 
             {/* ===== Business License number (OPTIONAL) ===== */}
             <Field
-              label={ // CHANGED: removed asterisk
-                <Text>
-                  Business License number
-                </Text>
-              }
+              label={<Text>Business License number</Text>}
               placeholder="e.g., BRN-12345"
               value={regNo}
               onChangeText={setRegNo}
@@ -455,20 +508,42 @@ export default function MerchantExtrasScreen() {
             </TouchableOpacity>
           </View>
 
-          <MapView
-            style={{ flex: 1 }}
-            initialRegion={mapRegion}
-            onRegionChangeComplete={setMapRegion}
-            onLongPress={onMapLongPress}
-          >
-            {pickedCoord && (
-              <Marker
-                coordinate={pickedCoord}
-                draggable
-                onDragEnd={(e) => setPickedCoord(e.nativeEvent.coordinate)}
-              />
-            )}
-          </MapView>
+          {/* Map with floating "Use Current Location" button */}
+          <View style={{ flex: 1 }}>
+            <MapView
+              ref={mapRef}
+              style={{ flex: 1 }}
+              initialRegion={mapRegion}
+              onRegionChangeComplete={setMapRegion}
+              onLongPress={onMapLongPress}
+            >
+              {pickedCoord && (
+                <Marker
+                  coordinate={pickedCoord}
+                  draggable
+                  onDragEnd={(e) => setPickedCoord(e.nativeEvent.coordinate)}
+                />
+              )}
+            </MapView>
+
+            <View style={styles.modalFloatWrap}>
+              <TouchableOpacity
+                style={styles.modalFloatBtn}
+                onPress={useCurrentLocationInModal}
+                disabled={modalLocLoading}
+                accessibilityRole="button"
+                accessibilityLabel="Use current location"
+              >
+                {modalLocLoading ? (
+                  <ActivityIndicator />
+                ) : (
+                  <Text style={styles.modalFloatBtnText}>Use Current Location</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {!!modalLocError && <Text style={[styles.locError, { marginHorizontal: 16 }]}>{modalLocError}</Text>}
 
           <View style={styles.modalFooter}>
             <Text style={styles.modalHint}>
@@ -647,16 +722,6 @@ function formatSize(bytes = 0) {
   const mb = kb / 1024;
   return `${mb.toFixed(2)} MB`;
 }
-function guessMimeFromName(name = "") {
-  const lower = name.toLowerCase();
-  if (lower.endsWith(".pdf")) return "application/pdf";
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
-  if (lower.endsWith(".png")) return "image/png";
-  if (lower.endsWith(".heic")) return "image/heic";
-  return null;
-}
-
-// --- value normalizers so .trim() is always safe ---
 const toSafeString = (v) => {
   if (v == null) return "";
   if (typeof v === "string") return v;
@@ -666,8 +731,7 @@ const toSafeString = (v) => {
   if (typeof v === "object") return String(v.label ?? v.value ?? "");
   return "";
 };
-
-// ✅ Normalize category to an array of **IDs** (strings)
+// Normalize category to an array of **IDs** (strings)
 const normalizeCategoryIds = (v) => {
   if (!v) return [];
   if (Array.isArray(v)) {
@@ -682,7 +746,6 @@ const normalizeCategoryIds = (v) => {
       .filter(Boolean);
   }
   if (typeof v === "string") {
-    // supports CSV of IDs: "2,5,8"
     return v
       .split(",")
       .map((s) => s.trim())
@@ -715,12 +778,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 20,
   },
-  section: {
-    marginTop: 6,
-    marginBottom: 8,
-    fontSize: 16,
-    fontWeight: "700",
-  },
 
   /* Typography */
   label: { fontSize: 14, marginBottom: 6, color: "#333" },
@@ -742,7 +799,7 @@ const styles = StyleSheet.create({
   },
   inputField: { flex: 1, fontSize: 14, paddingVertical: 10 },
 
-  /* Rows / Buttons (secondary) */
+  /* Buttons */
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -760,15 +817,16 @@ const styles = StyleSheet.create({
   btnSecondaryText: { fontWeight: "700" },
   btnDisabled: { opacity: 0.6 },
 
-  /* Map preview */
+  /* Location preview */
   mapPreviewWrapperLarge: {
     borderRadius: 12,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "ccc",
+    borderColor: "#ccc",
     height: 180,
     marginBottom: 8,
     position: "relative",
+    marginTop: 8,
   },
   mapPreview: { flex: 1 },
   previewOverlay: {
@@ -794,7 +852,7 @@ const styles = StyleSheet.create({
   coordsLabel: { fontSize: 12, color: "#6B7280" },
   coordsValue: { fontSize: 14, color: "#111827", fontWeight: "600" },
 
-  /* ---------- Logo Uploader styles ---------- */
+  /* Logo Uploader */
   logoCard: {
     borderWidth: 1.5,
     borderStyle: "dashed",
@@ -903,4 +961,27 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   modalHint: { fontSize: 12, color: "#6B7280", marginBottom: 8 },
+
+  // Floating button over the map (modal)
+  modalFloatWrap: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+  },
+  modalFloatBtn: {
+    backgroundColor: "#00b14f",
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
+  },
+  modalFloatBtnText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 13,
+  },
 });

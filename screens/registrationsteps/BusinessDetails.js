@@ -27,15 +27,12 @@ export default function MerchantRegistrationScreen() {
 
   const {
     merchant = {},
-    // ❗️no default here—let's not force "food" if the param is missing
     serviceType,
     deliveryOption = null,
     initialFullName,
     initialBusinessName,
     initialCategory,
     returnTo = null,
-
-    // NEW: make license fields optional by default; pass along to next screens
     requireLicense = false,
     requireLicenseImage = false,
   } = route.params ?? {};
@@ -47,10 +44,8 @@ export default function MerchantRegistrationScreen() {
     merchant?.business_name ?? initialBusinessName ?? ""
   );
 
-  // dynamic categories from admin API (store as {id, name})
-  const [categories, setCategories] = useState([]); // [{id, name}]
+  const [categories, setCategories] = useState([]);
 
-  // --- MULTI-SELECT: keep selected categories as an array of IDS (strings) ---
   const normalizeToArray = (val) => {
     if (!val) return [];
     if (Array.isArray(val)) return val.filter(Boolean).map((v) => String(v));
@@ -65,7 +60,6 @@ export default function MerchantRegistrationScreen() {
   };
 
   const [selectedCategories, setSelectedCategories] = useState(() => {
-    // Prefer merchant.category, else initialCategory — both interpreted as IDs
     const merged = normalizeToArray(merchant?.category).length
       ? normalizeToArray(merchant?.category)
       : normalizeToArray(initialCategory);
@@ -74,7 +68,16 @@ export default function MerchantRegistrationScreen() {
 
   const [focusedField, setFocusedField] = useState(null);
 
-  // ✅ compute the effective type from anything available
+  // ✅ Smart title-case fix used onBlur
+  const toTitleCaseSmart = (s = "") =>
+    s
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(
+        /(^|[\s\-’'])(\p{L})(\p{L}*)/gu,
+        (_, sep, a, rest) => sep + a.toUpperCase() + rest.toLowerCase()
+      );
+
   const effectiveServiceType = useMemo(() => {
     return String(
       serviceType ?? route.params?.owner_type ?? merchant?.owner_type ?? "food"
@@ -83,12 +86,10 @@ export default function MerchantRegistrationScreen() {
       .toLowerCase();
   }, [serviceType, route.params?.owner_type, merchant?.owner_type]);
 
-  // Keyboard spacing
   const [kbHeight, setKbHeight] = useState(0);
   useEffect(() => {
     const onShow = (e) => setKbHeight(e.endCoordinates?.height ?? 0);
     const onHide = () => setKbHeight(0);
-
     const showSub =
       Platform.OS === "ios"
         ? Keyboard.addListener("keyboardWillShow", onShow)
@@ -97,7 +98,6 @@ export default function MerchantRegistrationScreen() {
       Platform.OS === "ios"
         ? Keyboard.addListener("keyboardWillHide", onHide)
         : Keyboard.addListener("keyboardDidHide", onHide);
-
     return () => {
       showSub.remove();
       hideSub.remove();
@@ -106,31 +106,22 @@ export default function MerchantRegistrationScreen() {
 
   const bottomSpace = Math.max(kbHeight, insets.bottom, 16);
 
-  // fetch business types based on effectiveServiceType (food/mart)
+  // Fetch business types
   useEffect(() => {
     const controller = new AbortController();
     const URL = effectiveServiceType === "mart" ? ENV_BT_MART : ENV_BT_FOOD;
 
     (async () => {
       try {
-        if (!URL) {
-          setCategories([]);
-          return;
-        }
+        if (!URL) return setCategories([]);
         const res = await fetch(URL, { signal: controller.signal });
-        if (!res.ok) {
-          setCategories([]);
-          return;
-        }
+        if (!res.ok) return setCategories([]);
         const data = await res.json();
-
-        // Normalize to array of {id, name}
         const arr = Array.isArray(data)
           ? data
           : Array.isArray(data?.data)
           ? data.data
           : [];
-
         const normalized = arr
           .map((it) => {
             const id =
@@ -141,10 +132,9 @@ export default function MerchantRegistrationScreen() {
             return { id, name };
           })
           .filter((it) => it.id != null && it.name);
-
         setCategories(normalized);
 
-        // Ensure currently selected IDs are still valid
+        // keep valid selected IDs
         setSelectedCategories((prev) => {
           const validIds = new Set(normalized.map((c) => String(c.id)));
           const filtered = prev.filter((id) => validIds.has(String(id)));
@@ -170,20 +160,17 @@ export default function MerchantRegistrationScreen() {
     return () => controller.abort();
   }, [effectiveServiceType]);
 
-  // Only validate required fields: fullName + businessName
   const isValid = fullName.trim().length > 0 && businessName.trim().length > 0;
 
   const toggleCategory = (id) => {
     const strId = String(id);
-    setSelectedCategories((prev) => {
-      if (prev.includes(strId)) {
-        return prev.filter((x) => x !== strId);
-      }
-      return [...prev, strId];
-    });
+    setSelectedCategories((prev) =>
+      prev.includes(strId)
+        ? prev.filter((x) => x !== strId)
+        : [...prev, strId]
+    );
   };
 
-  // Map selected IDs -> names (fallback to ID if name not found)
   const selectedNames = useMemo(() => {
     const idToName = new Map(categories.map((c) => [String(c.id), c.name]));
     return selectedCategories.map((id) => idToName.get(String(id)) || String(id));
@@ -191,28 +178,24 @@ export default function MerchantRegistrationScreen() {
 
   const goContinue = () => {
     if (!isValid) return;
-
     const mergedMerchant = {
       ...merchant,
       full_name: fullName.trim(),
       business_name: businessName.trim(),
-      // Keep the same key name `category` but it's now an array of IDS
       category: selectedCategories,
       categories,
-      owner_type: effectiveServiceType, // keep consistent going forward
+      owner_type: effectiveServiceType,
     };
 
     navigation.navigate("MerchantExtrasScreen", {
       ...(route.params ?? {}),
       merchant: mergedMerchant,
-      serviceType: effectiveServiceType, // pass it forward
+      serviceType: effectiveServiceType,
       deliveryOption,
       returnTo,
       initialFullName: fullName.trim(),
       initialBusinessName: businessName.trim(),
-      initialCategory: selectedCategories, // IDs
-
-      // NEW: propagate optionality flags forward
+      initialCategory: selectedCategories,
       requireLicense,
       requireLicenseImage,
     });
@@ -239,11 +222,13 @@ export default function MerchantRegistrationScreen() {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
           >
-            {/* dynamic section title */}
             <Text style={styles.section}>
-              {effectiveServiceType === "mart" ? "Mart Merchant" : "Food Merchant"}
+              {effectiveServiceType === "mart"
+                ? "Mart Merchant"
+                : "Food Merchant"}
             </Text>
 
+            {/* ✅ Full Name field with native keyboard caps + smart cleanup */}
             <Field
               label={
                 <Text>
@@ -254,10 +239,15 @@ export default function MerchantRegistrationScreen() {
               value={fullName}
               onChangeText={setFullName}
               onFocus={() => setFocusedField("fullName")}
-              onBlur={() => setFocusedField(null)}
+              onBlur={() => {
+                setFocusedField(null);
+                setFullName(toTitleCaseSmart(fullName));
+              }}
               isFocused={focusedField === "fullName"}
+              autoCapitalize="words"
             />
 
+            {/* ✅ Business Name field, same smart capitalization */}
             <Field
               label={
                 <Text>
@@ -268,8 +258,12 @@ export default function MerchantRegistrationScreen() {
               value={businessName}
               onChangeText={setBusinessName}
               onFocus={() => setFocusedField("businessName")}
-              onBlur={() => setFocusedField(null)}
+              onBlur={() => {
+                setFocusedField(null);
+                setBusinessName(toTitleCaseSmart(businessName));
+              }}
               isFocused={focusedField === "businessName"}
+              autoCapitalize="words"
             />
 
             <Text style={styles.label}>Business type</Text>
@@ -297,7 +291,6 @@ export default function MerchantRegistrationScreen() {
                   </TouchableOpacity>
                 ))
               ) : selectedCategories.length > 0 ? (
-                // fallback: show currently selected IDs if API returned nothing
                 selectedCategories.map((id) => (
                   <TouchableOpacity
                     key={id}
@@ -347,6 +340,7 @@ export default function MerchantRegistrationScreen() {
   );
 }
 
+/* ---------- Field Component ---------- */
 function Field({
   label,
   value,
@@ -386,6 +380,7 @@ function Field({
   );
 }
 
+/* ---------- Styles ---------- */
 const styles = StyleSheet.create({
   fixedTitle: {
     backgroundColor: "#fff",
@@ -393,21 +388,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#fff",
   },
-  h1: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#1A1D1F",
-  },
-  container: {
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-  },
-  section: {
-    marginTop: 6,
-    marginBottom: 8,
-    fontSize: 16,
-    fontWeight: "700",
-  },
+  h1: { fontSize: 22, fontWeight: "bold", color: "#1A1D1F" },
+  container: { paddingHorizontal: 20, paddingVertical: 20 },
+  section: { marginTop: 6, marginBottom: 8, fontSize: 16, fontWeight: "700" },
   label: { fontSize: 14, marginBottom: 6, color: "#333" },
   hint: { marginTop: 6, fontSize: 12, color: "#067647" },
   inputWrapper: {

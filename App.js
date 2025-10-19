@@ -32,7 +32,6 @@ import MobileLoginScreen from './screens/general/MobileLoginScreen';
 import ForgotUsername from './screens/general/ForgotUsername';
 import EmailSentScreen from './screens/general/EmailSentScreen';
 import ForgotPassword from './screens/general/ForgotPassword';
-import PasswordSentScreen from './screens/general/PasswordSentScreen';
 import ResetPasswordNumber from './screens/general/ResetPasswordNumber';
 import MerchantRegistrationScreen from './screens/registrationsteps/BusinessDetails';
 import MerchantExtrasScreen from './screens/registrationsteps/MerchantExtrasScreen';
@@ -60,6 +59,12 @@ import TwoFactorPromptScreen from './screens/food/TwoFactorPromptScreen';
 import TermsOfService from './screens/food/TermsOfService';
 import PrivacyPolicy from './screens/general/PrivacyPolicy';
 import HelpScreen from './screens/general/HelpScreen';
+import SetNewPasswordScreen from './screens/general/SetNewPasswordScreen';
+import ForgotOTPVerify from './screens/general/ForgotOTPVerify';
+
+// ⬇️ NEW: global overlay that pops on socket "notify"
+import OrderNotifyOverlay from './components/OrderNotifyOverlay';
+
 const Stack = createStackNavigator();
 
 export default function App() {
@@ -70,11 +75,7 @@ export default function App() {
         <AppLockGate>
           <Stack.Navigator initialRouteName="Welcome" screenOptions={{ headerShown: false }}>
             <Stack.Screen name="Welcome" component={WelcomeScreen} />
-            {/* <Stack.Screen
-              name="CountrySelect"
-              component={CountrySelectScreen}
-              options={{ presentation: 'modal', headerShown: false }}
-            /> */}
+            {/* <Stack.Screen name="CountrySelect" component={CountrySelectScreen} options={{ presentation: 'modal', headerShown: false }} /> */}
             <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} />
             <Stack.Screen name="LoginScreen" component={LoginScreen} />
             <Stack.Screen name="OnboardingScreen" component={OnboardingScreen} />
@@ -87,7 +88,6 @@ export default function App() {
             <Stack.Screen name="ForgotUsername" component={ForgotUsername} />
             <Stack.Screen name="EmailSentScreen" component={EmailSentScreen} />
             <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
-            <Stack.Screen name="PasswordSentScreen" component={PasswordSentScreen} />
             <Stack.Screen name="ResetPasswordNumber" component={ResetPasswordNumber} />
             <Stack.Screen name="MerchantRegistrationScreen" component={MerchantRegistrationScreen} />
             <Stack.Screen name="MerchantExtrasScreen" component={MerchantExtrasScreen} />
@@ -105,11 +105,7 @@ export default function App() {
             <Stack.Screen name="SecuritySettings" component={SecuritySettings} />
             <Stack.Screen name="NotificationSettings" component={NotificationSettings} />
             <Stack.Screen name="ProfileBusinessDetails" component={ProfileBusinessDetails} />
-            <Stack.Screen
-              name="ManageQuickActions"
-              component={ManageQuickActionsScreen}
-              options={{ headerShown: false }}
-            />
+            <Stack.Screen name="ManageQuickActions" component={ManageQuickActionsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="OrderDetails" component={OrderDetails} />
             <Stack.Screen name="WalletScreen" component={WalletScreen} />
             <Stack.Screen name="FeedbackScreen" component={FeedbackScreen} />
@@ -117,9 +113,14 @@ export default function App() {
             <Stack.Screen name="TermsOfService" component={TermsOfService} />
             <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicy} />
             <Stack.Screen name="HelpScreen" component={HelpScreen} />
+            <Stack.Screen name="SetNewPasswordScreen" component={SetNewPasswordScreen} />
+            <Stack.Screen name="ForgotOTPVerify" component={ForgotOTPVerify} />
           </Stack.Navigator>
         </AppLockGate>
       </NavigationContainer>
+
+      {/* ⬇️ Always-mounted overlay that listens to DeviceEventEmitter and pops the toast */}
+      <OrderNotifyOverlay />
     </SafeAreaProvider>
   );
 }
