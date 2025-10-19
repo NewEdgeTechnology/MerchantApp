@@ -5,7 +5,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
-  SafeAreaView,
   StatusBar,
   TextInput,
   ScrollView,
@@ -17,7 +16,7 @@ import {
 } from 'react-native';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LOGIN_MERCHANT_ENDPOINT } from '@env';
 
 // ✅ Helper: enable LayoutAnimation ONLY on Android + Paper, called once in useEffect
@@ -184,7 +183,7 @@ export default function MobileLoginScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top','right','left','bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
 
       {/* Keep KAV but no behavior; we control the bottom bar explicitly */}

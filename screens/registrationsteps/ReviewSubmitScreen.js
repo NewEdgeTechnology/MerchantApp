@@ -8,7 +8,6 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
-  Modal,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
@@ -17,11 +16,11 @@ import HeaderWithSteps from "./HeaderWithSteps";
 import { SEND_OTP_ENDPOINT } from "@env";
 
 // ✨ Explicit edit targets
-const EDIT_SIGNUP_ROUTE = "SignupScreen";             // Email + Password
-const EDIT_PHONE_ROUTE = "PhoneNumberScreen";         // Phone
-const EDIT_BUSINESS_ROUTE = "MerchantRegistrationScreen"; // Business Details
-const EDIT_BANK_ROUTE = "BankPaymentInfoScreen";      // Bank (Step 4)
-const EDIT_DELIVERY_ROUTE = "DeliveryOptionsScreen";  // Delivery (Step 5)
+const EDIT_SIGNUP_ROUTE = "SignupScreen";
+const EDIT_PHONE_ROUTE = "PhoneNumberScreen";
+const EDIT_BUSINESS_ROUTE = "MerchantRegistrationScreen";
+const EDIT_BANK_ROUTE = "BankPaymentInfoScreen";
+const EDIT_DELIVERY_ROUTE = "DeliveryOptionsScreen";
 
 // ⬇️ redirect to email OTP screen after submit
 const NEXT_ROUTE = "EmailOtpVerificationScreen";
@@ -54,41 +53,69 @@ const normalizeCategoryIds = (v) => {
   return [];
 };
 
-// Map many possible inputs → strict enum expected by DB
+// Delivery option normalization
 const DELIVERY_ENUMS = ["self", "grab", "both"];
-
 const normalizeDeliveryOption = (val) => {
   if (val == null) return null;
-
-  // object like {value:'grab', label:'Grab Delivery'}
   if (typeof val === "object") {
     const raw = val.value ?? val.id ?? val.key ?? val.code ?? val.type ?? null;
     if (raw != null) return normalizeDeliveryOption(raw);
   }
-
-  // numeric codes (in case earlier screen used 0/1/2 or 1/2/3)
   if (typeof val === "number") {
     const by0 = { 0: "self", 1: "grab", 2: "both" }[val];
     const by1 = { 1: "self", 2: "grab", 3: "both" }[val];
     return by0 || by1 || null;
   }
-
-  // strings / labels
   const s = String(val).toLowerCase().trim();
   if (DELIVERY_ENUMS.includes(s)) return s;
-
-  // label variants
   if (/^self/.test(s)) return "self";
   if (/^grab/.test(s)) return "grab";
   if (/^both|^self\s*\+\s*grab|^grab\s*\+\s*self/.test(s)) return "both";
-
-  return null; // unknown → let server reject clearly instead of truncation
+  return null;
 };
 
 const deliveryDisplay = (norm) =>
   norm === "self" ? "Self Delivery" :
   norm === "grab" ? "Grab Delivery" :
   norm === "both" ? "Both" : "—";
+
+/* ---------- File helpers (logo/license/QR presence) ---------- */
+const firstNonEmpty = (...vals) =>
+  vals.find((v) => {
+    if (v == null) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === "object") return true;
+    return false;
+  });
+
+const extractUriLike = (v) => {
+  if (!v) return "";
+  if (typeof v === "string") return v.trim();
+  if (typeof v === "object") {
+    return (
+      v.uri?.trim?.() ||
+      v.url?.trim?.() ||
+      v.path?.trim?.() ||
+      v.file?.uri?.trim?.() ||
+      v.file?.url?.trim?.() ||
+      v.file?.path?.trim?.() ||
+      ""
+    );
+  }
+  return "";
+};
+
+const isUploaded = (v) => {
+  const picked = firstNonEmpty(
+    v,
+    typeof v === "object" ? v?.uri : null,
+    typeof v === "object" ? v?.url : null,
+    typeof v === "object" ? v?.path : null
+  );
+  const uri = extractUriLike(picked);
+  return !!uri;
+};
 
 /* ---------------- Component ---------------- */
 
@@ -109,7 +136,6 @@ export default function ReviewSubmitScreen() {
       .toLowerCase();
   }, [incomingOwnerType, merchant?.owner_type, serviceType]);
 
-  // ✅ delivery option normalized once here
   const deliveryOption = useMemo(
     () => normalizeDeliveryOption(incomingDelivery),
     [incomingDelivery]
@@ -117,19 +143,11 @@ export default function ReviewSubmitScreen() {
 
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
-  // legal overlay state
-  const [showLegal, setShowLegal] = useState(false);
-  const [legalDoc, setLegalDoc] = useState("terms"); // "terms" | "privacy"
-
-  // 🔒 toggles for sensitive values
   const [showPassword, setShowPassword] = useState(false);
   const [showAccountNumber, setShowAccountNumber] = useState(false);
 
-  // ✅ Normalize to **IDs** for downstream API
   const normalizedCategoryIds = normalizeCategoryIds(merchant?.category);
 
-  // For display, map IDs → names if list is present
   const displayCategory =
     normalizedCategoryIds.length && Array.isArray(merchant?.categories)
       ? normalizedCategoryIds
@@ -143,18 +161,41 @@ export default function ReviewSubmitScreen() {
   const business = {
     fullName: merchant?.full_name ?? "",
     businessName: merchant?.business_name ?? "",
-    category: normalizedCategoryIds, // keep **IDs** array internally
+    category: normalizedCategoryIds,
     regNo: merchant?.registration_no ?? "",
     address: merchant?.address ?? "",
     latitude: merchant?.latitude ?? null,
     longitude: merchant?.longitude ?? null,
-    // Contact & auth
     email: merchant?.email ?? "",
     phone: merchant?.phone ?? "",
     password: merchant?.password ?? "",
   };
 
-  // ⬇️ Updated: removed card_front / card_back
+  // 🔍 resolve possible logo/license shapes/keys
+  const businessLogoRaw = firstNonEmpty(
+    merchant?.business_logo,
+    merchant?.logo,
+    merchant?.businessLogo,
+    merchant?.merchant_logo,
+    merchant?.logo_uri,
+    merchant?.logo_url,
+    merchant?.documents?.logo
+  );
+  const businessLicenseRaw = firstNonEmpty(
+    merchant?.business_license,
+    merchant?.license,
+    merchant?.license_image,
+    merchant?.trade_license,
+    merchant?.businessLicense,
+    merchant?.tradeLicense,
+    merchant?.license_uri,
+    merchant?.license_url,
+    merchant?.documents?.license
+  );
+
+  const businessLogoUploaded = isUploaded(businessLogoRaw);
+  const businessLicenseUploaded = isUploaded(businessLicenseRaw);
+
   const bank = merchant?.bank ?? {
     account_name: "",
     account_number: "",
@@ -177,7 +218,7 @@ export default function ReviewSubmitScreen() {
     try {
       setSubmitting(true);
 
-      // ✅ Send OTP using endpoint from .env
+      // ✅ Send OTP only once here
       const res = await fetch(SEND_OTP_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -193,16 +234,20 @@ export default function ReviewSubmitScreen() {
         throw new Error(msg);
       }
 
-      // 🔐 Build a single canonical payload to forward EVERYTHING to the next page
       const review = {
         serviceType,
         owner_type: effectiveOwnerType,
-        deliveryOption, // already normalized: 'self' | 'grab' | 'both' | null
+        deliveryOption,
         agreeTerms: true,
         displayCategory,
         normalizedCategoryIds: business.category,
         business,
         bank,
+        files: {
+          business_logo: extractUriLike(businessLogoRaw) || null,
+          business_license: extractUriLike(businessLicenseRaw) || null,
+          bank_qr: extractUriLike(bank?.bank_qr) || null,
+        },
         merchantNormalized: {
           ...(merchant ?? {}),
           category: business.category,
@@ -216,25 +261,28 @@ export default function ReviewSubmitScreen() {
           email: business.email,
           phone: business.phone,
           password: business.password,
-          delivery_option: deliveryOption, // ✅ normalized for backend insert
+          delivery_option: deliveryOption,
           bank,
+          business_logo: businessLogoRaw ?? null,
+          business_license: businessLicenseRaw ?? null,
         },
       };
 
-      // ➡️ Navigate to the OTP verification screen with ALL data
+      // ✅ Navigate to OTP screen but prevent double sending
       navigation.navigate(NEXT_ROUTE, {
         ...(route.params ?? {}),
         email: business.email,
         otpType: "email_verification",
+        skipAutoSend: true, // 👈 prevent resend on mount
         serviceType,
         owner_type: effectiveOwnerType,
-        deliveryOption,                  // ✅ normalized
+        deliveryOption,
         initialCategory: business.category,
         merchant: {
           ...(merchant ?? {}),
           category: business.category,
           owner_type: effectiveOwnerType,
-          delivery_option: deliveryOption, // ✅ normalized
+          delivery_option: deliveryOption,
         },
         review,
       });
@@ -245,7 +293,7 @@ export default function ReviewSubmitScreen() {
     }
   };
 
-  // 👉 Jump to a step for editing with prefilled values + come back to Review
+  // Jump to edit routes
   const jumpTo = (routeName) => {
     const common = {
       ...(route.params ?? {}),
@@ -253,10 +301,10 @@ export default function ReviewSubmitScreen() {
         ...(merchant ?? {}),
         category: business.category,
         owner_type: effectiveOwnerType,
-        delivery_option: deliveryOption, // keep normalized in edits too
+        delivery_option: deliveryOption,
       },
       initialCategory: business.category,
-      deliveryOption, // normalized
+      deliveryOption,
       serviceType,
       owner_type: effectiveOwnerType,
       returnTo: "ReviewSubmitScreen",
@@ -270,12 +318,10 @@ export default function ReviewSubmitScreen() {
       });
       return;
     }
-
     if (routeName === EDIT_PHONE_ROUTE) {
       navigation.navigate(routeName, { ...common, initialPhone: business.phone });
       return;
     }
-
     if (routeName === EDIT_BUSINESS_ROUTE) {
       navigation.navigate(routeName, {
         ...common,
@@ -292,9 +338,7 @@ export default function ReviewSubmitScreen() {
       });
       return;
     }
-
     if (routeName === EDIT_BANK_ROUTE) {
-      // ⬇️ Updated: removed initialBankCardFront / initialBankCardBack
       navigation.navigate(routeName, {
         ...common,
         initialAccountName: bank?.account_name ?? "",
@@ -304,11 +348,10 @@ export default function ReviewSubmitScreen() {
       });
       return;
     }
-
     if (routeName === EDIT_DELIVERY_ROUTE) {
       navigation.navigate(routeName, {
         ...common,
-        initialDeliveryOption: deliveryOption, // normalized seed
+        initialDeliveryOption: deliveryOption,
       });
       return;
     }
@@ -319,7 +362,6 @@ export default function ReviewSubmitScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
       <HeaderWithSteps step="Step 6 of 7" />
-
       <View style={styles.fixedTitle}>
         <Text style={styles.h1}>Review &amp; Submit</Text>
       </View>
@@ -329,7 +371,6 @@ export default function ReviewSubmitScreen() {
           Please review your details before submitting. You can edit any section if needed.
         </Text>
 
-        {/* ✨ Contact & Login (email/password) */}
         <Section
           title="Signup (Email & Password)"
           onEdit={() => jumpTo(EDIT_SIGNUP_ROUTE)}
@@ -360,14 +401,12 @@ export default function ReviewSubmitScreen() {
           ]}
         />
 
-        {/* ✨ Phone number */}
         <Section
           title="Phone Number"
           onEdit={() => jumpTo(EDIT_PHONE_ROUTE)}
           rows={[["Phone", business.phone || "—"]]}
         />
 
-        {/* Business Details */}
         <Section
           title="Business Details"
           onEdit={() => jumpTo(EDIT_BUSINESS_ROUTE)}
@@ -383,17 +422,18 @@ export default function ReviewSubmitScreen() {
                 ? `${Number(business.latitude).toFixed(5)}, ${Number(business.longitude).toFixed(5)}`
                 : "—",
             ],
+            // 👇 New: show uploaded flags like Bank QR
+            ["Business logo", businessLogoUploaded ? "Uploaded" : "—"],
+            ["Business license", businessLicenseUploaded ? "Uploaded" : "—"],
           ]}
         />
 
-        {/* Delivery */}
         <Section
           title="Delivery Option"
           onEdit={() => jumpTo(EDIT_DELIVERY_ROUTE)}
           rows={[["Selected option", deliveryDisplay(deliveryOption)]]}
         />
 
-        {/* Bank & Payment */}
         <Section
           title="Bank & Payment"
           onEdit={() => jumpTo(EDIT_BANK_ROUTE)}
@@ -422,12 +462,11 @@ export default function ReviewSubmitScreen() {
               ),
             ],
             ["Bank name", bank?.bank_name || "—"],
-            // ⬇️ Updated: removed Card (front) and Card (back) rows
-            ["Bank QR", bank?.bank_qr?.uri ? "Uploaded" : "—"],
+            ["Bank QR", bank?.bank_qr?.uri || bank?.bank_qr?.url || bank?.bank_qr?.path ? "Uploaded" : "—"],
           ]}
         />
 
-        {/* Agreements */}
+        {/* Agreement */}
         <View style={styles.agreeWrap}>
           <TouchableOpacity
             style={[styles.checkbox, agreeTerms && styles.checkboxChecked]}
@@ -438,23 +477,11 @@ export default function ReviewSubmitScreen() {
           </TouchableOpacity>
           <Text style={styles.agreeText}>
             I accept the{" "}
-            <Text
-              style={styles.link}
-              onPress={() => {
-                setLegalDoc("terms");
-                setShowLegal(true);
-              }}
-            >
+            <Text style={styles.link} onPress={() => Alert.alert("Terms & Conditions", "Open Terms screen in your app.")}>
               Terms &amp; Conditions
             </Text>{" "}
             and{" "}
-            <Text
-              style={styles.link}
-              onPress={() => {
-                setLegalDoc("privacy");
-                setShowLegal(true);
-              }}
-            >
+            <Text style={styles.link} onPress={() => Alert.alert("Privacy Policy", "Open Privacy screen in your app.")}>
               Privacy Policy
             </Text>
             .
@@ -462,7 +489,7 @@ export default function ReviewSubmitScreen() {
         </View>
       </ScrollView>
 
-      {/* Sticky CTA */}
+      {/* Submit */}
       <View style={styles.submitContainer}>
         <TouchableOpacity
           onPress={handleSubmit}
@@ -480,45 +507,11 @@ export default function ReviewSubmitScreen() {
         </TouchableOpacity>
         <Text style={styles.subNote}>Your account will enter verification after submission.</Text>
       </View>
-
-      {/* In-file Legal Overlay */}
-      <Modal
-        visible={showLegal}
-        animationType="slide"
-        presentationStyle="fullScreen"
-        onRequestClose={() => setShowLegal(false)}
-      >
-        <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-          <View style={styles.legalHeader}>
-            <Text style={styles.legalHeaderTitle}>
-              {legalDoc === "privacy" ? "Privacy Policy" : "Terms & Conditions"}
-            </Text>
-            <TouchableOpacity
-              onPress={() => setShowLegal(false)}
-              hitSlop={{ top: 8, left: 8, right: 8, bottom: 8 }}
-            >
-              <Text style={styles.legalClose}>Close</Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView contentContainerStyle={styles.legalContent}>
-            {legalDoc === "privacy" ? <PrivacyContent /> : <TermsContent />}
-            <View style={{ height: 24 }} />
-          </ScrollView>
-
-          <View style={styles.legalFooter}>
-            <TouchableOpacity style={styles.btnPrimary} onPress={() => setShowLegal(false)}>
-              <Text style={styles.btnPrimaryText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      </Modal>
     </SafeAreaView>
   );
 }
 
-/* ---------- Components & helpers ---------- */
-
+/* ---------- Helper Components ---------- */
 function Section({ title, rows, onEdit }) {
   return (
     <View style={styles.card}>
@@ -557,300 +550,30 @@ function maskPassword(pw = "") {
   return "•".repeat(Math.min(Math.max(pw.length, 6), 12));
 }
 
-/* ---------- Inline Legal Content ---------- */
-
-function TermsContent() {
-  return (
-    <View>
-      <Text style={styles.h2}>Introduction</Text>
-      <Text style={styles.p}>
-        These Terms &amp; Conditions (“Terms”) govern your use of our app and services
-        (“Services”). By creating an account or using the Services, you agree to these Terms.
-      </Text>
-
-      <Text style={styles.h2}>Eligibility</Text>
-      <Text style={styles.p}>
-        You must be legally capable of entering into contracts within your jurisdiction. You are
-        responsible for ensuring the information you provide is accurate and complete.
-      </Text>
-
-      <Text style={styles.h2}>Account &amp; Registration</Text>
-      <Text style={styles.p}>
-        Keep your login credentials confidential and notify us promptly of any unauthorized access.
-        You are responsible for all activity under your account.
-      </Text>
-
-      <Text style={styles.h2}>Merchant Responsibilities</Text>
-      <Text style={styles.p}>
-        Comply with applicable laws and regulations, including licensing, tax, food safety, and
-        delivery standards. You are responsible for your products/services, pricing, and
-        fulfillment.
-      </Text>
-
-      <Text style={styles.h2}>Payments</Text>
-      <Text style={styles.p}>
-        Payouts are processed to the bank account you provide. You authorize us and our payment
-        partners to process, hold, and disburse funds. Fees and settlement timelines may vary.
-      </Text>
-
-      <Text style={styles.h2}>Delivery Options</Text>
-      <Text style={styles.p}>
-        For Self Delivery, you handle your own logistics and liabilities. For Grab Delivery or Both,
-        you agree to the relevant third-party terms and pricing that may apply.
-      </Text>
-
-      <Text style={styles.h2}>Prohibited Activities</Text>
-      <Text style={styles.p}>
-        Don’t misuse the Services: no unlawful activity, IP infringement, deceptive/harmful content,
-        interference, or unauthorized data access.
-      </Text>
-
-      <Text style={styles.h2}>Intellectual Property</Text>
-      <Text style={styles.p}>
-        The app, logos, content, and technology are owned by us or our licensors. You get a
-        limited, non-exclusive, non-transferable license to use the Services.
-      </Text>
-
-      <Text style={styles.h2}>Suspension &amp; Termination</Text>
-      <Text style={styles.p}>
-        We may suspend/terminate access for policy violations or risk/security reasons and remove
-        content that violates laws or our policies.
-      </Text>
-
-      <Text style={styles.h2}>Limitation of Liability</Text>
-      <Text style={styles.p}>
-        To the fullest extent permitted by law, we’re not liable for indirect, incidental, special,
-        or consequential damages, or for lost profits, data, or goodwill.
-      </Text>
-
-      <Text style={styles.h2}>Indemnity</Text>
-      <Text style={styles.p}>
-        You agree to indemnify and hold us harmless from claims arising out of your use of the
-        Services, your content, or your violation of these Terms/laws.
-      </Text>
-
-      <Text style={styles.h2}>Changes to the Terms</Text>
-      <Text style={styles.p}>
-        We may update these Terms from time to time. We’ll notify you of material changes.
-        Continued use after changes means acceptance.
-      </Text>
-
-      <Text style={styles.h2}>Governing Law</Text>
-      <Text style={styles.p}>
-        These Terms are governed by the laws of your operating jurisdiction unless otherwise
-        required by mandatory local law.
-      </Text>
-
-      <Text style={styles.h2}>Contact</Text>
-      <Text style={styles.p}>For questions, contact support@example.com.</Text>
-    </View>
-  );
-}
-
-function PrivacyContent() {
-  return (
-    <View>
-      <Text style={styles.h2}>Overview</Text>
-      <Text style={styles.p}>
-        This Privacy Policy explains how we collect, use, and protect your information when you use
-        our Services. By using the Services, you consent to this Policy.
-      </Text>
-
-      <Text style={styles.h2}>Information We Collect</Text>
-      <Text style={styles.p}>
-        We collect information you provide (e.g., name, email, business details, bank info for
-        payouts) and data generated during use (device info, logs, usage analytics).
-      </Text>
-
-      <Text style={styles.h3}>Images &amp; Documents</Text>
-      <Text style={styles.p}>
-        When you upload logos, licenses, or bank QR codes, we store them to verify your merchant
-        account and to facilitate payouts and compliance checks.
-      </Text>
-
-      <Text style={styles.h2}>How We Use Information</Text>
-      <Text style={styles.p}>
-        To operate and improve the Services, verify merchants, process payouts, provide support,
-        monitor for fraud/misuse, and comply with legal obligations.
-      </Text>
-
-      <Text style={styles.h2}>Sharing &amp; Disclosure</Text>
-      <Text style={styles.p}>
-        We may share information with payment/delivery partners, service providers, and authorities
-        where required by law. We do not sell personal data.
-      </Text>
-
-      <Text style={styles.h2}>Data Retention</Text>
-      <Text style={styles.p}>
-        We retain information as long as needed to provide the Services, comply with legal
-        obligations, resolve disputes, and enforce agreements.
-      </Text>
-
-      <Text style={styles.h2}>Security</Text>
-      <Text style={styles.p}>
-        We use technical and organizational measures to protect your information, but no method of
-        transmission or storage is 100% secure.
-      </Text>
-
-      <Text style={styles.h2}>Your Rights</Text>
-      <Text style={styles.p}>
-        Depending on your location, you may request access, correction, or deletion of your data.
-        Contact privacy@example.com for requests.
-      </Text>
-
-      <Text style={styles.h2}>International Transfers</Text>
-      <Text style={styles.p}>
-        Your information may be processed in countries with different data protection laws. We
-        implement safeguards where required.
-      </Text>
-
-      <Text style={styles.h2}>Children</Text>
-      <Text style={styles.p}>
-        Our Services aren’t intended for children, and we don’t knowingly collect children’s data.
-      </Text>
-
-      <Text style={styles.h2}>Changes to this Policy</Text>
-      <Text style={styles.p}>
-        We may update this Policy periodically. Material changes will be notified in-app or by
-        email. Continued use after changes constitutes acceptance.
-      </Text>
-
-      <Text style={styles.h2}>Contact</Text>
-      <Text style={styles.p}>For privacy questions, contact privacy@example.com.</Text>
-    </View>
-  );
-}
-
 /* ---------- Styles ---------- */
 const styles = StyleSheet.create({
-  fixedTitle: {
-    backgroundColor: "#fff",
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "#fff",
-  },
+  fixedTitle: { backgroundColor: "#fff", paddingHorizontal: 20, borderBottomColor: "#fff" },
   h1: { fontSize: 22, fontWeight: "bold", color: "#1A1D1F", marginBottom: 16 },
-
-  scrollContent: {
-    paddingHorizontal: 20,
-    paddingBottom: 130,
-    backgroundColor: "#fff",
-  },
+  scrollContent: { paddingHorizontal: 20, paddingBottom: 130 },
   lead: { fontSize: 13, color: "#6b7280", marginBottom: 10 },
-
-  card: {
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    borderRadius: 14,
-    backgroundColor: "#fff",
-    padding: 14,
-    marginTop: 12,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 6,
-  },
+  card: { borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 14, backgroundColor: "#fff", padding: 14, marginTop: 12 },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
   cardTitle: { fontSize: 16, fontWeight: "700", color: "#111827" },
   editBtn: { fontSize: 13, fontWeight: "700", color: "#00b14f" },
-
-  row: {
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#F3F4F6",
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-  },
+  row: { flexDirection: "row", borderTopWidth: 1, borderTopColor: "#F3F4F6", paddingVertical: 8, gap: 10 },
   rowLabel: { width: 130, fontSize: 13, color: "#6B7280" },
   rowValue: { flex: 1, fontSize: 14, color: "#111827", fontWeight: "600" },
-
-  secretRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 10,
-    flex: 1,
-  },
+  secretRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", flex: 1, gap: 10 },
   secretText: { flex: 1, fontSize: 14, color: "#111827", fontWeight: "600" },
-
-  submitContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 110,
-    backgroundColor: "#fff",
-    padding: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: -2 },
-    elevation: 6,
-  },
-  btnPrimary: {
-    backgroundColor: "#00b14f",
-    paddingVertical: 14,
-    borderRadius: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-    marginTop: 6,
-    marginBottom: 8,
-    elevation: 15,
-    shadowColor: "#00b14f",
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-  },
-  btnPrimaryDisabled: {
-    backgroundColor: "#eee",
-    paddingVertical: 14,
-    borderRadius: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-    marginTop: 6,
-    marginBottom: 8,
-  },
+  submitContainer: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: "#fff", padding: 16, borderTopWidth: 1, borderTopColor: "#e5e7eb" },
+  btnPrimary: { backgroundColor: "#00b14f", paddingVertical: 14, borderRadius: 30, alignItems: "center", justifyContent: "center", elevation: 8 },
+  btnPrimaryDisabled: { backgroundColor: "#eee", paddingVertical: 14, borderRadius: 30, alignItems: "center", justifyContent: "center" },
   btnPrimaryText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   btnPrimaryTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
   subNote: { textAlign: "center", fontSize: 12, color: "#6B7280" },
-
   agreeWrap: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: "#000",
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: "#000", alignItems: "center", justifyContent: "center" },
   checkboxChecked: { backgroundColor: "#EAF8EE" },
   agreeText: { flex: 1, color: "#374151", fontSize: 13 },
   link: { color: "#417fa2ff", fontWeight: "700" },
-
-  legalHeader: {
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#fff",
-  },
-  legalHeaderTitle: { fontSize: 18, fontWeight: "700", color: "#111827" },
-  legalClose: { fontSize: 14, fontWeight: "700", color: "#ef4444" },
-  legalContent: { paddingHorizontal: 20, paddingTop: 12, backgroundColor: "#fff" },
-  legalFooter: { padding: 24, backgroundColor: "#fff", borderTopWidth: 1, borderTopColor: "#eee" },
-
-  h2: { fontSize: 16, fontWeight: "700", color: "#111827", marginTop: 10, marginBottom: 6 },
-  h3: { fontSize: 14, fontWeight: "700", color: "#111827", marginTop: 8, marginBottom: 4 },
-  p: { fontSize: 13, color: "#374151", lineHeight: 20, marginBottom: 6 },
 });

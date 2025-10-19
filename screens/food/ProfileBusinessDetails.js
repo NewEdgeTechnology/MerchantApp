@@ -63,9 +63,19 @@ async function putMultipart(url, bodyObj, fileField, file, headers = {}, timeout
   const tid = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const form = new FormData();
+
+    // append non-null/empty values only
     Object.entries(bodyObj || {}).forEach(([k, v]) => {
-      form.append(k, Array.isArray(v) ? JSON.stringify(v) : String(v ?? ''));
+      if (v === null || v === undefined) return;
+      if (Array.isArray(v) || typeof v === 'object') {
+        form.append(k, JSON.stringify(v));
+      } else {
+        const s = String(v);
+        if (s.trim() === '') return;
+        form.append(k, s);
+      }
     });
+
     if (file?.uri) {
       form.append(fileField, {
         uri: file.uri,
@@ -178,6 +188,17 @@ const makeFromOrigin = (raw, base) => {
   return origin ? `${origin}/${p}` : p;
 };
 
+// remove null/undefined/empty-string fields
+function pruneNulls(obj) {
+  const out = {};
+  Object.entries(obj || {}).forEach(([k, v]) => {
+    if (v === null || v === undefined) return;
+    if (typeof v === 'string' && v.trim() === '') return;
+    out[k] = v;
+  });
+  return out;
+}
+
 /* ───────── component ───────── */
 export default function ProfileBusinessDetails() {
   const navigation = useNavigation();
@@ -216,8 +237,9 @@ export default function ProfileBusinessDetails() {
   const scrollRef = useRef(null);
   const autoScrollToEnd = useRef(false);
 
-  // Logo file (picked image)
+  // Logo file (picked image) + cache bust for preview
   const [logoFile, setLogoFile] = useState(null);
+  const [logoBust, setLogoBust] = useState(0); // cache-buster
 
   // Map picker state
   const [locationModalVisible, setLocationModalVisible] = useState(false);
@@ -321,29 +343,49 @@ export default function ProfileBusinessDetails() {
 
   useEffect(() => { if (endpoint) load(); }, [endpoint, load]);
 
-  const buildUpdatePayload = useCallback(() => ({
-    business_name: String(form.business_name ?? ''),
-    latitude: pickedCoord?.latitude ?? null,
-    longitude: pickedCoord?.longitude ?? null,
-    address: String(form.address ?? ''),
-    business_logo: String(form.business_logo ?? ''), // keep existing path when no new file
-    delivery_option: String(form.delivery_option ?? 'BOTH'),
-    complementary: String(form.complementary ?? ''),
-    complementary_details: String(form.complementary_details ?? ''),
-    opening_time: to24h(openText, openAmPm) || '',
-    closing_time: to24h(closeText, closeAmPm) || '',
-    holidays: Array.isArray(form.holidays) ? form.holidays : [],
-    business_license_number: String(form.business_license_number ?? ''),
-  }), [form, openText, openAmPm, closeText, closeAmPm, pickedCoord]);
+  const buildUpdatePayload = useCallback(() => {
+    const lat = pickedCoord?.latitude ?? data?.latitude ?? form?.latitude ?? null;
+    const lng = pickedCoord?.longitude ?? data?.longitude ?? form?.longitude ?? null;
+
+    return {
+      business_name: String(form.business_name ?? ''),
+      latitude: Number.isFinite(lat) ? lat : null,
+      longitude: Number.isFinite(lng) ? lng : null,
+      address: String(form.address ?? ''),
+      business_logo: String(form.business_logo ?? ''), // keep existing path when no new file
+      delivery_option: String(form.delivery_option ?? 'BOTH'),
+      complementary: String(form.complementary ?? ''),
+      complementary_details: String(form.complementary_details ?? ''),
+      opening_time: to24h(openText, openAmPm) || '',
+      closing_time: to24h(closeText, closeAmPm) || '',
+      holidays: Array.isArray(form.holidays) ? form.holidays : [],
+      business_license_number: String(form.business_license_number ?? ''),
+    };
+  }, [form, openText, openAmPm, closeText, closeAmPm, pickedCoord, data]);
 
   const save = useCallback(async () => {
     if (!endpoint) return;
+
+    // basic coord validation
+    const lat = pickedCoord?.latitude ?? data?.latitude ?? null;
+    const lng = pickedCoord?.longitude ?? data?.longitude ?? null;
+    if (!(Number.isFinite(lat) && Number.isFinite(lng))) {
+      Alert.alert('Pick a location', 'Please long-press on the map to set latitude & longitude.');
+      return;
+    }
+
     setSaving(true);
     try {
       const headers = await getAuthHeader();
-      const payload = buildUpdatePayload();
+
+      // build + prune payload
+      const payloadRaw = buildUpdatePayload();
+      const payload = pruneNulls(payloadRaw);
 
       if (logoFile?.uri) {
+        // Don’t send text value for business_logo with file; let backend set it
+        delete payload.business_logo;
+
         const candidates = ['business_logo', 'logo', 'image', 'file'];
         let lastErr = null;
         for (const field of candidates) {
@@ -356,6 +398,8 @@ export default function ProfileBusinessDetails() {
           }
         }
         if (lastErr) throw lastErr;
+        // Bust cache so the <Image> refetches the new logo
+        setLogoBust(Date.now());
       } else {
         await putJSON(endpoint, payload, headers, 30000);
       }
@@ -368,7 +412,7 @@ export default function ProfileBusinessDetails() {
     } finally {
       setSaving(false);
     }
-  }, [endpoint, getAuthHeader, buildUpdatePayload, load, logoFile]);
+  }, [endpoint, getAuthHeader, buildUpdatePayload, load, logoFile, pickedCoord, data]);
 
   const cancelEdit = () => { setForm(data); setEditMode(false); setLogoFile(null); };
 
@@ -381,7 +425,11 @@ export default function ProfileBusinessDetails() {
     route?.params?.business?.license_image ||
     route?.params?.files?.license_image ||
     '';
-  const logoUri = makeLogoUrl(logoRaw);
+  const logoUri = useMemo(() => {
+    const base = makeLogoUrl(logoRaw);
+    if (!base) return '';
+    return logoBust ? `${base}${base.includes('?') ? '&' : '?'}v=${logoBust}` : base;
+  }, [logoRaw, logoBust]);
   const licenseUri = makeFromOrigin(licenseRaw, BUSINESS_DETAILS);
 
   const openMapsApp = () => {

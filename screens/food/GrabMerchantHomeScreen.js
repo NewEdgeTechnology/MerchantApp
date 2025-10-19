@@ -1,5 +1,8 @@
 // screens/food/GrabMerchantHomeScreen.js
-// Simplified: direct URLs for merchant & profile images (using env bases), with promo URL overrides via env
+// Simplified: direct URLs for merchant & profile images (ENV-ONLY bases), with promo URL overrides via env
+// UPDATE: "Add" tab now routes conditionally:
+//   - Food → ./AddMenuTab
+//   - Mart → ../mart/AddItemTab
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
@@ -20,27 +23,29 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as SecureStore from 'expo-secure-store';
 import {
   LOGIN_USERNAME_MERCHANT_ENDPOINT,
   PROFILE_ENDPOINT,
   BUSINESS_DETAILS,
-  MERCHANT_LOGO, // e.g. http://103.7.253.31/merchant
+  MERCHANT_LOGO,                 // e.g. https://grab.newedge.bt/merchant/
   ITEM_ENDPOINT as MART_ITEM_ENDPOINT,
   DISPLAY_ITEM_ENDPOINT as MART_DISPLAY_ITEM_ENDPOINT,
-  PROFILE_IMAGE as PROFILE_IMAGE_ENDPOINT, // e.g. http://103.7.253.31/merchant
+  PROFILE_IMAGE as PROFILE_IMAGE_ENDPOINT, // e.g. https://grab.newedge.bt/driver/
   // Optional env overrides for promos:
   PROMOS_ENDPOINT,           // fallback for both kinds
   PROMOS_FOOD_ENDPOINT,      // specific override for food
   PROMOS_MART_ENDPOINT,      // specific override for mart
+  MEDIA_BASE_URL,            // general media base (optional fallback)
 } from '@env';
 
 // Tabs / footer
 import HomeTab from './HomeTab';
 import OrdersTab from './OrderTab';
-import MenuTab from './AddMenuTab';
+import FoodAddMenuTab from './AddMenuTab';
+import MartAddItemTab from '../mart/AddItemTab';
 import NotificationsTab from './NotificationsTab';
 import PayoutsTab from './PayoutTab';
 import MerchantBottomBar from './MerchantBottomBar';
@@ -125,15 +130,36 @@ const candidateProfileUrls = () => {
   return [`${base}/api/merchant/me`, `${base}/api/merchant/profile`, `${base}/api/profile/me`];
 };
 
-// Direct URL helpers
-const makeAbsolute = (maybeRelative, base) => {
-  if (!maybeRelative) return null;
-  const s = String(maybeRelative);
-  if (/^https?:\/\//i.test(s)) return s;
-  const b = (base || '').replace(/\/+$/, '');
-  const p = s.startsWith('/') ? s.slice(1) : s;
-  return `${b}/${p}`;
+/* ───────────────────────── ENV-ONLY image URL helpers ─────────────────────────
+   Force ALL images to use only the hosts defined in .env.
+   - Merchant logos  → MERCHANT_LOGO base
+   - Profile avatars → PROFILE_IMAGE_ENDPOINT base
+   If API returns an absolute URL, we strip its host and keep only pathname + query.
+-------------------------------------------------------------------------------*/
+const BASE_MERCHANT = String(MERCHANT_LOGO || MEDIA_BASE_URL || '').replace(/\/+$/,'');
+const BASE_PROFILE  = String(PROFILE_IMAGE_ENDPOINT || MEDIA_BASE_URL || '').replace(/\/+$/,'');
+
+const makeEnvImageUrl = (input, kind = 'merchant') => {
+  if (!input) return null;
+  const raw = String(input).trim();
+  const base = kind === 'profile' ? BASE_PROFILE : BASE_MERCHANT;
+  if (!base) return null; // no base provided in env
+
+  try {
+    if (/^https?:\/\//i.test(raw)) {
+      const u = new URL(raw);
+      const path = u.pathname.startsWith('/') ? u.pathname : `/${u.pathname}`;
+      const qs = u.search || '';
+      return `${base}${path}${qs}`;
+    }
+    const path = raw.startsWith('/') ? raw : `/${raw}`;
+    return `${base}${path}`;
+  } catch {
+    const path = raw.startsWith('/') ? raw : `/${raw}`;
+    return `${base}${path}`;
+  }
 };
+
 const money = (n, c = 'Nu') => `${c} ${Number(n ?? 0).toFixed(2)}`;
 const DEFAULT_KPIS = { salesToday: 0, salesCurrency: 'Nu', activeOrders: 0, cancellations: 0, acceptanceRate: 0 };
 
@@ -155,8 +181,8 @@ export default function GrabMerchantHomeScreen() {
 
   // ───────── Merchant & UI state ─────────
   const [merchantName, setMerchantName] = useState(DEFAULT_NAME);
-  const [merchantLogo, setMerchantLogo] = useState(DEFAULT_AVATAR); // will be absolute URL
-  const [profileAvatar, setProfileAvatar] = useState(null);          // absolute URL
+  const [merchantLogo, setMerchantLogo] = useState(null); // ENV-ONLY absolute URL
+  const [profileAvatar, setProfileAvatar] = useState(null); // ENV-ONLY absolute URL
   const [businessAddress, setBusinessAddress] = useState('');
   const [businessLicense, setBusinessLicense] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -177,8 +203,9 @@ export default function GrabMerchantHomeScreen() {
   // cache-buster to force logo refresh when pulling to refresh or when backend says logo changed
   const [logoVersion, setLogoVersion] = useState(0);
   const addBuster = (u, v) => {
-    if (!u || !v) return u;
-    const sep = u?.includes('?') ? '&' : '?';
+    if (!u) return u;
+    if (!v) return u;
+    const sep = u.includes('?') ? '&' : '?';
     return `${u}${sep}v=${v}`;
   };
 
@@ -198,7 +225,7 @@ export default function GrabMerchantHomeScreen() {
         base,
         menus: `${base}/api/food/menus`,
         orders: `${base}/api/food/orders`,
-        promos: resolvedFoodPromos,          // ← promo URL (food)
+        promos: resolvedFoodPromos,
         payouts: `${base}/api/food/payouts`,
         notifications: `${base}/api/food/notifications`,
         menusList: `${base}/api/food/menus`,
@@ -214,7 +241,7 @@ export default function GrabMerchantHomeScreen() {
       itemsList: listUrl,
       itemsWrite: writeUrl,
       orders: `${base}/api/mart/orders`,
-      promos: resolvedMartPromos,           // ← promo URL (mart)
+      promos: resolvedMartPromos,
       payouts: `${base}/api/mart/payouts`,
       notifications: `${base}/api/mart/notifications`,
     };
@@ -270,18 +297,18 @@ export default function GrabMerchantHomeScreen() {
       headerSnapRef.current.addr = next.addr;
     }
     if (next.logo) {
-      // Use env base for merchant logos
-      const resolved = makeAbsolute(String(next.logo), MERCHANT_LOGO);
-      if (resolved !== headerSnapRef.current.logo) {
+      // ENV-ONLY: always re-root to MERCHANT_LOGO base
+      const resolved = makeEnvImageUrl(String(next.logo), 'merchant');
+      if (resolved && resolved !== headerSnapRef.current.logo) {
         setMerchantLogo(resolved);
         headerSnapRef.current.logo = resolved;
-        bumped = true; // bust caches
+        bumped = true; // bust caches for header image
       }
     }
     if (next.profile) {
-      // If relative → use PROFILE_IMAGE_ENDPOINT; if absolute, use as is
-      const resolvedP = makeAbsolute(String(next.profile), PROFILE_IMAGE_ENDPOINT);
-      if (resolvedP !== headerSnapRef.current.profile) {
+      // ENV-ONLY: always re-root to PROFILE_IMAGE base
+      const resolvedP = makeEnvImageUrl(String(next.profile), 'profile');
+      if (resolvedP && resolvedP !== headerSnapRef.current.profile) {
         setProfileAvatar(resolvedP);
         headerSnapRef.current.profile = resolvedP;
       }
@@ -754,6 +781,9 @@ export default function GrabMerchantHomeScreen() {
     { key: 'Payouts', label: 'Payouts', icon: 'card-outline' },
   ];
 
+  // Decide which component to render for the Add tab
+  const AddTabComponent = isFood ? FoodAddMenuTab : MartAddItemTab;
+
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right']}>
       <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
@@ -814,7 +844,7 @@ export default function GrabMerchantHomeScreen() {
       {activeTab === 'Add Menu' && (
         <View style={[styles.tabWrap, { paddingBottom: bottomBarHeight }]}>
           <Header />
-          <MenuTab
+          <AddTabComponent
             isTablet={isTablet}
             businessId={businessId}
             ownerType={ownerType}

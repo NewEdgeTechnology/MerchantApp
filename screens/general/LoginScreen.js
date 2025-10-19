@@ -15,18 +15,17 @@ import {
   PROFILE_ENDPOINT,
 } from '@env';
 
-const KEY_SAVED_USERNAME = 'saved_username'; // stores FULL NAME here
+// ⬇️ NEW: use the shared connector (no direct socket.io import here)
+import { connectMerchantSocket } from '../realtime/merchantSocket';
+
+const KEY_SAVED_USERNAME = 'saved_username';
 const KEY_SAVED_PASSWORD = 'saved_password';
 const KEY_LAST_LOGIN_USERNAME = 'last_login_username';
 const KEY_AUTH_TOKEN      = 'auth_token';
 const KEY_MERCHANT_LOGIN  = 'merchant_login';
-
-// ✅ Align with SecuritySettings
 const KEY_BIOMETRIC_ENABLED = 'security_biometric_login';
-// (optional) legacy flag — read-only fallback
 const KEY_BIOMETRIC_ENABLED_LEGACY = 'biometric_enabled_v1';
-
-const KEY_REFRESH_TOKEN   = 'refresh_token_v1'; // optional if your backend supports refresh
+const KEY_REFRESH_TOKEN   = 'refresh_token_v1';
 
 const endpoint = (ENV_LOGIN_USERNAME_MERCHANT_ENDPOINT ?? '').trim();
 
@@ -61,7 +60,7 @@ const goToWelcome = (navigation) => {
 };
 /* ────────────────────────────────────── */
 
-/* ===== Image URL normalization (unchanged) ===== */
+/* ===== Image URL normalization ===== */
 const DEFAULT_DEV_ORIGIN = Platform.select({
   android: 'http://10.0.2.2:3000',
   ios: 'http://localhost:3000',
@@ -93,6 +92,7 @@ const toAbsoluteUrl = (raw) => {
   const origin = getImageBaseOrigin();
   return collapsePathSlashes(androidLoopback(`${origin}${raw.startsWith('/') ? '' : '/'}${raw}`));
 };
+
 /** Guard LayoutAnimation on old arch only */
 const isNewArch = !!global?.nativeFabricUIManager || !!global?.__turboModuleProxy || !!global?.RN$Bridgeless;
 if (Platform.OS === 'android' && !isNewArch && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -121,30 +121,14 @@ function useKeyboardGap(minGap = 8) {
 }
 
 /* Helpers */
-const collapseInnerSpaces = (s = '') => s.replace(/\s+/g, ' ');
-
-// Title-case (strict)
 const toTitleCase = (s = '') =>
-  s
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\b([A-Za-zÀ-ÖØ-öø-ÿ])([A-Za-zÀ-ÖØ-öø-ÿ']*)/g, (_, a, b) => a.toUpperCase() + b.toLowerCase());
+  s.replace(/\s+/g, ' ')
+   .trim()
+   .replace(/\b([A-Za-zÀ-ÖØ-öø-ÿ])([A-Za-zÀ-ÖØ-öø-ÿ']*)/g, (_, a, b) => a.toUpperCase() + b.toLowerCase());
+const toTitleCaseLive = (s = '') =>
+  s.split(/(\s+)/).map(part => /\s+/.test(part) ? part : (part ? part[0].toUpperCase() + part.slice(1).toLowerCase() : part)).join('');
 
-// Title-case while typing (live): PRESERVES spaces
-const toTitleCaseLive = (s = '') => {
-  return s
-    .split(/(\s+)/)
-    .map(part =>
-      /\s+/.test(part)
-        ? part
-        : part
-          ? part[0].toUpperCase() + part.slice(1).toLowerCase()
-          : part
-    )
-    .join('');
-};
-
-/* ===== Biometrics helpers (inline) ===== */
+/* ===== Biometrics helpers ===== */
 async function deviceSupportsBiometrics() {
   try {
     const has = await LocalAuthentication.hasHardwareAsync();
@@ -173,12 +157,11 @@ async function biometricPrompt(reason = 'Authenticate') {
     return { success: false, error: e?.message || 'ERROR' };
   }
 }
-/* ======================================= */
 
 const LoginScreen = () => {
   const navigation = useNavigation();
 
-  const [fullName, setFullName]           = useState(''); // FULL NAME (username)
+  const [fullName, setFullName]           = useState('');
   const [password, setPassword]           = useState('');
   const [savePassword, setSavePassword]   = useState(false);
   const [showPassword, setShowPassword]   = useState(false);
@@ -191,7 +174,7 @@ const LoginScreen = () => {
   const [bioAvail, setBioAvail]             = useState(false);
   const [bioEnabled, setBioEnabled]         = useState(false);
   const [bioLabel, setBioLabel]             = useState('Biometric');
-  const [hasSavedSecret, setHasSavedSecret] = useState(false); // saved password OR refresh token
+  const [hasSavedSecret, setHasSavedSecret] = useState(false);
 
   const canSubmit = fullName.length > 0 && password.length > 0 && !loading;
   const bottomGap = useKeyboardGap(8);
@@ -215,12 +198,12 @@ const LoginScreen = () => {
       ]);
 
       if (u || p) {
-        setFullName(toTitleCase(u || ''));  // strict title-case prefill
+        setFullName(toTitleCase(u || ''));
         setPassword(p || '');
         setSavePassword(!!p);
       } else {
         const lastU = await SecureStore.getItemAsync(KEY_LAST_LOGIN_USERNAME);
-        if (lastU) setFullName(toTitleCase(lastU)); // strict title-case prefill
+        if (lastU) setFullName(toTitleCase(lastU));
       }
 
       const sup = await deviceSupportsBiometrics();
@@ -265,7 +248,7 @@ const LoginScreen = () => {
     return mapCodeToType(v).trim().toLowerCase();
   };
 
-  // Core login routine — **case-sensitive** username (use raw value only)
+  // Core login routine — case-sensitive username
   const loginWithCredentials = async (userNameVal, pwdVal) => {
     const variants = [{ val: userNameVal, _hint: 'raw' }];
 
@@ -427,7 +410,10 @@ const LoginScreen = () => {
 
       DeviceEventEmitter.emit('profile-updated', { profile_image, business_name });
 
-      // No 2FA flow — navigate straight home
+      // ⬇️ Connect merchant socket globally (popup overlay is listening)
+      connectMerchantSocket({ user_id, business_id });
+
+      // Navigate home
       navigateHome({ business_name, business_logo, profile_image, business_address, business_id, owner_type: ownerType, ownerType });
     } catch (err) {
       const msg = err?.message?.toString() ?? 'Login failed';
@@ -437,7 +423,6 @@ const LoginScreen = () => {
     }
   };
 
-  // Biometric button appears only if: device supports + enabled in SecuritySettings + we have a saved secret
   const canShowBiometricUnlock = useMemo(
     () => bioAvail && bioEnabled && hasSavedSecret && !loading,
     [bioAvail, bioEnabled, hasSavedSecret, loading]
@@ -458,13 +443,11 @@ const LoginScreen = () => {
 
     try {
       setLoading(true);
-
       if (refreshTok) {
-        // TODO: call your refresh endpoint here...
+        // Optional: implement refresh token auth
       }
-
       if (savedU && savedP) {
-        setFullName(toTitleCase(savedU)); // strict title-case on biometric prefill
+        setFullName(toTitleCase(savedU));
         setPassword(savedP);
         await handleLogin();
       } else {
@@ -510,7 +493,7 @@ const LoginScreen = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Biometric quick unlock CTA (shows above form if available) */}
+        {/* Biometric quick unlock CTA */}
         {canShowBiometricUnlock && (
           <TouchableOpacity onPress={onBiometricUnlock} activeOpacity={0.9} style={styles.bioUnlockBtn}>
             <Icon name="finger-print-outline" size={18} color="#0f172a" style={{ marginRight: 8 }} />
@@ -533,7 +516,7 @@ const LoginScreen = () => {
                 value={fullName}
                 editable={!loading}
                 onChangeText={(t) => {
-                  setFullName(toTitleCaseLive(t)); // LIVE title case — preserves spaces
+                  setFullName(toTitleCaseLive(t));
                   setErrorText('');
                 }}
                 onFocus={() => setIsNameFocused(true)}
@@ -617,8 +600,6 @@ const LoginScreen = () => {
                   if (!v) {
                     const refreshTok = await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
                     setHasSavedSecret(!!refreshTok);
-                  } else {
-                    // will be persisted after next successful login
                   }
                 }}
                 disabled={loading}
@@ -633,8 +614,6 @@ const LoginScreen = () => {
         <View style={[styles.footer, { paddingBottom: bottomGap }]} >
           <Text style={styles.forgotText}>
             Forgot your{' '}
-            <Text style={styles.link} onPress={() => !loading && navigation.navigate('ForgotUsername')}>username</Text>{' '}
-            or{' '}
             <Text style={styles.link} onPress={() => !loading && navigation.navigate('ForgotPassword')}>password</Text>
             ?
           </Text>

@@ -81,7 +81,8 @@ export default function SignupScreen() {
 
   const isValidEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
 
-  const checkRules = {
+  // ✅ Added: must start with a lowercase letter
+  const checkRules = {           // <-- NEW
     length: password.length >= 8,
     upperLower: /[A-Z]/.test(password) && /[a-z]/.test(password),
     number: /[0-9]/.test(password),
@@ -124,8 +125,6 @@ export default function SignupScreen() {
   };
 
   return (
-    // Same shell as SellingTypeScreen: SafeAreaView without edges override,
-    // HeaderWithSteps placed directly at the top, no extra margins.
     <SafeAreaView style={styles.safeArea}>
       <HeaderWithSteps step="Step 1 of 7" />
 
@@ -185,6 +184,7 @@ export default function SignupScreen() {
                       secureTextEntry={!showPassword}
                       onFocus={() => setIsPasswordFocused(true)}
                       onBlur={() => setIsPasswordFocused(false)}
+                      autoCapitalize="none" // keep exact casing as typed
                     />
                     <TouchableOpacity
                       onPress={() => setShowPassword(!showPassword)}

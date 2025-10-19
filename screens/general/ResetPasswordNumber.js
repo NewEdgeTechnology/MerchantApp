@@ -6,15 +6,17 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   Platform,
   KeyboardAvoidingView,
   StatusBar,
   ScrollView,
   Image,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context'; // ✅ use the correct SafeAreaView
 import Icon from 'react-native-vector-icons/Ionicons';
 import { useNavigation } from '@react-navigation/native';
+
+const ALLOWED_PREFIXES = ['77', '17', '16'];
 
 const ResetPasswordNumber = () => {
   const navigation = useNavigation();
@@ -22,12 +24,20 @@ const ResetPasswordNumber = () => {
   const [phoneNumber, setPhoneNumber] = useState('');
   const [isFocused, setIsFocused] = useState(false);
 
-  const isValidPhone = phoneNumber.trim().length > 0;
+  const handleChange = (text) => {
+    // keep digits only and clamp to 8 chars
+    let digits = text.replace(/\D/g, '').slice(0, 8);
+    setPhoneNumber(digits);
+  };
+
+  const prefix = phoneNumber.slice(0, 2);
+  const isValidPrefix = ALLOWED_PREFIXES.includes(prefix);
+  const isValidPhone = phoneNumber.length === 8 && isValidPrefix;
 
   const handleClear = () => setPhoneNumber('');
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'right', 'left']}>
       <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
 
       <KeyboardAvoidingView
@@ -36,7 +46,7 @@ const ResetPasswordNumber = () => {
         keyboardVerticalOffset={Platform.OS === 'android' ? 10 : 0}
       >
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
-          {/* Header */}
+          {/* Header (kept same place + layout) */}
           <View style={styles.header}>
             <TouchableOpacity onPress={() => navigation.navigate('LoginScreen')} style={styles.iconButton}>
               <Icon name="close-outline" size={28} color="#1A1D1F" style={{ paddingLeft: 10 }} />
@@ -73,9 +83,11 @@ const ResetPasswordNumber = () => {
               <TextInput
                 style={styles.input}
                 placeholder="Enter phone number"
-                keyboardType="phone-pad"
+                keyboardType="number-pad"
+                inputMode="numeric"
+                maxLength={8}
                 value={phoneNumber}
-                onChangeText={setPhoneNumber}
+                onChangeText={handleChange}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
               />
@@ -86,19 +98,22 @@ const ResetPasswordNumber = () => {
               )}
             </View>
 
+            {/* Warning if prefix invalid */}
+            {phoneNumber.length >= 2 && !isValidPrefix && (
+              <Text style={styles.warningText}>
+                Please enter a valid Bhutanese number (starts with 77, 17, or 16)
+              </Text>
+            )}
+
             {/* Username link */}
             <TouchableOpacity onPress={() => navigation.navigate('ForgotPassword')}>
-              <Text style={styles.link}>Use username instead</Text>
+              <Text style={styles.link}>Use email instead</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
 
         {/* Bottom Section */}
         <View style={styles.bottomSticky}>
-          <TouchableOpacity onPress={() => navigation.navigate('ForgotUsername')}>
-            <Text style={styles.bottomLink}>Forgot your username?</Text>
-          </TouchableOpacity>
-
           <TouchableOpacity
             style={isValidPhone ? styles.submitButton : styles.submitButtonDisabled}
             onPress={() => navigation.navigate('PasswordSentScreen')}
@@ -121,10 +136,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 15,
-    marginTop: 24,
+    // removed marginTop: 24 to avoid double spacing with SafeAreaView
   },
   iconButton: { padding: 8 },
-  content: { flex: 1, paddingHorizontal: 20, marginTop: -5 },
+  content: { flex: 1, paddingHorizontal: 20 /* removed marginTop:-5 to avoid pull-up */ },
   title: {
     fontSize: 26,
     fontWeight: '700',
@@ -140,8 +155,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 5,
     borderRadius: 12,
-    marginBottom: 12,
+    marginBottom: 8,
     justifyContent: 'space-between',
+  },
+  warningText: {
+    color: '#d9534f',
+    fontSize: 13,
+    marginBottom: 10,
+    marginLeft: 5,
   },
   flagContainer: {
     flexDirection: 'row',

@@ -1,19 +1,32 @@
 // screens/food/OrderDetails.js
 // Sequence rail + two-button actions (Accept/Reject when pending; Next when later)
+// Now with real nearby drivers fetched from ENV_NEARBY_DRIVERS when READY + platform delivery
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal, TextInput, ActivityIndicator,
+  View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal,
+  TextInput, ActivityIndicator,
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
-import { UPDATE_ORDER_STATUS_ENDPOINT as ENV_UPDATE_ORDER } from '@env';
 import { DeviceEventEmitter } from 'react-native';
+import {
+  UPDATE_ORDER_STATUS_ENDPOINT as ENV_UPDATE_ORDER,
+  NEARBY_DRIVERS_ENDPOINT as ENV_NEARBY_DRIVERS, // 👈 from .env
+} from '@env';
 
+/* ---------------- Money + utils ---------------- */
 const money = (n, c = 'Nu') => `${c} ${Number(n ?? 0).toFixed(2)}`;
-const norm = (s='') => String(s).toLowerCase().trim();
+const norm = (s = '') => String(s).toLowerCase().trim();
+const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+const findStepIndex = (status, seq) => seq.indexOf((status || '').toUpperCase());
+const fmtStamp = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
 
 /* ---------------- Status config (BACKEND KEYS, FRIENDLY LABELS) ---------------- */
 const STATUS_META = {
@@ -25,19 +38,10 @@ const STATUS_META = {
   COMPLETED:         { label: 'Delivered', color: '#047857', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-done-outline' },
   CANCELLED:         { label: 'Rejected',  color: '#b91c1c', bg: '#fee2e2', border: '#fecaca', icon: 'close-circle-outline' },
 };
-
 const TERMINAL_NEGATIVE = new Set(['CANCELLED']);
 const TERMINAL_SUCCESS  = new Set(['COMPLETED']);
 
-/* ---------------- helpers ---------------- */
-const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-const findStepIndex = (status, seq) => seq.indexOf((status || '').toUpperCase());
-const fmtStamp = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-};
-
+/* ---------------- Order code + endpoints ---------------- */
 // Accepts "ORD-64049678" or "64049678" → "ORD-64049678"
 const normalizeOrderCode = (raw) => {
   if (!raw) return null;
@@ -65,7 +69,7 @@ const buildUpdateUrl = (base, orderCode) => {
   return `${clean}/${orderCode}/status`;
 };
 
-/* ---------------- API ---------------- */
+/* ---------------- API calls ---------------- */
 async function updateStatusApi({ endpoint, orderCode, payload, token }) {
   const url = buildUpdateUrl(endpoint, orderCode);
   if (!url) throw new Error('Invalid update endpoint');
@@ -82,12 +86,44 @@ async function updateStatusApi({ endpoint, orderCode, payload, token }) {
 
   const text = await res.text();
   let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch {}
+  try { json = text ? JSON.parse(text) : null; } catch { /* ignore */ }
   if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
   return json;
 }
 
-/* ---------------- tiny UI atoms ---------------- */
+/* ---------------- Nearby drivers ---------------- */
+// We allow ENV_NEARBY_DRIVERS to be a full URL with query params, or a template
+// like "...?cityId={city}&lng={lng}&lat={lat}&radiusKm=5&limit=20".
+const expandNearbyUrl = (baseUrl, { cityId, lat, lng, radiusKm, limit }) => {
+  const clean = String(baseUrl || '').trim();
+  if (!clean) return null;
+
+  // Template replacement pass
+  let u = clean
+    .replace(/\{city\}/gi, encodeURIComponent(cityId ?? 'thimphu'))
+    .replace(/\{cityId\}/gi, encodeURIComponent(cityId ?? 'thimphu'))
+    .replace(/\{lat\}/gi, encodeURIComponent(lat ?? '27.4775469'))
+    .replace(/\{lng\}/gi, encodeURIComponent(lng ?? '89.6387255'))
+    .replace(/\{radius\}/gi, encodeURIComponent(radiusKm ?? '5'))
+    .replace(/\{radiusKm\}/gi, encodeURIComponent(radiusKm ?? '5'))
+    .replace(/\{limit\}/gi, encodeURIComponent(limit ?? '20'));
+
+  // If not templated, try to append/patch query params
+  try {
+    const url = new URL(u);
+    if (!url.searchParams.get('cityId') && cityId) url.searchParams.set('cityId', cityId);
+    if (!url.searchParams.get('lat') && lat != null) url.searchParams.set('lat', String(lat));
+    if (!url.searchParams.get('lng') && lng != null) url.searchParams.set('lng', String(lng));
+    if (!url.searchParams.get('radiusKm') && radiusKm != null) url.searchParams.set('radiusKm', String(radiusKm));
+    if (!url.searchParams.get('limit') && limit != null) url.searchParams.set('limit', String(limit));
+    return url.toString();
+  } catch {
+    // base might be partial; fall back to the templated string
+    return u;
+  }
+};
+
+/* ---------------- Tiny UI atoms ---------------- */
 const Chip = ({ label, color, bg, border, icon }) => (
   <View style={[styles.pill, { backgroundColor: bg, borderColor: border }]}>
     <Ionicons name={icon} size={14} color={color} />
@@ -112,6 +148,19 @@ const Step = ({ label, ringColor, fill, icon, time, onPress, disabled, dimmed })
   );
 };
 
+const Row = ({ icon, text }) => (
+  <View style={styles.row}>
+    <Ionicons name={icon} size={16} color="#64748b" />
+    <Text style={styles.rowText} numberOfLines={2}>{text}</Text>
+  </View>
+);
+
+const RowTitle = ({ title }) => (
+  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+    <Text style={styles.blockTitle}>{title}</Text>
+  </View>
+);
+
 /* ======================= Screen ======================= */
 export default function OrderDetails() {
   const insets = useSafeAreaInsets();
@@ -126,13 +175,6 @@ export default function OrderDetails() {
   const [updating, setUpdating] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
-
-  // --- DRIVER (dummy) state ---
-  const [drivers, setDrivers] = useState([]);
-  const [loadingDrivers, setLoadingDrivers] = useState(false);
-  const [offerPendingDriver, setOfferPendingDriver] = useState(null);
-  const [waitingDriverAccept, setWaitingDriverAccept] = useState(false);
-  const acceptTimerRef = useRef(null);
 
   // Detect owner type robustly (route param takes priority)
   const ownerTypeRaw =
@@ -249,7 +291,7 @@ export default function OrderDetails() {
           reason: `Merchant rejected: ${r}`,
         };
       } else {
-        // Accept/Next transitions → no user prompt, but include an auto-reason to pass backend validation
+        // Accept/Next transitions → include an auto-reason to pass backend validation
         payload = { status: newStatus };
         if (DEFAULT_REASON[newStatus]) payload.reason = DEFAULT_REASON[newStatus];
       }
@@ -306,39 +348,99 @@ export default function OrderDetails() {
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
-  // ─────────────── Dummy driver “API” ───────────────
-  const makeDummyDrivers = () => {
-    // small randomized list
-    const base = [
-      { id: 201, name: 'Kezang',   distance_km: 1.2, vehicle_type: 'Bike', rating: 4.9 },
-      { id: 202, name: 'Sonam',    distance_km: 2.5, vehicle_type: 'Scooter', rating: 4.5 },
-      { id: 203, name: 'Tshering', distance_km: 0.8, vehicle_type: 'Bike', rating: 4.7 },
-      { id: 204, name: 'Pelden',   distance_km: 3.1, vehicle_type: 'Car', rating: 4.3 },
-    ];
-    return base.sort(() => Math.random() - 0.5).slice(0, 3 + Math.floor(Math.random()*2));
-  };
+  /* ─────────────── Nearby drivers (REAL API) ─────────────── */
+  const [drivers, setDrivers] = useState([]);
+  const [loadingDrivers, setLoadingDrivers] = useState(false);
+  const [driversError, setDriversError] = useState('');
+  const [offerPendingDriver, setOfferPendingDriver] = useState(null);
+  const [waitingDriverAccept, setWaitingDriverAccept] = useState(false);
+  const acceptTimerRef = useRef(null);
 
-  const loadDummyDrivers = useCallback(async () => {
+  // Extract reference coords from order if available; else defaults
+  const refCoords = useMemo(() => {
+    // try various possible shapes in your system
+    const lat =
+      order?.delivery_lat ??
+      order?.lat ??
+      order?.destination?.lat ??
+      order?.geo?.lat ??
+      27.4775469;
+    const lng =
+      order?.delivery_lng ??
+      order?.lng ??
+      order?.destination?.lng ??
+      order?.geo?.lng ??
+      89.6387255;
+    const cityId =
+      order?.city_id ??
+      order?.city ??
+      'thimphu';
+    return { lat: Number(lat), lng: Number(lng), cityId: String(cityId || 'thimphu').toLowerCase() };
+  }, [order]);
+
+  const buildNearby = useCallback(() => {
+    return expandNearbyUrl(ENV_NEARBY_DRIVERS, {
+      cityId: refCoords.cityId,
+      lat: refCoords.lat,
+      lng: refCoords.lng,
+      radiusKm: 5,
+      limit: 20,
+    });
+  }, [refCoords]);
+
+  const fetchNearbyDrivers = useCallback(async () => {
     if (!(status === 'READY' && isPlatformDelivery)) return;
+    const url = buildNearby();
+    if (!url) {
+      setDriversError('NEARBY_DRIVERS_ENDPOINT not configured');
+      return;
+    }
+    setDriversError('');
+    setLoadingDrivers(true);
     try {
-      setLoadingDrivers(true);
-      await new Promise(r => setTimeout(r, 800)); // simulate network
-      setDrivers(makeDummyDrivers());
+      const resp = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
+      const text = await resp.text();
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch { /* ignore */ }
+
+      if (!resp.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
+
+      // Accept a few possible response shapes:
+      // { success:true, data:[...] } | { drivers:[...] } | [...]
+      let arr = [];
+      if (Array.isArray(json)) arr = json;
+      else if (Array.isArray(json?.data)) arr = json.data;
+      else if (Array.isArray(json?.drivers)) arr = json.drivers;
+      else throw new Error('Unexpected driver API response');
+
+      // Normalize minimal fields
+      const normArr = arr.map((d, i) => ({
+        id: d.id ?? d.driver_id ?? d._id ?? i,
+        name: d.name ?? d.full_name ?? 'Driver',
+        distance_km: d.distance_km ?? d.distance ?? null,
+        vehicle_type: d.vehicle_type ?? d.vehicle ?? 'Bike',
+        rating: d.rating ?? d.avg_rating ?? null,
+      }));
+
+      setDrivers(normArr);
+    } catch (e) {
+      setDrivers([]);
+      setDriversError(String(e?.message || e));
     } finally {
       setLoadingDrivers(false);
     }
-  }, [status, isPlatformDelivery]);
+  }, [status, isPlatformDelivery, buildNearby]);
 
-  // load dummy drivers when we land on READY
+  // load real drivers when we land on READY (and city/coords changes)
   useEffect(() => {
     if (status === 'READY' && isPlatformDelivery) {
-      loadDummyDrivers();
+      fetchNearbyDrivers();
     } else {
       setDrivers([]);
       setOfferPendingDriver(null);
       setWaitingDriverAccept(false);
     }
-  }, [status, isPlatformDelivery, loadDummyDrivers]);
+  }, [status, isPlatformDelivery, refCoords.cityId, refCoords.lat, refCoords.lng, fetchNearbyDrivers]);
 
   // Offer to driver → simulate acceptance in 3–6 seconds, then flip to OUT_FOR_DELIVERY
   const offerToDriver = useCallback((driverId) => {
@@ -364,10 +466,11 @@ export default function OrderDetails() {
     };
   }, []);
 
+  /* ---------------- UI ---------------- */
   return (
-    <SafeAreaView style={styles.safe} edges={['left','right','bottom']}>
-      {/* Header — centered title like PersonalInformation.js */}
-      <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
+    <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
+      {/* Header — centered title */}
+      <View style={[styles.headerBar, { paddingTop: Math.max(insets.top, 8) + 18 }]}>
         <Pressable onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={8}>
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </Pressable>
@@ -452,7 +555,7 @@ export default function OrderDetails() {
           )}
         </View>
 
-        {/* Update actions — Accept/Reject only when PENDING; otherwise Next (but READY gated for platform delivery) */}
+        {/* Update actions — Accept/Reject only when PENDING; otherwise Next (READY is gated for platform delivery) */}
         <Text style={styles.sectionTitle}>Update status</Text>
         {isTerminalNegative || isTerminalSuccess ? (
           <Text style={styles.terminalNote}>No further actions.</Text>
@@ -480,7 +583,7 @@ export default function OrderDetails() {
               </>
             ) : (
               <>
-                {/* On READY + platform delivery: hide manual "Next" */}
+                {/* On READY + platform delivery: hide manual "Next" (we need driver assignment) */}
                 {(status !== 'READY' || !isPlatformDelivery) && primaryLabel ? (
                   <Pressable
                     onPress={onPrimaryAction}
@@ -502,22 +605,35 @@ export default function OrderDetails() {
           </View>
         )}
 
-        {/* 🔸 Dummy Driver assignment panel (only READY + platform delivery) */}
+        {/* 🔸 Nearby Driver assignment panel (REAL API) — only READY + platform delivery */}
         {status === 'READY' && isPlatformDelivery && (
           <View style={styles.block}>
             <RowTitle title="Nearby drivers" />
             <View style={{ marginTop: 8 }} />
+
             {loadingDrivers ? (
               <View style={{ paddingVertical: 12, alignItems: 'center', gap: 8 }}>
                 <ActivityIndicator />
                 <Text style={{ color: '#64748b', fontWeight: '600' }}>Loading drivers…</Text>
+              </View>
+            ) : driversError ? (
+              <View style={{ paddingVertical: 12 }}>
+                <Text style={{ color: '#b91c1c', fontWeight: '700' }}>{driversError}</Text>
+                <View style={{ height: 8 }} />
+                <Pressable
+                  onPress={fetchNearbyDrivers}
+                  style={({ pressed }) => [styles.secondaryBtn, { borderColor: '#CBD5E1', opacity: pressed ? 0.85 : 1, alignSelf: 'flex-start' }]}
+                >
+                  <Ionicons name="refresh" size={18} color="#334155" />
+                  <Text style={[styles.secondaryBtnText, { color: '#334155' }]}>Retry</Text>
+                </Pressable>
               </View>
             ) : drivers.length === 0 ? (
               <View style={{ paddingVertical: 12 }}>
                 <Text style={{ color: '#64748b', fontWeight: '600' }}>No drivers nearby yet.</Text>
                 <View style={{ height: 8 }} />
                 <Pressable
-                  onPress={loadDummyDrivers}
+                  onPress={fetchNearbyDrivers}
                   style={({ pressed }) => [styles.secondaryBtn, { borderColor: '#CBD5E1', opacity: pressed ? 0.85 : 1, alignSelf: 'flex-start' }]}
                 >
                   <Ionicons name="refresh" size={18} color="#334155" />
@@ -563,7 +679,7 @@ export default function OrderDetails() {
                   </View>
                 ) : (
                   <Pressable
-                    onPress={loadDummyDrivers}
+                    onPress={fetchNearbyDrivers}
                     style={({ pressed }) => [styles.secondaryBtn, { borderColor: '#CBD5E1', opacity: pressed ? 0.85 : 1, alignSelf: 'flex-start' }]}
                   >
                     <Ionicons name="refresh" size={18} color="#334155" />
@@ -642,25 +758,11 @@ export default function OrderDetails() {
   );
 }
 
-/* ---------------- tiny pieces ---------------- */
-const Row = ({ icon, text }) => (
-  <View style={styles.row}>
-    <Ionicons name={icon} size={16} color="#64748b" />
-    <Text style={styles.rowText} numberOfLines={2}>{text}</Text>
-  </View>
-);
-
-const RowTitle = ({ title }) => (
-  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-    <Text style={styles.blockTitle}>{title}</Text>
-  </View>
-);
-
 /* ---------------- styles ---------------- */
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#fff' },
 
-  // Centered header (matches PersonalInformation.js)
+  // Centered header (matches your other screens)
   headerBar: {
     minHeight: 52,
     paddingHorizontal: 12,
