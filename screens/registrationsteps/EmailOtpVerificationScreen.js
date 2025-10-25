@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { useSafeAreaInsets, SafeAreaView } from "react-native-safe-area-context";
-import Ionicons from "react-native-vector-icons/Ionicons";
+import { Ionicons } from "@expo/vector-icons";
 import HeaderWithSteps from "./HeaderWithSteps";
 
 // Endpoints from .env
@@ -28,11 +28,11 @@ import {
 const VERIFY_NEXT_ROUTE = "LoginScreen";
 const EDIT_SIGNUP_ROUTE = "SignupScreen";
 
-/* ---------------- Debug helpers ---------------- */
+/* ---------------- Debug helpers (SAFE) ---------------- */
 const DEBUG_NET = true;
 const rid = () => Math.random().toString(36).slice(2, 8);
-// const log = (...a) => DEBUG_NET && console.log("[OTP]", ...a);
-// const logErr = (...a) => DEBUG_NET && console.log("%c[OTP ERR]", "color:#d00", ...a);
+const log = (...a) => { if (DEBUG_NET) console.log("[OTP]", ...a); };
+const logErr = (...a) => { if (DEBUG_NET) console.log("[OTP ERR]", ...a); };
 
 /* ---------------- Normalizers ---------------- */
 const normalizeCategoryIds = (v) => {
@@ -112,14 +112,15 @@ const buildFilePart = (uri, base = "image") => {
 
 /* ---------------- Network helpers ---------------- */
 const postJson = async (url, payload, timeoutMs = 20000) => {
-  if (!url) throw new Error("Endpoint missing");
+  const u = String(url || "").trim();
+  if (!u) throw new Error("Endpoint missing");
   const id = rid();
-  log(`(req:${id}) POST JSON ->`, url);
+  log(`(req:${id}) POST JSON ->`, u);
   log(`(req:${id}) body:`, payload);
   const controller = new AbortController();
   const to = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, {
+    const res = await fetch(u, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -153,12 +154,14 @@ const postJson = async (url, payload, timeoutMs = 20000) => {
 };
 
 const postMultipart = async (url, formData, timeoutMs = 30000) => {
+  const u = String(url || "").trim();
+  if (!u) throw new Error("Endpoint missing");
   const id = rid();
-  log(`(req:${id}) POST MULTIPART ->`, url);
+  log(`(req:${id}) POST MULTIPART ->`, u);
   const controller = new AbortController();
   const to = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, {
+    const res = await fetch(u, {
       method: "POST",
       headers: {
         // DO NOT set Content-Type; RN will add multipart boundary

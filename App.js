@@ -52,7 +52,6 @@ import ProfileBusinessDetails from './screens/food/ProfileBusinessDetails';
 import './screens/food/secureStorePatch';
 import ManageQuickActionsScreen from './screens/food/ManageQuickActionsScreen';
 import OrderDetails from './screens/food/OrderDetails';
-import WalletScreen from './screens/food/WalletScreen';
 import FeedbackScreen from './screens/food/FeedbackScreen';
 import AppLockGate from './AppLockGate';
 import TwoFactorPromptScreen from './screens/food/TwoFactorPromptScreen';
@@ -61,10 +60,12 @@ import PrivacyPolicy from './screens/general/PrivacyPolicy';
 import HelpScreen from './screens/general/HelpScreen';
 import SetNewPasswordScreen from './screens/general/SetNewPasswordScreen';
 import ForgotOTPVerify from './screens/general/ForgotOTPVerify';
-
-// ⬇️ NEW: global overlay that pops on socket "notify"
 import OrderNotifyOverlay from './components/OrderNotifyOverlay';
-
+import WalletScreen from './screens/wallet/WalletScreen';
+import CreateWalletScreen from './screens/wallet/CreateWalletScreen';
+import AddMoneyScreen from './screens/wallet/AddMoneyScreen';
+import WithdrawScreen from './screens/wallet/WithdrawScreen';
+import SendToFriendScreen from './screens/wallet/SendToFriendScreen';
 const Stack = createStackNavigator();
 
 export default function App() {
@@ -115,6 +116,10 @@ export default function App() {
             <Stack.Screen name="HelpScreen" component={HelpScreen} />
             <Stack.Screen name="SetNewPasswordScreen" component={SetNewPasswordScreen} />
             <Stack.Screen name="ForgotOTPVerify" component={ForgotOTPVerify} />
+            <Stack.Screen name="CreateWalletScreen" component={CreateWalletScreen} />
+            <Stack.Screen name="AddMoneyScreen" component={AddMoneyScreen} />
+            <Stack.Screen name="WithdrawScreen" component={WithdrawScreen} />
+            <Stack.Screen name="SendToFriendScreen" component={SendToFriendScreen} />
           </Stack.Navigator>
         </AppLockGate>
       </NavigationContainer>

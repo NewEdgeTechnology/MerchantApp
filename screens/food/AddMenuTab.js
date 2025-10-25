@@ -1,5 +1,5 @@
 // screens/food/AddMenuTab.js
-// FOOD ONLY: includes is_veg + spice_level; posts to MENU_ENDPOINT
+// Supports dynamic category details overlay (fresh fetch) for BOTH owner types: 'food' | 'mart'
 import React, {
   useEffect, useMemo, useState, useLayoutEffect, useCallback, useRef
 } from 'react';
@@ -16,15 +16,15 @@ import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/nativ
 import { useHeaderHeight } from '@react-navigation/elements';
 import {
   CATEGORY_ENDPOINT as ENV_CATEGORY_ENDPOINT,
-  MENU_ENDPOINT as ENV_ADD_MENU_ENDPOINT,          // FOOD create endpoint
+  MENU_ENDPOINT as ENV_ADD_MENU_ENDPOINT,          // create endpoint
   MENU_IMAGE_ENDPOINT as ENV_MENU_IMAGE_ENDPOINT,   // optional view base
 } from '@env';
 
 /* ───────── Debug ───────── */
 const DEBUG = true;
 const rid = () => Math.random().toString(36).slice(2, 8);
-const dlog = (...a) => DEBUG && console.log('[FOOD-ADD]', ...a);
-const derr = (...a) => DEBUG && console.log('%c[FOOD-ADD ERR]', 'color:#d00', ...a);
+const dlog = (...a) => DEBUG && console.log('[ADD-MENU]', ...a);
+const derr = (...a) => DEBUG && console.log('%c[ADD-MENU ERR]', 'color:#d00', ...a);
 
 /* ───────── Theme ───────── */
 const FONT_FAMILY = Platform.select({ ios: 'System', android: 'sans-serif' });
@@ -41,14 +41,47 @@ const makeImageUrl = (path) => {
   return IMG_FOOD_BASE ? `${IMG_FOOD_BASE}/${s.replace(/^\/+/, '')}` : s;
 };
 
+/* ── BusinessId resolver ─────────────────────────────────────── */
+const pickFirst = (...arr) => arr.find(v => v !== undefined && v !== null && String(v).trim() !== '');
+const fromObj = (o, path) => path.split('.').reduce((a, k) => (a && a[k] !== undefined ? a[k] : undefined), o);
+
+function getBizIdFromParams(p = {}) {
+  return pickFirst(
+    p.businessId, p.businessID, p.business_id, p.bizId, p.id,
+    fromObj(p, 'merchant.businessId'), fromObj(p, 'merchant.business_id'), fromObj(p, 'merchant.id'),
+    fromObj(p, 'business.businessId'), fromObj(p, 'business.business_id'), fromObj(p, 'business.id'),
+    fromObj(p, 'profile.businessId'), fromObj(p, 'profile.business_id')
+  );
+}
+
+async function getBizIdFromStorage() {
+  try {
+    const keys = [
+      'merchant_business_id', 'business_id', 'businessId',
+      'merchant_profile', 'profile'
+    ];
+    for (const k of keys) {
+      const raw = await SecureStore.getItemAsync(k);
+      if (!raw) continue;
+      if (/^\d+$/.test(String(raw))) return raw;
+      try {
+        const obj = JSON.parse(raw);
+        const cand = getBizIdFromParams(obj);
+        if (cand) return cand;
+      } catch { }
+    }
+  } catch { }
+  return '';
+}
+
 /* ───────── Small Select component ───────── */
-function Select({ value, options, onChange, placeholder = 'None', fontSize = 14, testID, maxVisible = 3 }) {
+function Select({ value, options, onChange, placeholder = 'None', fontSize = 14, testID, maxVisible = 3, style }) {
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const wrapRef = useRef(null);
 
   const isNone = value == null || value === '' || value === 'None';
-  const shown = isNone
+  const theShown = isNone
     ? placeholder
     : (options.find((o) => String(o.value) === String(value))?.label ?? placeholder);
 
@@ -62,10 +95,19 @@ function Select({ value, options, onChange, placeholder = 'None', fontSize = 14,
 
   return (
     <>
-      <Pressable ref={wrapRef} onPress={openMenu} testID={testID} style={styles.pickerWrap} onLayout={measure}>
+      <Pressable
+        ref={wrapRef}
+        onPress={openMenu}
+        testID={testID}
+        style={[styles.pickerWrap, style]}
+        onLayout={measure}
+      >
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text numberOfLines={1} style={[styles.pickerText, { color: isNone ? PLACEHOLDER_COLOR : TEXT_COLOR, fontSize }]}>
-            {shown}
+          <Text
+            numberOfLines={1}
+            style={[styles.pickerText, { color: isNone ? PLACEHOLDER_COLOR : TEXT_COLOR, fontSize }]}
+          >
+            {theShown}
           </Text>
           <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color={isNone ? PLACEHOLDER_COLOR : TEXT_COLOR} />
         </View>
@@ -107,7 +149,7 @@ function Select({ value, options, onChange, placeholder = 'None', fontSize = 14,
   );
 }
 
-/* ───────── Main (FOOD) ───────── */
+/* ───────── Main ───────── */
 export default function AddMenuTab({ isTablet }) {
   const navigation = useNavigation();
   const route = useRoute();
@@ -140,11 +182,34 @@ export default function AddMenuTab({ isTablet }) {
     }, [navigation])
   );
 
-  /* BusinessId */
-  const BUSINESS_ID = useMemo(() => {
-    const p = route?.params ?? {};
-    return String(p.businessId || p.business_id || p.merchant?.businessId || p.merchant?.id || '').trim();
-  }, [route?.params]);
+  /* Business / Owner type */
+  // NEW: state + resolver (params -> SecureStore)
+  const [BUSINESS_ID, setBUSINESS_ID] = useState(() => {
+    const cand = getBizIdFromParams(route?.params ?? {});
+    return cand ? String(cand).trim() : '';
+  });
+
+  useEffect(() => {
+    (async () => {
+      if (!BUSINESS_ID) {
+        const fromStore = await getBizIdFromStorage();
+        if (fromStore) setBUSINESS_ID(String(fromStore).trim());
+      }
+    })();
+  }, [BUSINESS_ID]);
+
+  useEffect(() => {
+    if (DEBUG) {
+      // console.log('[ADD-MENU] route.params =', JSON.stringify(route?.params ?? {}, null, 2));
+      // console.log('[ADD-MENU] BUSINESS_ID =', BUSINESS_ID);
+    }
+  }, [route?.params, BUSINESS_ID]);
+
+  // owner_type: 'food' | 'mart' (default 'food')
+  const OWNER_TYPE = useMemo(() => {
+    const val = String(route?.params?.owner_type || 'food').toLowerCase();
+    return (val === 'mart' || val === 'food') ? val : 'food';
+  }, [route?.params?.owner_type]);
 
   /* Categories URL */
   const CATEGORY_BASE = useMemo(() => (ENV_CATEGORY_ENDPOINT || '').replace(/\/$/, ''), []);
@@ -152,14 +217,14 @@ export default function AddMenuTab({ isTablet }) {
     if (!CATEGORY_BASE || !BUSINESS_ID) return null;
     const hasPh = /\{businessId\}/i.test(CATEGORY_BASE);
     const pathStyle = hasPh ? CATEGORY_BASE.replace(/\{businessId\}/gi, encodeURIComponent(BUSINESS_ID))
-                            : `${CATEGORY_BASE}/${encodeURIComponent(BUSINESS_ID)}`;
+      : `${CATEGORY_BASE}/${encodeURIComponent(BUSINESS_ID)}`;
     const queryStyle = `${CATEGORY_BASE}?business_id=${encodeURIComponent(BUSINESS_ID)}`;
     const baseUrl = CATEGORY_BASE.includes('?') ? queryStyle : pathStyle;
     const sep = baseUrl.includes('?') ? '&' : '?';
-    return `${baseUrl}${sep}owner_type=food`;
-  }, [CATEGORY_BASE, BUSINESS_ID]);
+    return `${baseUrl}${sep}owner_type=${encodeURIComponent(OWNER_TYPE)}`;
+  }, [CATEGORY_BASE, BUSINESS_ID, OWNER_TYPE]);
 
-  /* Endpoint: FOOD create */
+  /* Endpoint: create item */
   const addEndpointOverride = useMemo(() => {
     const p = route?.params ?? {};
     return String(p.addItemEndpoint ?? p.add_item_endpoint ?? '').trim();
@@ -186,12 +251,22 @@ export default function AddMenuTab({ isTablet }) {
   const [isAvailable, setIsAvailable] = useState(true);
   const [stockLimit, setStockLimit] = useState('');
   const [sortPriority, setSortPriority] = useState('None');
-  const [category, setCategory] = useState('None');   // store NAME only
-  const [categories, setCategories] = useState([]);   // [{id, name}]
+
+  // dropdown list (names only)
+  const [category, setCategory] = useState('None');           // store NAME only
+  const [categories, setCategories] = useState([]);           // [{ id, name }]
   const [loadingCats, setLoadingCats] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [kbHeight, setKbHeight] = useState(0);
+
+  // dynamic overlay
+  const [catInfoOpen, setCatInfoOpen] = useState(false);
+  const [catInfoLoading, setCatInfoLoading] = useState(false);
+  const [catInfoError, setCatInfoError] = useState('');
+  const [catInfoData, setCatInfoData] = useState(null); // { name, description, image? }
+
+  const selectedCategoryName = category && category !== 'None' ? String(category) : '';
 
   useEffect(() => {
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -215,20 +290,26 @@ export default function AddMenuTab({ isTablet }) {
     setImageSize(asset.fileSize ?? asset.size ?? 0);
   };
 
-  const extractCategoriesFromResponse = (raw) => {
-    if (Array.isArray(raw)) return raw;
-    if (raw && Array.isArray(raw.types)) {
-      const flat = [];
-      for (const t of raw.types) if (Array.isArray(t.categories)) flat.push(...t.categories);
-      return flat;
-    }
+  // minimal categories list for dropdown
+  const extractCategoryNames = (raw) => {
+    const out = [];
+    const push = (c) => {
+      if (!c) return;
+      const name = c.category_name ?? c.name ?? c.title ?? c.label ?? '';
+      if (name) out.push({ id: String(c.id ?? c.category_id ?? name), name });
+    };
+    if (Array.isArray(raw)) raw.forEach(push);
+    if (raw && Array.isArray(raw.types)) for (const t of raw.types) if (Array.isArray(t.categories)) t.categories.forEach(push);
     const wrappers = ['data', 'categories', 'result', 'items', 'rows', 'payload', 'list'];
-    for (const k of wrappers) if (Array.isArray(raw?.[k])) return raw[k];
-    if (raw && typeof raw === 'object') for (const v of Object.values(raw)) if (Array.isArray(v)) return v;
-    return [];
+    for (const k of wrappers) if (Array.isArray(raw?.[k])) raw[k].forEach(push);
+    if (!out.length && raw && typeof raw === 'object') for (const v of Object.values(raw)) if (Array.isArray(v)) { v.forEach(push); break; }
+    // de-dupe by name
+    const seen = new Set(); const unique = [];
+    for (const c of out) if (!seen.has(c.name)) { seen.add(c.name); unique.push(c); }
+    return unique;
   };
 
-  // Fetch categories (food)
+  // Fetch dropdown categories
   const loadCategories = useCallback(async (opts = { showErrors: true }) => {
     if (!BUSINESS_ID) { setLoadingCats(false); if (opts.showErrors) Alert.alert('Config', 'Missing businessId.'); return; }
     if (!CATEGORY_BASE) { setLoadingCats(false); if (opts.showErrors) Alert.alert('Config', 'Missing CATEGORY_ENDPOINT'); return; }
@@ -253,15 +334,10 @@ export default function AddMenuTab({ isTablet }) {
       let raw;
       try { raw = text ? JSON.parse(text) : []; } catch { raw = []; }
 
-      const list = extractCategoriesFromResponse(raw);
-      const normalized = list.map((c, idx) => ({
-        id: String(c.id ?? c._id ?? c.categoryId ?? c.category_id ?? idx),
-        name: c.category_name ?? c.name ?? c.title ?? c.label ?? 'Unnamed',
-      }));
-
-      const withNone = [{ id: 'None', name: 'None' }, ...normalized];
+      const list = extractCategoryNames(raw);
+      const withNone = [{ id: 'None', name: 'None' }, ...list];
       setCategories(withNone);
-      if (!category || category === 'None') setCategory(normalized[0]?.name ?? 'None');
+      if (!category || category === 'None') setCategory(list[0]?.name ?? 'None');
     } catch (e) {
       if (opts.showErrors) Alert.alert('Categories', `Failed to load categories.\n${String(e?.message || e)}`);
     } finally {
@@ -271,6 +347,65 @@ export default function AddMenuTab({ isTablet }) {
 
   useEffect(() => { loadCategories({ showErrors: true }); }, [loadCategories]);
   const onRefresh = useCallback(async () => { setRefreshing(true); await loadCategories({ showErrors: false }); setRefreshing(false); }, [loadCategories]);
+
+  // Dynamic category details fetcher
+  const fetchCategoryDetails = useCallback(async () => {
+    if (!selectedCategoryName) return;
+    if (!CATEGORIES_URL) { setCatInfoError('Config error: categories URL not set.'); return; }
+
+    try {
+      setCatInfoLoading(true);
+      setCatInfoError('');
+      setCatInfoData(null);
+
+      const token = (await SecureStore.getItemAsync('auth_token')) || '';
+      const url = CATEGORIES_URL + (CATEGORIES_URL.includes('?') ? '&' : '?') + `ts=${Date.now()}`;
+
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        signal: controller.signal,
+      });
+      clearTimeout(tid);
+
+      const text = await res.text();
+      if (!res.ok) throw new Error(`HTTP ${res.status}${text ? ` • ${text}` : ''}`);
+
+      let raw;
+      try { raw = text ? JSON.parse(text) : []; } catch { raw = []; }
+
+      const harvest = [];
+      const push = (c) => {
+        if (!c) return;
+        harvest.push({
+          id: String(c.id ?? c.category_id ?? ''),
+          name: c.category_name ?? c.name ?? c.title ?? c.label ?? '',
+          description: c.description ?? '',
+          image: c.category_image ?? c.image ?? null,
+          business_type: c.business_type ?? '',
+        });
+      };
+      if (Array.isArray(raw)) raw.forEach(push);
+      if (raw && Array.isArray(raw.types)) for (const t of raw.types) if (Array.isArray(t.categories)) t.categories.forEach(push);
+      const wrappers = ['data', 'categories', 'result', 'items', 'rows', 'payload', 'list'];
+      for (const k of wrappers) if (Array.isArray(raw?.[k])) raw[k].forEach(push);
+      if (!harvest.length && raw && typeof raw === 'object') {
+        for (const v of Object.values(raw)) { if (Array.isArray(v)) { v.forEach(push); break; } }
+      }
+
+      const norm = (s = '') => String(s).trim().toLowerCase();
+      const found = harvest.find(c => norm(c.name) === norm(selectedCategoryName));
+
+      if (!found) setCatInfoError('Category not found on server.');
+      else setCatInfoData(found);
+    } catch (e) {
+      setCatInfoError(e?.message || 'Failed to load details.');
+    } finally {
+      setCatInfoLoading(false);
+    }
+  }, [selectedCategoryName, CATEGORIES_URL]);
 
   // Image actions
   const pickFromLibrary = async () => {
@@ -369,6 +504,23 @@ export default function AddMenuTab({ isTablet }) {
     } finally { clearTimeout(timeout); }
   }
 
+  const goToMenu = () => {
+    if (!BUSINESS_ID) {
+      Alert.alert('Config', 'Missing businessId. Cannot open items.');
+      return;
+    }
+    navigation.navigate({
+      name: 'MenuScreen',
+      params: {
+        businessId: Number(BUSINESS_ID),
+        business_id: Number(BUSINESS_ID),
+        owner_type: OWNER_TYPE,
+        refreshAt: Date.now(),
+      },
+      merge: true, // ✅ important when the target is already mounted
+    });
+  };
+
   const onSave = async () => {
     const clickId = rid();
     dlog(`(click:${clickId}) Save pressed`);
@@ -383,7 +535,7 @@ export default function AddMenuTab({ isTablet }) {
       return Alert.alert('Validation', 'Stock limit must be 0 or more.');
     }
 
-    const category_name = (category && category !== 'None') ? String(category) : '';
+    const category_name = selectedCategoryName;
     if (!category_name) return Alert.alert('Validation', 'Please select a category.');
 
     setSaving(true);
@@ -402,25 +554,18 @@ export default function AddMenuTab({ isTablet }) {
       is_veg: isVeg ? 1 : 0,
       spice_level: spiceLevel,
     };
-    if (__DEV__) console.log('payload', payload);
 
     try {
-      const { data: created } = await postToBackend(payload);
-      const rawPath =
-        created?.image_url ?? created?.item_image_url ?? created?.menu_image_url ??
-        created?.item_image ?? created?.menu_image ?? created?.data?.item_image ?? created?.data?.menu_image ?? null;
-
-      const absoluteUrl = makeImageUrl(rawPath);
-      const imageUrl = absoluteUrl ? `${absoluteUrl}${absoluteUrl.includes('?') ? '&' : '?'}v=${Date.now()}` : '';
-
+      await postToBackend(payload);
       // reset form
       setItemName(''); setDescription(''); setImageUri(''); setImageName(''); setImageSize(0);
       setBasePrice(''); setTaxRate(''); setDiscount(''); setIsVeg(false); setSpiceLevel('None');
       setIsAvailable(true); setStockLimit(''); setSortPriority('None');
 
-      Alert.alert('Saved', 'Menu item added successfully.', [{ text: 'OK', onPress: () => navigation.navigate('MenuScreen') }], {
-        cancelable: true, onDismiss: () => navigation.navigate('MenuScreen'),
-      });
+      Alert.alert('Saved', 'Item added successfully.',
+        [{ text: 'OK', onPress: goToMenu }],
+        { cancelable: true, onDismiss: goToMenu }
+      );
     } catch (e) {
       derr(`(click:${clickId}) failed:`, e?.message);
       Alert.alert('Error', e?.message || 'Failed to save.');
@@ -432,10 +577,12 @@ export default function AddMenuTab({ isTablet }) {
 
   const ListHeaderComponent = useMemo(() => (
     <View style={{ marginBottom: 12 }}>
-      <Text style={[styles.title, { fontSize: FS.title }]}>Menu</Text>
-      <Text style={[styles.sub, { fontSize: FS.sub }]}>Manage your menu items and availability.</Text>
+      <Text style={[styles.title, { fontSize: FS.title }]}>{OWNER_TYPE === 'mart' ? 'Mart Items' : 'Menu'}</Text>
+      <Text style={[styles.sub, { fontSize: FS.sub }]}>
+        {OWNER_TYPE === 'mart' ? 'Add new mart items and set availability.' : 'Manage your menu items and availability.'}
+      </Text>
     </View>
-  ), [FS.title, FS.sub]);
+  ), [FS.title, FS.sub, OWNER_TYPE]);
 
   const renderForm = useCallback(() => (
     <View>
@@ -592,29 +739,60 @@ export default function AddMenuTab({ isTablet }) {
         </View>
       </View>
 
-      {/* Category */}
+      {/* Category with INFO ICON moved near the label */}
       <View style={styles.field}>
-        <Text style={[styles.label, { fontSize: FS.label }]}>Category</Text>
-        {loadingCats ? (
-          <View style={[styles.pickerWrap, styles.catLoading]}>
-            <ActivityIndicator />
-            <Text style={[styles.catLoadingText, { fontFamily: FONT_FAMILY, fontSize: FS.small }]}>Loading categories…</Text>
-          </View>
-        ) : categories.length === 0 ? (
-          <View style={[styles.pickerWrap, styles.catLoading]}>
-            <Ionicons name="warning-outline" size={16} color="#ef4444" />
-            <Text style={[styles.catLoadingText, { color: '#ef4444', fontFamily: FONT_FAMILY, fontSize: FS.small }]}>
-              No categories found for this business.
-            </Text>
-          </View>
-        ) : (
-          <Select
-            value={category}
-            onChange={setCategory}
-            options={categories.map((c) => ({ label: c.name, value: c.name }))}
-            placeholder="None" testID="category" fontSize={FS.base}
-          />
-        )}
+        <View style={styles.labelRow}>
+          <Text style={[styles.label, { fontSize: FS.label }]}>Category</Text>
+          <TouchableOpacity
+            style={styles.labelInfoBtn}
+            onPress={async () => {
+              if (!selectedCategoryName) {
+                Alert.alert('Category', 'Please select a category first.');
+                return;
+              }
+              setCatInfoOpen(true);
+              await fetchCategoryDetails();
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Show category details"
+            testID="cat-info-button"
+          >
+            <Ionicons
+              name="information-circle-outline"
+              size={18}
+              color={selectedCategoryName ? TEXT_COLOR : '#626975ff'}
+            />
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ position: 'relative' }}>
+          {loadingCats ? (
+            <View style={[styles.pickerWrap, styles.catLoading]}>
+              <ActivityIndicator />
+              <Text style={[styles.catLoadingText, { fontFamily: FONT_FAMILY, fontSize: FS.small }]}>
+                Loading categories…
+              </Text>
+            </View>
+          ) : categories.length === 0 ? (
+            <View style={[styles.pickerWrap, styles.catLoading]}>
+              <Ionicons name="warning-outline" size={16} color="#ef4444" />
+              <Text style={[styles.catLoadingText, { color: '#ef4444', fontFamily: FONT_FAMILY, fontSize: FS.small }]}>
+                No categories found for this business.
+              </Text>
+            </View>
+          ) : (
+            <>
+              <Select
+                value={category}
+                onChange={setCategory}
+                options={categories.map((c) => ({ label: c.name, value: c.name }))}
+                placeholder="None"
+                testID="category"
+                fontSize={FS.base}
+              />
+            </>
+          )}
+        </View>
       </View>
 
       {/* Buttons */}
@@ -635,15 +813,17 @@ export default function AddMenuTab({ isTablet }) {
 
         <TouchableOpacity
           style={[styles.secondaryBtn, { paddingVertical: isTablet ? 14 : 12 }]}
-          onPress={() => navigation.navigate('MenuScreen')} activeOpacity={0.9} disabled={saving}
+          onPress={goToMenu}
+          activeOpacity={0.9}
+          disabled={saving}
         >
           <Ionicons name="list-outline" size={isTablet ? 20 : 18} color={TEXT_COLOR} />
-          <Text style={[styles.secondaryBtnText, { fontSize: FS.base, fontFamily: FONT_FAMILY }]}>Open menu</Text>
+          <Text style={[styles.secondaryBtnText, { fontSize: FS.base, fontFamily: FONT_FAMILY }]}>Open items</Text>
         </TouchableOpacity>
       </View>
     </View>
   ), [FS, itemName, description, imageUri, imageName, imageSize, isTablet, basePrice, taxRate, discount, isVeg, isAvailable,
-      category, categories, loadingCats, spiceLevel, stockLimit, sortPriority, saving]);
+    category, categories, loadingCats, spiceLevel, stockLimit, sortPriority, saving, selectedCategoryName, fetchCategoryDetails, goToMenu]);
 
   return (
     <>
@@ -660,7 +840,7 @@ export default function AddMenuTab({ isTablet }) {
         />
       </KeyboardAvoidingView>
 
-      {/* Preview Modal */}
+      {/* Image Preview Modal */}
       <Modal visible={previewOpen} animationType="fade" transparent>
         <TouchableWithoutFeedback onPress={() => setPreviewOpen(false)}>
           <View style={styles.modalBackdrop}>
@@ -681,6 +861,51 @@ export default function AddMenuTab({ isTablet }) {
         </TouchableWithoutFeedback>
       </Modal>
 
+      {/* Category Info Overlay (dynamic) */}
+      <Modal visible={catInfoOpen} animationType="fade" transparent onRequestClose={() => setCatInfoOpen(false)}>
+        <TouchableWithoutFeedback onPress={() => setCatInfoOpen(false)}>
+          <View style={styles.modalBackdrop}>
+            <TouchableWithoutFeedback>
+              <View style={styles.catInfoCard}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Category details</Text>
+                  <TouchableOpacity onPress={() => setCatInfoOpen(false)}>
+                    <Ionicons name="close" size={22} color={TEXT_COLOR} />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={{ paddingHorizontal: 16, paddingBottom: 16, minHeight: 96, justifyContent: 'center' }}>
+                  {catInfoLoading ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <ActivityIndicator />
+                      <Text style={{ color: '#475569', fontFamily: FONT_FAMILY }}>Loading details…</Text>
+                    </View>
+                  ) : catInfoError ? (
+                    <Text style={{ color: '#ef4444', fontFamily: FONT_FAMILY }}>{catInfoError}</Text>
+                  ) : (
+                    <>
+                      <Text style={styles.infoTitle}>{catInfoData?.name ?? selectedCategoryName ?? '—'}</Text>
+                      <Text style={styles.infoDesc}>
+                        {catInfoData?.description?.trim()
+                          ? catInfoData.description
+                          : 'No description available for this category.'}
+                      </Text>
+                      {/* Show image if you want:
+                      {catInfoData?.image ? (
+                        <View style={{ marginTop: 12 }}>
+                          <Image source={{ uri: makeImageUrl(catInfoData.image) }} style={{ width: '100%', height: 160, borderRadius: 10 }} resizeMode="cover" />
+                        </View>
+                      ) : null}
+                      */}
+                    </>
+                  )}
+                </View>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
       {/* Saving overlay */}
       <Modal visible={saving} animationType="fade" transparent>
         <View style={styles.loaderOverlay}>
@@ -694,13 +919,17 @@ export default function AddMenuTab({ isTablet }) {
   );
 }
 
-/* ───────── Styles (shared look) ───────── */
+/* ───────── Styles ───────── */
 const styles = StyleSheet.create({
   title: { fontWeight: '700', color: TEXT_COLOR, fontFamily: FONT_FAMILY },
   sub: { color: '#64748b', marginTop: 6, fontFamily: FONT_FAMILY },
 
   field: { marginTop: 14 },
   label: { color: TEXT_COLOR, fontWeight: '600', fontFamily: FONT_FAMILY },
+
+  // NEW: label row and tiny icon button near subtitle
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  labelInfoBtn: { padding: 2 },
 
   input: {
     marginTop: 8, backgroundColor: '#fff', paddingHorizontal: 14, paddingVertical: 12,
@@ -784,4 +1013,40 @@ const styles = StyleSheet.create({
   loaderOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', alignItems: 'center', justifyContent: 'center' },
   loaderCard: { backgroundColor: '#fff', paddingHorizontal: 20, paddingVertical: 16, borderRadius: 12, alignItems: 'center', gap: 10, minWidth: 140 },
   loaderText: { color: TEXT_COLOR, fontWeight: '700' },
+
+  // Category Info card
+  catInfoCard: {
+    width: '100%',
+    maxWidth: 560,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  infoTitle: {
+    fontFamily: FONT_FAMILY,
+    color: TEXT_COLOR,
+    fontWeight: '700',
+    fontSize: 16,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  infoDesc: {
+    fontFamily: FONT_FAMILY,
+    color: '#475569',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+
+  // (old inlineInfoBtn style kept but unused)
+  inlineInfoBtn: {
+    position: 'absolute',
+    left: '50%',
+    top: 15,
+    bottom: 0,
+    height: INPUT_HEIGHT,
+    width: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 5,
+  },
 });

@@ -2,9 +2,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Image, BackHandler, Platform,
-  ActivityIndicator, FlatList, Pressable,
+  ActivityIndicator, FlatList, Pressable, ScrollView,
 } from 'react-native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
 import * as SecureStore from 'expo-secure-store';
 import {
@@ -15,6 +15,7 @@ import {
   BANNERS_IMAGE_ENDPOINT as ENV_BANNERS_IMAGE_ENDPOINT,
   MENU_IMAGE_ENDPOINT as ENV_MENU_IMAGE_ENDPOINT,
   ITEM_IMAGE_ENDPOINT as ENV_ITEM_IMAGE_ENDPOINT,
+  ORDER_ENDPOINT as ENV_ORDER_ENDPOINT, // ✅ orders source for KPIs (one of many candidates)
 } from '@env';
 
 /* ---------------- constants for Quick Actions ---------------- */
@@ -28,6 +29,17 @@ const ALL_ACTIONS = [
   { key: 'addItem', icon: 'add-circle-outline', label: 'Add item' },
 ];
 const DEFAULT_ACTIONS = ['menu', 'promos', 'payouts', 'settings'];
+
+/* ---------------- order status meta (match OrdersTab) ---------------- */
+const BASE_STATUS_LABELS = [
+  { key: 'PENDING', label: 'Pending' },
+  { key: 'CONFIRMED', label: 'Confirmed' },
+  { key: 'PREPARING', label: 'Preparing' }, // hidden for Mart
+  { key: 'READY', label: 'Ready' },
+  { key: 'OUT_FOR_DELIVERY', label: 'Out for delivery' },
+  { key: 'COMPLETED', label: 'Completed' },
+  { key: 'REJECTED', label: 'Rejected' },
+];
 
 /* ---------------- Small UI bits ---------------- */
 const KpiCard = ({ icon, label, value, sub, isTablet }) => {
@@ -53,6 +65,21 @@ const Shortcut = ({ icon, label, onPress = () => {}, isTablet }) => (
   </TouchableOpacity>
 );
 
+// Status chip (display-only on Home; tapping goes to Orders)
+const StatusChip = ({ label, count = 0, onPress, active = false }) => (
+  <TouchableOpacity
+    onPress={onPress}
+    activeOpacity={0.8}
+    style={[styles.statusChip, active && styles.statusChipActive]}
+    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+  >
+    <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>{label}</Text>
+    <View style={[styles.badge, active && styles.badgeActive]}>
+      <Text style={[styles.badgeText, active && styles.badgeTextActive]}>{count}</Text>
+    </View>
+  </TouchableOpacity>
+);
+
 // Menu/Item card
 const MenuItem = ({ item, isTablet, money, onPress = () => {} }) => {
   const price =
@@ -75,7 +102,6 @@ const MenuItem = ({ item, isTablet, money, onPress = () => {} }) => {
           onError={(e) => {
             console.warn('[MenuItem] Image failed:', item.image, e?.nativeEvent?.error);
           }}
-          // onLoadStart={() => { if (__DEV__) console.log('[MenuItem] Loading image:', item.image); }}
         />
       ) : (
         <View style={[styles.menuThumb, styles.menuThumbFallback]}>
@@ -187,17 +213,127 @@ const normalizeOwnerType = (v) => {
   return s || 'food';
 };
 
-/* ---------------- IMAGE HELPERS (owner + kind aware) ---------------- */
-const originOf = (u) => {
-  try { return new URL(u).origin; } catch { return ''; }
+/* ---------------- KPI/Orders helpers (wide + resilient) ---------------- */
+const toNumber = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const isTodayLocal = (iso) => {
+  if (!iso) return false;
+  const d = new Date(iso);
+  const n = new Date();
+  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
 };
+const normalizeBusinessId = (v) => {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  const lower = s.toLowerCase();
+  if (lower === 'null' || lower === 'undefined') return null;
+  return s;
+};
+const isValidBusinessId = (v) => !!normalizeBusinessId(v);
+
+// Treat HTML responses as 404
+async function fetchJSON(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    const text = await res.text();
+    const looksLikeHtml = /^\s*<!doctype html|^\s*<html[\s>]/i.test(text);
+    let json = null;
+    try { json = looksLikeHtml ? null : (text ? JSON.parse(text) : null); } catch {}
+    if (!res.ok || looksLikeHtml) {
+      const msg = looksLikeHtml ? '404 page not found' : ((json && (json.message || json.error)) || text || `HTTP ${res.status}`);
+      throw new Error(msg);
+    }
+    return json;
+  } finally {
+    clearTimeout(tid);
+  }
+}
+
+// Robust builder: handles .../business/:id OR ?business_id=
+const buildOrdersUrlSmart = (base, businessId, { appendOwnerType = true, ownerType = 'food', altParam = 'business_id' } = {}) => {
+  if (!base || !isValidBusinessId(businessId)) return null;
+  const id = encodeURIComponent(normalizeBusinessId(businessId));
+  const b = String(base).trim().replace(/\/+$/, '');
+  let replaced = b
+    .replace(/\{\s*businessId\s*\}/g, id)
+    .replace(/\{\s*business_id\s*\}/gi, id)
+    .replace(/:businessId/g, id)
+    .replace(/:business_id/gi, id);
+
+  if (replaced === b) {
+    if (/\/business$/i.test(b)) replaced = `${b}/${id}`;
+    else if (!b.endsWith(`/${id}`)) {
+      const sep = b.includes('?') ? '&' : '?';
+      replaced = `${b}${sep}${altParam}=${id}`;
+    }
+  }
+  if (appendOwnerType) {
+    const sep2 = replaced.includes('?') ? '&' : '?';
+    replaced = `${replaced}${sep2}owner_type=${encodeURIComponent(ownerType)}`;
+  }
+  return replaced;
+};
+
+// Extract order rows (light, but tolerant)
+const getCreated = (o) => o?.created_at || o?.createdAt || o?.ordered_at || o?.order_date || null;
+const getTotal = (o) => toNumber(o?.total_amount ?? o?.total ?? o?.grand_total ?? o?.amount ?? 0);
+const getStatus = (o) => String(o?.status ?? o?.order_status ?? '').toUpperCase();
+
+const pluckOrdersLight = (payload) => {
+  try {
+    if (payload && Array.isArray(payload.data)) {
+      const out = [];
+      for (const block of payload.data) {
+        const orders = block?.orders || block?.rows || block?.result || [];
+        if (Array.isArray(orders)) {
+          for (const o of orders) out.push({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) });
+        }
+      }
+      if (out.length) return out;
+    }
+    if (Array.isArray(payload)) return payload.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
+    if (Array.isArray(payload?.orders)) return payload.orders.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
+    if (Array.isArray(payload?.rows))    return payload.rows.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
+    if (Array.isArray(payload?.result))  return payload.result.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
+  } catch {}
+  return [];
+};
+
+// Count KPIs and per-status
+const countFromOrders = (rows, kind = 'food') => {
+  const baseActive = ['CONFIRMED', 'READY', 'OUT_FOR_DELIVERY', 'ACCEPTED', 'ASSIGNED', 'DISPATCHED'];
+  const ACTIVE_SET = new Set(kind === 'food' ? [...baseActive, 'PREPARING'] : baseActive);
+  const ACCEPTED_SET = new Set([...ACTIVE_SET, 'COMPLETED']);
+
+  let active = 0, rejected = 0, accepted = 0, salesToday = 0;
+  const statusCounts = Object.create(null);
+
+  for (const r of rows) {
+    const st = r.status;
+    statusCounts[st] = (statusCounts[st] || 0) + 1;
+    if (ACTIVE_SET.has(st)) active += 1;
+    if (st === 'REJECTED' || st === 'CANCELLED' || st === 'CANCELED') rejected += 1;
+    if (ACCEPTED_SET.has(st)) accepted += 1;
+    if (st !== 'REJECTED' && isTodayLocal(r.created_at)) salesToday += toNumber(r.total);
+  }
+
+  const denom = accepted + rejected;
+  const acceptanceRate = denom > 0 ? accepted / denom : 0;
+
+  return {
+    kpis: { salesToday, salesCurrency: 'Nu', activeOrders: active, acceptanceRate, cancellations: rejected },
+    statusCounts,
+  };
+};
+
+/* ---------------- IMAGE HELPERS (owner + kind aware) ---------------- */
+const originOf = (u) => { try { return new URL(u).origin; } catch { return ''; } };
 
 /** collapse duplicate /uploads and double slashes (not after http:) */
 const sanitizePath = (p) => {
   let path = String(p || '');
-  // /uploads/uploads/... or /mart/uploads/uploads/... → single uploads
   path = path.replace(/^\/(mart\/)?uploads\/uploads\//i, '/$1uploads/');
-  // collapse // → /
   path = path.replace(/([^:]\/)\/+/g, '$1');
   return path;
 };
@@ -218,26 +354,17 @@ const absJoin = (base, raw) => {
   const baseNorm = String(normalizeHost(base || '')).replace(/\/+$/, '');
   let path = s.startsWith('/') ? s : `/${s}`;
 
-  // If base ends with /uploads OR /mart/uploads and path begins with the same,
-  // drop the leading uploads segment from the path to avoid duplication.
   if (/\/(?:mart\/)?uploads$/i.test(baseNorm) && /^\/(?:mart\/)?uploads\//i.test(path)) {
     path = path.replace(/^\/(?:mart\/)?uploads/i, '');
   }
 
-  // Collapse duplicate segments first
   path = sanitizePath(path);
-
-  // Encode ONLY the path portion to handle spaces & special chars
   const encodedPath = encodePathSegments(path);
-
-  // Join (don’t touch http://)
-  const joined = `${baseNorm}${encodedPath.startsWith('/') ? '' : '/'}${encodedPath}`
-    .replace(/([^:]\/)\/+/g, '$1');
-
+  const joined = `${baseNorm}${encodedPath.startsWith('/') ? '' : '/'}${encodedPath}`.replace(/([^:]\/)\/+/g, '$1');
   return joined;
 };
 
-// Always use **host only** for bases (strip any path from envs) — used for banners only
+// Always use host-only for banners image base (strip path)
 const hostOnly = (u) => {
   const norm = normalizeHost(u || '');
   return originOf(norm || '') || '';
@@ -246,24 +373,20 @@ const hostOnly = (u) => {
 /** ✅ Map image bases by owner type (KEEP PATHS like /food or /mart from .env) */
 const IMAGE_BASES = (owner) => ({
   food: {
-    // e.g. MENU_IMAGE_ENDPOINT=http://103.7.253.31/food  (we keep /food)
     item: normalizeHost(ENV_MENU_IMAGE_ENDPOINT) || originOf(ENV_DISPLAY_MENU_ENDPOINT || ''),
     promo: normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT) || originOf(ENV_BANNERS_ENDPOINT || ''),
   },
   mart: {
-    // e.g. ITEM_IMAGE_ENDPOINT=http://103.7.253.31/mart
     item: normalizeHost(ENV_ITEM_IMAGE_ENDPOINT) || originOf(ENV_DISPLAY_ITEM_ENDPOINT || ''),
     promo: normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT) || originOf(ENV_BANNERS_ENDPOINT || ''),
   },
 }[owner] || { item: '', promo: '' });
-// Keep this near your other helpers
+
 const baseWithServicePrefix = (u) => {
   try {
     const url = new URL(normalizeHost(u || ''));
     const firstSeg = url.pathname.split('/').filter(Boolean)[0];
-    if (firstSeg === 'food' || firstSeg === 'mart') {
-      return `${url.origin}/${firstSeg}`;
-    }
+    if (firstSeg === 'food' || firstSeg === 'mart') return `${url.origin}/${firstSeg}`;
     return url.origin;
   } catch {
     return originOf(normalizeHost(u || '')) || '';
@@ -272,15 +395,9 @@ const baseWithServicePrefix = (u) => {
 
 /**
  * Items/promos builder (service-aware).
- * - Fallback base preserves '/food' or '/mart' from the list base if present.
- * - If base ends with /food or /mart and path doesn't start with /uploads, insert /uploads.
- * - If base ends with /food or /mart and path starts with the same segment (/food/... or /mart/...), strip that segment (prevents /food/food/... and /mart/mart/...).
- * - Avoid duplicate '/uploads' when base already ends with '/uploads'.
  */
 const useBuildImg = (ownerType, listBase) => {
   const bases = useMemo(() => IMAGE_BASES(ownerType), [ownerType]);
-
-  // 👇 smarter fallback that keeps '/food' or '/mart' if the list endpoint has it
   const fallbackBase = useMemo(() => baseWithServicePrefix(listBase), [listBase]);
 
   return useCallback((kind, raw) => {
@@ -293,32 +410,17 @@ const useBuildImg = (ownerType, listBase) => {
     const baseNorm = String(normalizeHost(chosenBase)).replace(/\/+$/, '');
     let path = raw.startsWith('/') ? raw : `/${raw}`;
 
-    // If base ends with /food or /mart and path starts with the same segment, drop that leading segment from path
-    if (/\/food$/i.test(baseNorm) && /^\/food\//i.test(path)) {
-      path = path.replace(/^\/food/i, '');
-    }
-    if (/\/mart$/i.test(baseNorm) && /^\/mart\//i.test(path)) {
-      path = path.replace(/^\/mart/i, '');
-    }
+    if (/\/food$/i.test(baseNorm) && /^\/food\//i.test(path)) path = path.replace(/^\/food/i, '');
+    if (/\/mart$/i.test(baseNorm) && /^\/mart\//i.test(path)) path = path.replace(/^\/mart/i, '');
 
-    // For item images: if base ends with /food or /mart and path doesn't start with /uploads, insert it
     if (kind === 'item') {
       const baseIsFoodOrMart = /\/(food|mart)$/i.test(baseNorm);
       const missingUploads = !/^\/(?:uploads|merchant\/uploads)\//i.test(path);
-      if (baseIsFoodOrMart && missingUploads) {
-        path = `/uploads${path}`;
-      }
-
-      // If base already ends with /uploads and path also starts with /uploads → strip one
-      if (/\/uploads$/i.test(baseNorm) && /^\/uploads\//i.test(path)) {
-        path = path.replace(/^\/uploads/i, '');
-      }
+      if (baseIsFoodOrMart && missingUploads) path = `/uploads${path}`;
+      if (/\/uploads$/i.test(baseNorm) && /^\/uploads\//i.test(path)) path = path.replace(/^\/uploads/i, '');
     }
 
     path = sanitizePath(path);
-
-    // if (__DEV__) { try { /* console.log('[useBuildImg]', { ownerType, kind, base: baseNorm, raw, path }); */ } catch {} }
-
     return absJoin(baseNorm, path);
   }, [ownerType, bases, fallbackBase]);
 };
@@ -328,36 +430,29 @@ const buildBannerImg = (raw, bannerImgBase, endpointByBiz, endpointAll) => {
   if (!raw) return '';
   if (/^https?:\/\//i.test(raw)) return normalizeHost(raw);
 
-  // Use host-only if provided, otherwise infer from endpoints
   const baseHost =
     hostOnly(bannerImgBase) ||
     originOf(normalizeHost(endpointByBiz || '')) ||
     originOf(normalizeHost(endpointAll || '')) ||
     '';
 
-  // If either banner endpoint path contains /merchant, assume files are under /merchant/uploads
   const needsMerchant =
     /\/merchant(\/|$)/i.test(String(endpointByBiz || '')) ||
     /\/merchant(\/|$)/i.test(String(endpointAll || ''));
 
-  // Normalize incoming raw path
   let path = raw.startsWith('/') ? raw : `/${raw}`;
 
-  // If API returns /uploads/... but server serves /merchant/uploads/..., prefix /merchant once
   if (needsMerchant && /^\/uploads\//i.test(path) && !/^\/merchant\//i.test(path)) {
     path = `/merchant${path}`;
   }
 
-  // If base already ends with /merchant/uploads and path also starts with it, drop from path
   const baseHasMerchantUploads = /\/merchant\/uploads$/i.test(baseHost);
   if (baseHasMerchantUploads && /^\/merchant\/uploads\//i.test(path)) {
     path = path.replace(/^\/merchant\/uploads/i, '');
   }
 
-  // Clean and join
   path = sanitizePath(path);
   const finalUrl = absJoin(baseHost, path);
-
   return finalUrl;
 };
 
@@ -365,9 +460,75 @@ const buildBannerImg = (raw, bannerImgBase, endpointByBiz, endpointAll) => {
 const menusStoreKey = (bizId, ownerId, ownerType) =>
   `menus_${String(bizId || 'na')}_${String(ownerId || 'na')}_${String(ownerType || 'food')}`;
 
+/* ---------------- Orders multi-probe helpers (like Home screen) ---------------- */
+const baseOriginFromEnvLists = () => {
+  const src = normalizeHost(ENV_DISPLAY_MENU_ENDPOINT || ENV_DISPLAY_ITEM_ENDPOINT || '');
+  try { return new URL(src).origin; } catch { return ''; }
+};
+
+const buildBaseCandidates = (kind, serviceOrdersBase) => {
+  const origin = baseOriginFromEnvLists();
+  const fromEnv = normalizeHost(ENV_ORDER_ENDPOINT || '');
+  const fromService = normalizeHost(serviceOrdersBase || '');
+  const base = normalizeHost(origin);
+
+  const swapFoodMart = (u) => (u ? u.replace(/\/food\//g, '/mart/').replace(/\/mart\//g, '/food/') : u);
+
+  const candidates = [
+    fromEnv,
+    fromService,
+    swapFoodMart(fromEnv),
+    swapFoodMart(fromService),
+    `${base}/api/${kind}/orders`,
+    `${base}/api/orders`,
+    `${base}/${kind}/orders`,
+    `${base}/orders`,
+  ]
+    .filter(Boolean)
+    .map((u) => u.replace(/\/+$/, ''));
+
+  return Array.from(new Set(candidates));
+};
+
+async function probeOrdersPayload({ baseCandidates, businessId, kind }) {
+  const idParams = ['business_id', 'businessId', 'id'];
+  const typeParams = ['owner_type', 'ownerType', 'kind'];
+  const tries = [];
+
+  for (const base of baseCandidates) {
+    idParams.forEach((idKey) => {
+      tries.push(buildOrdersUrlSmart(base, businessId, { appendOwnerType: true, ownerType: kind, altParam: idKey }));
+    });
+    idParams.forEach((idKey) => {
+      typeParams.forEach((tKey) => {
+        const id = encodeURIComponent(normalizeBusinessId(businessId));
+        const b = String(base).trim().replace(/\/+$/, '');
+        const sep = b.includes('?') ? '&' : '?';
+        tries.push(`${b}${sep}${idKey}=${id}&${tKey}=${encodeURIComponent(kind)}`);
+      });
+    });
+    tries.push(`${base}/business/${encodeURIComponent(normalizeBusinessId(businessId))}`);
+  }
+
+  const candidates = Array.from(new Set(tries.filter(Boolean)));
+  let lastErr = null;
+  for (const url of candidates) {
+    try {
+      const payload = await fetchJSON(url, { headers: { Accept: 'application/json' } });
+      const rows = pluckOrdersLight(payload);
+      // if (__DEV__) console.log('[HomeTab KPI] probe matched:', url, 'rows:', rows.length);
+      return rows;
+    } catch (e) {
+      lastErr = e;
+      // if (__DEV__) console.log('[HomeTab KPI] probe failed:', url, e?.message);
+    }
+  }
+  if (lastErr) throw lastErr;
+  return [];
+}
+
 export default function HomeTab({
   isTablet,
-  kpis = {},
   menus = [],
   money: moneyProp,
   onPressNav = () => {},
@@ -385,18 +546,16 @@ export default function HomeTab({
   );
   const isMart = ownerType === 'mart';
 
-  // NOTE: prefer .env over serviceConfig to avoid accidental overrides
-  const CONFIG_LIST = useMemo(() => {
-    const sc = route?.params?.serviceConfig || serviceConfig || {};
-    return isMart ? (sc.itemsList || sc.menus || '') : (sc.menusList || sc.menus || '');
-  }, [route?.params?.serviceConfig, serviceConfig, isMart]);
+  // Status labels (hide PREPARING for Mart)
+  // const STATUS_LABELS = useMemo(
+  //   () => (isMart ? BASE_STATUS_LABELS.filter(s => s.key !== 'PREPARING') : BASE_STATUS_LABELS),
+  //   [isMart]
+  // );
 
   // Nouns
   const nouns = useMemo(() => {
     const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
     const base = isMart ? 'item' : 'menu';
-    pour: // prevent accidental label collisions in IDE formatters
-    null;
     const plural = isMart ? 'items' : 'menus';
     return {
       noun: base, nounCap: cap(base), nounPlural: plural, nounPluralCap: cap(plural),
@@ -422,6 +581,10 @@ export default function HomeTab({
   const [allMenus, setAllMenus] = useState(() => (Array.isArray(menus) ? menus : []));
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  // KPIs + status counts (computed here from orders)
+  const [kpis, setKpis] = useState({ salesToday: 0, salesCurrency: 'Nu', activeOrders: 0, acceptanceRate: 0, cancellations: 0 });
+  const [statusCounts, setStatusCounts] = useState({});
 
   // Quick actions
   const [quickActions, setQuickActions] = useState(DEFAULT_ACTIONS);
@@ -495,6 +658,11 @@ export default function HomeTab({
   }, [isMart]);
 
   // Final list base: prefer .env, then serviceConfig (if .env empty)
+  const CONFIG_LIST = useMemo(() => {
+    const sc = route?.params?.serviceConfig || serviceConfig || {};
+    return isMart ? (sc.itemsList || sc.menus || '') : (sc.menusList || sc.menus || '');
+  }, [route?.params?.serviceConfig, serviceConfig, isMart]);
+
   const LIST_BASE = useMemo(() => {
     const chosen = (ENV_LIST_BASE && ENV_LIST_BASE.length) ? ENV_LIST_BASE : (CONFIG_LIST || '');
     return normalizeHost((chosen || '').replace(/\/+$/, ''));
@@ -604,7 +772,6 @@ export default function HomeTab({
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
       });
-      // if (__DEV__) console.log('[HomeTab] FETCH status:', res.status, url);
 
       const text = await res.text();
       let parsed = null;
@@ -631,12 +798,28 @@ export default function HomeTab({
     } catch (e) {
       if (latestContextRef.current === myKey) {
         setErrorMsg(`Error fetching ${nouns.nounPlural}: ${e.message}`);
-        // if (__DEV__) console.log('[HomeTab] FETCH error:', e?.message);
       }
     } finally {
       if (latestContextRef.current === myKey) setLoading(false);
     }
   }, [LIST_BASE, BUSINESS_ID, buildFetchUrl, extractItemsFromResponse, normalizeItem, filterMenusForOwner, nouns.nounPlural, nouns.emptyText]);
+
+  /* ------------ Orders → KPIs (multi-probe like Home screen) ------------ */
+  const fetchKpis = useCallback(async () => {
+    const id = normalizeBusinessId(BUSINESS_ID);
+    if (!isValidBusinessId(id)) return;
+
+    try {
+      const baseCandidates = buildBaseCandidates(ownerType, serviceConfig?.orders);
+      const rows = await probeOrdersPayload({ baseCandidates, businessId: id, kind: ownerType });
+      const { kpis: computed, statusCounts: counts } = countFromOrders(rows, ownerType);
+      setKpis(computed);
+      setStatusCounts(counts);
+    } catch (e) {
+      // if (__DEV__) console.log('[HomeTab] KPI fetch error:', e?.message);
+      // keep prior KPIs instead of clearing to zeros
+    }
+  }, [BUSINESS_ID, ownerType, serviceConfig?.orders]);
 
   /* ------------ BANNERS (by business) ------------ */
   const BANNERS_ENDPOINT = useMemo(() => normalizeHost(ENV_BANNERS_ENDPOINT || ''), []);
@@ -652,7 +835,7 @@ export default function HomeTab({
       id: String(b?.id ?? b?._id ?? ''),
       title: b?.title ?? '',
       description: b?.description ?? '',
-      image: buildBannerImg(rawImg, imgBase, BANNERS_BY_BUSINESS_ENDPOINT, BANNERS_ENDPOINT), // never add /mart
+      image: buildBannerImg(rawImg, imgBase, BANNERS_BY_BUSINESS_ENDPOINT, BANNERS_ENDPOINT),
       is_active: Number(b?.is_active ?? 1),
       start_date: b?.start_date ? String(b.start_date).slice(0, 10) : '',
       end_date: b?.end_date ? String(b.end_date).slice(0, 10) : '',
@@ -674,7 +857,6 @@ export default function HomeTab({
     const imgOriginByBiz = originFromUrl(BANNERS_BY_BUSINESS_ENDPOINT || '');
     const imgOriginAll = originFromUrl(BANNERS_ENDPOINT || '');
 
-    // Prefer explicit banner image base; otherwise fall back to origin
     const imgBaseByBiz = BANNERS_IMG_BASE || imgOriginByBiz;
     const imgBaseAll = BANNERS_IMG_BASE || imgOriginAll;
 
@@ -699,7 +881,6 @@ export default function HomeTab({
         const url = allBase;
         const res = await fetch(url);
         const raw = await res.text();
-        // if (__DEV__) console.log('[HomeTab] BANNERS-ALL status:', res.status, url);
         if (res.ok) {
           const json = raw ? JSON.parse(raw) : [];
           const arr = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
@@ -714,7 +895,6 @@ export default function HomeTab({
       if (latestContextRef.current !== myKey) return;
       setBanners([]);
       setBannersError('');
-      // if (__DEV__) console.log('Banner fetch error:', e?.message);
     } finally {
       if (latestContextRef.current === myKey) setBannersLoading(false);
     }
@@ -723,8 +903,9 @@ export default function HomeTab({
   // Only fetch when both businessId and list base are known
   const ready = useMemo(() => Boolean(BUSINESS_ID && LIST_BASE), [BUSINESS_ID, LIST_BASE]);
 
-  useFocusEffect(useCallback(() => { if (ready) { fetchMenus(); fetchBanners(); } }, [ready, fetchMenus, fetchBanners]));
-  useEffect(() => { if (ready) { fetchMenus(); fetchBanners(); } }, [ownerId, BUSINESS_ID, ownerType, ready]);
+  // initial + on focus
+  useFocusEffect(useCallback(() => { if (ready) { fetchMenus(); fetchBanners(); fetchKpis(); } }, [ready, fetchMenus, fetchBanners, fetchKpis]));
+  useEffect(() => { if (ready) { fetchMenus(); fetchBanners(); fetchKpis(); } }, [ownerId, BUSINESS_ID, ownerType, ready]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // money / pct helpers
   const fmtMoney = useCallback(
@@ -792,7 +973,12 @@ export default function HomeTab({
     return meta.icon;
   }, [isMart]);
 
-  /* ---------------- Header ---------------- */
+  /* ---------------- Status counters (display-only) ---------------- */
+  const totalStatusCount = useMemo(
+    () => Object.values(statusCounts || {}).reduce((a, b) => a + (Number(b) || 0), 0),
+    [statusCounts]
+  );
+
   const ListHeaderComponent = useMemo(() => (
     <View>
       {/* KPIs */}
@@ -801,6 +987,30 @@ export default function HomeTab({
         <KpiCard isTablet={isTablet} icon="receipt-outline" label="Active" value={String(activeOrders)} sub="Orders" />
         <KpiCard isTablet={isTablet} icon="trending-up-outline" label="Accept" value={pct(acceptanceRate)} sub="Rate" />
         <KpiCard isTablet={isTablet} icon="alert-circle-outline" label="Cancel" value={String(cancellations)} sub="Today" />
+      </View>
+
+      {/* Status counts (tap → Orders) */}
+      <View style={[styles.section, { marginTop: 8 }]}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ alignItems: 'center', paddingVertical: 6, gap: 8 }}
+        >
+          {/* <StatusChip
+            label="All"
+            count={totalStatusCount}
+            onPress={() => onPressNav('Orders')}
+            active={false}
+          />
+          {STATUS_LABELS.map(s => (
+            <StatusChip
+              key={s.key}
+              label={s.label}
+              count={Number(statusCounts?.[s.key]) || 0}
+              onPress={() => onPressNav('Orders')}
+            /> */}
+          {/* ))} */}
+        </ScrollView>
       </View>
 
       {/* Shortcuts */}
@@ -877,7 +1087,8 @@ export default function HomeTab({
     isTablet, fmtMoney, salesToday, salesCurrency, activeOrders,
     acceptanceRate, cancellations, pct, navigation, BUSINESS_ID,
     allMenus.length, showCountNote, quickActions, actionMeta, onShortcutPress,
-    loading, errorMsg, visibleMenus.length, fetchMenus, nouns, isMart, actionIconFor, actionLabelFor, ownerType
+    loading, errorMsg, visibleMenus.length, fetchMenus, nouns, isMart, actionIconFor, actionLabelFor, ownerType,
+    , statusCounts, totalStatusCount, onPressNav
   ]);
 
   /* ---------------- Data composition: menus/items + sentinel for banners ---------------- */
@@ -954,10 +1165,10 @@ export default function HomeTab({
   const onRefreshBoth = useCallback(async () => {
     setLoading(true);
     setBannersLoading(true);
-    await Promise.allSettled([fetchMenus(), fetchBanners()]);
+    await Promise.allSettled([fetchMenus(), fetchBanners(), fetchKpis()]);
     setLoading(false);
     setBannersLoading(false);
-  }, [fetchMenus, fetchBanners]);
+  }, [fetchMenus, fetchBanners, fetchKpis]);
 
   return (
     <FlatList
@@ -985,6 +1196,39 @@ const styles = StyleSheet.create({
   linkText: { color: '#00b14f', fontWeight: '600' },
   countNote: { color: '#64748b', marginTop: -6, paddingHorizontal: 2 },
 
+  // Status chips (Home)
+  statusChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  statusChipActive: {
+    backgroundColor: '#16a34a1A',
+    borderColor: '#16a34a',
+  },
+  statusChipText: { color: '#0f172a', fontWeight: '700', fontSize: 14 },
+  statusChipTextActive: { color: '#065f46' },
+
+  badge: {
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e2e8f0',
+    marginLeft: 6,
+  },
+  badgeActive: { backgroundColor: '#16a34a' },
+  badgeText: { color: '#0f172a', fontSize: 12, fontWeight: '700' },
+  badgeTextActive: { color: 'white' },
+
+  // KPIs
   kpiRow: { marginTop: -10, backgroundColor: 'transparent', flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   kpiCard: {
     backgroundColor: '#fff', borderRadius: 16, padding: 14,
@@ -1048,7 +1292,6 @@ const styles = StyleSheet.create({
   emptyTitle: { fontWeight: '700', color: '#0f172a' },
   emptySub: { color: '#6b7280' },
 
-  badge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#00b14f' },
-  badgeText: { color: '#fff', fontWeight: '700' },
+  badgeTextAlt: { color: '#fff', fontWeight: '700' }, // (unused fallback)
+  badgeAlt: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#00b14f' },
 });
-  

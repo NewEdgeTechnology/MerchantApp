@@ -86,6 +86,14 @@ export default function MerchantRegistrationScreen() {
       .toLowerCase();
   }, [serviceType, route.params?.owner_type, merchant?.owner_type]);
 
+  // 🔁 Dynamic labels based on seller type
+  const typeLabel =
+    effectiveServiceType === "mart" ? "Business type" : "Cuisine";
+  const selectedHintPrefix =
+    effectiveServiceType === "mart"
+      ? "Selected type(s): "
+      : "Selected cuisine(s): ";
+
   const [kbHeight, setKbHeight] = useState(0);
   useEffect(() => {
     const onShow = (e) => setKbHeight(e.endCoordinates?.height ?? 0);
@@ -106,7 +114,7 @@ export default function MerchantRegistrationScreen() {
 
   const bottomSpace = Math.max(kbHeight, insets.bottom, 16);
 
-  // Fetch business types
+  // Fetch business types (for food we treat them as cuisines)
   useEffect(() => {
     const controller = new AbortController();
     const URL = effectiveServiceType === "mart" ? ENV_BT_MART : ENV_BT_FOOD;
@@ -266,7 +274,8 @@ export default function MerchantRegistrationScreen() {
               autoCapitalize="words"
             />
 
-            <Text style={styles.label}>Business type</Text>
+            {/* 🔁 Dynamic label here */}
+            <Text style={styles.label}>{typeLabel}</Text>
             <View style={styles.chipsRow}>
               {categories.length > 0 ? (
                 categories.map((c) => (
@@ -307,7 +316,8 @@ export default function MerchantRegistrationScreen() {
 
             {!!selectedCategories.length && (
               <Text style={styles.hint}>
-                Selected: {selectedNames.join(", ")}
+                {selectedHintPrefix}
+                {selectedNames.join(", ")}
               </Text>
             )}
           </ScrollView>

@@ -120,7 +120,7 @@ function shapeFromParams(params = {}) {
 function to12hText(hhmmss) {
   if (!hhmmss) return { text: '', ampm: 'AM' };
   const [hh, mm = '00'] = String(hhmmss).split(':');
-  const h = Math.max(0, Math.min(23, Number(h) || Number(hh) || 0)); // robust
+  const h = Math.max(0, Math.min(23, Number(hh) || 0));
   const ampm = h >= 12 ? 'PM' : 'AM';
   const h12 = ((h + 11) % 12) + 1;
   return { text: `${String(h12)}:${String(mm).padStart(2, '0')}`, ampm };
@@ -607,6 +607,7 @@ export default function ProfileBusinessDetails() {
                   </View>
 
                   <View style={{ marginTop: 8 }}>
+                    {/* UPDATED: colon is fixed and not editable by splitting HH and MM — NOW STRICT 12-HOUR + TYPEABLE MINUTES */}
                     <TimeField
                       label="Opens"
                       text={openText}
@@ -904,32 +905,119 @@ function formatPretty(hhmmss) {
   const h12 = ((h + 11) % 12) + 1;
   return `${h12}:${String(mm).padStart(2, '0')} ${ampm}`;
 }
+
+/* UPDATED TimeField: split HH and MM with fixed ":"; strict 12-hour hours input; minutes fully typeable */
 function TimeField({ label, text, ampm, onChangeText, onToggleAmPm, inputRef, onSubmitEditing, returnKeyType = 'next' }) {
+  // derive initial hh:mm once from parent text
+  const [hours, setHours] = useState(() => {
+    const m = String(text || '').match(/^(\d{1,2}):(\d{2})$/);
+    return m ? m[1] : '';
+  });
+  const [mins, setMins]   = useState(() => {
+    const m = String(text || '').match(/^(\d{1,2}):(\d{2})$/);
+    return m ? m[2] : '';
+  });
+
+  const minsRef = useRef(null);
+
+  // keep in sync if parent changes from outside (e.g., load())
+  useEffect(() => {
+    const m = String(text || '').match(/^(\d{1,2}):(\d{2})$/);
+    const newH = m ? m[1] : '';
+    const newM = m ? m[2] : '';
+    if (newH !== hours) setHours(newH);
+    if (newM !== mins) setMins(newM);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text]);
+
+  // helper to emit only when we have a valid HH + two-digit MM
+  const tryEmit = useCallback((h, m) => {
+    const hh = String(h || '');
+    const mm = String(m || '');
+    if (!hh || mm.length !== 2) return; // wait until both present
+    // clamp ONLY on emit (called from blur)
+    let H = parseInt(hh, 10);
+    if (!Number.isFinite(H)) return;
+    // STRICT 12-HOUR: 1..12
+    H = Math.max(1, Math.min(12, H));
+    let M = parseInt(mm, 10);
+    if (!Number.isFinite(M)) return;
+    M = Math.max(0, Math.min(59, M));
+    onChangeText?.(`${H}:${String(M).padStart(2, '0')}`);
+  }, [onChangeText]);
+
+  // typing: just record digits (no auto anything)
+  const onHoursChange = (v) => {
+    const digits = v.replace(/\D/g, '').slice(0, 2);
+    setHours(digits);
+  };
+
+  const onMinsChange = (v) => {
+    const digits = v.replace(/\D/g, '').slice(0, 2);
+    setMins(digits);
+  };
+
+  // Blur handlers: clamp & emit a clean value
+  const onHoursEnd = () => {
+    if (!hours) return;
+    let H = parseInt(hours, 10);
+    if (!Number.isFinite(H)) return;
+    H = Math.max(1, Math.min(12, H)); // strict 12h
+    const Hs = String(H);
+    if (Hs !== hours) setHours(Hs); // reflect clamped hours
+    tryEmit(Hs, mins);
+    // move focus to minutes if empty
+    if (!mins) minsRef.current?.focus();
+  };
+
+  const onMinsEnd = () => {
+    if (!mins) return;
+    let M = parseInt(mins, 10);
+    if (!Number.isFinite(M)) return;
+    M = Math.max(0, Math.min(59, M));
+    const Ms = String(M).padStart(2, '0');
+    if (Ms !== mins) setMins(Ms); // reflect padded/clamped minutes
+    tryEmit(hours, Ms);
+  };
+
   return (
     <View style={{ marginBottom: 10 }}>
       <Text style={styles.itemLabel}>{label}</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <TextInput
-          ref={inputRef}
-          value={text}
-          onChangeText={(v) => {
-            const cleaned = v.replace(/[^\d:]/g, '');
-            const m = cleaned.match(/^(\d{1,2})(:?)(\d{0,2})$/);
-            let next = cleaned;
-            if (m) {
-              const h = Math.min(12, Math.max(1, Number(m[1] || 0)));
-              const min = m[3] ? Math.min(59, Number(m[3])) : '';
-              next = `${h}:${min !== '' ? String(min).padStart(2, '0') : ''}`.replace(/:$/, '');
-            }
-            onChangeText(next);
-          }}
-          placeholder="e.g. 9:00"
-          placeholderTextColor="#94a3b8"
-          keyboardType="numbers-and-punctuation"
-          returnKeyType={returnKeyType}
-          onSubmitEditing={onSubmitEditing}
-          style={[styles.input, { flex: 1, marginRight: 8 }]}
-        />
+        <View style={[styles.input, styles.hhmmBox]}>
+          {/* HOURS (strict 12-hour) */}
+          <TextInput
+            ref={inputRef}
+            value={hours}
+            onChangeText={onHoursChange}
+            onEndEditing={onHoursEnd}
+            placeholder="9"
+            placeholderTextColor="#94a3b8"
+            keyboardType="number-pad"
+            returnKeyType="next"
+            maxLength={2}
+            style={[styles.hhmmInput, { textAlign: 'center' }]}
+            onSubmitEditing={() => minsRef.current?.focus()}
+            accessibilityLabel="Hour"
+          />
+          <Text style={styles.colonFixed}>:</Text>
+          {/* MINUTES (typeable) */}
+          <TextInput
+            ref={minsRef}
+            value={mins}
+            onChangeText={onMinsChange}
+            onEndEditing={onMinsEnd}
+            placeholder="00"
+            placeholderTextColor="#94a3b8"
+            keyboardType="number-pad"
+            returnKeyType={returnKeyType}
+            onSubmitEditing={onSubmitEditing}
+            maxLength={2}
+            style={[styles.hhmmInput, { textAlign: 'center' }]}
+            accessibilityLabel="Minutes"
+          />
+        </View>
+
         <View style={styles.ampmWrap}>
           {['AM', 'PM'].map(opt => {
             const active = ampm === opt;
@@ -938,6 +1026,9 @@ function TimeField({ label, text, ampm, onChangeText, onToggleAmPm, inputRef, on
                 key={opt}
                 onPress={() => onToggleAmPm(opt)}
                 style={({ pressed }) => [styles.ampmBtn, active && styles.ampmBtnActive, pressed && styles.pressed]}
+                accessibilityRole="button"
+                accessibilityLabel={`Select ${opt}`}
+                accessibilityState={{ selected: active }}
               >
                 <Text style={[styles.ampmText, active && styles.ampmTextActive]}>{opt}</Text>
               </Pressable>
@@ -1229,13 +1320,41 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 12, color: '#0f172a', fontWeight: '700' },
   chipTextActive: { color: '#065f46' },
 
+  /* AM/PM + HH:MM styles */
   ampmWrap: {
     flexDirection: 'row', backgroundColor: '#f1f5f9', borderRadius: 10, borderWidth: 1, borderColor: '#e5e7eb',
+    marginLeft: 8
   },
   ampmBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
   ampmBtnActive: { backgroundColor: '#dcfce7', borderColor: '#86efac' },
   ampmText: { fontWeight: '700', color: '#0f172a', fontSize: 12 },
   ampmTextActive: { color: '#065f46' },
+
+  /* NEW: HH:MM box with fixed colon */
+  hhmmBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    gap: 6,
+    flex: 1,
+  },
+  hhmmInput: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    minWidth: 52,
+    fontSize: 14,
+    color: '#111827',
+  },
+  colonFixed: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#111827',
+    paddingHorizontal: 2,
+  },
 
   pressed: { opacity: 0.9 },
   btnPressed: { transform: [{ scale: 0.99 }] },

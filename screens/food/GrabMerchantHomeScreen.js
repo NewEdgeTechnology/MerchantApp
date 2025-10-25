@@ -3,6 +3,8 @@
 // UPDATE: "Add" tab now routes conditionally:
 //   - Food → ./AddMenuTab
 //   - Mart → ../mart/AddItemTab
+//
+// UPDATE 2025-10-19: Live KPIs (activeOrders, cancellations, acceptanceRate, salesToday)
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
@@ -163,6 +165,87 @@ const makeEnvImageUrl = (input, kind = 'merchant') => {
 const money = (n, c = 'Nu') => `${c} ${Number(n ?? 0).toFixed(2)}`;
 const DEFAULT_KPIS = { salesToday: 0, salesCurrency: 'Nu', activeOrders: 0, cancellations: 0, acceptanceRate: 0 };
 
+// ───────────────────── helpers for KPI stats ─────────────────────
+const UPPER = (s) => String(s || '').toUpperCase();
+const isTodayLocal = (iso) => {
+  if (!iso) return false;
+  const d = new Date(iso);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() &&
+         d.getMonth() === now.getMonth() &&
+         d.getDate() === now.getDate();
+};
+const toNumber = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+// understand both wrapped and legacy orders payloads; return light rows
+const pluckOrdersLight = (payload) => {
+  // wrapped: { data: [ { user, orders:[{ status, total_amount, created_at, ...}] } ] }
+  if (payload && Array.isArray(payload.data)) {
+    const out = [];
+    for (const block of payload.data) {
+      const orders = Array.isArray(block?.orders) ? block.orders : [];
+      for (const o of orders) {
+        out.push({
+          status: UPPER(o.status),
+          total: toNumber(o.total_amount ?? o.total),
+          created_at: o.created_at || o.createdAt || o.created || null,
+        });
+      }
+    }
+    return out;
+  }
+  // legacy: array of flat rows
+  if (Array.isArray(payload)) {
+    return payload.map((r) => ({
+      status: UPPER(r.status),
+      total: toNumber(r.total_amount ?? r.total),
+      created_at: r.created_at || r.createdAt || r.created || null,
+    }));
+  }
+  return [];
+};
+
+const countKpis = (rows) => {
+  const ACTIVE_SET = new Set(['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY']);
+  const ACCEPTED_SET = new Set(['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']);
+
+  let active = 0;
+  let cancelled = 0;
+  let accepted = 0;
+  let salesToday = 0;
+
+  for (const r of rows) {
+    const st = r.status;
+    if (ACTIVE_SET.has(st)) active += 1;
+    if (st === 'CANCELLED') cancelled += 1;
+    if (ACCEPTED_SET.has(st)) accepted += 1;
+    if (st !== 'CANCELLED' && isTodayLocal(r.created_at)) {
+      salesToday += toNumber(r.total);
+    }
+  }
+
+  const denom = accepted + cancelled;
+  const acceptanceRate = denom > 0 ? Math.round((accepted / denom) * 100) : 0;
+
+  return {
+    salesToday,
+    salesCurrency: 'Nu',
+    activeOrders: active,
+    cancellations: cancelled,
+    acceptanceRate, // %
+  };
+};
+
+// build orders URL, appending business & kind safely
+const buildOrdersUrl = (ordersBase, businessId, ownerType) => {
+  const base = (ordersBase || '').trim();
+  if (!base) return null;
+  const sep1 = base.includes('?') ? '&' : '?';
+  const q1 = `business_id=${encodeURIComponent(String(businessId || ''))}`;
+  const q2 = `owner_type=${encodeURIComponent(String(ownerType || ''))}`;
+  return `${base}${sep1}${q1}&${q2}`;
+};
+
 export default function GrabMerchantHomeScreen() {
   const route = useRoute();
   const navigation = useNavigation();
@@ -208,6 +291,9 @@ export default function GrabMerchantHomeScreen() {
     const sep = u.includes('?') ? '&' : '?';
     return `${u}${sep}v=${v}`;
   };
+
+  // ───────── KPIs state ─────────
+  const [kpis, setKpis] = useState(DEFAULT_KPIS);
 
   // Central service config (tabs can choose paths by kind)
   const serviceConfig = React.useMemo(() => {
@@ -485,6 +571,22 @@ export default function GrabMerchantHomeScreen() {
     }
   }, [applyHeaderIfChanged]);
 
+  // ───────── KPI loader ─────────
+  const fetchKpis = useCallback(async (bid, kind) => {
+    if (!bid || !serviceConfig?.orders) return;
+    try {
+      const url = buildOrdersUrl(serviceConfig.orders, bid, kind);
+      if (!url) return;
+      const payload = await fetchJSON(url, { method: 'GET', headers: { Accept: 'application/json' } });
+      const rows = pluckOrdersLight(payload);
+      const next = countKpis(rows);
+      setKpis(next);
+    } catch (e) {
+      // if (__DEV__) console.log('[Home] fetchKpis failed:', e?.message);
+      // keep previous KPIs on failure
+    }
+  }, [serviceConfig?.orders]);
+
   // Initial
   useEffect(() => {
     (async () => {
@@ -498,6 +600,7 @@ export default function GrabMerchantHomeScreen() {
       }
       if (businessId) {
         await loadBusinessFromBackend(String(businessId));
+        await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
       }
       if (route?.params?.authContext) setAuthContext(route.params.authContext);
     })();
@@ -510,10 +613,13 @@ export default function GrabMerchantHomeScreen() {
       await loadFromStore();
       const uid = route?.params?.user_id || userId;
       if (uid) await loadFromBackend(String(uid));
-      if (businessId) await loadBusinessFromBackend(String(businessId));
+      if (businessId) {
+        await loadBusinessFromBackend(String(businessId));
+        await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
+      }
     });
     return unsub;
-  }, [navigation, userId, route?.params?.user_id, businessId, loadFromStore, loadFromBackend, loadBusinessFromBackend]);
+  }, [navigation, userId, route?.params?.user_id, businessId, ownerType, loadFromStore, loadFromBackend, loadBusinessFromBackend, fetchKpis]);
 
   // Foreground refresh
   useEffect(() => {
@@ -522,13 +628,16 @@ export default function GrabMerchantHomeScreen() {
         await loadFromStore();
         const uid = route?.params?.user_id || userId;
         if (uid) await loadFromBackend(String(uid));
-        if (businessId) await loadBusinessFromBackend(String(businessId));
+        if (businessId) {
+          await loadBusinessFromBackend(String(businessId));
+          await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
+        }
       }
     });
     return () => sub.remove();
-  }, [userId, route?.params?.user_id, businessId, loadFromBackend, loadFromStore, loadBusinessFromBackend]);
+  }, [userId, route?.params?.user_id, businessId, ownerType, loadFromBackend, loadFromStore, loadBusinessFromBackend, fetchKpis]);
 
-  // Focused auto-refresh loop for header (name, address, logo/profile)
+  // Focused auto-refresh loop for header + KPIs
   useEffect(() => {
     let timer = null;
     let isActive = true;
@@ -537,7 +646,10 @@ export default function GrabMerchantHomeScreen() {
       if (timer) clearInterval(timer);
       timer = setInterval(async () => {
         if (!isActive) return;
-        if (businessId) await loadBusinessFromBackend(String(businessId));
+        if (businessId) {
+          await loadBusinessFromBackend(String(businessId));
+          await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
+        }
         const uid = route?.params?.user_id || userId;
         if (uid) await loadFromBackend(String(uid));
       }, HEADER_REFRESH_MS);
@@ -557,7 +669,7 @@ export default function GrabMerchantHomeScreen() {
     if (navigation.isFocused?.()) onFocus();
 
     return () => { stop(); unsubFocus(); unsubBlur(); };
-  }, [navigation, businessId, userId, route?.params?.user_id, loadBusinessFromBackend, loadFromBackend]);
+  }, [navigation, businessId, userId, route?.params?.user_id, ownerType, loadBusinessFromBackend, loadFromBackend, fetchKpis]);
 
   // Menus (ownerType-aware storage key to prevent cross-kind bleed)
   const loadMenusFromStorage = useCallback(async (bid, kind) => {
@@ -592,7 +704,10 @@ export default function GrabMerchantHomeScreen() {
       await loadFromStore();
       const uid = route?.params?.user_id || userId;
       if (uid) await loadFromBackend(String(uid));
-      if (businessId) await loadBusinessFromBackend(String(businessId));
+      if (businessId) {
+        await loadBusinessFromBackend(String(businessId));
+        await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
+      }
     });
     const sub2 = DeviceEventEmitter.addListener('menus-updated', async (payload) => {
       const bid = payload?.businessId || businessId;
@@ -613,6 +728,10 @@ export default function GrabMerchantHomeScreen() {
       }
       if (params.authContext) setAuthContext(params.authContext);
       try { await SecureStore.setItemAsync(KEY_LAST_CTX, JSON.stringify(params)); } catch { }
+      // refresh KPIs when context changes
+      const bid = params.businessId || params.business_id || businessId;
+      const kind = normalizeOwnerType(params.owner_type ?? ownerType);
+      if (bid) await fetchKpis(String(bid), kind);
     });
     const sub4 = DeviceEventEmitter.addListener('profile-updated', async (payload) => {
       try {
@@ -627,11 +746,21 @@ export default function GrabMerchantHomeScreen() {
       } catch { }
       const uid = route?.params?.user_id || userId;
       if (uid) await loadFromBackend(String(uid));
-      if (businessId) await loadBusinessFromBackend(String(businessId));
+      if (businessId) {
+        await loadBusinessFromBackend(String(businessId));
+        await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
+      }
+    });
+    // real-time order updates should bump KPIs
+    const sub5 = DeviceEventEmitter.addListener('order-updated', async () => {
+      if (businessId) await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
+    });
+    const sub6 = DeviceEventEmitter.addListener('order-placed', async () => {
+      if (businessId) await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
     });
 
-    return () => { sub1.remove(); sub2.remove(); sub3.remove(); sub4.remove(); };
-  }, [businessId, ownerType, loadMenusFromStorage, loadFromBackend, loadFromStore, route?.params?.user_id, userId, belongsToCurrentContext, loadBusinessFromBackend, applyHeaderIfChanged]);
+    return () => { sub1.remove(); sub2.remove(); sub3.remove(); sub4.remove(); sub5.remove(); sub6.remove(); };
+  }, [businessId, ownerType, loadMenusFromStorage, loadFromBackend, loadFromStore, route?.params?.user_id, userId, belongsToCurrentContext, loadBusinessFromBackend, applyHeaderIfChanged, fetchKpis]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -640,9 +769,10 @@ export default function GrabMerchantHomeScreen() {
     if (uid) await loadFromBackend(String(uid));
     if (businessId) await loadMenusFromStorage(businessId, ownerType);
     if (businessId) await loadBusinessFromBackend(String(businessId)); // ← update header (name/location/logo)
+    if (businessId) await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
     setRefreshing(false);
     setLogoVersion((v) => v + 1);
-  }, [userId, route?.params?.user_id, businessId, ownerType, loadMenusFromStorage, loadFromBackend, loadFromStore, loadBusinessFromBackend]);
+  }, [userId, route?.params?.user_id, businessId, ownerType, loadMenusFromStorage, loadFromBackend, loadFromStore, loadBusinessFromBackend, fetchKpis]);
 
   useEffect(() => {
     if (activeTab !== 'Home' && showWelcome) setShowWelcome(false);
@@ -797,7 +927,7 @@ export default function GrabMerchantHomeScreen() {
           <Header />
           <HomeTab
             isTablet={isTablet}
-            kpis={DEFAULT_KPIS}
+            kpis={kpis}      
             money={money}
             onPressNav={setActiveTab}
             businessId={businessId}
