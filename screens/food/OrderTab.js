@@ -12,15 +12,16 @@ import {
   ActivityIndicator,
   RefreshControl,
   DeviceEventEmitter,
-  Pressable,
   TextInput,
   KeyboardAvoidingView,
   Platform,
   Keyboard,
   ScrollView,
+  TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { ORDER_ENDPOINT as ENV_ORDER_ENDPOINT } from '@env';
 
 /* ---------------- constants ---------------- */
@@ -32,62 +33,144 @@ const BASE_STATUS_LABELS = [
   { key: 'READY', label: 'Ready' },
   { key: 'OUT_FOR_DELIVERY', label: 'Out for delivery' },
   { key: 'COMPLETED', label: 'Completed' },
-  { key: 'CANCELLED', label: 'Cancelled' },
+  { key: 'DECLINED', label: 'Declined' },
 ];
 
-/* ---------------- UI ---------------- */
-const OrderItem = ({ item, isTablet, money, onPress }) => (
-  <Pressable
-    onPress={() => onPress?.(item)}
-    style={styles.orderCard}
-    android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
-  >
-    <View style={styles.orderRow}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-        <Ionicons
-          name={item.type === 'Delivery' ? 'bicycle-outline' : 'bag-outline'}
-          size={isTablet ? 18 : 16}
-          color="#0f172a"
-        />
-        <Text style={[styles.orderId, { fontSize: isTablet ? 15 : 14 }]}>{item.id}</Text>
-        <Text style={[styles.orderTime, { fontSize: isTablet ? 13 : 12 }]}>• {item.time}</Text>
-      </View>
-      <Text style={[styles.orderTotal, { fontSize: isTablet ? 16 : 15 }]}>{money(item.total, 'Nu')}</Text>
-    </View>
+// Color system for status pills (card-only — tabs untouched)
+const STATUS_THEME = {
+  PENDING:          { fg: '#0ea5e9',  bg: '#e0f2fe',  bd: '#bae6fd', icon: 'time-outline' },
+  CONFIRMED:        { fg: '#16a34a',  bg: '#ecfdf5',  bd: '#bbf7d0', icon: 'checkmark-circle-outline' },
+  PREPARING:        { fg: '#6366f1',  bg: '#eef2ff',  bd: '#c7d2fe', icon: 'restaurant-outline' },
+  READY:            { fg: '#2563eb',  bg: '#dbeafe',  bd: '#bfdbfe', icon: 'cube-outline' },
+  OUT_FOR_DELIVERY: { fg: '#f59e0b',  bg: '#fef3c7',  bd: '#fde68a', icon: 'bicycle-outline' },
+  COMPLETED:        { fg: '#047857',  bg: '#ecfdf5',  bd: '#bbf7d0', icon: 'checkmark-done-outline' },
+  DECLINED:         { fg: '#b91c1c',  bg: '#fee2e2',  bd: '#fecaca', icon: 'close-circle-outline' },
+};
 
-    {(item.customer_name || item.customer_phone || item.customer_email) ? (
-      <View style={styles.metaRow}>
-        <Ionicons name="person-outline" size={16} color="#64748b" />
-        <Text style={styles.customerText} numberOfLines={1}>
-          {item.customer_name || 'Customer'}
-          {item.customer_phone ? ` • ${item.customer_phone}` : ''}
-          {!item.customer_phone && item.customer_email ? ` • ${item.customer_email}` : ''}
+// Color system for fulfillment type pills
+const FULFILL_THEME = {
+  DELIVERY: { fg: '#0ea5e9', bg: '#e0f2fe', bd: '#bae6fd', icon: 'bicycle-outline', label: 'Delivery' },
+  PICKUP:   { fg: '#7c3aed', bg: '#f5f3ff', bd: '#ddd6fe', icon: 'bag-outline',      label: 'Pickup' },
+};
+
+/* ---------------- small UI atoms (card only) ---------------- */
+const StatusPill = ({ status }) => {
+  const key = String(status || '').toUpperCase();
+  const t = STATUS_THEME[key] || STATUS_THEME.PENDING;
+  return (
+    <View style={[styles.pill, { backgroundColor: t.bg, borderColor: t.bd }]}>
+      <Ionicons name={t.icon} size={12} color={t.fg} />
+      <Text style={[styles.pillText, { color: t.fg }]} numberOfLines={1}>
+        {key.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (s) => s.toUpperCase())}
+      </Text>
+    </View>
+  );
+};
+
+const FulfillmentPill = ({ type }) => {
+  const key = String(type || '').toUpperCase() === 'DELIVERY' ? 'DELIVERY' : 'PICKUP';
+  const t = FULFILL_THEME[key];
+  return (
+    <View style={[styles.pill, { backgroundColor: t.bg, borderColor: t.bd }]}>
+      <Ionicons name={t.icon} size={12} color={t.fg} />
+      <Text style={[styles.pillText, { color: t.fg }]} numberOfLines={1}>
+        {t.label}
+      </Text>
+    </View>
+  );
+};
+
+const ItemPreview = ({ items, raw }) => {
+  // Prefer raw array to build preview (+N more), else fallback to the flat string
+  if (Array.isArray(raw) && raw.length) {
+    const [a, b] = raw;
+    const t1 = a ? `${a.item_name ?? 'Item'} ×${Number(a.quantity ?? 1)}` : '';
+    const t2 = b ? `${b.item_name ?? 'Item'} ×${Number(b.quantity ?? 1)}` : '';
+    const more = raw.length > 2 ? ` +${raw.length - 2} more` : '';
+    return (
+      <Text style={styles.orderItems} numberOfLines={2}>
+        {t1}{t2 ? `, ${t2}` : ''}{more}
+      </Text>
+    );
+  }
+  if (items) return <Text style={styles.orderItems} numberOfLines={2}>{items}</Text>;
+  return null;
+};
+
+/* ---------------- UI ---------------- */
+const OrderItem = ({ item, isTablet, money, onPress }) => {
+  const isDelivery = item.type === 'Delivery';
+  return (
+    <TouchableOpacity
+      activeOpacity={0.75}
+      onPress={() => onPress?.(item)}
+      style={styles.card}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      accessibilityRole="button"
+      accessibilityLabel={`Open order ${item.id}`}
+    >
+      {/* Row 1: ID/time + total */}
+      <View style={styles.row1}>
+        <View style={styles.row1Left}>
+          <Ionicons
+            name={isDelivery ? 'bicycle-outline' : 'bag-outline'}
+            size={18}
+            color="#0f172a"
+          />
+          <Text style={[styles.orderId, { fontSize: isTablet ? 15 : 14 }]}>{item.id}</Text>
+          <Text style={[styles.orderTime, { fontSize: isTablet ? 13 : 12 }]}> • {item.time}</Text>
+        </View>
+        <Text style={[styles.orderTotal, { fontSize: isTablet ? 18 : 17 }]}>
+          {money(item.total, 'Nu')}
         </Text>
       </View>
-    ) : null}
 
-    <Text style={[styles.orderItems, { fontSize: isTablet ? 14 : 13 }]} numberOfLines={2}>
-      {item.items}
-    </Text>
-
-    {/* 🔹 Show restaurant note + which item it belongs to */}
-    {!!item.note_for_restaurant?.trim?.() && (
-      <View style={styles.noteRow}>
-        <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0f766e" />
-        <View style={{ flex: 1 }}>
-          <Text style={styles.noteText} numberOfLines={3}>
-            {item.note_for_restaurant.trim()}
-          </Text>
-          {!!item.note_target?.trim?.() && (
-            <Text style={styles.noteMeta} numberOfLines={1}>
-              for {item.note_target.trim()}
-            </Text>
-          )}
-        </View>
+      {/* Row 2: fulfillment + status + payment */}
+      <View style={styles.row2}>
+        <FulfillmentPill type={item.type} />
+        <StatusPill status={item.status} />
+        {!!item.payment_method && (
+          <View style={styles.payWrap}>
+            <Ionicons name="card-outline" size={14} color="#64748b" />
+            <Text style={styles.payText} numberOfLines={1}>{item.payment_method}</Text>
+          </View>
+        )}
       </View>
-    )}
-  </Pressable>
-);
+
+      {/* Row 3: items preview */}
+      <ItemPreview items={item.items} raw={item.raw_items} />
+
+      {/* Row 4: customer */}
+      {(item.customer_name || item.customer_phone || item.customer_email) ? (
+        <View style={styles.metaRow}>
+          <Ionicons name="person-outline" size={16} color="#64748b" />
+          <Text style={styles.customerText} numberOfLines={1}>
+            {item.customer_name || 'Customer'}
+            {item.customer_phone ? ` • ${item.customer_phone}` : ''}
+            {!item.customer_phone && item.customer_email ? ` • ${item.customer_email}` : ''}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Row 5: note bubble */}
+      {!!item.note_for_restaurant?.trim?.() && (
+        <View style={styles.noteRow}>
+          <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0f766e" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.noteText} numberOfLines={3}>
+              {item.note_for_restaurant.trim()}
+            </Text>
+            {!!item.note_target?.trim?.() && (
+              <Text style={styles.noteMeta} numberOfLines={1}>
+                for {item.note_target.trim()}
+              </Text>
+            )}
+          </View>
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+};
 
 /* ---------------- helpers ---------------- */
 const safeNum = (v) => {
@@ -133,24 +216,22 @@ const groupOrders = (rows = []) => {
         business_name: r.business_name,
         payment_method: r.payment_method,
         status: r.status,
-        // 🔹 capture order-level note once per order (legacy flat rows)
         note_for_restaurant: null,
-        // 🔹 which item carried the note (legacy)
         note_target: null,
+        raw_items: [],
       };
 
     g.totals.push(safeNum(r.total_amount));
     const qty = safeNum(r.quantity) || 1;
     const nm = r.item_name || 'Item';
     g.itemsArr.push(`${nm} ×${qty}`);
+    g.raw_items.push({ item_name: nm, quantity: qty });
 
-    // keep earliest created_at
     if (!g.created_at || (r.created_at && new Date(r.created_at) < new Date(g.created_at))) {
       g.created_at = r.created_at;
     }
     if (r.fulfillment_type === 'Delivery') g.type = 'Delivery';
 
-    // order-level note (first one wins)
     if (!g.note_for_restaurant) {
       g.note_for_restaurant =
         r.note_for_restaurant ||
@@ -160,7 +241,6 @@ const groupOrders = (rows = []) => {
         null;
     }
 
-    // item-level note on this row?
     const itemLevelNote =
       r.item_note ||
       r.item_instructions ||
@@ -170,7 +250,6 @@ const groupOrders = (rows = []) => {
       '';
     if (!g.note_target && (itemLevelNote && String(itemLevelNote).trim())) {
       g.note_target = r.item_name || 'Item';
-      // If no order-level note yet, fall back to the item note as the main note text
       if (!g.note_for_restaurant) {
         g.note_for_restaurant = itemLevelNote;
       }
@@ -196,9 +275,8 @@ const groupOrders = (rows = []) => {
       customer_name: '',
       customer_email: '',
       customer_phone: '',
-      raw_items: [],
+      raw_items: g.raw_items,
       delivery_address: '',
-      // 🔹 expose it on the list items so UI can show it
       note_for_restaurant: g.note_for_restaurant || '',
       note_target: g.note_target || '',
       priority: 0,
@@ -252,10 +330,9 @@ const normalizeOrdersFromApi = (payload) => {
       for (const o of orders) {
         const createdISO = o.created_at || null;
 
-        // find first item with a specific item-level note
         let noteTarget = '';
         if (Array.isArray(o.items)) {
-          const withNote = o.items.find((it) => getItemNote(it)?.trim?.());
+          const withNote = o.items.find((it) => (it?.note_for_restaurant || it?.note || it?.special_request || it?.instructions || it?.customization || it?.item_note)?.trim?.());
           if (withNote) noteTarget = withNote.item_name || withNote.name || '';
         }
 
@@ -279,9 +356,8 @@ const normalizeOrdersFromApi = (payload) => {
           payment_method: o.payment_method,
           business_name: businessName,
           delivery_address: o.delivery_address || '',
-          // 🔹 already present for wrapped payloads
           note_for_restaurant: o.note_for_restaurant || '',
-          note_target: noteTarget, // ⬅️ which item the note is about
+          note_target: noteTarget,
           priority: Number(o.priority ?? 0),
           discount_amount: Number(o.discount_amount ?? 0),
           raw_items: Array.isArray(o.items) ? o.items : [],
@@ -327,7 +403,6 @@ export default function MartOrdersTab({
       : BASE_STATUS_LABELS;
   }, [ownerType]);
 
-  // If a now-hidden status was selected (e.g., PREPARING when ownerType switched to mart), reset filter
   useEffect(() => {
     if (selectedStatus && !STATUS_LABELS.some(s => s.key === selectedStatus)) {
       setSelectedStatus(null);
@@ -407,10 +482,9 @@ export default function MartOrdersTab({
         if (!o) return;
         const createdISO = o.created_at || new Date().toISOString();
 
-        // find first item with a specific item-level note (for live placed orders)
         let liveNoteTarget = '';
         if (Array.isArray(o.items)) {
-          const withNote = o.items.find((it) => getItemNote(it)?.trim?.());
+          const withNote = o.items.find((it) => (it?.note_for_restaurant || it?.note || it?.special_request || it?.instructions || it?.customization || it?.item_note)?.trim?.());
           if (withNote) liveNoteTarget = withNote.item_name || withNote.name || '';
         }
 
@@ -456,7 +530,18 @@ export default function MartOrdersTab({
   const openOrder = useCallback(
     (o) => {
       Keyboard.dismiss();
-      // Pass ownerType through so OrderDetails can adapt its sequence too.
+      try {
+        // Validate that the route exists; if not, fail gracefully.
+        const state = navigation.getState?.();
+        const routeExists = !!state?.routeNames?.includes?.(detailsRoute);
+        if (!routeExists) {
+          Alert.alert(
+            'Order screen not found',
+            `No screen named "${detailsRoute}". Please register it in your navigator.`,
+          );
+          return;
+        }
+      } catch {}
       navigation.navigate(detailsRoute, { orderId: o.id, businessId, order: o, ownerType });
     },
     [navigation, businessId, detailsRoute, ownerType]
@@ -496,6 +581,20 @@ export default function MartOrdersTab({
     });
   }, [orders, query, selectedStatus]);
 
+  const renderItem = useCallback(
+    ({ item }) => (
+      <OrderItem
+        isTablet={isTablet}
+        money={money}
+        item={item}
+        onPress={openOrder}            // direct handler (clickable)
+      />
+    ),
+    [isTablet, money, openOrder]
+  );
+
+  const totalCount = orders.length;
+
   const content = useMemo(() => {
     if (loading && orders.length === 0) {
       return (
@@ -507,9 +606,19 @@ export default function MartOrdersTab({
     }
     if (error && orders.length === 0) {
       return (
-        <View style={{ paddingVertical: 24 }}>
-          <Text style={{ color: '#b91c1c', fontWeight: '600' }}>Failed to load orders</Text>
-          <Text style={{ color: '#6b7280', marginTop: 4 }}>{error}</Text>
+        <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+          <Ionicons name="alert-circle-outline" size={24} color="#b91c1c" />
+          <Text style={{ color: '#b91c1c', fontWeight: '700', marginTop: 6 }}>Failed to load</Text>
+          <Text style={{ color: '#6b7280', marginTop: 4, textAlign: 'center' }}>{error}</Text>
+        </View>
+      );
+    }
+    if (!loading && filtered.length === 0) {
+      return (
+        <View style={{ paddingVertical: 36, alignItems: 'center' }}>
+          <Ionicons name="file-tray-outline" size={36} color="#94a3b8" />
+          <Text style={{ color: '#334155', fontWeight: '800', marginTop: 8 }}>No orders</Text>
+          <Text style={{ color: '#64748b', marginTop: 4 }}>Pull down to refresh or change filters.</Text>
         </View>
       );
     }
@@ -518,41 +627,57 @@ export default function MartOrdersTab({
         contentContainerStyle={{ paddingBottom: 24 + kbHeight }}
         data={filtered}
         keyExtractor={(item) => String(item.id)}
-        renderItem={({ item }) => (
-          <OrderItem isTablet={isTablet} money={money} item={item} onPress={openOrder} />
-        )}
+        renderItem={renderItem}
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         keyboardDismissMode="on-drag"
-        keyboardShouldPersistTaps="handled"
+        keyboardShouldPersistTaps="always"
+        removeClippedSubviews={false}
       />
     );
-  }, [loading, error, orders, filtered, isTablet, money, refreshing, onRefresh, openOrder, kbHeight]);
+  }, [loading, error, orders, filtered, kbHeight, refreshing, onRefresh, renderItem]);
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={{ flex: 1, paddingHorizontal: 16 }}>
-        {/* Title + Status Tabs together in one horizontal scroll */}
-        <View style={{ marginTop: 12, marginBottom: 8 }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      pointerEvents="box-none"
+    >
+      <View style={{ flex: 1, paddingHorizontal: 16 }} pointerEvents="box-none">
+        {/* Title + Status Tabs together in one horizontal scroll (UNCHANGED) */}
+        <View style={{ marginTop: 12, marginBottom: 8 }} pointerEvents="box-none">
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ alignItems: 'center', paddingVertical: 8, gap: 8 }}
           >
-            {/* Title uses the same font as chips */}
-            <Text style={styles.headerInlineText}>
-              All orders ({String(ownerType || '').toLowerCase() === 'mart' ? 'Mart' : 'Food'})
-            </Text>
+            {/* ✅ real "All" chip (UNCHANGED) */}
+            <TouchableOpacity
+              onPress={() => setSelectedStatus(null)}
+              style={[styles.statusChip, selectedStatus === null && styles.statusChipActive]}
+              activeOpacity={0.7}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Text style={[styles.statusChipText, selectedStatus === null && styles.statusChipTextActive]}>
+                All
+              </Text>
+              <View style={[styles.badge, selectedStatus === null && styles.badgeActive]}>
+                <Text style={[styles.badgeText, selectedStatus === null && styles.badgeTextActive]}>
+                  {totalCount}
+                </Text>
+              </View>
+            </TouchableOpacity>
 
             {STATUS_LABELS.map((s) => {
               const active = selectedStatus === s.key;
               const count = statusCounts[s.key] || 0;
               return (
-                <Pressable
+                <TouchableOpacity
                   key={s.key}
-                  onPress={() => setSelectedStatus(active ? null : s.key)} // deselect → All
+                  onPress={() => setSelectedStatus(active ? null : s.key)}
                   style={[styles.statusChip, active && styles.statusChipActive]}
-                  android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                 >
                   <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
                     {s.label}
@@ -564,14 +689,14 @@ export default function MartOrdersTab({
                       </Text>
                     </View>
                   ) : null}
-                </Pressable>
+                </TouchableOpacity>
               );
             })}
           </ScrollView>
         </View>
 
-        {/* Search bar */}
-        <View style={styles.searchWrap}>
+        {/* Search bar (UNCHANGED) */}
+        <View style={styles.searchWrap} pointerEvents="auto">
           <Ionicons name="search-outline" size={18} color="#64748b" />
           <TextInput
             style={styles.searchInput}
@@ -584,13 +709,14 @@ export default function MartOrdersTab({
             returnKeyType="search"
           />
           {query ? (
-            <Pressable
+            <TouchableOpacity
               onPress={() => setQuery('')}
               style={styles.clearBtn}
-              android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: true }}
+              activeOpacity={0.7}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
               <Ionicons name="close-circle" size={18} color="#94a3b8" />
-            </Pressable>
+            </TouchableOpacity>
           ) : null}
         </View>
 
@@ -602,7 +728,6 @@ export default function MartOrdersTab({
 
 /* ---------------- styles ---------------- */
 const styles = StyleSheet.create({
-  // Title font same as chips
   headerInlineText: {
     fontSize: 14,
     fontWeight: '700',
@@ -610,7 +735,6 @@ const styles = StyleSheet.create({
     marginRight: 2,
   },
 
-  // status chips
   statusChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -622,10 +746,10 @@ const styles = StyleSheet.create({
     borderColor: '#e2e8f0',
   },
   statusChipActive: {
-    backgroundColor: '#16a34a1A', // light green tint
+    backgroundColor: '#16a34a1A',
     borderColor: '#16a34a',
   },
-  statusChipText: { color: '#0f172a', fontWeight: '700', fontSize: 14 }, // font unified
+  statusChipText: { color: '#0f172a', fontWeight: '700', fontSize: 14 },
   statusChipTextActive: { color: '#065f46' },
 
   badge: {
@@ -638,13 +762,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#e2e8f0',
     marginLeft: 6,
   },
-  badgeActive: {
-    backgroundColor: '#16a34a',
-  },
+  badgeActive: { backgroundColor: '#16a34a' },
   badgeText: { color: '#0f172a', fontSize: 12, fontWeight: '700' },
   badgeTextActive: { color: 'white' },
 
-  // search
+  // search (UNCHANGED)
   searchWrap: {
     marginBottom: 10,
     flexDirection: 'row',
@@ -660,27 +782,52 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, color: '#0f172a', paddingVertical: 0 },
   clearBtn: { padding: 4, borderRadius: 999 },
 
-  orderCard: {
+  /* --- Updated card + internals --- */
+  card: {
     backgroundColor: '#fff',
     borderRadius: 16,
     padding: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
     shadowColor: '#000',
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.05,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    elevation: 1,
   },
-  orderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  orderId: { fontWeight: '700', color: '#111827' },
-  orderTime: { color: '#6b7280', fontWeight: '500' },
-  orderTotal: { fontWeight: '700', color: '#0f172a' },
 
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
-  customerText: { color: '#64748b', fontWeight: '500', flexShrink: 1 },
+  // row 1
+  row1: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  row1Left: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  orderId: { fontWeight: '900', color: '#0f172a' },
+  orderTime: { color: '#64748b', fontWeight: '600' },
+  orderTotal: { fontWeight: '900', color: '#0f172a' },
 
-  orderItems: { marginTop: 6, color: '#475569', fontWeight: '500' },
+  // row 2
+  row2: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    maxWidth: '70%',
+  },
+  pillText: { fontWeight: '800', fontSize: 12 },
 
-  // 🔹 note bubble
+  payWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 'auto' },
+  payText: { color: '#64748b', fontWeight: '700' },
+
+  // items
+  orderItems: { marginTop: 8, color: '#334155', fontWeight: '600' },
+
+  // customer
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
+  customerText: { color: '#64748b', fontWeight: '600', flexShrink: 1 },
+
+  // note bubble
   noteRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -689,9 +836,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 12,
-    backgroundColor: '#ecfeff',      // teal-50
+    backgroundColor: '#ecfeff',
     borderWidth: 1,
-    borderColor: '#99f6e4',          // teal-200
+    borderColor: '#99f6e4',
   },
   noteText: { flex: 1, color: '#115e59', fontWeight: '600' },
   noteMeta: { marginTop: 4, color: '#0f766e', fontWeight: '700' },

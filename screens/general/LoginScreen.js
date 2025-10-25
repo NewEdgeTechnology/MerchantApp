@@ -3,7 +3,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, KeyboardAvoidingView,
   Platform, ScrollView, Keyboard, ActivityIndicator, Alert, Modal,
-  LayoutAnimation, UIManager, DeviceEventEmitter, Pressable, AppState,
+  LayoutAnimation, UIManager, Pressable, AppState,
+  DeviceEventEmitter as RNDeviceEventEmitter,   // ✅ bundler-safe import
 } from 'react-native';
 import CheckBox from 'expo-checkbox';
 import Icon from 'react-native-vector-icons/Ionicons';
@@ -15,12 +16,20 @@ import {
   PROFILE_ENDPOINT,
 } from '@env';
 
-// ⬇️ NEW: use the shared connector (no direct socket.io import here)
+// Shared socket connector
 import { connectMerchantSocket } from '../realtime/merchantSocket';
 
-const KEY_SAVED_USERNAME = 'saved_username';
+/* ===== Safe emitter (no-op if unavailable) ===== */
+const SafeDeviceEventEmitter = RNDeviceEventEmitter && typeof RNDeviceEventEmitter.emit === 'function'
+  ? RNDeviceEventEmitter
+  : { emit: () => {} }; // avoids “DeviceEventEmitter doesn’t exist” at runtime
+
+/* ===== Keys (email-first, with backward compatibility) ===== */
+const KEY_SAVED_EMAIL = 'saved_email_v2';
+const KEY_LAST_LOGIN_EMAIL = 'last_login_email_v2';
+const KEY_SAVED_USERNAME = 'saved_username';              // legacy (only for migration)
 const KEY_SAVED_PASSWORD = 'saved_password';
-const KEY_LAST_LOGIN_USERNAME = 'last_login_username';
+const KEY_LAST_LOGIN_USERNAME = 'last_login_username';    // legacy (only for migration)
 const KEY_AUTH_TOKEN      = 'auth_token';
 const KEY_MERCHANT_LOGIN  = 'merchant_login';
 const KEY_BIOMETRIC_ENABLED = 'security_biometric_login';
@@ -104,7 +113,7 @@ function useKeyboardGap(minGap = 8) {
   useEffect(() => {
     const onShow = (e) => {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      const h = e?.endCoordinates?.height ?? 0;    
+      const h = e?.endCoordinates?.height ?? 0;
       setGap(Math.max(minGap, h + 8));
     };
     const onHide = () => {
@@ -119,14 +128,6 @@ function useKeyboardGap(minGap = 8) {
   }, [minGap]);
   return gap;
 }
-
-/* Helpers */
-const toTitleCase = (s = '') =>
-  s.replace(/\s+/g, ' ')
-   .trim()
-   .replace(/\b([A-Za-zÀ-ÖØ-öø-ÿ])([A-Za-zÀ-ÖØ-öø-ÿ']*)/g, (_, a, b) => a.toUpperCase() + b.toLowerCase());
-const toTitleCaseLive = (s = '') =>
-  s.split(/(\s+)/).map(part => /\s+/.test(part) ? part : (part ? part[0].toUpperCase() + part.slice(1).toLowerCase() : part)).join('');
 
 /* ===== Biometrics helpers ===== */
 async function deviceSupportsBiometrics() {
@@ -161,14 +162,14 @@ async function biometricPrompt(reason = 'Authenticate') {
 const LoginScreen = () => {
   const navigation = useNavigation();
 
-  const [fullName, setFullName]           = useState('');
-  const [password, setPassword]           = useState('');
-  const [savePassword, setSavePassword]   = useState(false);
-  const [showPassword, setShowPassword]   = useState(false);
-  const [isNameFocused, setIsNameFocused] = useState(false);
-  const [isPwFocused, setIsPwFocused]     = useState(false);
-  const [loading, setLoading]             = useState(false);
-  const [errorText, setErrorText]         = useState('');
+  const [email, setEmail]               = useState('');
+  const [password, setPassword]         = useState('');
+  const [savePassword, setSavePassword] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [isEmailFocused, setIsEmailFocused] = useState(false);
+  const [isPwFocused, setIsPwFocused]   = useState(false);
+  const [loading, setLoading]           = useState(false);
+  const [errorText, setErrorText]       = useState('');
 
   // Biometrics state
   const [bioAvail, setBioAvail]             = useState(false);
@@ -176,18 +177,24 @@ const LoginScreen = () => {
   const [bioLabel, setBioLabel]             = useState('Biometric');
   const [hasSavedSecret, setHasSavedSecret] = useState(false);
 
-  const canSubmit = fullName.length > 0 && password.length > 0 && !loading;
+  const canSubmit = email.length > 0 && password.length > 0 && !loading;
   const bottomGap = useKeyboardGap(8);
 
-  const nameRef = useRef(null);
-  const pwdRef  = useRef(null);
+  const emailRef = useRef(null);
+  const pwdRef   = useRef(null);
   const [pwdSelection, setPwdSelection] = useState({ start: 0, end: 0 });
 
-  /** Load saved creds + biometric flags */
+  /** Load saved creds + biometric flags (email-first; fallback to legacy username) */
   const loadBiometricAndSavedState = async () => {
     try {
-      const [u, p, enabledFlagResolved, refreshTok] = await Promise.all([
-        SecureStore.getItemAsync(KEY_SAVED_USERNAME),
+      const [savedEmail, savedPwd, enabledFlagResolved, refreshTok] = await Promise.all([
+        (async () => {
+          const e = await SecureStore.getItemAsync(KEY_SAVED_EMAIL);
+          if (e) return e;
+          // fallback once for legacy
+          const legacyU = await SecureStore.getItemAsync(KEY_SAVED_USERNAME);
+          return legacyU || '';
+        })(),
         SecureStore.getItemAsync(KEY_SAVED_PASSWORD),
         (async () => {
           const v = await SecureStore.getItemAsync(KEY_BIOMETRIC_ENABLED);
@@ -197,20 +204,22 @@ const LoginScreen = () => {
         SecureStore.getItemAsync(KEY_REFRESH_TOKEN),
       ]);
 
-      if (u || p) {
-        setFullName(toTitleCase(u || ''));
-        setPassword(p || '');
-        setSavePassword(!!p);
+      if (savedEmail || savedPwd) {
+        setEmail(String(savedEmail || '').trim().toLowerCase());
+        setPassword(savedPwd || '');
+        setSavePassword(!!savedPwd);
       } else {
-        const lastU = await SecureStore.getItemAsync(KEY_LAST_LOGIN_USERNAME);
-        if (lastU) setFullName(toTitleCase(lastU));
+        // last email (or legacy username)
+        const lastE = (await SecureStore.getItemAsync(KEY_LAST_LOGIN_EMAIL)) ||
+                      (await SecureStore.getItemAsync(KEY_LAST_LOGIN_USERNAME)) || '';
+        if (lastE) setEmail(String(lastE).trim().toLowerCase());
       }
 
       const sup = await deviceSupportsBiometrics();
       setBioAvail(!!sup.ok);
       setBioLabel(labelForTypes(sup.types));
       setBioEnabled(enabledFlagResolved === '1');
-      setHasSavedSecret(!!(p || refreshTok));
+      setHasSavedSecret(!!(savedPwd || refreshTok));
     } catch {}
   };
 
@@ -248,9 +257,10 @@ const LoginScreen = () => {
     return mapCodeToType(v).trim().toLowerCase();
   };
 
-  // Core login routine — case-sensitive username
-  const loginWithCredentials = async (userNameVal, pwdVal) => {
-    const variants = [{ val: userNameVal, _hint: 'raw' }];
+  // Core login routine — EMAIL based
+  const loginWithCredentials = async (emailVal, pwdVal) => {
+    const normalized = String(emailVal || '').trim().toLowerCase();
+    const variants = [{ val: normalized, _hint: 'email' }];
 
     let tokenStr = '';
     let success = null;
@@ -261,7 +271,7 @@ const LoginScreen = () => {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ user_name: val, password: pwdVal }),
+        body: JSON.stringify({ email: val, password: pwdVal }),   // ⬅️ email payload
       });
 
       const txt = await res.text();
@@ -278,7 +288,7 @@ const LoginScreen = () => {
          /login\s*successful/i.test(serverMsg));
 
       if (ok) {
-        success = { data, usedName: val };
+        success = { data, usedEmail: val };
         tokenStr = typeof data?.token === 'string'
           ? data.token
           : (data?.token?.access_token ?? '');
@@ -290,7 +300,7 @@ const LoginScreen = () => {
       }
     }
 
-    if (!success) throw new Error(lastErr || 'Invalid full name or password');
+    if (!success) throw new Error(lastErr || 'Invalid email or password');
 
     return { success, tokenStr };
   };
@@ -309,21 +319,24 @@ const LoginScreen = () => {
       Alert.alert('Configuration error', 'LOGIN_USERNAME_MERCHANT_ENDPOINT is not set in your .env file.');
       return;
     }
-    if (!(fullName && password)) return;
+    if (!(email && password)) return;
 
     setErrorText('');
     setLoading(true);
     try {
-      const { success, tokenStr } = await loginWithCredentials(String(fullName), String(password));
+      const { success, tokenStr } = await loginWithCredentials(String(email), String(password));
 
-      // Persist “remember me”
-      await SecureStore.setItemAsync(KEY_LAST_LOGIN_USERNAME, success.usedName);
+      // Persist “remember me”: email-first; clear legacy username if any
+      await SecureStore.setItemAsync(KEY_LAST_LOGIN_EMAIL, success.usedEmail);
+      await SecureStore.deleteItemAsync(KEY_LAST_LOGIN_USERNAME);
+
       if (savePassword) {
-        await SecureStore.setItemAsync(KEY_SAVED_USERNAME, success.usedName);
+        await SecureStore.setItemAsync(KEY_SAVED_EMAIL, success.usedEmail);
         await SecureStore.setItemAsync(KEY_SAVED_PASSWORD, String(password));
+        await SecureStore.deleteItemAsync(KEY_SAVED_USERNAME);
         setHasSavedSecret(true);
       } else {
-        await SecureStore.deleteItemAsync(KEY_SAVED_USERNAME);
+        await SecureStore.deleteItemAsync(KEY_SAVED_EMAIL);
         await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
         const refreshTok = await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
         setHasSavedSecret(!!refreshTok);
@@ -368,9 +381,8 @@ const LoginScreen = () => {
         profile?.business_address ?? userInfo?.business_address ?? userInfo?.businessAddress ??
         userInfo?.address ?? userInfo?.location ?? success.data?.business_address ?? success.data?.address ?? '';
 
-      const email =
-        profile?.email ?? userInfo?.email ?? userInfo?.owner_email ?? userInfo?.contact_email ??
-        userInfo?.contact?.email ?? success.data?.email ?? success.data?.user?.email ?? success.data?.merchant?.email ?? '';
+      const emailFinal =
+        profile?.email ?? userInfo?.email ?? success.usedEmail ?? '';
 
       const phone =
         profile?.phone ?? userInfo?.phone ?? userInfo?.phone_number ?? userInfo?.mobile ??
@@ -398,8 +410,7 @@ const LoginScreen = () => {
         business_logo,
         business_address,
         business_license,
-        username: success.usedName,
-        email,
+        email: emailFinal,
         phone,
         token: success.data?.token || null,
         owner_type: ownerType || null,
@@ -408,9 +419,10 @@ const LoginScreen = () => {
 
       try { await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(userPayload)); } catch {}
 
-      DeviceEventEmitter.emit('profile-updated', { profile_image, business_name });
+      // Notify other parts of the app (safe no-op if unavailable)
+      SafeDeviceEventEmitter.emit('profile-updated', { profile_image, business_name });
 
-      // ⬇️ Connect merchant socket globally (popup overlay is listening)
+      // Connect merchant socket globally
       connectMerchantSocket({ user_id, business_id });
 
       // Navigate home
@@ -435,8 +447,8 @@ const LoginScreen = () => {
       return;
     }
 
-    const [savedU, savedP, refreshTok] = await Promise.all([
-      SecureStore.getItemAsync(KEY_SAVED_USERNAME),
+    const [savedE, savedP, refreshTok] = await Promise.all([
+      (async () => (await SecureStore.getItemAsync(KEY_SAVED_EMAIL)) || (await SecureStore.getItemAsync(KEY_SAVED_USERNAME)) || '')(),
       SecureStore.getItemAsync(KEY_SAVED_PASSWORD),
       SecureStore.getItemAsync(KEY_REFRESH_TOKEN),
     ]);
@@ -446,8 +458,8 @@ const LoginScreen = () => {
       if (refreshTok) {
         // Optional: implement refresh token auth
       }
-      if (savedU && savedP) {
-        setFullName(toTitleCase(savedU));
+      if (savedE && savedP) {
+        setEmail(String(savedE).trim().toLowerCase());
         setPassword(savedP);
         await handleLogin();
       } else {
@@ -504,30 +516,31 @@ const LoginScreen = () => {
         {/* Form */}
         <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="always">
           <View style={styles.form}>
-            <Text style={styles.label}>Full Name (username)</Text>
-            <Text style={styles.tip}>Use the exact full name you entered during signup.</Text>
-            <View style={[styles.inputWrapper, { borderColor: isNameFocused ? '#00b14f' : '#ccc' }]}>
+            <Text style={styles.label}>Email</Text>
+            <Text style={styles.tip}>Use the email address you used during signup.</Text>
+            <View style={[styles.inputWrapper, { borderColor: isEmailFocused ? '#00b14f' : '#ccc' }]}>
               <TextInput
-                ref={nameRef}
+                ref={emailRef}
                 style={styles.inputField}
-                placeholder={isNameFocused ? '' : 'e.g. Sonam Dorji'}
-                autoCapitalize="words"
+                placeholder={isEmailFocused ? '' : 'e.g. sonam@example.com'}
+                autoCapitalize="none"
                 autoCorrect={false}
-                value={fullName}
+                keyboardType="email-address"
+                value={email}
                 editable={!loading}
                 onChangeText={(t) => {
-                  setFullName(toTitleCaseLive(t));
+                  setEmail(String(t || '').trim().toLowerCase());
                   setErrorText('');
                 }}
-                onFocus={() => setIsNameFocused(true)}
-                onBlur={() => setIsNameFocused(false)}
+                onFocus={() => setIsEmailFocused(true)}
+                onBlur={() => setIsEmailFocused(false)}
                 returnKeyType="next"
                 blurOnSubmit={false}
                 onSubmitEditing={() => pwdRef.current?.focus()}
-                textContentType="username"
+                textContentType="emailAddress"
               />
-              {fullName.length > 0 && !loading && (
-                <TouchableOpacity onPress={() => setFullName('')} style={styles.clearButton}>
+              {email.length > 0 && !loading && (
+                <TouchableOpacity onPress={() => setEmail('')} style={styles.clearButton}>
                   <View style={styles.clearCircle}><Icon name="close" size={14} color="#fff" /></View>
                 </TouchableOpacity>
               )}

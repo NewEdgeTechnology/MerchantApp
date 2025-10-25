@@ -7,57 +7,68 @@ import {
   FlatList,
   RefreshControl,
   TouchableOpacity,
-  Platform,
   ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { Ionicons } from '@expo/vector-icons';
+import { NOTIFICATIONS_ENDPOINT as ENV_NOTIFS_ENDPOINT } from '@env';
 
-const STORAGE_KEY = '@notifications_v1';
-  
-const seedNotifications = () => ([
-  {
-    id: 'n-1005',
-    title: 'Order #10234 delivered',
-    body: 'Your order was completed successfully. Great job keeping up!',
-    time: '2m',
-    type: 'success', // success | order | warning | payout | system | promo
-    read: false,
-  },
-  {
-    id: 'n-1004',
-    title: 'New order #10235',
-    body: '2× Chicken Rice, 1× Iced Tea • Total Nu 27.50',
-    time: '5m',
-    type: 'order',
-    read: false,
-  },
-  {
-    id: 'n-1003',
-    title: 'Payout initiated',
-    body: 'Nu 1,240.00 will arrive in your bank within 1–2 business days.',
-    time: '1h',
-    type: 'payout',
-    read: true,
-  },
-  {
-    id: 'n-1002',
-    title: 'Menu item low stock',
-    body: 'Beef Burger is running low. Consider updating availability.',
-    time: '2h',
-    type: 'warning',
-    read: true,
-  },
-  {
-    id: 'n-1001',
-    title: 'Welcome to Merchant!',
-    body: 'Set up your menu and start accepting orders.',
-    time: '1d',
-    type: 'system',
-    read: true,
-  },
-]);
+const STORAGE_KEY_READMAP = '@notifications_readmap_v1';
 
+/* ---------------- helpers: business id resolution ---------------- */
+const toInt = (v) => {
+  const n = Number.parseInt(String(v ?? '').trim(), 10);
+  return Number.isFinite(n) ? n : null;
+};
+
+// Try, in order:
+// 1) route?.params?.business_id
+// 2) AsyncStorage 'merchant_login' JSON -> .merchant?.business_id
+// 3) SecureStore 'merchant_login' JSON -> .merchant?.business_id
+async function resolveBusinessId(routeParams) {
+  const fromParams = toInt(routeParams?.business_id ?? routeParams?.businessId);
+  if (fromParams != null) return fromParams;
+
+  try {
+    const rawAS = await AsyncStorage.getItem('merchant_login');
+    if (rawAS) {
+      const parsed = JSON.parse(rawAS);
+      const id = toInt(
+        parsed?.merchant?.business_id ??
+        parsed?.merchant?.businessId ??
+        parsed?.business_id ??
+        parsed?.businessId
+      );
+      if (id != null) return id;
+    }
+  } catch {}
+
+  try {
+    const rawSS = await SecureStore.getItemAsync('merchant_login');
+    if (rawSS) {
+      const parsed = JSON.parse(rawSS);
+      const id = toInt(
+        parsed?.merchant?.business_id ??
+        parsed?.merchant?.businessId ??
+        parsed?.business_id ??
+        parsed?.businessId
+      );
+      if (id != null) return id;
+    }
+  } catch {}
+
+  return null;
+}
+
+const trimSlashes = (s = '') => String(s).replace(/\/+$/, '');
+const NOTIFS_BASE = trimSlashes(String(ENV_NOTIFS_ENDPOINT || ''));
+
+/** Replace `{business_id}` token in the env URL */
+const buildNotificationsUrl = (businessId) =>
+  NOTIFS_BASE ? NOTIFS_BASE.replace('{business_id}', String(businessId)) : null;
+
+/* ---------------- UI helpers ---------------- */
 const typeIcon = (type) => {
   switch (type) {
     case 'order':   return 'receipt-outline';
@@ -80,68 +91,176 @@ const typeTint = (type) => {
   }
 };
 
-export default function NotificationsTab({ isTablet = false }) {
+const timeAgo = (isoOrDateLike) => {
+  try {
+    const t = new Date(isoOrDateLike).getTime();
+    if (!Number.isFinite(t)) return '';
+    const s = Math.max(1, Math.floor((Date.now() - t) / 1000));
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h`;
+    const d = Math.floor(h / 24);
+    return `${d}d`;
+  } catch { return ''; }
+};
+
+/* ---------------- mapping for your API shape ---------------- */
+const normalizeType = (raw) => {
+  const t = String(raw || '').toLowerCase();
+  if (t.startsWith('order')) return 'order';      // "order:create", "order:status", etc.
+  if (t.includes('payout')) return 'payout';
+  if (t.includes('warn')) return 'warning';
+  if (t.includes('success')) return 'success';
+  if (t.includes('promo') || t.includes('offer')) return 'promo';
+  return 'system';
+};
+
+const mapApiNotif = (n, readMap) => {
+  const id =
+    String(n.notification_id ??
+      n.id ??
+      n._id ??
+      Math.random().toString(36).slice(2));
+
+  const type = normalizeType(n.type);
+  const created = n.created_at ?? n.createdAt ?? n.timestamp ?? null;
+
+  const title = n.title ?? 'Notification';
+  let body =
+    n.body_preview ??
+    n.body ??
+    n.message ??
+    n.description ??
+    '';
+
+  // ✅ Friendly rewrite for "completed" status messages
+  // Example from your payload: type: "order:status", body_preview: "Status changed to COMPLETED"
+  if (String(n.type).toLowerCase() === 'order:status' &&
+      String(body).toLowerCase().includes('status changed to completed')) {
+    body = 'Order completed successfully.';
+  }
+
+  const readServer = n.is_read ?? n.read ?? n.isRead ?? null; // 0/1 or boolean
+  const read =
+    readServer == null
+      ? Boolean(readMap[id])
+      : (String(readServer) === '1' || readServer === true);
+
+  return {
+    id,
+    title: String(title),
+    body: String(body),
+    time: created ? timeAgo(created) : '',
+    type,
+    read,
+    _created_at: created ?? null,
+  };
+};
+
+export default function NotificationsTab({ isTablet = false, route }) {
   const [list, setList] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [bizId, setBizId] = useState(null);
+  const readMapRef = useRef({});
 
-  // first load
+  /* ---------- load business id then fetch ---------- */
   useEffect(() => {
     (async () => {
-      const raw = await AsyncStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw);
-          setList(Array.isArray(parsed) ? parsed : seedNotifications());
-        } catch {
-          setList(seedNotifications());
-        }
-      } else {
-        const seeded = seedNotifications();
-        setList(seeded);
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
-      }
+      const id = await resolveBusinessId(route?.params ?? {});
+      setBizId(id);
+    })();
+  }, [route?.params]);
+
+  /* ---------- load saved read map ---------- */
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(STORAGE_KEY_READMAP);
+        readMapRef.current = raw ? JSON.parse(raw) : {};
+      } catch { readMapRef.current = {}; }
     })();
   }, []);
 
-  const persist = useCallback(async (next) => {
-    setList(next);
+  const saveReadMap = useCallback(async (next) => {
+    readMapRef.current = next;
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch { /* no-op */ }
+      await AsyncStorage.setItem(STORAGE_KEY_READMAP, JSON.stringify(next));
+    } catch {}
   }, []);
+
+  const fetchNotifications = useCallback(async () => {
+    if (bizId == null) { setList([]); return; }
+    const url = buildNotificationsUrl(bizId);
+    if (!url) { setList([]); return; }
+
+    try {
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      const text = await res.text();
+      let data = {};
+      try { data = JSON.parse(text); } catch { data = {}; }
+
+      // Your API: { success, count, data: [...] }
+      const arr = Array.isArray(data)
+        ? data
+        : (Array.isArray(data?.data) ? data.data
+          : Array.isArray(data?.notifications) ? data.notifications
+          : []);
+
+      const mapped = arr.map((n) => mapApiNotif(n, readMapRef.current));
+
+      mapped.sort((a, b) => {
+        const ta = a._created_at ? new Date(a._created_at).getTime() : 0;
+        const tb = b._created_at ? new Date(b._created_at).getTime() : 0;
+        return tb - ta;
+      });
+
+      setList(mapped);
+    } catch {
+      // keep prior list on error
+    }
+  }, [bizId]);
+
+  // initial + whenever bizId changes
+  useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    // here you could call your backend for fresh notifications
-    // we’ll just simulate a quick refresh
-    await new Promise((r) => setTimeout(r, 600));
+    await fetchNotifications();
     setRefreshing(false);
-  }, []);
+  }, [fetchNotifications]);
 
   const onEndReached = useCallback(async () => {
+    // If your API later supports pagination, implement here.
     if (loadingMore) return;
     setLoadingMore(true);
-    // simulate pagination
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, 300)); // placeholder for future pagination
     setLoadingMore(false);
   }, [loadingMore]);
 
   const unreadCount = useMemo(() => list.filter((n) => !n.read).length, [list]);
 
-  const markAllRead = useCallback(() => {
-    const next = list.map((n) => ({ ...n, read: true }));
-    persist(next);
-  }, [list, persist]);
+  const applyReadOverlay = useCallback((nextList, nextReadMap) =>
+    nextList.map((n) => ({ ...n, read: (n.read ?? false) || Boolean(nextReadMap[n.id]) })),
+  []);
 
-  const clearAll = useCallback(() => {
-    persist([]);
-  }, [persist]);
+  const markAllRead = useCallback(() => {
+    const nextReadMap = { ...readMapRef.current };
+    for (const n of list) nextReadMap[n.id] = true;
+    saveReadMap(nextReadMap);
+    setList((cur) => applyReadOverlay(cur, nextReadMap));
+  }, [list, saveReadMap, applyReadOverlay]);
+
+  const clearAll = useCallback(() => { setList([]); }, []);
 
   const toggleRead = useCallback((id) => {
-    const next = list.map((n) => (n.id === id ? { ...n, read: !n.read } : n));
-    persist(next);
-  }, [list, persist]);
+    const nextReadMap = { ...readMapRef.current };
+    nextReadMap[id] = !Boolean(nextReadMap[id]);
+    saveReadMap(nextReadMap);
+    setList((cur) => applyReadOverlay(cur, nextReadMap));
+  }, [saveReadMap, applyReadOverlay]);
 
   const renderItem = ({ item }) => (
     <TouchableOpacity onPress={() => toggleRead(item.id)} activeOpacity={0.7} style={styles.itemWrap}>
@@ -303,4 +422,6 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { color: '#111827', fontWeight: '700' },
   emptyBody: { color: '#6b7280' },
+
+  footerLoad: { paddingVertical: 16, alignItems: 'center', justifyContent: 'center' },
 });

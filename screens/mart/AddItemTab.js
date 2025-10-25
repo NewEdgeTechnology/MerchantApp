@@ -284,6 +284,12 @@ export default function AddItemTab({ isTablet }) {
   // keyboard padding
   const [kbHeight, setKbHeight] = useState(0);
 
+  // Category info overlay state
+  const [catInfoOpen, setCatInfoOpen] = useState(false);
+  const [catInfoLoading, setCatInfoLoading] = useState(false);
+  const [catInfoError, setCatInfoError] = useState('');
+  const [catInfoData, setCatInfoData] = useState(null); // { name, description, image? }
+
   useEffect(() => {
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
@@ -374,6 +380,8 @@ export default function AddItemTab({ isTablet }) {
         const normalized = listCandidate.map((c, idx) => ({
           id: String(c.id ?? c._id ?? c.categoryId ?? c.category_id ?? idx),
           name: c.category_name ?? c.name ?? c.title ?? c.label ?? 'Unnamed',
+          description: c.description ?? '',
+          image: c.category_image ?? c.image ?? null,
         }));
 
         const withNone = [{ id: 'None', name: 'None' }, ...normalized];
@@ -559,6 +567,66 @@ export default function AddItemTab({ isTablet }) {
     }
   }
   /* ─────────────────────────────────────────────────────────── */
+
+  // Fetch Category Details (by name) and open overlay
+  const fetchCategoryDetails = useCallback(async () => {
+    const selectedName = category && category !== 'None' ? String(category) : '';
+    if (!selectedName) return;
+    if (!CATEGORIES_URL) { setCatInfoError('Config error: categories URL not set.'); return; }
+
+    try {
+      setCatInfoLoading(true);
+      setCatInfoError('');
+      setCatInfoData(null);
+
+      const token = (await SecureStore.getItemAsync('auth_token')) || '';
+      const url = CATEGORIES_URL + (CATEGORIES_URL.includes('?') ? '&' : '?') + `ts=${Date.now()}`;
+
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 15000);
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        signal: controller.signal,
+      });
+      clearTimeout(tid);
+
+      const text = await res.text();
+      if (!res.ok) throw new Error(`HTTP ${res.status}${text ? ` • ${text}` : ''}`);
+
+      let raw;
+      try { raw = text ? JSON.parse(text) : []; } catch { raw = []; }
+
+      const harvest = [];
+      const push = (c) => {
+        if (!c) return;
+        harvest.push({
+          id: String(c.id ?? c.category_id ?? c._id ?? ''),
+          name: c.category_name ?? c.name ?? c.title ?? c.label ?? '',
+          description: c.description ?? '',
+          image: c.category_image ?? c.image ?? null,
+          business_type: c.business_type ?? '',
+        });
+      };
+      if (Array.isArray(raw)) raw.forEach(push);
+      if (raw && Array.isArray(raw.types)) for (const t of raw.types) if (Array.isArray(t.categories)) t.categories.forEach(push);
+      const wrappers = ['data', 'categories', 'result', 'items', 'rows', 'payload', 'list'];
+      for (const k of wrappers) if (Array.isArray(raw?.[k])) raw[k].forEach(push);
+      if (!harvest.length && raw && typeof raw === 'object') {
+        for (const v of Object.values(raw)) { if (Array.isArray(v)) { v.forEach(push); break; } }
+      }
+
+      const norm = (s = '') => String(s).trim().toLowerCase();
+      const found = harvest.find(c => norm(c.name) === norm(selectedName));
+
+      if (!found) setCatInfoError('Category not found on server.');
+      else setCatInfoData(found);
+    } catch (e) {
+      setCatInfoError(e?.message || 'Failed to load details.');
+    } finally {
+      setCatInfoLoading(false);
+    }
+  }, [category, CATEGORIES_URL]);
 
   // Save
   const onSave = async () => {
@@ -879,9 +947,32 @@ export default function AddItemTab({ isTablet }) {
           </View>
         </View>
 
-        {/* Category */}
+        {/* Category with INFO ICON next to label */}
         <View style={styles.field}>
-          <Text style={[styles.label, { fontSize: FS.label }]}>Category</Text>
+          <View style={styles.labelRow}>
+            <Text style={[styles.label, { fontSize: FS.label }]}>Category</Text>
+            <TouchableOpacity
+              style={styles.labelInfoBtn}
+              onPress={async () => {
+                if (!category || category === 'None') {
+                  Alert.alert('Category', 'Please select a category first.');
+                  return;
+                }
+                setCatInfoOpen(true);
+                await fetchCategoryDetails();
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityLabel="Show category details"
+              testID="cat-info-button"
+            >
+              <Ionicons
+                name="information-circle-outline"
+                size={18}
+                color={category && category !== 'None' ? '#0a0f1a' : '#94a3b8'} // slightly darker
+              />
+            </TouchableOpacity>
+          </View>
+
           {loadingCats ? (
             <View style={[styles.pickerWrap, styles.catLoading]}>
               <ActivityIndicator />
@@ -969,6 +1060,7 @@ export default function AddItemTab({ isTablet }) {
       sortPriority,
       onSave,
       saving,
+      fetchCategoryDetails,
     ]
   );
 
@@ -1027,6 +1119,51 @@ export default function AddItemTab({ isTablet }) {
         </TouchableWithoutFeedback>
       </Modal>
 
+      {/* Category Info Overlay (dynamic) */}
+      <Modal visible={catInfoOpen} animationType="fade" transparent onRequestClose={() => setCatInfoOpen(false)}>
+        <TouchableWithoutFeedback onPress={() => setCatInfoOpen(false)}>
+          <View style={styles.modalBackdrop}>
+            <TouchableWithoutFeedback>
+              <View style={styles.catInfoCard}>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Category details</Text>
+                  <TouchableOpacity onPress={() => setCatInfoOpen(false)}>
+                    <Ionicons name="close" size={22} color={TEXT_COLOR} />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={{ paddingHorizontal: 16, paddingBottom: 16, minHeight: 96, justifyContent: 'center' }}>
+                  {catInfoLoading ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <ActivityIndicator />
+                      <Text style={{ color: '#475569', fontFamily: FONT_FAMILY }}>Loading details…</Text>
+                    </View>
+                  ) : catInfoError ? (
+                    <Text style={{ color: '#ef4444', fontFamily: FONT_FAMILY }}>{catInfoError}</Text>
+                  ) : (
+                    <>
+                      <Text style={styles.infoTitle}>{catInfoData?.name ?? category ?? '—'}</Text>
+                      <Text style={styles.infoDesc}>
+                        {catInfoData?.description?.trim()
+                          ? catInfoData.description
+                          : 'No description available for this category.'}
+                      </Text>
+                      {/* Optional image (uncomment if desired)
+                      {catInfoData?.image ? (
+                        <View style={{ marginTop: 12 }}>
+                          <Image source={{ uri: makeItemImageUrl(catInfoData.image) }} style={{ width: '100%', height: 160, borderRadius: 10 }} resizeMode="cover" />
+                        </View>
+                      ) : null}
+                      */}
+                    </>
+                  )}
+                </View>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+
       {/* Saving overlay loader */}
       <Modal visible={saving} animationType="fade" transparent>
         <View style={styles.loaderOverlay}>
@@ -1048,6 +1185,10 @@ const styles = StyleSheet.create({
 
   field: { marginTop: 14 },
   label: { color: TEXT_COLOR, fontWeight: '600', fontFamily: FONT_FAMILY },
+
+  // Label row + tiny icon button (for Category)
+  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  labelInfoBtn: { padding: 2 },
 
   input: {
     marginTop: 8,
@@ -1243,6 +1384,29 @@ const styles = StyleSheet.create({
   dropdownSeparator: { height: 1, backgroundColor: '#e2e8f0' },
   dropdownText: { fontFamily: FONT_FAMILY },
 
+  // Category info overlay card
+  catInfoCard: {
+    width: '100%',
+    maxWidth: 560,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  infoTitle: {
+    fontFamily: FONT_FAMILY,
+    color: TEXT_COLOR,
+    fontWeight: '700',
+    fontSize: 16,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  infoDesc: {
+    fontFamily: FONT_FAMILY,
+    color: '#475569',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+
   // Saving overlay
   loaderOverlay: {
     flex: 1,
@@ -1261,4 +1425,3 @@ const styles = StyleSheet.create({
   },
   loaderText: { color: TEXT_COLOR, fontWeight: '700' },
 });
-

@@ -23,12 +23,11 @@ export default function SignupScreen() {
   const navigation = useNavigation();
   const route = useRoute();
 
-  // May arrive when editing from Review
   const {
     merchant: incomingMerchant = {},
     initialEmail = null,
     initialPassword = null,
-    returnTo = null, // e.g., "ReviewSubmitScreen"
+    returnTo = null,
     serviceType,
     owner_type,
   } = route.params ?? {};
@@ -50,10 +49,6 @@ export default function SignupScreen() {
     };
   }, []);
 
-  // Prefill priority:
-  // 1) initialEmail/initialPassword (from Review "Edit")
-  // 2) incomingMerchant.email/password (carried through params)
-  // 3) SecureStore (ONLY if BOTH saved_email and saved_password exist)
   useEffect(() => {
     (async () => {
       const seededEmail = (initialEmail ?? incomingMerchant?.email ?? '').trim();
@@ -76,13 +71,15 @@ export default function SignupScreen() {
         } catch {}
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const isValidEmail = (val) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+  // ✅ Loose validation: must contain @ and .
+  const isValidEmail = (val) => {
+    const v = String(val ?? '').trim();
+    return v.includes('@') && v.includes('.');
+  };
 
-  // ✅ Added: must start with a lowercase letter
-  const checkRules = {           // <-- NEW
+  const checkRules = {
     length: password.length >= 8,
     upperLower: /[A-Z]/.test(password) && /[a-z]/.test(password),
     number: /[0-9]/.test(password),
@@ -184,7 +181,7 @@ export default function SignupScreen() {
                       secureTextEntry={!showPassword}
                       onFocus={() => setIsPasswordFocused(true)}
                       onBlur={() => setIsPasswordFocused(false)}
-                      autoCapitalize="none" // keep exact casing as typed
+                      autoCapitalize="none"
                     />
                     <TouchableOpacity
                       onPress={() => setShowPassword(!showPassword)}

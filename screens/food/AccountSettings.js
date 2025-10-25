@@ -1,4 +1,4 @@
-// AccountSettings.js — simple avatar resolution using PROFILE_IMAGE base; minimal helpers
+// AccountSettings.js — avatar via PROFILE_IMAGE base + robust logout using LOGOUT_ENDPOINT
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Dimensions,
@@ -12,10 +12,13 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ✅ Use legacy API to avoid deprecation warnings in SDK 54+
-// (Keeps getInfoAsync/deleteAsync semantics the same)
 import * as FileSystem from 'expo-file-system/legacy';
 
-import { PROFILE_ENDPOINT, PROFILE_IMAGE as PROFILE_IMAGE_ENDPOINT } from '@env';
+import {
+  PROFILE_ENDPOINT,
+  PROFILE_IMAGE as PROFILE_IMAGE_ENDPOINT,
+  LOGOUT_ENDPOINT as ENV_LOGOUT_ENDPOINT,                // ⬅️ bring the .env logout here
+} from '@env';
 
 const { width } = Dimensions.get('window');
 const KEY_MERCHANT_LOGIN = 'merchant_login';
@@ -135,6 +138,79 @@ function resetLocalState(setters) {
   });
   setBusinessLicense('');
   DeviceEventEmitter.emit('logged-out');
+}
+
+/** Try to obtain an existing merchant socket from your shared connector. */
+function getExistingMerchantSocket() {
+  try {
+    const mod = require('../realtime/merchantSocket');
+    return mod?.getMerchantSocket?.() || mod?.socket || global?.merchantSocket || null;
+  } catch {
+    return global?.merchantSocket || null;
+  }
+}
+
+/** Politely notify server + disconnect socket; always safe to call. */
+async function disconnectSocketGracefully({ userId, businessId }) {
+  try {
+    const sock = getExistingMerchantSocket();
+    if (!sock) return;
+
+    if (sock?.connected) {
+      try {
+        sock.emit?.('merchant:logout', { userId, businessId });
+        await new Promise(r => setTimeout(r, 120));
+      } catch {}
+    }
+
+    try { sock.removeAllListeners?.(); } catch {}
+    try { sock.disconnect?.(); } catch {}
+    try { sock.close?.(); } catch {}
+  } catch {
+    // swallow — logout must not crash
+  } finally {
+    try { if (global?.merchantSocket) global.merchantSocket = null; } catch {}
+  }
+}
+
+/** Build the concrete logout URL from .env pattern like .../logout/{user_id} */
+function resolveLogoutUrlFromEnv(userId) {
+  const raw = (ENV_LOGOUT_ENDPOINT || '').trim();
+  if (!raw) return null;
+  const id = encodeURIComponent(String(userId ?? '').trim());
+  if (!id) return null;
+  return raw.replace('{user_id}', id);
+}
+
+/** Optionally tell backend to invalidate tokens. Accepts explicit endpoint or falls back to .env */
+async function attemptServerLogout({ explicitEndpoint, userId }) {
+  const endpoint =
+    explicitEndpoint ||
+    resolveLogoutUrlFromEnv(userId) ||
+    null;
+
+  if (!endpoint) return;
+
+  // Prefer POST; if the server rejects body, we retry with GET (many simple logout routes are GET)
+  const refresh = await SecureStore.getItemAsync('refresh_token');
+  const access = await SecureStore.getItemAsync('auth_token');
+  const baseHeaders = { 'Content-Type': 'application/json' };
+  if (access) baseHeaders['Authorization'] = `Bearer ${access}`;
+
+  try {
+    await fetchJSON(endpoint, {
+      method: 'POST',
+      headers: baseHeaders,
+      body: JSON.stringify({ refresh_token: refresh || undefined }),
+    });
+  } catch {
+    // Retry once with GET (no body)
+    try {
+      await fetchJSON(endpoint, { method: 'GET', headers: baseHeaders });
+    } catch {
+      // non-fatal; continue local logout
+    }
+  }
 }
 
 // ───────────────────────── Component ─────────────────────────
@@ -418,7 +494,7 @@ const AccountSettings = () => {
       business_name: biz.business_name || name,
       business_logo: biz.business_logo || imageUri || '',
       business_license: businessLicense,
-      profile_image_url: imageUri || '', // pass resolved profile URL forward if needed
+      profile_image_url: imageUri || '',
       authContext,
     });
   };
@@ -432,7 +508,47 @@ const AccountSettings = () => {
     });
   };
 
-  // Hard logout: clear caches, reset state, and reset navigation stack
+  /** Full, graceful logout pipeline: revoke server session → disconnect socket → clear stores → reset nav */
+  const handleLogoutNow = useCallback(async () => {
+    try {
+      // 1) Hook for app-specific side effects
+      if (authContext?.onBeforeLogout) {
+        try { await authContext.onBeforeLogout(); } catch {}
+      }
+
+      // 2) Server-side token/session invalidation
+      const explicitEndpoint =
+        authContext?.logoutEndpoint ||
+        route?.params?.logoutEndpoint ||
+        null;
+
+      await attemptServerLogout({
+        explicitEndpoint,           // if passed via route/context, this wins
+        userId,                     // else we build from ENV_LOGOUT_ENDPOINT with {user_id}
+      });
+
+      // 3) Disconnect realtime socket & notify server presence
+      await disconnectSocketGracefully({ userId, businessId });
+
+      // 4) Local cleanup
+      await clearCredentialStores();
+      await clearImageCacheAsync();
+      resetLocalState({ setName, setImageUri, setImgVersion, setBiz, setBusinessLicense });
+
+      // 5) Post-logout hook
+      if (authContext?.onAfterLogout) {
+        try { await authContext.onAfterLogout(); } catch {}
+      }
+    } finally {
+      // 6) Always reset to login
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'LoginScreen' }],
+      });
+    }
+  }, [authContext, route?.params, userId, businessId, navigation]);
+
+  // Hard logout: confirm then run pipeline
   const logOut = useCallback(() => {
     Alert.alert(
       'Log out',
@@ -442,19 +558,11 @@ const AccountSettings = () => {
         {
           text: 'Log out',
           style: 'destructive',
-          onPress: async () => {
-            await clearCredentialStores();
-            await clearImageCacheAsync();
-            resetLocalState({ setName, setImageUri, setImgVersion, setBiz, setBusinessLicense });
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'LoginScreen' }],
-            });
-          },
+          onPress: handleLogoutNow,
         },
       ]
     );
-  }, [navigation, setName, setImageUri, setImgVersion, setBiz, setBusinessLicense]);
+  }, [handleLogoutNow]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -491,7 +599,6 @@ const AccountSettings = () => {
 
           <View style={styles.nameContainer}>
             <Text style={styles.name}>{name}</Text>
-            {/* <Text style={{ color: '#666', fontSize: 12 }} numberOfLines={1}>{imageUri}</Text> */}
           </View>
 
           <TouchableOpacity style={styles.editButton} onPress={goToPersonalInformation}>

@@ -1,6 +1,7 @@
 // screens/food/OrderDetails.js
-// Sequence rail + two-button actions (Accept/Reject when pending; Next when later)
+// Sequence rail + two-button actions (Accept/Decline when pending; Next when later)
 // Now with real nearby drivers fetched from ENV_NEARBY_DRIVERS when READY + platform delivery
+// Also fetches per-driver ratings from DIVER_RATING_ENDPOINT and displays: driver name, vehicle type, and rating.
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import {
@@ -14,7 +15,8 @@ import * as SecureStore from 'expo-secure-store';
 import { DeviceEventEmitter } from 'react-native';
 import {
   UPDATE_ORDER_STATUS_ENDPOINT as ENV_UPDATE_ORDER,
-  NEARBY_DRIVERS_ENDPOINT as ENV_NEARBY_DRIVERS, // 👈 from .env
+  NEARBY_DRIVERS_ENDPOINT as ENV_NEARBY_DRIVERS,   // 👈 from .env
+  DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING,      // 👈 from .env (spelled DIVER_ in your .env)
 } from '@env';
 
 /* ---------------- Money + utils ---------------- */
@@ -36,9 +38,9 @@ const STATUS_META = {
   READY:             { label: 'Ready',     color: '#2563eb', bg: '#dbeafe', border: '#bfdbfe', icon: 'cube-outline' },
   OUT_FOR_DELIVERY:  { label: 'Out for delivery', color: '#f59e0b', bg: '#fef3c7', border: '#fde68a', icon: 'bicycle-outline' },
   COMPLETED:         { label: 'Delivered', color: '#047857', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-done-outline' },
-  CANCELLED:         { label: 'Rejected',  color: '#b91c1c', bg: '#fee2e2', border: '#fecaca', icon: 'close-circle-outline' },
+  DECLINED:          { label: 'Declined',  color: '#b91c1c', bg: '#fee2e2', border: '#fecaca', icon: 'close-circle-outline' },
 };
-const TERMINAL_NEGATIVE = new Set(['CANCELLED']);
+const TERMINAL_NEGATIVE = new Set(['DECLINED']);
 const TERMINAL_SUCCESS  = new Set(['COMPLETED']);
 
 /* ---------------- Order code + endpoints ---------------- */
@@ -92,8 +94,8 @@ async function updateStatusApi({ endpoint, orderCode, payload, token }) {
 }
 
 /* ---------------- Nearby drivers ---------------- */
-// We allow ENV_NEARBY_DRIVERS to be a full URL with query params, or a template
-// like "...?cityId={city}&lng={lng}&lat={lat}&radiusKm=5&limit=20".
+// Accepts either a full URL with query params OR a template like
+// "...?cityId={cityId}&lng={lng}&lat={lat}&radiusKm={radiusKm}&limit={limit}"
 const expandNearbyUrl = (baseUrl, { cityId, lat, lng, radiusKm, limit }) => {
   const clean = String(baseUrl || '').trim();
   if (!clean) return null;
@@ -118,9 +120,47 @@ const expandNearbyUrl = (baseUrl, { cityId, lat, lng, radiusKm, limit }) => {
     if (!url.searchParams.get('limit') && limit != null) url.searchParams.set('limit', String(limit));
     return url.toString();
   } catch {
-    // base might be partial; fall back to the templated string
     return u;
   }
+};
+
+/* ---------------- Driver rating endpoint helpers ---------------- */
+const buildDriverRatingUrl = (baseUrl, driverId) => {
+  if (!baseUrl || !driverId) return null;
+  let u = String(baseUrl).trim();
+  u = u
+    .replace(/\{driver_id\}/gi, encodeURIComponent(driverId))
+    .replace(/:driver_id/gi, encodeURIComponent(driverId));
+  // If no template existed, try to append ?driver_id=...
+  try {
+    const url = new URL(u);
+    if (!url.searchParams.get('driver_id')) url.searchParams.set('driver_id', String(driverId));
+    if (!url.searchParams.get('limit')) url.searchParams.set('limit', '20');
+    if (!url.searchParams.get('offset')) url.searchParams.set('offset', '0');
+    return url.toString();
+  } catch {
+    return u;
+  }
+};
+
+// Robustly compute average rating from unknown shapes
+const computeAverageRating = (payload) => {
+  let arr = [];
+  if (!payload) return null;
+  if (Array.isArray(payload)) arr = payload;
+  else if (Array.isArray(payload?.data)) arr = payload.data;
+  else if (Array.isArray(payload?.ratings)) arr = payload.ratings;
+  else if (Array.isArray(payload?.items)) arr = payload.items;
+
+  const vals = arr
+    .map((r) => r?.rating ?? r?.score ?? r?.stars ?? r?.value ?? null)
+    .filter((v) => v != null)
+    .map(Number)
+    .filter((n) => !Number.isNaN(n));
+
+  if (!vals.length) return null;
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+  return Math.round(avg * 10) / 10; // one decimal
 };
 
 /* ---------------- Tiny UI atoms ---------------- */
@@ -173,8 +213,8 @@ export default function OrderDetails() {
 
   const [order, setOrder] = useState(orderProp || {});
   const [updating, setUpdating] = useState(false);
-  const [rejectOpen, setRejectOpen] = useState(false);
-  const [rejectReason, setRejectReason] = useState('');
+  const [declineOpen, setDeclineOpen] = useState(false);
+  const [declineReason, setDeclineReason] = useState('');
 
   // Detect owner type robustly (route param takes priority)
   const ownerTypeRaw =
@@ -182,24 +222,46 @@ export default function OrderDetails() {
       order?.ownerType ?? order?.owner_type ?? '').toString().toLowerCase();
   const isMartOwner = ownerTypeRaw === 'mart'; // Food = default when false
 
-  // delivery mode detection
+  /* ---------- Fulfillment / delivery mode detection (self vs platform) ---------- */
+  // Strong detector for "self" fulfillment across multiple possible fields
+  const isSelfFulfillment = useMemo(() => {
+    const candidates = [
+      params.fulfillment_type, params.fulfillmentType,
+      order?.fulfillment_type, order?.fulfillmentType,
+      order?.delivery_option, order?.delivery_type, order?.type,
+    ].map((v) => norm(v ?? ''));
+    // Treat common spellings/aliases as self
+    return candidates.some((s) =>
+      s === 'self' ||
+      s === 'self-delivery' || s === 'self_delivery' || s === 'selfdelivery' ||
+      s === 'self-pickup'   || s === 'self_pickup'   || s === 'selfpickup' ||
+      s === 'pickup'
+    );
+  }, [params.fulfillment_type, params.fulfillmentType, order?.fulfillment_type, order?.fulfillmentType, order?.delivery_option, order?.delivery_type, order?.type]);
+
   const deliveryMode = useMemo(() => {
+    if (isSelfFulfillment) return 'self';
     const s = norm(order?.delivery_option ?? order?.delivery_type ?? order?.type ?? '');
-    if (!s) return '';
-    if (s.includes('self')) return 'self';
-    if (s.includes('grab') || s.includes('platform') || s.includes('delivery')) return 'grab';
-    return s;
-  }, [order]);
+    if (s.includes('grab') || s.includes('platform')) return 'grab';
+    if (s.includes('delivery')) return 'grab'; // generic "Delivery" → assume platform if not self
+    return s || '';
+  }, [order, isSelfFulfillment]);
+
   const isPlatformDelivery = deliveryMode === 'grab';
 
-  // Dynamic sequence: remove PREPARING for mart; keep it for food
-  const STATUS_SEQUENCE = useMemo(
-    () =>
-      isMartOwner
-        ? ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
-        : ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'],
-    [isMartOwner]
-  );
+  // 🔁 Dynamic sequence:
+  // - SELF (both Food & Mart): only Pending → Confirmed → Ready
+  // - Mart: skip Preparing
+  // - Food: full flow
+  const STATUS_SEQUENCE = useMemo(() => {
+    if (isSelfFulfillment) {
+      return ['PENDING', 'CONFIRMED', 'READY'];
+    }
+    if (isMartOwner) {
+      return ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
+    }
+    return ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
+  }, [isMartOwner, isSelfFulfillment]);
 
   // Compute next step from the dynamic sequence
   const nextFor = useCallback(
@@ -208,7 +270,14 @@ export default function OrderDetails() {
       if (TERMINAL_NEGATIVE.has(s) || TERMINAL_SUCCESS.has(s)) return null;
 
       // If backend sends PREPARING but mart flow hides it, jump to READY
-      if (isMartOwner && s === 'PREPARING') return 'READY';
+      if (!isSelfFulfillment && isMartOwner && s === 'PREPARING') return 'READY';
+
+      // SELF-fulfillment: only allow up to READY; nothing after
+      if (isSelfFulfillment) {
+        if (s === 'PENDING') return 'CONFIRMED';
+        if (s === 'CONFIRMED') return 'READY';
+        return null;
+      }
 
       // IMPORTANT: Gate READY → OUT_FOR_DELIVERY behind driver acceptance when platform delivery
       if (s === 'READY' && isPlatformDelivery) return null;
@@ -220,7 +289,7 @@ export default function OrderDetails() {
       }
       return STATUS_SEQUENCE[idx + 1] || null;
     },
-    [STATUS_SEQUENCE, isMartOwner, isPlatformDelivery]
+    [STATUS_SEQUENCE, isMartOwner, isPlatformDelivery, isSelfFulfillment]
   );
 
   useEffect(() => {
@@ -265,7 +334,7 @@ export default function OrderDetails() {
     return String(n || '').trim();
   }, [order]);
 
-  // Auto-reason strings to satisfy backend validator for non-rejection updates
+  // Auto-reason strings to satisfy backend validator for non-decline updates
   const DEFAULT_REASON = {
     CONFIRMED: 'Order accepted by merchant',
     PREPARING: 'Order is being prepared',
@@ -278,17 +347,17 @@ export default function OrderDetails() {
     try {
       let payload;
 
-      if (newStatus === 'CANCELLED') {
-        // Only rejection requires a typed reason
+      if (newStatus === 'DECLINED') {
+        // Only decline requires a typed reason
         const r = String(opts?.reason ?? '').trim();
         if (r.length < 3) {
-          setRejectOpen(true);
-          Alert.alert('Reason required', 'Please provide at least 3 characters explaining why the order is rejected.');
+          setDeclineOpen(true);
+          Alert.alert('Reason required', 'Please provide at least 3 characters explaining why the order is declined.');
           return;
         }
         payload = {
-          status: 'CANCELLED',
-          reason: `Merchant rejected: ${r}`,
+          status: 'DECLINED',
+          reason: `Merchant declined: ${r}`,
         };
       } else {
         // Accept/Next transitions → include an auto-reason to pass backend validation
@@ -331,25 +400,25 @@ export default function OrderDetails() {
     doUpdate(next); // Accept/Next → no reason prompt
   }, [next, updating, doUpdate]);
 
-  const onReject = () => setRejectOpen(true);
+  const onDecline = () => setDeclineOpen(true);
 
-  const confirmReject = () => {
-    const r = String(rejectReason).trim();
+  const confirmDecline = () => {
+    const r = String(declineReason).trim();
     if (r.length < 3) {
       Alert.alert('Reason required', 'Please type a brief reason (min 3 characters).');
       return;
     }
-    setRejectOpen(false);
-    doUpdate('CANCELLED', { reason: r });
-    setRejectReason('');
+    setDeclineOpen(false);
+    doUpdate('DECLINED', { reason: r });
+    setDeclineReason('');
   };
 
-  const canReject = String(rejectReason).trim().length >= 3;
+  const canDecline = String(declineReason).trim().length >= 3;
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
-  /* ─────────────── Nearby drivers (REAL API) ─────────────── */
-  const [drivers, setDrivers] = useState([]);
+  /* ─────────────── Nearby drivers (REAL API) + ratings ─────────────── */
+  const [drivers, setDrivers] = useState([]);             // [{id,name,vehicle_type,distance_km,rating}]
   const [loadingDrivers, setLoadingDrivers] = useState(false);
   const [driversError, setDriversError] = useState('');
   const [offerPendingDriver, setOfferPendingDriver] = useState(null);
@@ -388,6 +457,24 @@ export default function OrderDetails() {
     });
   }, [refCoords]);
 
+  const fetchDriverRating = useCallback(async (driverId) => {
+    try {
+      if (!ENV_DRIVER_RATING) return null;
+      const url = buildDriverRatingUrl(ENV_DRIVER_RATING, driverId);
+      if (!url) return null;
+
+      const resp = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
+      const text = await resp.text();
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch { /* ignore */ }
+      if (!resp.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
+      return computeAverageRating(json);
+    } catch (e) {
+      console.warn('[Driver rating] failed for driver', driverId, e?.message);
+      return null;
+    }
+  }, []);
+
   const fetchNearbyDrivers = useCallback(async () => {
     if (!(status === 'READY' && isPlatformDelivery)) return;
     const url = buildNearby();
@@ -405,31 +492,51 @@ export default function OrderDetails() {
 
       if (!resp.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
 
-      // Accept a few possible response shapes:
-      // { success:true, data:[...] } | { drivers:[...] } | [...]
+      // Your provided shape:
+      // { drivers: [{ id, status, user: {...}, driver: {...} }], searched_keys: [...] }
+      // Also support generic shapes.
       let arr = [];
-      if (Array.isArray(json)) arr = json;
+      if (Array.isArray(json?.drivers)) arr = json.drivers;
       else if (Array.isArray(json?.data)) arr = json.data;
-      else if (Array.isArray(json?.drivers)) arr = json.drivers;
+      else if (Array.isArray(json)) arr = json;
       else throw new Error('Unexpected driver API response');
 
-      // Normalize minimal fields
-      const normArr = arr.map((d, i) => ({
-        id: d.id ?? d.driver_id ?? d._id ?? i,
-        name: d.name ?? d.full_name ?? 'Driver',
-        distance_km: d.distance_km ?? d.distance ?? null,
-        vehicle_type: d.vehicle_type ?? d.vehicle ?? 'Bike',
-        rating: d.rating ?? d.avg_rating ?? null,
-      }));
+      // Normalize minimal fields (prefer nested names)
+      const normalized = arr.map((d, i) => {
+        const driverNode = d.driver || {};
+        const userNode = d.user || {};
+        return {
+          id: d.id ?? driverNode.id ?? userNode.id ?? i,                    // unique card key
+          driver_id: driverNode.id ?? d.driver_id ?? null,                  // for ratings endpoint
+          name: userNode.user_name ?? userNode.name ?? d.name ?? 'Driver',  // display name
+          vehicle_type: driverNode.vehicle_type ?? d.vehicle_type ?? d.vehicle ?? 'Bike',
+          distance_km: d.distance_km ?? d.distance ?? null,
+          rating: null, // will fill after rating fetch
+        };
+      });
 
-      setDrivers(normArr);
+      // Fetch ratings in parallel (limit to top 12 to keep it snappy)
+      const top = normalized.slice(0, 12);
+      const ratings = await Promise.all(
+        top.map(async (d) => {
+          const idForRating = d.driver_id || d.id; // prefer "driver table id"
+          const avg = idForRating ? await fetchDriverRating(idForRating) : null;
+          return avg;
+        })
+      );
+
+      top.forEach((d, idx) => { d.rating = ratings[idx]; });
+
+      // merge rated top with the rest
+      const merged = top.concat(normalized.slice(12));
+      setDrivers(merged);
     } catch (e) {
       setDrivers([]);
       setDriversError(String(e?.message || e));
     } finally {
       setLoadingDrivers(false);
     }
-  }, [status, isPlatformDelivery, buildNearby]);
+  }, [status, isPlatformDelivery, buildNearby, fetchDriverRating]);
 
   // load real drivers when we land on READY (and city/coords changes)
   useEffect(() => {
@@ -506,7 +613,7 @@ export default function OrderDetails() {
               const fill = done;
 
               let ring = '#cbd5e1';
-              if (isTerminalNegative) ring = isActiveStep ? (STATUS_META.CANCELLED.color) : '#cbd5e1';
+              if (isTerminalNegative) ring = isActiveStep ? (STATUS_META.DECLINED.color) : '#cbd5e1';
               else if (isTerminalSuccess) ring = '#16a34a';
               else ring = (done || isActiveStep) ? '#16a34a' : '#cbd5e1';
 
@@ -528,12 +635,12 @@ export default function OrderDetails() {
             })}
           </View>
 
-          {/* Terminal info (only for Rejected) */}
+          {/* Terminal info (only for Declined) */}
           {isTerminalNegative ? (
             <View style={styles.terminalRow}>
-              <Ionicons name="information-circle-outline" size={16} color={STATUS_META.CANCELLED.color} />
-              <Text style={[styles.terminalText, { color: STATUS_META.CANCELLED.color }]}>
-                Flow ended: {STATUS_META.CANCELLED.label}
+              <Ionicons name="information-circle-outline" size={16} color={STATUS_META.DECLINED.color} />
+              <Text style={[styles.terminalText, { color: STATUS_META.DECLINED.color }]}>
+                Flow ended: {STATUS_META.DECLINED.label}
               </Text>
             </View>
           ) : null}
@@ -541,7 +648,7 @@ export default function OrderDetails() {
           {/* Meta */}
           <View style={{ marginTop: 12, gap: 8 }}>
             <Row icon="person-outline" text={`${order.customer_name || '—'}${order.customer_phone ? ` • ${order.customer_phone}` : ''}`} />
-            <Row icon="bicycle-outline" text={`Type: ${order.type || order.delivery_option || '—'}`} />
+            <Row icon="bicycle-outline" text={`Type: ${order.type || order.delivery_option || order.fulfillment_type || '—'}`} />
             <Row icon="card-outline" text={`Payment: ${order.payment_method || '—'}`} />
             <Row icon="navigate-outline" text={order.delivery_address || '—'} />
           </View>
@@ -555,7 +662,9 @@ export default function OrderDetails() {
           )}
         </View>
 
-        {/* Update actions — Accept/Reject only when PENDING; otherwise Next (READY is gated for platform delivery) */}
+        {/* Update actions — Accept/Decline only when PENDING; otherwise Next
+            - On READY + platform delivery: need driver assignment (no manual Next)
+            - On SELF: there is no Next after READY */}
         <Text style={styles.sectionTitle}>Update status</Text>
         {isTerminalNegative || isTerminalSuccess ? (
           <Text style={styles.terminalNote}>No further actions.</Text>
@@ -573,18 +682,17 @@ export default function OrderDetails() {
                 </Pressable>
 
                 <Pressable
-                  onPress={onReject}
+                  onPress={onDecline}
                   disabled={updating}
                   style={({ pressed }) => [styles.secondaryBtn, { borderColor: '#ef4444', opacity: updating || pressed ? 0.85 : 1 }]}
                 >
                   <Ionicons name="close-circle-outline" size={18} color="#b91c1c" />
-                  <Text style={[styles.secondaryBtnText, { color: '#991b1b' }]}>Reject</Text>
+                  <Text style={[styles.secondaryBtnText, { color: '#991b1b' }]}>Decline</Text>
                 </Pressable>
               </>
             ) : (
               <>
-                {/* On READY + platform delivery: hide manual "Next" (we need driver assignment) */}
-                {(status !== 'READY' || !isPlatformDelivery) && primaryLabel ? (
+                {(status !== 'READY' || !isPlatformDelivery) && !isSelfFulfillment && primaryLabel ? (
                   <Pressable
                     onPress={onPrimaryAction}
                     disabled={updating}
@@ -594,19 +702,26 @@ export default function OrderDetails() {
                     <Text style={styles.primaryBtnText}>{primaryLabel}</Text>
                   </Pressable>
                 ) : (
-                  status === 'READY' && isPlatformDelivery ? (
-                    <Text style={{ color: '#64748b', fontWeight: '600' }}>
-                      Assign a driver below to continue…
-                    </Text>
-                  ) : null
+                  <>
+                    {status === 'READY' && isPlatformDelivery && !isSelfFulfillment ? (
+                      <Text style={{ color: '#64748b', fontWeight: '600' }}>
+                        Assign a driver below to continue…
+                      </Text>
+                    ) : null}
+                    {isSelfFulfillment && status === 'READY' ? (
+                      <Text style={{ color: '#64748b', fontWeight: '600' }}>
+                        Ready for Self-Pickup.
+                      </Text>
+                    ) : null}
+                  </>
                 )}
               </>
             )}
           </View>
         )}
 
-        {/* 🔸 Nearby Driver assignment panel (REAL API) — only READY + platform delivery */}
-        {status === 'READY' && isPlatformDelivery && (
+        {/* 🔸 Nearby Driver assignment panel (REAL API) — only READY + platform delivery (never for self) */}
+        {status === 'READY' && isPlatformDelivery && !isSelfFulfillment && (
           <View style={styles.block}>
             <RowTitle title="Nearby drivers" />
             <View style={{ marginTop: 8 }} />
@@ -645,11 +760,12 @@ export default function OrderDetails() {
                 {drivers.map((d) => (
                   <View key={String(d.id)} style={styles.driverRow}>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.driverName}>{d.name}</Text>
-                      <Text style={styles.driverMeta}>
-                        {d.distance_km != null ? `${Number(d.distance_km).toFixed(1)} km • ` : ''}
+                      {/* Driver name, rating and vehicle type */}
+                      <Text style={styles.driverName} numberOfLines={1}>{d.name}</Text>
+                      <Text style={styles.driverMeta} numberOfLines={1}>
+                        {d.rating != null ? `★ ${Number(d.rating).toFixed(1)} • ` : '★ — • '}
                         {d.vehicle_type || '—'}
-                        {d.rating ? ` • ★ ${Number(d.rating).toFixed(1)}` : ''}
+                        {d.distance_km != null ? ` • ${Number(d.distance_km).toFixed(1)} km` : ''}
                       </Text>
                     </View>
 
@@ -715,40 +831,40 @@ export default function OrderDetails() {
         </View>
       </ScrollView>
 
-      {/* Reject modal */}
-      <Modal visible={rejectOpen} transparent animationType="fade" onRequestClose={() => setRejectOpen(false)}>
+      {/* Decline modal */}
+      <Modal visible={declineOpen} transparent animationType="fade" onRequestClose={() => setDeclineOpen(false)}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Reject order</Text>
+            <Text style={styles.modalTitle}>Decline order</Text>
             <Text style={styles.modalSub}>
               A reason is required:
             </Text>
             <TextInput
               style={styles.input}
               placeholder="Reason (min 3 characters)"
-              value={rejectReason}
-              onChangeText={setRejectReason}
+              value={declineReason}
+              onChangeText={setDeclineReason}
               multiline
             />
-            <Text style={{ fontSize: 11, color: canReject ? '#16a34a' : '#ef4444', marginTop: 6 }}>
-              {canReject ? 'Looks good.' : 'Please enter at least 3 characters.'}
+            <Text style={{ fontSize: 11, color: canDecline ? '#16a34a' : '#ef4444', marginTop: 6 }}>
+              {canDecline ? 'Looks good.' : 'Please enter at least 3 characters.'}
             </Text>
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
               <Pressable
                 style={[styles.dialogBtn, { backgroundColor: '#f1f5f9' }]}
-                onPress={() => { setRejectOpen(false); }}
+                onPress={() => { setDeclineOpen(false); }}
               >
                 <Text style={[styles.dialogBtnText, { color: '#0f172a' }]}>Cancel</Text>
               </Pressable>
               <Pressable
                 style={({ pressed }) => [
                   styles.dialogBtn,
-                  { backgroundColor: canReject ? '#ef4444' : '#fecaca', opacity: pressed ? 0.85 : 1 },
+                  { backgroundColor: canDecline ? '#ef4444' : '#fecaca', opacity: pressed ? 0.85 : 1 },
                 ]}
-                onPress={confirmReject}
-                disabled={!canReject}
+                onPress={confirmDecline}
+                disabled={!canDecline}
               >
-                <Text style={[styles.dialogBtnText, { color: canReject ? '#fff' : '#7f1d1d' }]}>Reject</Text>
+                <Text style={[styles.dialogBtnText, { color: canDecline ? '#fff' : '#7f1d1d' }]}>Decline</Text>
               </Pressable>
             </View>
           </View>

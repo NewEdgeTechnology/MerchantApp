@@ -11,32 +11,35 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import Ionicons from "react-native-vector-icons/Ionicons";
+// Keep Ionicons consistent with the rest of the app
+import { Ionicons } from "@expo/vector-icons";
 import HeaderWithSteps from "./HeaderWithSteps";
 import { SEND_OTP_ENDPOINT } from "@env";
 
-// ✨ Explicit edit targets
+/* ───────────────────────── Routes ───────────────────────── */
 const EDIT_SIGNUP_ROUTE = "SignupScreen";
 const EDIT_PHONE_ROUTE = "PhoneNumberScreen";
 const EDIT_BUSINESS_ROUTE = "MerchantRegistrationScreen";
 const EDIT_BANK_ROUTE = "BankPaymentInfoScreen";
 const EDIT_DELIVERY_ROUTE = "DeliveryOptionsScreen";
-
-// ⬇️ redirect to email OTP screen after submit
 const NEXT_ROUTE = "EmailOtpVerificationScreen";
 
-/* ---------------- Normalizers ---------------- */
-
+/* ─────────────────────── Normalizers ─────────────────────── */
 const normalizeCategoryIds = (v) => {
   if (!v) return [];
   if (Array.isArray(v)) {
     return v
       .map((item) => {
-        if (typeof item === "object") {
-          const id = item.id ?? item.value ?? item.business_type_id ?? null;
+        if (item && typeof item === "object") {
+          const id =
+            item.id ??
+            item.value ??
+            item.business_type_id ??
+            item.businessTypeId ??
+            null;
           return id != null ? String(id).trim() : "";
         }
-        return String(item).trim();
+        return String(item ?? "").trim();
       })
       .filter(Boolean);
   }
@@ -47,21 +50,23 @@ const normalizeCategoryIds = (v) => {
       .filter(Boolean);
   }
   if (typeof v === "object") {
-    const id = v.id ?? v.value ?? v.business_type_id ?? null;
+    const id =
+      v.id ?? v.value ?? v.business_type_id ?? v.businessTypeId ?? null;
     return id != null && String(id).trim() ? [String(id).trim()] : [];
   }
   return [];
 };
 
-// Delivery option normalization
 const DELIVERY_ENUMS = ["self", "grab", "both"];
 const normalizeDeliveryOption = (val) => {
   if (val == null) return null;
   if (typeof val === "object") {
     const raw = val.value ?? val.id ?? val.key ?? val.code ?? val.type ?? null;
     if (raw != null) return normalizeDeliveryOption(raw);
+    return null;
   }
   if (typeof val === "number") {
+    // tolerate both 0/1/2 and 1/2/3 styles
     const by0 = { 0: "self", 1: "grab", 2: "both" }[val];
     const by1 = { 1: "self", 2: "grab", 3: "both" }[val];
     return by0 || by1 || null;
@@ -79,7 +84,7 @@ const deliveryDisplay = (norm) =>
   norm === "grab" ? "Grab Delivery" :
   norm === "both" ? "Both" : "—";
 
-/* ---------- File helpers (logo/license/QR presence) ---------- */
+/* ─────────────── File presence helpers (uri-ish) ─────────────── */
 const firstNonEmpty = (...vals) =>
   vals.find((v) => {
     if (v == null) return false;
@@ -93,15 +98,15 @@ const extractUriLike = (v) => {
   if (!v) return "";
   if (typeof v === "string") return v.trim();
   if (typeof v === "object") {
-    return (
-      v.uri?.trim?.() ||
-      v.url?.trim?.() ||
-      v.path?.trim?.() ||
-      v.file?.uri?.trim?.() ||
-      v.file?.url?.trim?.() ||
-      v.file?.path?.trim?.() ||
-      ""
-    );
+    const s =
+      (typeof v.uri === "string" && v.uri.trim()) ||
+      (typeof v.url === "string" && v.url.trim()) ||
+      (typeof v.path === "string" && v.path.trim()) ||
+      (typeof v.file?.uri === "string" && v.file.uri.trim()) ||
+      (typeof v.file?.url === "string" && v.file.url.trim()) ||
+      (typeof v.file?.path === "string" && v.file.path.trim()) ||
+      "";
+    return s;
   }
   return "";
 };
@@ -117,8 +122,7 @@ const isUploaded = (v) => {
   return !!uri;
 };
 
-/* ---------------- Component ---------------- */
-
+/* ───────────────────────── Component ───────────────────────── */
 export default function ReviewSubmitScreen() {
   const navigation = useNavigation();
   const route = useRoute();
@@ -131,7 +135,9 @@ export default function ReviewSubmitScreen() {
   } = route.params ?? {};
 
   const effectiveOwnerType = useMemo(() => {
-    return String(incomingOwnerType ?? merchant?.owner_type ?? serviceType ?? "food")
+    return String(
+      incomingOwnerType ?? merchant?.owner_type ?? serviceType ?? "food"
+    )
       .trim()
       .toLowerCase();
   }, [incomingOwnerType, merchant?.owner_type, serviceType]);
@@ -152,8 +158,10 @@ export default function ReviewSubmitScreen() {
     normalizedCategoryIds.length && Array.isArray(merchant?.categories)
       ? normalizedCategoryIds
           .map((id) => {
-            const found = merchant.categories.find((c) => String(c.id) === String(id));
-            return found ? found.name : id;
+            const found = merchant.categories.find(
+              (c) => String(c.id) === String(id)
+            );
+            return found ? (found.name ?? found.category_name ?? id) : id;
           })
           .join(", ")
       : normalizedCategoryIds.join(", ");
@@ -171,7 +179,7 @@ export default function ReviewSubmitScreen() {
     password: merchant?.password ?? "",
   };
 
-  // 🔍 resolve possible logo/license shapes/keys
+  // Resolve possible logo/license shapes/keys
   const businessLogoRaw = firstNonEmpty(
     merchant?.business_logo,
     merchant?.logo,
@@ -203,11 +211,17 @@ export default function ReviewSubmitScreen() {
     bank_qr: null,
   };
 
-  const maskedAccount = useMemo(() => maskAccount(bank?.account_number), [bank?.account_number]);
+  const maskedAccount = useMemo(
+    () => maskAccount(bank?.account_number),
+    [bank?.account_number]
+  );
 
   const handleSubmit = async () => {
     if (!agreeTerms) {
-      Alert.alert("Accept terms", "Please accept Terms & Conditions and Privacy Policy to continue.");
+      Alert.alert(
+        "Accept terms",
+        "Please accept Terms & Conditions and Privacy Policy to continue."
+      );
       return;
     }
     if (!business.email) {
@@ -218,8 +232,7 @@ export default function ReviewSubmitScreen() {
     try {
       setSubmitting(true);
 
-      // ✅ Send OTP only once here
-      const res = await fetch(SEND_OTP_ENDPOINT, {
+      const res = await fetch(String(SEND_OTP_ENDPOINT || "").trim(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: business.email }),
@@ -230,7 +243,7 @@ export default function ReviewSubmitScreen() {
         try {
           const data = await res.json();
           msg = data?.message || data?.error || msg;
-        } catch (_e) {}
+        } catch (_) {}
         throw new Error(msg);
       }
 
@@ -268,12 +281,11 @@ export default function ReviewSubmitScreen() {
         },
       };
 
-      // ✅ Navigate to OTP screen but prevent double sending
       navigation.navigate(NEXT_ROUTE, {
         ...(route.params ?? {}),
         email: business.email,
         otpType: "email_verification",
-        skipAutoSend: true, // 👈 prevent resend on mount
+        skipAutoSend: true, // prevent resend on mount
         serviceType,
         owner_type: effectiveOwnerType,
         deliveryOption,
@@ -293,7 +305,6 @@ export default function ReviewSubmitScreen() {
     }
   };
 
-  // Jump to edit routes
   const jumpTo = (routeName) => {
     const common = {
       ...(route.params ?? {}),
@@ -366,9 +377,13 @@ export default function ReviewSubmitScreen() {
         <Text style={styles.h1}>Review &amp; Submit</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.lead}>
-          Please review your details before submitting. You can edit any section if needed.
+          Please review your details before submitting. You can edit any section
+          if needed.
         </Text>
 
         <Section
@@ -381,7 +396,9 @@ export default function ReviewSubmitScreen() {
               business.password ? (
                 <View style={styles.secretRow}>
                   <Text style={styles.secretText}>
-                    {showPassword ? business.password : maskPassword(business.password)}
+                    {showPassword
+                      ? business.password
+                      : maskPassword(business.password)}
                   </Text>
                   <TouchableOpacity
                     onPress={() => setShowPassword((v) => !v)}
@@ -419,10 +436,11 @@ export default function ReviewSubmitScreen() {
             [
               "Coordinates",
               business.latitude && business.longitude
-                ? `${Number(business.latitude).toFixed(5)}, ${Number(business.longitude).toFixed(5)}`
+                ? `${Number(business.latitude).toFixed(5)}, ${Number(
+                    business.longitude
+                  ).toFixed(5)}`
                 : "—",
             ],
-            // 👇 New: show uploaded flags like Bank QR
             ["Business logo", businessLogoUploaded ? "Uploaded" : "—"],
             ["Business license", businessLicenseUploaded ? "Uploaded" : "—"],
           ]}
@@ -462,7 +480,14 @@ export default function ReviewSubmitScreen() {
               ),
             ],
             ["Bank name", bank?.bank_name || "—"],
-            ["Bank QR", bank?.bank_qr?.uri || bank?.bank_qr?.url || bank?.bank_qr?.path ? "Uploaded" : "—"],
+            [
+              "Bank QR",
+              bank?.bank_qr?.uri ||
+              bank?.bank_qr?.url ||
+              bank?.bank_qr?.path
+                ? "Uploaded"
+                : "—",
+            ],
           ]}
         />
 
@@ -473,15 +498,27 @@ export default function ReviewSubmitScreen() {
             onPress={() => setAgreeTerms((v) => !v)}
             activeOpacity={0.9}
           >
-            {agreeTerms ? <Ionicons name="checkmark" size={16} color="#000" /> : null}
+            {agreeTerms ? (
+              <Ionicons name="checkmark" size={16} color="#000" />
+            ) : null}
           </TouchableOpacity>
           <Text style={styles.agreeText}>
             I accept the{" "}
-            <Text style={styles.link} onPress={() => Alert.alert("Terms & Conditions", "Open Terms screen in your app.")}>
+            <Text
+              style={styles.link}
+              onPress={() =>
+                Alert.alert("Terms & Conditions", "Open Terms screen in your app.")
+              }
+            >
               Terms &amp; Conditions
             </Text>{" "}
             and{" "}
-            <Text style={styles.link} onPress={() => Alert.alert("Privacy Policy", "Open Privacy screen in your app.")}>
+            <Text
+              style={styles.link}
+              onPress={() =>
+                Alert.alert("Privacy Policy", "Open Privacy screen in your app.")
+              }
+            >
               Privacy Policy
             </Text>
             .
@@ -500,18 +537,24 @@ export default function ReviewSubmitScreen() {
           {submitting ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={agreeTerms ? styles.btnPrimaryText : styles.btnPrimaryTextDisabled}>
+            <Text
+              style={
+                agreeTerms ? styles.btnPrimaryText : styles.btnPrimaryTextDisabled
+              }
+            >
               Submit
             </Text>
           )}
         </TouchableOpacity>
-        <Text style={styles.subNote}>Your account will enter verification after submission.</Text>
+        <Text style={styles.subNote}>
+          Your account will enter verification after submission.
+        </Text>
       </View>
     </SafeAreaView>
   );
 }
 
-/* ---------- Helper Components ---------- */
+/* ─────────────────── Helper Components ─────────────────── */
 function Section({ title, rows, onEdit }) {
   return (
     <View style={styles.card}>
@@ -547,32 +590,96 @@ function maskAccount(acc = "") {
 
 function maskPassword(pw = "") {
   if (!pw) return "";
-  return "•".repeat(Math.min(Math.max(pw.length, 6), 12));
+  const len = Math.min(Math.max(pw.length, 6), 12);
+  return "•".repeat(len);
 }
 
-/* ---------- Styles ---------- */
+/* ───────────────────────── Styles ───────────────────────── */
 const styles = StyleSheet.create({
-  fixedTitle: { backgroundColor: "#fff", paddingHorizontal: 20, borderBottomColor: "#fff" },
+  fixedTitle: {
+    backgroundColor: "#fff",
+    paddingHorizontal: 20,
+    borderBottomColor: "#fff",
+  },
   h1: { fontSize: 22, fontWeight: "bold", color: "#1A1D1F", marginBottom: 16 },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 130 },
   lead: { fontSize: 13, color: "#6b7280", marginBottom: 10 },
-  card: { borderWidth: 1, borderColor: "#e5e7eb", borderRadius: 14, backgroundColor: "#fff", padding: 14, marginTop: 12 },
-  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
+
+  card: {
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    padding: 14,
+    marginTop: 12,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
   cardTitle: { fontSize: 16, fontWeight: "700", color: "#111827" },
   editBtn: { fontSize: 13, fontWeight: "700", color: "#00b14f" },
-  row: { flexDirection: "row", borderTopWidth: 1, borderTopColor: "#F3F4F6", paddingVertical: 8, gap: 10 },
+
+  row: {
+    flexDirection: "row",
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
+    paddingVertical: 8,
+    gap: 10,
+  },
   rowLabel: { width: 130, fontSize: 13, color: "#6B7280" },
   rowValue: { flex: 1, fontSize: 14, color: "#111827", fontWeight: "600" },
-  secretRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", flex: 1, gap: 10 },
+
+  secretRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flex: 1,
+    gap: 10,
+  },
   secretText: { flex: 1, fontSize: 14, color: "#111827", fontWeight: "600" },
-  submitContainer: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: "#fff", padding: 16, borderTopWidth: 1, borderTopColor: "#e5e7eb" },
-  btnPrimary: { backgroundColor: "#00b14f", paddingVertical: 14, borderRadius: 30, alignItems: "center", justifyContent: "center", elevation: 8 },
-  btnPrimaryDisabled: { backgroundColor: "#eee", paddingVertical: 14, borderRadius: 30, alignItems: "center", justifyContent: "center" },
+
+  submitContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "#fff",
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+  },
+  btnPrimary: {
+    backgroundColor: "#00b14f",
+    paddingVertical: 14,
+    borderRadius: 30,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 8,
+  },
+  btnPrimaryDisabled: {
+    backgroundColor: "#eee",
+    paddingVertical: 14,
+    borderRadius: 30,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   btnPrimaryText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   btnPrimaryTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
   subNote: { textAlign: "center", fontSize: 12, color: "#6B7280" },
+
   agreeWrap: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
-  checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: "#000", alignItems: "center", justifyContent: "center" },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#000",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   checkboxChecked: { backgroundColor: "#EAF8EE" },
   agreeText: { flex: 1, color: "#374151", fontSize: 13 },
   link: { color: "#417fa2ff", fontWeight: "700" },
