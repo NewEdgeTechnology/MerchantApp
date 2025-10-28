@@ -2,6 +2,7 @@
 // Sequence rail + two-button actions (Accept/Decline when pending; Next when later)
 // Now with real nearby drivers fetched from ENV_NEARBY_DRIVERS when READY + platform delivery
 // Also fetches per-driver ratings from DIVER_RATING_ENDPOINT and displays: driver name, vehicle type, and rating.
+// UPDATE: Hydrate from grouped orders endpoint when launched from Notifications.
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import {
@@ -15,8 +16,8 @@ import * as SecureStore from 'expo-secure-store';
 import { DeviceEventEmitter } from 'react-native';
 import {
   UPDATE_ORDER_STATUS_ENDPOINT as ENV_UPDATE_ORDER,
-  NEARBY_DRIVERS_ENDPOINT as ENV_NEARBY_DRIVERS,   // 👈 from .env
-  DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING,      // 👈 from .env (spelled DIVER_ in your .env)
+  NEARBY_DRIVERS_ENDPOINT as ENV_NEARBY_DRIVERS,
+  DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING,
 } from '@env';
 
 /* ---------------- Money + utils ---------------- */
@@ -34,7 +35,6 @@ const fmtStamp = (iso) => {
 const STATUS_META = {
   PENDING:           { label: 'Pending',   color: '#0ea5e9', bg: '#e0f2fe', border: '#bae6fd', icon: 'time-outline' },
   CONFIRMED:         { label: 'Accepted',  color: '#16a34a', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-circle-outline' },
-  PREPARING:         { label: 'Preparing', color: '#6366f1', bg: '#eef2ff', border: '#c7d2fe', icon: 'restaurant-outline' },
   READY:             { label: 'Ready',     color: '#2563eb', bg: '#dbeafe', border: '#bfdbfe', icon: 'cube-outline' },
   OUT_FOR_DELIVERY:  { label: 'Out for delivery', color: '#f59e0b', bg: '#fef3c7', border: '#fde68a', icon: 'bicycle-outline' },
   COMPLETED:         { label: 'Delivered', color: '#047857', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-done-outline' },
@@ -44,16 +44,21 @@ const TERMINAL_NEGATIVE = new Set(['DECLINED']);
 const TERMINAL_SUCCESS  = new Set(['COMPLETED']);
 
 /* ---------------- Order code + endpoints ---------------- */
-// Accepts "ORD-64049678" or "64049678" → "ORD-64049678"
 const normalizeOrderCode = (raw) => {
   if (!raw) return null;
   const s = String(raw).trim();
   const digits = (s.match(/\d+/) || [])[0];
-  if (!digits) return s;
+  if (!digits) return s.toUpperCase();
   return `ORD-${digits}`;
 };
+const sameOrder = (a, b) => {
+  if (!a || !b) return false;
+  const A = normalizeOrderCode(a);
+  const B = normalizeOrderCode(b);
+  if (!A || !B) return false;
+  return A.replace(/\D/g, '') === B.replace(/\D/g, '');
+};
 
-// Build URL like: <ENV_UPDATE_ORDER>/<ORD-XXXX>/status
 const buildUpdateUrl = (base, orderCode) => {
   const clean = String(base || '').trim().replace(/\/+$/, '');
   if (!clean || !orderCode) return null;
@@ -94,13 +99,10 @@ async function updateStatusApi({ endpoint, orderCode, payload, token }) {
 }
 
 /* ---------------- Nearby drivers ---------------- */
-// Accepts either a full URL with query params OR a template like
-// "...?cityId={cityId}&lng={lng}&lat={lat}&radiusKm={radiusKm}&limit={limit}"
 const expandNearbyUrl = (baseUrl, { cityId, lat, lng, radiusKm, limit }) => {
   const clean = String(baseUrl || '').trim();
   if (!clean) return null;
 
-  // Template replacement pass
   let u = clean
     .replace(/\{city\}/gi, encodeURIComponent(cityId ?? 'thimphu'))
     .replace(/\{cityId\}/gi, encodeURIComponent(cityId ?? 'thimphu'))
@@ -110,7 +112,6 @@ const expandNearbyUrl = (baseUrl, { cityId, lat, lng, radiusKm, limit }) => {
     .replace(/\{radiusKm\}/gi, encodeURIComponent(radiusKm ?? '5'))
     .replace(/\{limit\}/gi, encodeURIComponent(limit ?? '20'));
 
-  // If not templated, try to append/patch query params
   try {
     const url = new URL(u);
     if (!url.searchParams.get('cityId') && cityId) url.searchParams.set('cityId', cityId);
@@ -131,7 +132,6 @@ const buildDriverRatingUrl = (baseUrl, driverId) => {
   u = u
     .replace(/\{driver_id\}/gi, encodeURIComponent(driverId))
     .replace(/:driver_id/gi, encodeURIComponent(driverId));
-  // If no template existed, try to append ?driver_id=...
   try {
     const url = new URL(u);
     if (!url.searchParams.get('driver_id')) url.searchParams.set('driver_id', String(driverId));
@@ -143,7 +143,6 @@ const buildDriverRatingUrl = (baseUrl, driverId) => {
   }
 };
 
-// Robustly compute average rating from unknown shapes
 const computeAverageRating = (payload) => {
   let arr = [];
   if (!payload) return null;
@@ -160,7 +159,7 @@ const computeAverageRating = (payload) => {
 
   if (!vals.length) return null;
   const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-  return Math.round(avg * 10) / 10; // one decimal
+  return Math.round(avg * 10) / 10;
 };
 
 /* ---------------- Tiny UI atoms ---------------- */
@@ -210,6 +209,8 @@ export default function OrderDetails() {
   const params = route?.params ?? {};
   const orderProp = params.order ?? null;
   const routeOrderId = params.orderId ?? null; // may be "ORD-..." or just digits
+  const ordersGroupedUrl = params.ordersGroupedUrl ?? null; // 👈 from Notifications
+  const businessId = params.businessId ?? null;
 
   const [order, setOrder] = useState(orderProp || {});
   const [updating, setUpdating] = useState(false);
@@ -222,15 +223,13 @@ export default function OrderDetails() {
       order?.ownerType ?? order?.owner_type ?? '').toString().toLowerCase();
   const isMartOwner = ownerTypeRaw === 'mart'; // Food = default when false
 
-  /* ---------- Fulfillment / delivery mode detection (self vs platform) ---------- */
-  // Strong detector for "self" fulfillment across multiple possible fields
+  /* ---------- Fulfillment / delivery mode detection ---------- */
   const isSelfFulfillment = useMemo(() => {
     const candidates = [
       params.fulfillment_type, params.fulfillmentType,
       order?.fulfillment_type, order?.fulfillmentType,
       order?.delivery_option, order?.delivery_type, order?.type,
     ].map((v) => norm(v ?? ''));
-    // Treat common spellings/aliases as self
     return candidates.some((s) =>
       s === 'self' ||
       s === 'self-delivery' || s === 'self_delivery' || s === 'selfdelivery' ||
@@ -243,16 +242,13 @@ export default function OrderDetails() {
     if (isSelfFulfillment) return 'self';
     const s = norm(order?.delivery_option ?? order?.delivery_type ?? order?.type ?? '');
     if (s.includes('grab') || s.includes('platform')) return 'grab';
-    if (s.includes('delivery')) return 'grab'; // generic "Delivery" → assume platform if not self
+    if (s.includes('delivery')) return 'grab';
     return s || '';
   }, [order, isSelfFulfillment]);
 
   const isPlatformDelivery = deliveryMode === 'grab';
 
   // 🔁 Dynamic sequence:
-  // - SELF (both Food & Mart): only Pending → Confirmed → Ready
-  // - Mart: skip Preparing
-  // - Food: full flow
   const STATUS_SEQUENCE = useMemo(() => {
     if (isSelfFulfillment) {
       return ['PENDING', 'CONFIRMED', 'READY'];
@@ -260,26 +256,22 @@ export default function OrderDetails() {
     if (isMartOwner) {
       return ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
     }
-    return ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
+    return ['PENDING', 'CONFIRMED','READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
   }, [isMartOwner, isSelfFulfillment]);
 
-  // Compute next step from the dynamic sequence
   const nextFor = useCallback(
     (curr) => {
       const s = (curr || '').toUpperCase();
       if (TERMINAL_NEGATIVE.has(s) || TERMINAL_SUCCESS.has(s)) return null;
 
-      // If backend sends PREPARING but mart flow hides it, jump to READY
-      if (!isSelfFulfillment && isMartOwner && s === 'PREPARING') return 'READY';
+      if (!isSelfFulfillment && isMartOwner && s === 'CONFIRMED') return 'READY';
 
-      // SELF-fulfillment: only allow up to READY; nothing after
       if (isSelfFulfillment) {
         if (s === 'PENDING') return 'CONFIRMED';
         if (s === 'CONFIRMED') return 'READY';
         return null;
       }
 
-      // IMPORTANT: Gate READY → OUT_FOR_DELIVERY behind driver acceptance when platform delivery
       if (s === 'READY' && isPlatformDelivery) return null;
 
       const idx = STATUS_SEQUENCE.indexOf(s);
@@ -305,7 +297,6 @@ export default function OrderDetails() {
   const isTerminalNegative = TERMINAL_NEGATIVE.has(status);
   const isTerminalSuccess  = TERMINAL_SUCCESS.has(status);
 
-  // progress calc
   const stepIndex = findStepIndex(status, STATUS_SEQUENCE);
   const lastIndex = STATUS_SEQUENCE.length - 1;
   const progressIndex = clamp(stepIndex === -1 ? 0 : stepIndex, 0, lastIndex);
@@ -334,33 +325,102 @@ export default function OrderDetails() {
     return String(n || '').trim();
   }, [order]);
 
-  // Auto-reason strings to satisfy backend validator for non-decline updates
   const DEFAULT_REASON = {
     CONFIRMED: 'Order accepted by merchant',
-    PREPARING: 'Order is being prepared',
     READY: 'Order is ready',
     OUT_FOR_DELIVERY: 'Order handed over for delivery',
     COMPLETED: 'Order delivered',
   };
 
+  /* ---------- HYDRATE FROM GROUPED ENDPOINT (fix for Notifications) ---------- */
+  const hydrateFromGrouped = useCallback(async () => {
+    try {
+      if (!ordersGroupedUrl || !routeOrderId) return;
+
+      // Don’t re-fetch if we already have items/name/payment filled
+      const hasCore =
+        (order?.raw_items && order.raw_items.length) ||
+        order?.payment_method ||
+        order?.customer_name ||
+        order?.delivery_address;
+
+      if (hasCore) return;
+
+      const token = await SecureStore.getItemAsync('auth_token');
+      const res = await fetch(ordersGroupedUrl, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      const text = await res.text();
+      let json = null;
+      try { json = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+
+      // Accept multiple shapes:
+      // 1) { success, data:[ { user, orders:[...] }, ... ] }
+      // 2) { data:[ ...flatOrders ] }
+      // 3) [ ...flatOrders ]
+      const groups = Array.isArray(json?.data) ? json.data
+                   : Array.isArray(json) ? json
+                   : [];
+
+      // Flatten to orders[]
+      let allOrders = [];
+      for (const g of groups) {
+        if (Array.isArray(g?.orders)) allOrders = allOrders.concat(g.orders);
+        else if (g?.id || g?.order_id || g?.order_code) allOrders.push(g);
+      }
+
+      // Find by id/code
+      const match = allOrders.find((o) =>
+        sameOrder(o?.id ?? o?.order_id ?? o?.order_code, routeOrderId)
+      );
+      if (!match) return;
+
+      // Normalize minimal fields we render
+      const normalized = {
+        ...match,
+        id: String(match?.id ?? match?.order_id ?? match?.order_code ?? routeOrderId),
+        order_code: normalizeOrderCode(match?.order_code ?? match?.id ?? routeOrderId),
+        customer_name: match?.customer_name ?? match?.user_name ?? match?.user?.user_name ?? '',
+        // phone intentionally omitted per requirement
+        payment_method: match?.payment_method ?? match?.payment ?? '',
+        delivery_address: match?.delivery_address ?? match?.address ?? '',
+        raw_items: Array.isArray(match?.raw_items) ? match.raw_items
+                  : Array.isArray(match?.items) ? match.items
+                  : [],
+        total: match?.total ?? match?.total_amount ?? 0,
+        status: (match?.status ?? order?.status ?? 'PENDING').toUpperCase(),
+        type: match?.type ?? match?.delivery_option ?? match?.fulfillment_type ?? order?.type ?? '',
+        status_timestamps: match?.status_timestamps ?? order?.status_timestamps ?? {},
+      };
+
+      setOrder((prev) => ({ ...prev, ...normalized }));
+    } catch (e) {
+      // silent fail; UI will still show minimal card
+      console.warn('[OrderDetails] hydrate error:', e?.message);
+    }
+  }, [ordersGroupedUrl, routeOrderId, order?.raw_items, order?.payment_method, order?.customer_name, order?.delivery_address, order?.status, order?.type, order?.status_timestamps]);
+
+  useEffect(() => { hydrateFromGrouped(); }, [hydrateFromGrouped]);
+
+  /* ---------- update handlers ---------- */
   const doUpdate = useCallback(async (newStatus, opts = {}) => {
     try {
       let payload;
 
       if (newStatus === 'DECLINED') {
-        // Only decline requires a typed reason
         const r = String(opts?.reason ?? '').trim();
         if (r.length < 3) {
           setDeclineOpen(true);
           Alert.alert('Reason required', 'Please provide at least 3 characters explaining why the order is declined.');
           return;
         }
-        payload = {
-          status: 'DECLINED',
-          reason: `Merchant declined: ${r}`,
-        };
+        payload = { status: 'DECLINED', reason: `Merchant declined: ${r}` };
       } else {
-        // Accept/Next transitions → include an auto-reason to pass backend validation
         payload = { status: newStatus };
         if (DEFAULT_REASON[newStatus]) payload.reason = DEFAULT_REASON[newStatus];
       }
@@ -397,7 +457,7 @@ export default function OrderDetails() {
 
   const onPrimaryAction = useCallback(() => {
     if (!next || updating) return;
-    doUpdate(next); // Accept/Next → no reason prompt
+    doUpdate(next);
   }, [next, updating, doUpdate]);
 
   const onDecline = () => setDeclineOpen(true);
@@ -418,16 +478,14 @@ export default function OrderDetails() {
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
   /* ─────────────── Nearby drivers (REAL API) + ratings ─────────────── */
-  const [drivers, setDrivers] = useState([]);             // [{id,name,vehicle_type,distance_km,rating}]
+  const [drivers, setDrivers] = useState([]);
   const [loadingDrivers, setLoadingDrivers] = useState(false);
   const [driversError, setDriversError] = useState('');
   const [offerPendingDriver, setOfferPendingDriver] = useState(null);
   const [waitingDriverAccept, setWaitingDriverAccept] = useState(false);
   const acceptTimerRef = useRef(null);
 
-  // Extract reference coords from order if available; else defaults
   const refCoords = useMemo(() => {
-    // try various possible shapes in your system
     const lat =
       order?.delivery_lat ??
       order?.lat ??
@@ -492,34 +550,29 @@ export default function OrderDetails() {
 
       if (!resp.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
 
-      // Your provided shape:
-      // { drivers: [{ id, status, user: {...}, driver: {...} }], searched_keys: [...] }
-      // Also support generic shapes.
       let arr = [];
       if (Array.isArray(json?.drivers)) arr = json.drivers;
       else if (Array.isArray(json?.data)) arr = json.data;
       else if (Array.isArray(json)) arr = json;
       else throw new Error('Unexpected driver API response');
 
-      // Normalize minimal fields (prefer nested names)
       const normalized = arr.map((d, i) => {
         const driverNode = d.driver || {};
         const userNode = d.user || {};
         return {
-          id: d.id ?? driverNode.id ?? userNode.id ?? i,                    // unique card key
-          driver_id: driverNode.id ?? d.driver_id ?? null,                  // for ratings endpoint
-          name: userNode.user_name ?? userNode.name ?? d.name ?? 'Driver',  // display name
+          id: d.id ?? driverNode.id ?? userNode.id ?? i,
+          driver_id: driverNode.id ?? d.driver_id ?? null,
+          name: userNode.user_name ?? userNode.name ?? d.name ?? 'Driver',
           vehicle_type: driverNode.vehicle_type ?? d.vehicle_type ?? d.vehicle ?? 'Bike',
           distance_km: d.distance_km ?? d.distance ?? null,
-          rating: null, // will fill after rating fetch
+          rating: null,
         };
       });
 
-      // Fetch ratings in parallel (limit to top 12 to keep it snappy)
       const top = normalized.slice(0, 12);
       const ratings = await Promise.all(
         top.map(async (d) => {
-          const idForRating = d.driver_id || d.id; // prefer "driver table id"
+          const idForRating = d.driver_id || d.id;
           const avg = idForRating ? await fetchDriverRating(idForRating) : null;
           return avg;
         })
@@ -527,7 +580,6 @@ export default function OrderDetails() {
 
       top.forEach((d, idx) => { d.rating = ratings[idx]; });
 
-      // merge rated top with the rest
       const merged = top.concat(normalized.slice(12));
       setDrivers(merged);
     } catch (e) {
@@ -538,7 +590,6 @@ export default function OrderDetails() {
     }
   }, [status, isPlatformDelivery, buildNearby, fetchDriverRating]);
 
-  // load real drivers when we land on READY (and city/coords changes)
   useEffect(() => {
     if (status === 'READY' && isPlatformDelivery) {
       fetchNearbyDrivers();
@@ -549,18 +600,16 @@ export default function OrderDetails() {
     }
   }, [status, isPlatformDelivery, refCoords.cityId, refCoords.lat, refCoords.lng, fetchNearbyDrivers]);
 
-  // Offer to driver → simulate acceptance in 3–6 seconds, then flip to OUT_FOR_DELIVERY
   const offerToDriver = useCallback((driverId) => {
     setOfferPendingDriver(driverId);
     setWaitingDriverAccept(true);
 
     if (acceptTimerRef.current) clearTimeout(acceptTimerRef.current);
-    const ms = 3000 + Math.floor(Math.random() * 3000); // 3–6s
+    const ms = 3000 + Math.floor(Math.random() * 3000);
     acceptTimerRef.current = setTimeout(() => {
       setWaitingDriverAccept(false);
       setOfferPendingDriver(null);
 
-      // flip locally: READY → OUT_FOR_DELIVERY
       const patch = { status: 'OUT_FOR_DELIVERY', assigned_driver: driverId };
       setOrder((prev) => ({ ...prev, ...patch }));
       DeviceEventEmitter.emit('order-updated', { id: routeOrderId || order?.id, patch });
@@ -647,7 +696,7 @@ export default function OrderDetails() {
 
           {/* Meta */}
           <View style={{ marginTop: 12, gap: 8 }}>
-            <Row icon="person-outline" text={`${order.customer_name || '—'}${order.customer_phone ? ` • ${order.customer_phone}` : ''}`} />
+            <Row icon="person-outline" text={`${order.customer_name || '—'}`} />
             <Row icon="bicycle-outline" text={`Type: ${order.type || order.delivery_option || order.fulfillment_type || '—'}`} />
             <Row icon="card-outline" text={`Payment: ${order.payment_method || '—'}`} />
             <Row icon="navigate-outline" text={order.delivery_address || '—'} />
@@ -662,9 +711,7 @@ export default function OrderDetails() {
           )}
         </View>
 
-        {/* Update actions — Accept/Decline only when PENDING; otherwise Next
-            - On READY + platform delivery: need driver assignment (no manual Next)
-            - On SELF: there is no Next after READY */}
+        {/* Update actions */}
         <Text style={styles.sectionTitle}>Update status</Text>
         {isTerminalNegative || isTerminalSuccess ? (
           <Text style={styles.terminalNote}>No further actions.</Text>
@@ -720,7 +767,7 @@ export default function OrderDetails() {
           </View>
         )}
 
-        {/* 🔸 Nearby Driver assignment panel (REAL API) — only READY + platform delivery (never for self) */}
+        {/* 🔸 Nearby Driver assignment panel */}
         {status === 'READY' && isPlatformDelivery && !isSelfFulfillment && (
           <View style={styles.block}>
             <RowTitle title="Nearby drivers" />
@@ -760,7 +807,6 @@ export default function OrderDetails() {
                 {drivers.map((d) => (
                   <View key={String(d.id)} style={styles.driverRow}>
                     <View style={{ flex: 1 }}>
-                      {/* Driver name, rating and vehicle type */}
                       <Text style={styles.driverName} numberOfLines={1}>{d.name}</Text>
                       <Text style={styles.driverMeta} numberOfLines={1}>
                         {d.rating != null ? `★ ${Number(d.rating).toFixed(1)} • ` : '★ — • '}
@@ -878,7 +924,6 @@ export default function OrderDetails() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#fff' },
 
-  // Centered header (matches your other screens)
   headerBar: {
     minHeight: 52,
     paddingHorizontal: 12,
@@ -912,7 +957,6 @@ const styles = StyleSheet.create({
   },
   progressFill: { height: 4, backgroundColor: '#16a34a' },
 
-  /* Steps */
   stepsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -933,7 +977,6 @@ const styles = StyleSheet.create({
   sectionTitle: { marginTop: 14, marginBottom: 8, fontWeight: '700', color: '#0f172a' },
   terminalNote: { color: '#64748b', marginBottom: 10 },
 
-  // 🔹 note bubble
   noteBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -942,9 +985,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 12,
-    backgroundColor: '#ecfeff',   // teal-50
+    backgroundColor: '#ecfeff',
     borderWidth: 1,
-    borderColor: '#99f6e4',       // teal-200
+    borderColor: '#99f6e4',
   },
   noteText: { flex: 1, color: '#115e59', fontWeight: '600' },
 

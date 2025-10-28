@@ -24,12 +24,9 @@ import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { ORDER_ENDPOINT as ENV_ORDER_ENDPOINT } from '@env';
 
-/* ---------------- constants ---------------- */
-// Base labels (full Food flow). We'll dynamically drop PREPARING for Mart.
 const BASE_STATUS_LABELS = [
   { key: 'PENDING', label: 'Pending' },
   { key: 'CONFIRMED', label: 'Confirmed' },
-  { key: 'PREPARING', label: 'Preparing' }, // <- hide for ownerType='mart'
   { key: 'READY', label: 'Ready' },
   { key: 'OUT_FOR_DELIVERY', label: 'Out for delivery' },
   { key: 'COMPLETED', label: 'Completed' },
@@ -40,7 +37,6 @@ const BASE_STATUS_LABELS = [
 const STATUS_THEME = {
   PENDING:          { fg: '#0ea5e9',  bg: '#e0f2fe',  bd: '#bae6fd', icon: 'time-outline' },
   CONFIRMED:        { fg: '#16a34a',  bg: '#ecfdf5',  bd: '#bbf7d0', icon: 'checkmark-circle-outline' },
-  PREPARING:        { fg: '#6366f1',  bg: '#eef2ff',  bd: '#c7d2fe', icon: 'restaurant-outline' },
   READY:            { fg: '#2563eb',  bg: '#dbeafe',  bd: '#bfdbfe', icon: 'cube-outline' },
   OUT_FOR_DELIVERY: { fg: '#f59e0b',  bg: '#fef3c7',  bd: '#fde68a', icon: 'bicycle-outline' },
   COMPLETED:        { fg: '#047857',  bg: '#ecfdf5',  bd: '#bbf7d0', icon: 'checkmark-done-outline' },
@@ -96,6 +92,66 @@ const ItemPreview = ({ items, raw }) => {
   if (items) return <Text style={styles.orderItems} numberOfLines={2}>{items}</Text>;
   return null;
 };
+
+/* ---------------- helpers (dates, numbers) ---------------- */
+const safeNum = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// Robust date parser for MySQL DATETIME / ISO / epoch
+const parseMaybeMySQLDate = (v) => {
+  if (!v) return null;
+  if (v instanceof Date) return v;
+  if (typeof v === 'number') {
+    const d = new Date(v);
+    return isNaN(d) ? null : d;
+  }
+  const s = String(v).trim();
+
+  // Try native first
+  let d = new Date(s);
+  if (!isNaN(d)) return d;
+
+  // Common MySQL DATETIME: "YYYY-MM-DD HH:mm:ss"
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
+    d = new Date(s.replace(' ', 'T')); // treat as local time on device
+    if (!isNaN(d)) return d;
+    // If your DB stores Bhutan local clock and you want to force +06:00:
+    // d = new Date(s.replace(' ', 'T') + '+06:00');
+    // if (!isNaN(d)) return d;
+  }
+
+  // "YYYY-MM-DDTHH:mm:ss" (no timezone) – treat as local
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s)) {
+    d = new Date(s);
+    if (!isNaN(d)) return d;
+  }
+
+  // Last resort: assume UTC by appending Z
+  d = new Date(s + 'Z');
+  return isNaN(d) ? null : d;
+};
+
+const fmtTime = (val) => {
+  const d = parseMaybeMySQLDate(val);
+  if (!d) return '';
+  const m = d.toLocaleString(undefined, { month: 'short' });
+  const day = String(d.getDate());
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${m} ${day}, ${hh}:${mm}`;
+};
+
+// pull a note string from common item-level fields
+const getItemNote = (it = {}) =>
+  it.note_for_restaurant ||
+  it.note ||
+  it.special_request ||
+  it.instructions ||
+  it.customization ||
+  it.item_note || // legacy
+  '';
 
 /* ---------------- UI ---------------- */
 const OrderItem = ({ item, isTablet, money, onPress }) => {
@@ -172,35 +228,7 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
   );
 };
 
-/* ---------------- helpers ---------------- */
-const safeNum = (v) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-};
-
-const fmtTime = (iso) => {
-  try {
-    const d = new Date(iso);
-    const m = d.toLocaleString(undefined, { month: 'short' });
-    const day = String(d.getDate());
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    return `${m} ${day}, ${hh}:${mm}`;
-  } catch {
-    return '';
-  }
-};
-
-// pull a note string from common item-level fields
-const getItemNote = (it = {}) =>
-  it.note_for_restaurant ||
-  it.note ||
-  it.special_request ||
-  it.instructions ||
-  it.customization ||
-  it.item_note || // legacy
-  '';
-
+/* ---------------- grouping & normalization ---------------- */
 const groupOrders = (rows = []) => {
   const byId = new Map();
   for (const r of rows) {
@@ -209,7 +237,7 @@ const groupOrders = (rows = []) => {
       byId.get(id) ||
       {
         id,
-        created_at: r.created_at,
+        created_at: null,
         type: r.fulfillment_type || 'Pickup',
         totals: [],
         itemsArr: [],
@@ -227,9 +255,15 @@ const groupOrders = (rows = []) => {
     g.itemsArr.push(`${nm} ×${qty}`);
     g.raw_items.push({ item_name: nm, quantity: qty });
 
-    if (!g.created_at || (r.created_at && new Date(r.created_at) < new Date(g.created_at))) {
-      g.created_at = r.created_at;
+    // Robust created_at extraction
+    const rowCreated =
+      r.created_at || r.createdAt || r.placed_at || r.order_time || r.createdOn || null;
+    const parsedRowCreated = parseMaybeMySQLDate(rowCreated);
+    const parsedExisting = parseMaybeMySQLDate(g.created_at);
+    if (!parsedExisting || (parsedRowCreated && parsedRowCreated < parsedExisting)) {
+      g.created_at = rowCreated || g.created_at;
     }
+
     if (r.fulfillment_type === 'Delivery') g.type = 'Delivery';
 
     if (!g.note_for_restaurant) {
@@ -261,10 +295,11 @@ const groupOrders = (rows = []) => {
   const list = Array.from(byId.values()).map((g) => {
     const total = g.totals.length > 0 ? g.totals.reduce((a, b) => a + b, 0) / g.totals.length : 0;
     const createdISO = g.created_at || null;
+    const createdParsed = parseMaybeMySQLDate(createdISO);
     return {
       id: String(g.id),
       type: g.type,
-      time: createdISO ? fmtTime(createdISO) : '',
+      time: createdParsed ? fmtTime(createdParsed) : '',
       created_at: createdISO,
       items: g.itemsArr.join(', '),
       total,
@@ -284,7 +319,11 @@ const groupOrders = (rows = []) => {
     };
   });
 
-  return list.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  return list.sort(
+    (a, b) =>
+      (parseMaybeMySQLDate(b.created_at)?.getTime?.() || 0) -
+      (parseMaybeMySQLDate(a.created_at)?.getTime?.() || 0)
+  );
 };
 
 const buildOrdersUrl = (base, businessId, { appendOwnerType = false, ownerType = 'mart' } = {}) => {
@@ -328,11 +367,20 @@ const normalizeOrdersFromApi = (payload) => {
       const u = block?.user || {};
       const orders = Array.isArray(block?.orders) ? block.orders : [];
       for (const o of orders) {
-        const createdISO = o.created_at || null;
+        // Robust created_at extraction
+        const createdISO = o.created_at || o.createdAt || o.placed_at || o.order_time || null;
+        const createdParsed = parseMaybeMySQLDate(createdISO);
 
         let noteTarget = '';
         if (Array.isArray(o.items)) {
-          const withNote = o.items.find((it) => (it?.note_for_restaurant || it?.note || it?.special_request || it?.instructions || it?.customization || it?.item_note)?.trim?.());
+          const withNote = o.items.find((it) =>
+            (it?.note_for_restaurant ||
+              it?.note ||
+              it?.special_request ||
+              it?.instructions ||
+              it?.customization ||
+              it?.item_note)?.trim?.()
+          );
           if (withNote) noteTarget = withNote.item_name || withNote.name || '';
         }
 
@@ -346,9 +394,9 @@ const normalizeOrdersFromApi = (payload) => {
           '';
 
         list.push({
-          id: String(o.order_id),
-          type: o.fulfillment_type || 'Pickup',
-          time: createdISO ? fmtTime(createdISO) : '',
+          id: String(o.order_id ?? o.id),
+          type: o.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
+          time: createdParsed ? fmtTime(createdParsed) : '',
           created_at: createdISO,
           items: itemsStr,
           total: Number(o.total_amount ?? 0),
@@ -368,7 +416,11 @@ const normalizeOrdersFromApi = (payload) => {
         });
       }
     }
-    return list.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    return list.sort(
+      (a, b) =>
+        (parseMaybeMySQLDate(b.created_at)?.getTime?.() || 0) -
+        (parseMaybeMySQLDate(a.created_at)?.getTime?.() || 0)
+    );
   } catch {
     return [];
   }
@@ -395,7 +447,7 @@ export default function MartOrdersTab({
   const [selectedStatus, setSelectedStatus] = useState(null); // null = All
   const abortRef = useRef(null);
 
-  // 🔑 Dynamically compute status chips: hide PREPARING for Mart, keep for Food
+
   const STATUS_LABELS = useMemo(() => {
     const isMart = String(ownerType || '').toLowerCase() === 'mart';
     return isMart
@@ -452,6 +504,18 @@ export default function MartOrdersTab({
           throw new Error(msg);
         }
         const json = await parseJSON(res);
+
+        // __DEV__ sample logging (optional)
+        // if (__DEV__) {
+        //   const sample = Array.isArray(json?.data) ? json.data[0]?.orders?.[0] : (Array.isArray(json) ? json[0] : null);
+        //   console.log('[OrdersTab] sample date fields:', {
+        //     created_at: sample?.created_at,
+        //     createdAt: sample?.createdAt,
+        //     placed_at: sample?.placed_at,
+        //     order_time: sample?.order_time,
+        //   });
+        // }
+
         const list = normalizeOrdersFromApi(json);
         setOrders(list);
       } catch (e) {
@@ -480,11 +544,19 @@ export default function MartOrdersTab({
       try {
         const o = payload?.order;
         if (!o) return;
-        const createdISO = o.created_at || new Date().toISOString();
+        const createdISO = o.created_at || o.createdAt || o.placed_at || o.order_time || new Date().toISOString();
+        const createdParsed = parseMaybeMySQLDate(createdISO);
 
         let liveNoteTarget = '';
         if (Array.isArray(o.items)) {
-          const withNote = o.items.find((it) => (it?.note_for_restaurant || it?.note || it?.special_request || it?.instructions || it?.customization || it?.item_note)?.trim?.());
+          const withNote = o.items.find((it) =>
+            (it?.note_for_restaurant ||
+              it?.note ||
+              it?.special_request ||
+              it?.instructions ||
+              it?.customization ||
+              it?.item_note)?.trim?.()
+          );
           if (withNote) liveNoteTarget = withNote.item_name || withNote.name || '';
         }
 
@@ -492,7 +564,7 @@ export default function MartOrdersTab({
           id: String(o.order_id || o.id),
           type: o.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
           created_at: createdISO,
-          time: fmtTime(createdISO),
+          time: createdParsed ? fmtTime(createdParsed) : '',
           items: (o.items || []).map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`).join(', '),
           total: safeNum(o.total_amount ?? o.total),
           status: o.status || 'PENDING',

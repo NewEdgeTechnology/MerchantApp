@@ -22,31 +22,32 @@ const s = (n) => Math.max(10, Math.round((W / base) * n));
  * - Else tries `global.__nav?.navigate(...)` if your app sets a global navigator.
  * - Always emits 'open-order-details' for any external listener as a fallback.
  */
-function safeNavigateToOrderDetails(orderId, navigation) {
+function safeNavigateToOrderDetails(orderId, navigation, extraParams = {}) {
   let navigated = false;
+  const params = { id: orderId, ...extraParams };
 
   if (navigation && typeof navigation.navigate === 'function') {
     try {
-      navigation.navigate('OrderDetails', { id: orderId });
+      navigation.navigate('OrderDetails', params);
       navigated = true;
     } catch {}
   }
 
   if (!navigated && global && global.__nav && typeof global.__nav.navigate === 'function') {
     try {
-      global.__nav.navigate('OrderDetails', { id: orderId });
+      global.__nav.navigate('OrderDetails', params);
       navigated = true;
     } catch {}
   }
 
   // Broadcast regardless so root screens can listen and handle custom routes.
-  DeviceEventEmitter.emit('open-order-details', { id: orderId });
+  DeviceEventEmitter.emit('open-order-details', params);
 
   return navigated;
 }
 
 export default function OrderNotifyOverlay({ navigation }) {
-  const [data, setData] = useState(null); // { id, orderId, title, body, total, status? }
+  const [data, setData] = useState(null); // { id, orderId, title, body, total, status?, ownerType? }
   const slide = useRef(new Animated.Value(-260)).current;
 
   const show = useCallback(() => {
@@ -83,11 +84,18 @@ export default function OrderNotifyOverlay({ navigation }) {
         normalizeStatus(inner?.meta?.status) ||
         (/(?:\b|_)(COMPLETED)(?:\b|_)/i.test(body) ? 'COMPLETED' : null);
 
+      // Pull owner type if available (food | mart)
+      const ownerType =
+        inner?.owner_type ||
+        payload?.owner_type ||
+        inner?.meta?.owner_type ||
+        null;
+
       let total = null;
       const m = body.match(/Nu\W*([\d]+(?:\.[\d]+)?)/i);
       if (m) total = Number(m[1]);
 
-      setData({ id, orderId, title, body, total, status });
+      setData({ id, orderId, title, body, total, status, ownerType });
       show();
       DeviceEventEmitter.emit('merchant-notify-ack', { id });
     });
@@ -152,10 +160,42 @@ export default function OrderNotifyOverlay({ navigation }) {
   const openDetails = useCallback(() => {
     const id = data?.orderId;
     if (!id) return;
+    const extra = {
+      fromOverlay: true,
+      ...(data?.ownerType ? { owner_type: data.ownerType } : {}),
+      ...(data?.status ? { status: data.status } : {}),
+    };
     hide(() => {
-      safeNavigateToOrderDetails(id, navigation);
+      safeNavigateToOrderDetails(id, navigation, extra);
     });
-  }, [data?.orderId, hide, navigation]);
+  }, [data?.orderId, data?.ownerType, data?.status, hide, navigation]);
+
+  const onAccept = useCallback(() => {
+    if (!data?.orderId) return;
+    const orderId = data.orderId;
+    const extra = {
+      fromOverlay: true,
+      ...(data?.ownerType ? { owner_type: data.ownerType } : {}),
+      ...(data?.status ? { status: data.status } : {}),
+    };
+
+    hide(async () => {
+      const ok = await updateStatus(orderId, 'CONFIRMED', 'Merchant confirmed');
+      if (ok) {
+        Alert.alert(
+          'Order accepted',
+          'Order has been accepted successfully.',
+          [
+            {
+              text: 'View details',
+              onPress: () => safeNavigateToOrderDetails(orderId, navigation, extra),
+            },
+          ],
+          { cancelable: true }
+        );
+      }
+    });
+  }, [data?.orderId, data?.ownerType, data?.status, hide, navigation]);
 
   if (!data) return null;
 
@@ -171,7 +211,7 @@ export default function OrderNotifyOverlay({ navigation }) {
           style={styles.touchArea}
         >
           <View style={styles.headerRow}>
-            <Icon name="notifications-outline" size={s(18)} color="#065f46" />
+            <Icon name="notifications-outline" size={s(18)} color="#065f46" style={{ marginTop: 15 }} />
             <Text style={styles.title} numberOfLines={1}>{data.title}</Text>
           </View>
 
@@ -195,6 +235,11 @@ export default function OrderNotifyOverlay({ navigation }) {
                 </Text>
               </View>
             )}
+            {!!data.ownerType && (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>{String(data.ownerType).toUpperCase()}</Text>
+              </View>
+            )}
           </View>
         </Pressable>
 
@@ -205,7 +250,7 @@ export default function OrderNotifyOverlay({ navigation }) {
             <Pressable
               style={[styles.btn, styles.accept]}
               android_ripple={{ color: '#bbf7d0' }}
-              onPress={() => hide(() => updateStatus(data.orderId, 'CONFIRMED', 'Merchant confirmed'))}
+              onPress={onAccept}
             >
               <Icon name="checkmark" size={s(16)} color="#fff" />
               <Text style={styles.btnTextLight}>Accept</Text>
@@ -237,11 +282,11 @@ const styles = StyleSheet.create({
   /* full-width card (height unchanged) */
   card: {
     width: '100%',
-    alignSelf: 'stretch',
+    // alignSelf: 'stretch',
     backgroundColor: '#ffffff',
     borderRadius: 0, // edge-to-edge banner style
-    paddingHorizontal: s(14),
-    paddingVertical: s(12),
+    paddingHorizontal: s(30),
+    paddingVertical: s(10),
     borderBottomWidth: 1,
     borderColor: '#e2e8f0',
     shadowColor: '#000',
@@ -254,7 +299,9 @@ const styles = StyleSheet.create({
   touchArea: { paddingBottom: s(6) },
 
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: s(6) },
-  title: { marginLeft: s(6), fontWeight: '800', color: '#064e3b', fontSize: s(16), lineHeight: s(20) },
+  title: { marginLeft: s(16), 
+    marginTop:15,
+    fontWeight: '800', color: '#064e3b', fontSize: s(16), lineHeight: s(14) },
   body: { color: '#0f172a', marginBottom: s(10), fontSize: s(14), lineHeight: s(19) },
 
   /* meta shown as readable chips */
@@ -262,7 +309,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     gap: s(8), marginBottom: s(12), flexWrap: 'wrap',
   },
-  badge: { paddingHorizontal: s(10), paddingVertical: s(6), borderRadius: s(999), backgroundColor: '#f1f5f9' },
+  badge: { paddingHorizontal: s(10), paddingVertical: s(6), borderRadius: s(999), backgroundColor: '#f1f5f9', },
   badgeMoney: { backgroundColor: '#ecfdf5' },
   badgeMoneyText: { color: '#065f46' },
 
@@ -287,7 +334,6 @@ const styles = StyleSheet.create({
     gap: s(8),
   },
   accept: { backgroundColor: '#10b981' },
-  reject: { backgroundColor: '#ef4444' },
   btnTextLight: { color: '#ffffff', fontWeight: '800', fontSize: s(14) },
 
   /* compact dismiss chip */
