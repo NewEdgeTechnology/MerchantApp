@@ -176,19 +176,6 @@ export default function WalletScreen() {
     return `${raw}${sep}wallet_id=${encodeURIComponent(String(walletId))}`;
   }, []);
 
-  // ⬇️ UPDATED: parse according to your JSON shape:
-  // {
-  //   "success": true,
-  //   "data": {
-  //     "id": 3,
-  //     "wallet_id": "NET000003",
-  //     "user_id": 58,
-  //     "amount": "10.00",
-  //     "status": "ACTIVE",
-  //     "created_at": "2025-10-24 11:04:28",
-  //     "updated_at": "2025-10-24 15:12:22"
-  //   }
-  // }
   const parseWalletPayload = (payload) => {
     const w = payload?.data ?? payload ?? {};
     const bal = Number.parseFloat(String(w?.amount ?? 0)) || 0;
@@ -383,7 +370,7 @@ export default function WalletScreen() {
 
         <TouchableOpacity
           activeOpacity={0.9}
-          onPress={() => navigation.navigate('CreateWallet', { userId: user?.user_id ?? null })}
+          onPress={() => navigation.navigate('CreateWalletScreen', { userId: user?.user_id ?? null })}
           style={[styles.primaryBtnFilled, { backgroundColor: '#f97316' }]}
         >
           <Text style={[styles.primaryBtnTextFilled]}>CREATE WALLET</Text>
@@ -490,16 +477,6 @@ export default function WalletScreen() {
                     <Text style={styles.actionText}>{a.label}</Text>
                   </TouchableOpacity>
                 ))}
-              </View>
-
-              {/* Promo Balance */}
-              <View style={styles.promoCard}>
-                <Ionicons name="pricetag-outline" size={20} color="#f97316" />
-                <View style={{ flex: 1, marginLeft: 10 }}>
-                  <Text style={styles.promoTitle}>Promo Credits</Text>
-                  <Text style={styles.promoSub}>Usable on eligible orders</Text>
-                </View>
-                <Text style={styles.promoAmount}>{money(promoBalance)}</Text>
               </View>
 
               <Text style={styles.sectionTitle}>Recent Transactions</Text>
