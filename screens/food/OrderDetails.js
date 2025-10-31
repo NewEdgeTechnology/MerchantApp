@@ -1,15 +1,17 @@
 // screens/food/OrderDetails.js
-// Sequence rail + two-button actions (Accept/Decline when pending; Next when later)
-// Now with real nearby drivers fetched from ENV_NEARBY_DRIVERS when READY + platform delivery
-// Also fetches per-driver ratings from DIVER_RATING_ENDPOINT and displays: driver name, vehicle type, and rating.
-// UPDATE: Hydrate from grouped orders endpoint when launched from Notifications.
+// Sequence rail. Self & Grab share the same steps:
+// PENDING → CONFIRMED → READY → OUT_FOR_DELIVERY → COMPLETED
+// If delivery_option=BOTH, show Self/Grab chooser ONLY at READY.
+// - Grab at READY: show nearby drivers with rating, block Next until assigned.
+// - Self at READY: allow Next → OUT_FOR_DELIVERY directly.
+// Back nav preserves headers/footers. Hydrates from grouped-orders.
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal,
-  TextInput, ActivityIndicator,
+  TextInput, ActivityIndicator, BackHandler,
 } from 'react-native';
-import { useRoute, useNavigation } from '@react-navigation/native';
+import { useRoute, useNavigation, useFocusEffect, CommonActions } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
@@ -18,6 +20,7 @@ import {
   UPDATE_ORDER_STATUS_ENDPOINT as ENV_UPDATE_ORDER,
   NEARBY_DRIVERS_ENDPOINT as ENV_NEARBY_DRIVERS,
   DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING,
+  BUSINESS_DETAILS as ENV_BUSINESS_DETAILS,            // ⬅️ NEW
 } from '@env';
 
 /* ---------------- Money + utils ---------------- */
@@ -31,7 +34,30 @@ const fmtStamp = (iso) => {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
 
-/* ---------------- Status config (BACKEND KEYS, FRIENDLY LABELS) ---------------- */
+/* ---------- stringify helpers (PREVENT RENDER ERROR) ---------- */
+const clean = (v) => (v == null ? '' : String(v).trim());
+const addressToLine = (val) => {
+  if (!val) return '';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'object') {
+    const parts = [
+      clean(val.address || val.line1 || val.street),
+      clean(val.area || val.locality || val.block),
+      clean(val.city || val.town || val.dzongkhag),
+      clean(val.postcode || val.zip),
+    ].filter(Boolean);
+    if (!parts.length) {
+      const lat = val.lat ?? val.latitude;
+      const lng = val.lng ?? val.longitude;
+      const ll = [lat, lng].filter((n) => n != null).join(', ');
+      return ll ? `(${ll})` : '';
+    }
+    return parts.join(', ');
+  }
+  return String(val);
+};
+
+/* ---------------- Status config ---------------- */
 const STATUS_META = {
   PENDING:           { label: 'Pending',   color: '#0ea5e9', bg: '#e0f2fe', border: '#bae6fd', icon: 'time-outline' },
   CONFIRMED:         { label: 'Accepted',  color: '#16a34a', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-circle-outline' },
@@ -43,7 +69,7 @@ const STATUS_META = {
 const TERMINAL_NEGATIVE = new Set(['DECLINED']);
 const TERMINAL_SUCCESS  = new Set(['COMPLETED']);
 
-/* ---------------- Order code + endpoints ---------------- */
+/* ---------------- Order code helpers ---------------- */
 const normalizeOrderCode = (raw) => {
   if (!raw) return null;
   const s = String(raw).trim();
@@ -62,13 +88,11 @@ const sameOrder = (a, b) => {
 const buildUpdateUrl = (base, orderCode) => {
   const clean = String(base || '').trim().replace(/\/+$/, '');
   if (!clean || !orderCode) return null;
-
   let url = clean
     .replace(/\{\s*order_id\s*\}/gi, orderCode)
     .replace(/\{\s*order\s*\}/gi, orderCode)
     .replace(/:order_id/gi, orderCode)
     .replace(/:order/gi, orderCode);
-
   if (url !== clean) {
     if (!/\/status(?:\?|$)/i.test(url)) url = `${url}/status`;
     return url;
@@ -76,11 +100,95 @@ const buildUpdateUrl = (base, orderCode) => {
   return `${clean}/${orderCode}/status`;
 };
 
+/* ---------------- NORMALIZERS ---------------- */
+/** 'SELF' | 'GRAB' | 'BOTH' | 'UNKNOWN' */
+const normDelivery = (v) => {
+  const s = String(v || '').trim().toUpperCase();
+  if (!s) return 'UNKNOWN';
+  if (['SELF','SELF_ONLY','PICKUP','PICK_UP','SELF_PICKUP','SELF-DELIVERY','SELF_DELIVERY'].includes(s)) return 'SELF';
+  if (['GRAB','GRAB_ONLY','DELIVERY','PLATFORM','PLATFORM_DELIVERY','PLATFORM-DELIVERY'].includes(s)) return 'GRAB';
+  if (s === 'BOTH' || s === 'ALL') return 'BOTH';
+  if (s === '1' || s === 'TRUE') return 'GRAB';
+  if (s === '0' || s === 'FALSE') return 'SELF';
+  if (s.includes('GRAB') || s.includes('PLATFORM')) return 'GRAB';
+  if (s.includes('SELF')) return 'SELF';
+  if (s.includes('BOTH')) return 'BOTH';
+  return 'UNKNOWN';
+};
+
+/** Returns 'SELF' | 'GRAB' | 'BOTH' | '' from raw order payload */
+function resolveDeliveryOptionFromOrder(from) {
+  const cands = [
+    from?.delivery_option, from?.deliveryOption, from?.delivery_by, from?.deliveryBy,
+    from?.courier, from?.courier_type, from?.courierType,
+    from?.fulfillment_option, from?.fulfillmentOption,
+    from?.owner_delivery_option, from?.ownerDeliveryOption,
+    from?.type, from?.delivery_type, from?.fulfillment_type,
+    from?.params?.delivery_option, from?.params?.deliveryOption, from?.params?.delivery_by,
+  ].map((v) => (v == null ? '' : String(v).trim()));
+
+  for (const val of cands) {
+    const n = normDelivery(val);
+    if (n !== 'UNKNOWN') return n;
+  }
+  return '';
+}
+
+/** Returns 'Delivery' | 'Pickup' | '' */
+function resolveFulfillmentType(from) {
+  const cands = [
+    from?.fulfillment_type, from?.fulfillmentType, from?.order_type, from?.orderType,
+    from?.type, from?.delivery_type, from?.service_type,
+  ].map((v) => (v == null ? '' : String(v).trim()));
+
+  for (const val of cands) {
+    const s = norm(val);
+    if (!s) continue;
+    if (['delivery', 'deliver', 'platform_delivery', 'self-delivery'].includes(s)) return 'Delivery';
+    if (['pickup', 'self-pickup', 'pick_up', 'takeaway', 'take-away'].includes(s)) return 'Pickup';
+  }
+  return '';
+}
+
+/* ---------------- BUSINESS_DETAILS fetcher ---------------- */
+async function fetchBusinessDetails({ token, business_id }) {
+  const base = (ENV_BUSINESS_DETAILS || '').trim().replace(/\/+$/, '');
+  if (!base) return null;
+
+  const headers = token
+    ? { Accept: 'application/json', Authorization: `Bearer ${token}` }
+    : { Accept: 'application/json' };
+
+  const candidates = [
+    `${base}`,
+    business_id ? `${base}/${business_id}` : null,
+    business_id ? `${base}?business_id=${encodeURIComponent(String(business_id))}` : null,
+  ].filter(Boolean);
+
+  for (const url of candidates) {
+    try {
+      const r = await fetch(url, { headers });
+      const text = await r.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!r.ok) continue;
+      const maybe = data?.data && typeof data.data === 'object' ? data.data : data;
+      if (maybe && (maybe.business_id || maybe.business_name || maybe.delivery_option)) {
+        // console.log('[OrderDetails] BUSINESS_DETAILS fetched from:', url);
+        return maybe;
+      }
+    } catch (e) {
+      // continue
+    }
+  }
+  console.log('[OrderDetails] BUSINESS_DETAILS not available from any candidate URL.');
+  return null;
+}
+
 /* ---------------- API calls ---------------- */
 async function updateStatusApi({ endpoint, orderCode, payload, token }) {
   const url = buildUpdateUrl(endpoint, orderCode);
   if (!url) throw new Error('Invalid update endpoint');
-
   const res = await fetch(url, {
     method: 'PUT',
     headers: {
@@ -90,10 +198,9 @@ async function updateStatusApi({ endpoint, orderCode, payload, token }) {
     },
     body: JSON.stringify(payload),
   });
-
   const text = await res.text();
   let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch { /* ignore */ }
+  try { json = text ? JSON.parse(text) : null; } catch {}
   if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
   return json;
 }
@@ -102,7 +209,6 @@ async function updateStatusApi({ endpoint, orderCode, payload, token }) {
 const expandNearbyUrl = (baseUrl, { cityId, lat, lng, radiusKm, limit }) => {
   const clean = String(baseUrl || '').trim();
   if (!clean) return null;
-
   let u = clean
     .replace(/\{city\}/gi, encodeURIComponent(cityId ?? 'thimphu'))
     .replace(/\{cityId\}/gi, encodeURIComponent(cityId ?? 'thimphu'))
@@ -111,7 +217,6 @@ const expandNearbyUrl = (baseUrl, { cityId, lat, lng, radiusKm, limit }) => {
     .replace(/\{radius\}/gi, encodeURIComponent(radiusKm ?? '5'))
     .replace(/\{radiusKm\}/gi, encodeURIComponent(radiusKm ?? '5'))
     .replace(/\{limit\}/gi, encodeURIComponent(limit ?? '20'));
-
   try {
     const url = new URL(u);
     if (!url.searchParams.get('cityId') && cityId) url.searchParams.set('cityId', cityId);
@@ -120,16 +225,13 @@ const expandNearbyUrl = (baseUrl, { cityId, lat, lng, radiusKm, limit }) => {
     if (!url.searchParams.get('radiusKm') && radiusKm != null) url.searchParams.set('radiusKm', String(radiusKm));
     if (!url.searchParams.get('limit') && limit != null) url.searchParams.set('limit', String(limit));
     return url.toString();
-  } catch {
-    return u;
-  }
+  } catch { return u; }
 };
 
-/* ---------------- Driver rating endpoint helpers ---------------- */
+/* ---------------- Driver rating helpers ---------------- */
 const buildDriverRatingUrl = (baseUrl, driverId) => {
   if (!baseUrl || !driverId) return null;
-  let u = String(baseUrl).trim();
-  u = u
+  let u = String(baseUrl).trim()
     .replace(/\{driver_id\}/gi, encodeURIComponent(driverId))
     .replace(/:driver_id/gi, encodeURIComponent(driverId));
   try {
@@ -138,11 +240,8 @@ const buildDriverRatingUrl = (baseUrl, driverId) => {
     if (!url.searchParams.get('limit')) url.searchParams.set('limit', '20');
     if (!url.searchParams.get('offset')) url.searchParams.set('offset', '0');
     return url.toString();
-  } catch {
-    return u;
-  }
+  } catch { return u; }
 };
-
 const computeAverageRating = (payload) => {
   let arr = [];
   if (!payload) return null;
@@ -150,13 +249,11 @@ const computeAverageRating = (payload) => {
   else if (Array.isArray(payload?.data)) arr = payload.data;
   else if (Array.isArray(payload?.ratings)) arr = payload.ratings;
   else if (Array.isArray(payload?.items)) arr = payload.items;
-
   const vals = arr
     .map((r) => r?.rating ?? r?.score ?? r?.stars ?? r?.value ?? null)
     .filter((v) => v != null)
     .map(Number)
     .filter((n) => !Number.isNaN(n));
-
   if (!vals.length) return null;
   const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
   return Math.round(avg * 10) / 10;
@@ -169,6 +266,13 @@ const Chip = ({ label, color, bg, border, icon }) => (
     <Text style={[styles.pillText, { color }]} numberOfLines={1}>{label}</Text>
   </View>
 );
+
+const toText = (val) => {
+  if (val == null) return '—';
+  if (typeof val === 'object') return addressToLine(val) || '—';
+  const s = String(val).trim();
+  return s.length ? s : '—';
+};
 
 const Step = ({ label, ringColor, fill, icon, time, onPress, disabled, dimmed }) => {
   const border = ringColor || '#cbd5e1';
@@ -190,7 +294,7 @@ const Step = ({ label, ringColor, fill, icon, time, onPress, disabled, dimmed })
 const Row = ({ icon, text }) => (
   <View style={styles.row}>
     <Ionicons name={icon} size={16} color="#64748b" />
-    <Text style={styles.rowText} numberOfLines={2}>{text}</Text>
+    <Text style={styles.rowText} numberOfLines={2}>{toText(text)}</Text>
   </View>
 );
 
@@ -208,103 +312,146 @@ export default function OrderDetails() {
 
   const params = route?.params ?? {};
   const orderProp = params.order ?? null;
-  const routeOrderId = params.orderId ?? null; // may be "ORD-..." or just digits
-  const ordersGroupedUrl = params.ordersGroupedUrl ?? null; // 👈 from Notifications
-  const businessId = params.businessId ?? null;
+  const routeOrderId = params.orderId ?? null;
+  const ordersGroupedUrl = params.ordersGroupedUrl ?? null;
+  const paramBusinessId = params.businessId ?? null;
 
   const [order, setOrder] = useState(orderProp || {});
   const [updating, setUpdating] = useState(false);
   const [declineOpen, setDeclineOpen] = useState(false);
   const [declineReason, setDeclineReason] = useState('');
 
-  // Detect owner type robustly (route param takes priority)
-  const ownerTypeRaw =
-    (params.ownerType ?? params.ownertype ?? params.owner_type ??
-      order?.ownerType ?? order?.owner_type ?? '').toString().toLowerCase();
-  const isMartOwner = ownerTypeRaw === 'mart'; // Food = default when false
+  /* ---------- Back handling (keep header/footer/tab) ---------- */
+  const goBackToOrders = useCallback(() => {
+    if (navigation.canGoBack()) { navigation.goBack(); return; }
+    try {
+      const parent = navigation.getParent?.();
+      const names = parent?.getState?.()?.routeNames ?? [];
+      const target =
+        names.find(n => /^(Orders|OrderTab|OrdersTab|MartOrders|FoodOrders)$/i.test(n)) ||
+        names.find(n => /Order/i.test(n));
+      if (parent && target) { parent.navigate(target); return; }
+    } catch {}
+    navigation.dispatch(CommonActions.navigate({ name: 'MainTabs', params: { screen: 'Orders' }}));
+  }, [navigation]);
 
-  /* ---------- Fulfillment / delivery mode detection ---------- */
-  const isSelfFulfillment = useMemo(() => {
-    const candidates = [
-      params.fulfillment_type, params.fulfillmentType,
-      order?.fulfillment_type, order?.fulfillmentType,
-      order?.delivery_option, order?.delivery_type, order?.type,
-    ].map((v) => norm(v ?? ''));
-    return candidates.some((s) =>
-      s === 'self' ||
-      s === 'self-delivery' || s === 'self_delivery' || s === 'selfdelivery' ||
-      s === 'self-pickup'   || s === 'self_pickup'   || s === 'selfpickup' ||
-      s === 'pickup'
-    );
-  }, [params.fulfillment_type, params.fulfillmentType, order?.fulfillment_type, order?.fulfillmentType, order?.delivery_option, order?.delivery_type, order?.type]);
+  useFocusEffect(
+    useCallback(() => {
+      const onBack = () => { goBackToOrders(); return true; };
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+      return () => sub.remove();
+    }, [goBackToOrders])
+  );
 
-  const deliveryMode = useMemo(() => {
-    if (isSelfFulfillment) return 'self';
-    const s = norm(order?.delivery_option ?? order?.delivery_type ?? order?.type ?? '');
-    if (s.includes('grab') || s.includes('platform')) return 'grab';
-    if (s.includes('delivery')) return 'grab';
-    return s || '';
-  }, [order, isSelfFulfillment]);
+  /* ---------- Merchant delivery option (BUSINESS_DETAILS) ---------- */
+  const [merchantDeliveryOpt, setMerchantDeliveryOpt] = useState('UNKNOWN'); // SELF|GRAB|BOTH|UNKNOWN
+  const [businessId, setBusinessId] = useState(paramBusinessId);
 
-  const isPlatformDelivery = deliveryMode === 'grab';
-
-  // 🔁 Dynamic sequence:
-  const STATUS_SEQUENCE = useMemo(() => {
-    if (isSelfFulfillment) {
-      return ['PENDING', 'CONFIRMED', 'READY'];
-    }
-    if (isMartOwner) {
-      return ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
-    }
-    return ['PENDING', 'CONFIRMED','READY', 'OUT_FOR_DELIVERY', 'COMPLETED'];
-  }, [isMartOwner, isSelfFulfillment]);
-
-  const nextFor = useCallback(
-    (curr) => {
-      const s = (curr || '').toUpperCase();
-      if (TERMINAL_NEGATIVE.has(s) || TERMINAL_SUCCESS.has(s)) return null;
-
-      if (!isSelfFulfillment && isMartOwner && s === 'CONFIRMED') return 'READY';
-
-      if (isSelfFulfillment) {
-        if (s === 'PENDING') return 'CONFIRMED';
-        if (s === 'CONFIRMED') return 'READY';
-        return null;
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await SecureStore.getItemAsync('auth_token');
+        if (!businessId) {
+          const saved = await SecureStore.getItemAsync('merchant_login');
+          if (saved) {
+            try {
+              const j = JSON.parse(saved);
+              setBusinessId(j?.business_id || j?.user?.business_id || j?.user?.businessId || j?.id || j?.user?.id || null);
+            } catch {}
+          }
+        }
+        const finalBizId = businessId || paramBusinessId;
+        const bd = await fetchBusinessDetails({ token, business_id: finalBizId });
+        const opt = normDelivery(bd?.delivery_option ?? bd?.deliveryOption);
+        setMerchantDeliveryOpt(opt);
+        // console.log('[OrderDetails] merchant delivery_option (BUSINESS_DETAILS) →', bd?.delivery_option, 'normalized →', opt);
+      } catch (e) {
+        console.log('[OrderDetails] BUSINESS_DETAILS fetch error:', e?.message || e);
       }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once on mount (token/biz id from secure storage)
 
-      if (s === 'READY' && isPlatformDelivery) return null;
+  /* ---------- Normalize Fulfillment vs Delivery-by ---------- */
+  const fulfillment = useMemo(() => resolveFulfillmentType({ ...order, params }), [order, params]);
 
-      const idx = STATUS_SEQUENCE.indexOf(s);
-      if (idx === -1) {
-        if (s === 'PENDING') return 'CONFIRMED';
-        return STATUS_SEQUENCE[0] || null;
-      }
-      return STATUS_SEQUENCE[idx + 1] || null;
-    },
-    [STATUS_SEQUENCE, isMartOwner, isPlatformDelivery, isSelfFulfillment]
+  // Order-level hint (fallback)
+  const orderDeliveryHint = useMemo(() => resolveDeliveryOptionFromOrder({ ...order, params }), [order, params]);
+
+  // Effective delivery option priority: BUSINESS_DETAILS > order hint > ''
+  const deliveryOptionInitial = useMemo(() => {
+    const m = merchantDeliveryOpt;
+    if (m !== 'UNKNOWN') return m;
+    return orderDeliveryHint || '';
+  }, [merchantDeliveryOpt, orderDeliveryHint]);
+
+  // When BOTH, merchant chooses at READY. Otherwise auto-choose.
+  const [deliveryChoice, setDeliveryChoice] = useState(
+    deliveryOptionInitial === 'SELF' ? 'self' :
+    deliveryOptionInitial === 'GRAB' ? 'grab' : ''
   );
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('order-updated', ({ id, patch }) => {
-      if (String(id) === String(routeOrderId)) setOrder((prev) => ({ ...prev, ...patch }));
-    });
-    return () => sub?.remove?.();
-  }, [routeOrderId]);
+    if (!deliveryChoice && (deliveryOptionInitial === 'SELF' || deliveryOptionInitial === 'GRAB')) {
+      setDeliveryChoice(deliveryOptionInitial === 'SELF' ? 'self' : 'grab');
+    }
+  }, [deliveryOptionInitial, deliveryChoice]);
+
+  const isBothOption   = deliveryOptionInitial === 'BOTH';
+  const isSelfSelected = (deliveryChoice || '').toLowerCase() === 'self';
+  const isGrabSelected = (deliveryChoice || '').toLowerCase() === 'grab';
 
   const status = (order?.status || 'PENDING').toUpperCase();
   const meta = STATUS_META[status] || STATUS_META.PENDING;
 
+  const isSelfFulfillment = useMemo(() => {
+    if (isBothOption) return isSelfSelected;
+    return deliveryOptionInitial === 'SELF';
+  }, [isBothOption, isSelfSelected, deliveryOptionInitial]);
+
+  const isPlatformDelivery = useMemo(() => {
+    if (isBothOption) return isGrabSelected;
+    return deliveryOptionInitial === 'GRAB';
+  }, [isBothOption, isGrabSelected, deliveryOptionInitial]);
+
+  const deliveryOptionDisplay = useMemo(() => {
+    if (isBothOption) {
+      if (status === 'READY') {
+        if (isSelfSelected) return 'BOTH (SELF chosen)';
+        if (isGrabSelected) return 'BOTH (GRAB chosen)';
+        return 'BOTH (choose at READY)';
+      }
+      return 'BOTH';
+    }
+    return deliveryOptionInitial || '';
+  }, [isBothOption, isSelfSelected, isGrabSelected, deliveryOptionInitial, status]);
+
+  /* ---------- Sequence ---------- */
+  const STATUS_SEQUENCE = useMemo(
+    () => ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'],
+    []
+  );
   const isTerminalNegative = TERMINAL_NEGATIVE.has(status);
   const isTerminalSuccess  = TERMINAL_SUCCESS.has(status);
+
+  // Block NEXT at READY only when Grab is active (BOTH+Grab chosen OR direct Grab)
+  const shouldBlockAtReady =
+    status === 'READY' && (isPlatformDelivery || (isBothOption && isGrabSelected));
+
+  const nextFor = useCallback((curr) => {
+    const s = (curr || '').toUpperCase();
+    if (TERMINAL_NEGATIVE.has(s) || TERMINAL_SUCCESS.has(s)) return null;
+    if (s === 'READY' && shouldBlockAtReady) return null; // must assign driver
+    const idx = STATUS_SEQUENCE.indexOf(s);
+    if (idx === -1) return 'CONFIRMED';
+    return STATUS_SEQUENCE[idx + 1] || null;
+  }, [STATUS_SEQUENCE, shouldBlockAtReady]);
 
   const stepIndex = findStepIndex(status, STATUS_SEQUENCE);
   const lastIndex = STATUS_SEQUENCE.length - 1;
   const progressIndex = clamp(stepIndex === -1 ? 0 : stepIndex, 0, lastIndex);
-
-  const progressPct = isTerminalNegative
-    ? 0
-    : isTerminalSuccess
-    ? 100
+  const progressPct = isTerminalNegative ? 0
+    : isTerminalSuccess ? 100
     : ((progressIndex + 1) / STATUS_SEQUENCE.length) * 100;
 
   const stamps = useMemo(() => {
@@ -314,79 +461,53 @@ export default function OrderDetails() {
     return out;
   }, [order?.status_timestamps, STATUS_SEQUENCE]);
 
-  // 🔹 Restaurant note (supports multiple common field names)
+  /* ---------- Note ---------- */
   const restaurantNote = useMemo(() => {
     const n =
       order?.note_for_restaurant ??
       order?.restaurant_note ??
       order?.note_for_store ??
-      order?.note ??
-      '';
+      order?.note ?? '';
     return String(n || '').trim();
   }, [order]);
 
-  const DEFAULT_REASON = {
-    CONFIRMED: 'Order accepted by merchant',
-    READY: 'Order is ready',
-    OUT_FOR_DELIVERY: 'Order handed over for delivery',
-    COMPLETED: 'Order delivered',
-  };
-
-  /* ---------- HYDRATE FROM GROUPED ENDPOINT (fix for Notifications) ---------- */
+  /* ---------- Hydrate from grouped endpoint ---------- */
   const hydrateFromGrouped = useCallback(async () => {
     try {
       if (!ordersGroupedUrl || !routeOrderId) return;
-
-      // Don’t re-fetch if we already have items/name/payment filled
       const hasCore =
         (order?.raw_items && order.raw_items.length) ||
         order?.payment_method ||
         order?.customer_name ||
         order?.delivery_address;
-
       if (hasCore) return;
 
       const token = await SecureStore.getItemAsync('auth_token');
       const res = await fetch(ordersGroupedUrl, {
         method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       });
       const text = await res.text();
       let json = null;
       try { json = text ? JSON.parse(text) : null; } catch {}
       if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
-      // Accept multiple shapes:
-      // 1) { success, data:[ { user, orders:[...] }, ... ] }
-      // 2) { data:[ ...flatOrders ] }
-      // 3) [ ...flatOrders ]
-      const groups = Array.isArray(json?.data) ? json.data
-                   : Array.isArray(json) ? json
-                   : [];
-
-      // Flatten to orders[]
+      const groups = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
       let allOrders = [];
       for (const g of groups) {
         if (Array.isArray(g?.orders)) allOrders = allOrders.concat(g.orders);
         else if (g?.id || g?.order_id || g?.order_code) allOrders.push(g);
       }
-
-      // Find by id/code
       const match = allOrders.find((o) =>
         sameOrder(o?.id ?? o?.order_id ?? o?.order_code, routeOrderId)
       );
       if (!match) return;
 
-      // Normalize minimal fields we render
       const normalized = {
         ...match,
         id: String(match?.id ?? match?.order_id ?? match?.order_code ?? routeOrderId),
         order_code: normalizeOrderCode(match?.order_code ?? match?.id ?? routeOrderId),
         customer_name: match?.customer_name ?? match?.user_name ?? match?.user?.user_name ?? '',
-        // phone intentionally omitted per requirement
         payment_method: match?.payment_method ?? match?.payment ?? '',
         delivery_address: match?.delivery_address ?? match?.address ?? '',
         raw_items: Array.isArray(match?.raw_items) ? match.raw_items
@@ -394,24 +515,29 @@ export default function OrderDetails() {
                   : [],
         total: match?.total ?? match?.total_amount ?? 0,
         status: (match?.status ?? order?.status ?? 'PENDING').toUpperCase(),
-        type: match?.type ?? match?.delivery_option ?? match?.fulfillment_type ?? order?.type ?? '',
+        type: match?.type ?? match?.fulfillment_type ?? match?.delivery_type ?? order?.type ?? '',
+        delivery_option: match?.delivery_option ?? match?.delivery_by ?? order?.delivery_option ?? '',
         status_timestamps: match?.status_timestamps ?? order?.status_timestamps ?? {},
       };
-
       setOrder((prev) => ({ ...prev, ...normalized }));
     } catch (e) {
-      // silent fail; UI will still show minimal card
       console.warn('[OrderDetails] hydrate error:', e?.message);
     }
-  }, [ordersGroupedUrl, routeOrderId, order?.raw_items, order?.payment_method, order?.customer_name, order?.delivery_address, order?.status, order?.type, order?.status_timestamps]);
+  }, [ordersGroupedUrl, routeOrderId, order]);
 
   useEffect(() => { hydrateFromGrouped(); }, [hydrateFromGrouped]);
 
-  /* ---------- update handlers ---------- */
+  /* ---------- Update handlers ---------- */
+  const DEFAULT_REASON = {
+    CONFIRMED: 'Order accepted by merchant',
+    READY: 'Order is ready',
+    OUT_FOR_DELIVERY: 'Order handed over for delivery',
+    COMPLETED: 'Order delivered',
+  };
+
   const doUpdate = useCallback(async (newStatus, opts = {}) => {
     try {
       let payload;
-
       if (newStatus === 'DECLINED') {
         const r = String(opts?.reason ?? '').trim();
         if (r.length < 3) {
@@ -425,20 +551,22 @@ export default function OrderDetails() {
         if (DEFAULT_REASON[newStatus]) payload.reason = DEFAULT_REASON[newStatus];
       }
 
+      // Always send the chosen/active delivery_option
+      const deliveryBy =
+        (isBothOption && (isSelfSelected || isGrabSelected))
+          ? (isSelfSelected ? 'SELF' : 'GRAB')
+          : (deliveryOptionInitial || '');
+      if (deliveryBy) payload.delivery_option = deliveryBy;
+
       setUpdating(true);
       const token = await SecureStore.getItemAsync('auth_token');
-
       const raw = order?.order_code || order?.id || routeOrderId;
       const orderCode = normalizeOrderCode(raw);
 
-      await updateStatusApi({
-        endpoint: ENV_UPDATE_ORDER || '',
-        orderCode,
-        payload,
-        token,
-      });
+      await updateStatusApi({ endpoint: ENV_UPDATE_ORDER || '', orderCode, payload, token });
 
       const patch = { status: newStatus };
+      if (payload.delivery_option) patch.delivery_option = payload.delivery_option;
       setOrder((prev) => ({ ...prev, ...patch }));
       DeviceEventEmitter.emit('order-updated', { id: routeOrderId || order?.id, patch });
     } catch (e) {
@@ -446,7 +574,7 @@ export default function OrderDetails() {
     } finally {
       setUpdating(false);
     }
-  }, [routeOrderId, order?.id, order?.order_code]);
+  }, [routeOrderId, order?.id, order?.order_code, isBothOption, isSelfSelected, isGrabSelected, deliveryOptionInitial]);
 
   const next = nextFor(status);
   const primaryLabel = status === 'PENDING'
@@ -460,9 +588,9 @@ export default function OrderDetails() {
     doUpdate(next);
   }, [next, updating, doUpdate]);
 
-  const onDecline = () => setDeclineOpen(true);
-
-  const confirmDecline = () => {
+  const onDecline = useCallback(() => setDeclineOpen(true), []);
+  const canDecline = useMemo(() => String(declineReason).trim().length >= 3, [declineReason]);
+  const confirmDecline = useCallback(() => {
     const r = String(declineReason).trim();
     if (r.length < 3) {
       Alert.alert('Reason required', 'Please type a brief reason (min 3 characters).');
@@ -471,13 +599,9 @@ export default function OrderDetails() {
     setDeclineOpen(false);
     doUpdate('DECLINED', { reason: r });
     setDeclineReason('');
-  };
+  }, [declineReason, doUpdate]);
 
-  const canDecline = String(declineReason).trim().length >= 3;
-
-  const headerTopPad = Math.max(insets.top, 8) + 18;
-
-  /* ─────────────── Nearby drivers (REAL API) + ratings ─────────────── */
+  /* ---------- Nearby drivers (READY + Grab active) ---------- */
   const [drivers, setDrivers] = useState([]);
   const [loadingDrivers, setLoadingDrivers] = useState(false);
   const [driversError, setDriversError] = useState('');
@@ -486,68 +610,43 @@ export default function OrderDetails() {
   const acceptTimerRef = useRef(null);
 
   const refCoords = useMemo(() => {
-    const lat =
-      order?.delivery_lat ??
-      order?.lat ??
-      order?.destination?.lat ??
-      order?.geo?.lat ??
-      27.4775469;
-    const lng =
-      order?.delivery_lng ??
-      order?.lng ??
-      order?.destination?.lng ??
-      order?.geo?.lng ??
-      89.6387255;
-    const cityId =
-      order?.city_id ??
-      order?.city ??
-      'thimphu';
+    const lat = order?.delivery_lat ?? order?.lat ?? order?.destination?.lat ?? order?.geo?.lat ?? 27.4775469;
+    const lng = order?.delivery_lng ?? order?.lng ?? order?.destination?.lng ?? order?.geo?.lng ?? 89.6387255;
+    const cityId = order?.city_id ?? order?.city ?? 'thimphu';
     return { lat: Number(lat), lng: Number(lng), cityId: String(cityId || 'thimphu').toLowerCase() };
   }, [order]);
 
-  const buildNearby = useCallback(() => {
-    return expandNearbyUrl(ENV_NEARBY_DRIVERS, {
-      cityId: refCoords.cityId,
-      lat: refCoords.lat,
-      lng: refCoords.lng,
-      radiusKm: 5,
-      limit: 20,
-    });
-  }, [refCoords]);
+  const buildNearby = useCallback(() => expandNearbyUrl(ENV_NEARBY_DRIVERS, {
+    cityId: refCoords.cityId, lat: refCoords.lat, lng: refCoords.lng, radiusKm: 5, limit: 20,
+  }), [refCoords]);
 
   const fetchDriverRating = useCallback(async (driverId) => {
     try {
       if (!ENV_DRIVER_RATING) return null;
       const url = buildDriverRatingUrl(ENV_DRIVER_RATING, driverId);
       if (!url) return null;
-
       const resp = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
       const text = await resp.text();
       let json = null;
-      try { json = text ? JSON.parse(text) : null; } catch { /* ignore */ }
+      try { json = text ? JSON.parse(text) : null; } catch {}
       if (!resp.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
       return computeAverageRating(json);
-    } catch (e) {
-      console.warn('[Driver rating] failed for driver', driverId, e?.message);
-      return null;
-    }
+    } catch { return null; }
   }, []);
 
   const fetchNearbyDrivers = useCallback(async () => {
-    if (!(status === 'READY' && isPlatformDelivery)) return;
+    const grabActive = (isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB');
+    if (!(status === 'READY' && grabActive)) return;
+
     const url = buildNearby();
-    if (!url) {
-      setDriversError('NEARBY_DRIVERS_ENDPOINT not configured');
-      return;
-    }
-    setDriversError('');
-    setLoadingDrivers(true);
+    if (!url) { setDriversError('NEARBY_DRIVERS_ENDPOINT not configured'); return; }
+
+    setDriversError(''); setLoadingDrivers(true);
     try {
       const resp = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
       const text = await resp.text();
       let json = null;
-      try { json = text ? JSON.parse(text) : null; } catch { /* ignore */ }
-
+      try { json = text ? JSON.parse(text) : null; } catch {}
       if (!resp.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
 
       let arr = [];
@@ -570,64 +669,63 @@ export default function OrderDetails() {
       });
 
       const top = normalized.slice(0, 12);
-      const ratings = await Promise.all(
-        top.map(async (d) => {
-          const idForRating = d.driver_id || d.id;
-          const avg = idForRating ? await fetchDriverRating(idForRating) : null;
-          return avg;
-        })
-      );
-
+      const ratings = await Promise.all(top.map(async (d) => {
+        const idForRating = d.driver_id || d.id;
+        return idForRating ? await fetchDriverRating(idForRating) : null;
+      }));
       top.forEach((d, idx) => { d.rating = ratings[idx]; });
-
       const merged = top.concat(normalized.slice(12));
       setDrivers(merged);
     } catch (e) {
-      setDrivers([]);
-      setDriversError(String(e?.message || e));
+      setDrivers([]); setDriversError(String(e?.message || e));
     } finally {
       setLoadingDrivers(false);
     }
-  }, [status, isPlatformDelivery, buildNearby, fetchDriverRating]);
+  }, [status, isBothOption, isGrabSelected, deliveryOptionInitial, buildNearby, fetchDriverRating]);
 
   useEffect(() => {
-    if (status === 'READY' && isPlatformDelivery) {
+    const grabActive = (isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB');
+    if (status === 'READY' && grabActive) {
       fetchNearbyDrivers();
     } else {
       setDrivers([]);
       setOfferPendingDriver(null);
       setWaitingDriverAccept(false);
     }
-  }, [status, isPlatformDelivery, refCoords.cityId, refCoords.lat, refCoords.lng, fetchNearbyDrivers]);
+  }, [status, isBothOption, isGrabSelected, deliveryOptionInitial, refCoords.cityId, refCoords.lat, refCoords.lng, fetchNearbyDrivers]);
 
   const offerToDriver = useCallback((driverId) => {
     setOfferPendingDriver(driverId);
     setWaitingDriverAccept(true);
-
     if (acceptTimerRef.current) clearTimeout(acceptTimerRef.current);
     const ms = 3000 + Math.floor(Math.random() * 3000);
     acceptTimerRef.current = setTimeout(() => {
       setWaitingDriverAccept(false);
       setOfferPendingDriver(null);
-
       const patch = { status: 'OUT_FOR_DELIVERY', assigned_driver: driverId };
       setOrder((prev) => ({ ...prev, ...patch }));
       DeviceEventEmitter.emit('order-updated', { id: routeOrderId || order?.id, patch });
     }, ms);
   }, [order?.id, routeOrderId]);
 
+  useEffect(() => () => { if (acceptTimerRef.current) clearTimeout(acceptTimerRef.current); }, []);
+
+  /* ---------- Live patch listener ---------- */
   useEffect(() => {
-    return () => {
-      if (acceptTimerRef.current) clearTimeout(acceptTimerRef.current);
-    };
-  }, []);
+    const sub = DeviceEventEmitter.addListener('order-updated', ({ id, patch }) => {
+      if (String(id) === String(routeOrderId)) setOrder((prev) => ({ ...prev, ...patch }));
+    });
+    return () => sub?.remove?.();
+  }, [routeOrderId]);
 
   /* ---------------- UI ---------------- */
+  const headerTopPad = Math.max(insets.top, 8) + 18;
+
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
-      {/* Header — centered title */}
-      <View style={[styles.headerBar, { paddingTop: Math.max(insets.top, 8) + 18 }]}>
-        <Pressable onPress={() => navigation.goBack()} style={styles.backBtn} hitSlop={8}>
+      {/* Header */}
+      <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
+        <Pressable onPress={goBackToOrders} style={styles.backBtn} hitSlop={8}>
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </Pressable>
         <Text style={styles.headerTitle}>Order details</Text>
@@ -637,7 +735,7 @@ export default function OrderDetails() {
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
         {/* Card */}
         <View style={styles.card}>
-          {/* Top row: id + current status chip */}
+          {/* Top row: id + status chip */}
           <View style={styles.idRow}>
             <Text style={styles.orderId}>#{order?.id || routeOrderId}</Text>
             <Chip
@@ -654,21 +752,18 @@ export default function OrderDetails() {
             <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
           </View>
 
-          {/* Steps row */}
+          {/* Steps */}
           <View style={styles.stepsRow}>
-            {STATUS_SEQUENCE.map((k, i) => {
+            {['PENDING','CONFIRMED','READY','OUT_FOR_DELIVERY','COMPLETED'].map((k, i) => {
               const isActiveStep = k === status;
               const done = isTerminalSuccess ? true : !isTerminalNegative && i <= progressIndex;
               const fill = done;
-
               let ring = '#cbd5e1';
               if (isTerminalNegative) ring = isActiveStep ? (STATUS_META.DECLINED.color) : '#cbd5e1';
               else if (isTerminalSuccess) ring = '#16a34a';
               else ring = (done || isActiveStep) ? '#16a34a' : '#cbd5e1';
-
               const dimmed = !isActiveStep && !(done || isTerminalSuccess);
               const icon = STATUS_META[k]?.icon || 'ellipse-outline';
-
               return (
                 <Step
                   key={k}
@@ -684,25 +779,17 @@ export default function OrderDetails() {
             })}
           </View>
 
-          {/* Terminal info (only for Declined) */}
-          {isTerminalNegative ? (
-            <View style={styles.terminalRow}>
-              <Ionicons name="information-circle-outline" size={16} color={STATUS_META.DECLINED.color} />
-              <Text style={[styles.terminalText, { color: STATUS_META.DECLINED.color }]}>
-                Flow ended: {STATUS_META.DECLINED.label}
-              </Text>
-            </View>
-          ) : null}
-
           {/* Meta */}
           <View style={{ marginTop: 12, gap: 8 }}>
-            <Row icon="person-outline" text={`${order.customer_name || '—'}`} />
-            <Row icon="bicycle-outline" text={`Type: ${order.type || order.delivery_option || order.fulfillment_type || '—'}`} />
+            <Row icon="person-outline" text={order.customer_name || '—'} />
+            <Row icon="bicycle-outline" text={`Fulfillment: ${fulfillment || '—'}`} />
+            <Row icon="swap-horizontal-outline" text={`Delivery by: ${deliveryOptionDisplay || '—'}`} />
             <Row icon="card-outline" text={`Payment: ${order.payment_method || '—'}`} />
+            {/* SAFE: delivery_address can be object or string */}
             <Row icon="navigate-outline" text={order.delivery_address || '—'} />
           </View>
 
-          {/* 🔹 Restaurant note bubble (only if present) */}
+          {/* Restaurant note */}
           {!!restaurantNote && (
             <View style={styles.noteBox}>
               <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0f766e" />
@@ -710,6 +797,36 @@ export default function OrderDetails() {
             </View>
           )}
         </View>
+
+        {/* ====== ONLY AT READY & BOTH: choose Self vs Grab ====== */}
+        {status === 'READY' && isBothOption && !isTerminalNegative && !isTerminalSuccess && (
+          <View style={[styles.block, { marginTop: 12 }]}>
+            <RowTitle title="Choose delivery method" />
+            <View style={styles.segmentWrap}>
+              <Pressable
+                onPress={() => setDeliveryChoice('self')}
+                style={[styles.segmentBtn, isSelfSelected && styles.segmentBtnActive]}
+              >
+                <Ionicons name="person-outline" size={16} color={isSelfSelected ? '#fff' : '#0f172a'} />
+                <Text style={[styles.segmentText, { color: isSelfSelected ? '#fff' : '#0f172a' }]}>Self</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => setDeliveryChoice('grab')}
+                style={[styles.segmentBtn, isGrabSelected && styles.segmentBtnActive]}
+              >
+                <Ionicons name="bicycle-outline" size={16} color={isGrabSelected ? '#fff' : '#0f172a'} />
+                <Text style={[styles.segmentText, { color: isGrabSelected ? '#fff' : '#0f172a' }]}>Grab</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.segmentHint}>
+              {isSelfSelected
+                ? 'Proceed directly to Out for delivery.'
+                : isGrabSelected
+                ? 'Assign a driver below to continue.'
+                : 'Pick one to continue.'}
+            </Text>
+          </View>
+        )}
 
         {/* Update actions */}
         <Text style={styles.sectionTitle}>Update status</Text>
@@ -729,7 +846,7 @@ export default function OrderDetails() {
                 </Pressable>
 
                 <Pressable
-                  onPress={onDecline}
+                  onPress={() => setDeclineOpen(true)}
                   disabled={updating}
                   style={({ pressed }) => [styles.secondaryBtn, { borderColor: '#ef4444', opacity: updating || pressed ? 0.85 : 1 }]}
                 >
@@ -739,36 +856,38 @@ export default function OrderDetails() {
               </>
             ) : (
               <>
-                {(status !== 'READY' || !isPlatformDelivery) && !isSelfFulfillment && primaryLabel ? (
+                {primaryLabel ? (
                   <Pressable
-                    onPress={onPrimaryAction}
-                    disabled={updating}
-                    style={({ pressed }) => [styles.primaryBtn, { opacity: updating || pressed ? 0.85 : 1 }]}
+                    onPress={() => { if (primaryLabel) { const n = next; if (n) onPrimaryAction(); }}}
+                    disabled={
+                      updating ||
+                      (status === 'READY' && (
+                        (isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB')
+                      ))
+                    }
+                    style={({ pressed }) => [styles.primaryBtn, {
+                      opacity: (updating ||
+                               (status === 'READY' && ((isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB'))) ||
+                               pressed) ? 0.85 : 1
+                    }]}
                   >
                     <Ionicons name="arrow-forward-circle" size={18} color="#fff" />
                     <Text style={styles.primaryBtnText}>{primaryLabel}</Text>
                   </Pressable>
-                ) : (
-                  <>
-                    {status === 'READY' && isPlatformDelivery && !isSelfFulfillment ? (
-                      <Text style={{ color: '#64748b', fontWeight: '600' }}>
-                        Assign a driver below to continue…
-                      </Text>
-                    ) : null}
-                    {isSelfFulfillment && status === 'READY' ? (
-                      <Text style={{ color: '#64748b', fontWeight: '600' }}>
-                        Ready for Self-Pickup.
-                      </Text>
-                    ) : null}
-                  </>
-                )}
+                ) : null}
+
+                {status === 'READY' && ((isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB')) ? (
+                  <Text style={{ color: '#64748b', fontWeight: '600' }}>
+                    Assign a driver below to continue…
+                  </Text>
+                ) : null}
               </>
             )}
           </View>
         )}
 
-        {/* 🔸 Nearby Driver assignment panel */}
-        {status === 'READY' && isPlatformDelivery && !isSelfFulfillment && (
+        {/* Nearby Driver assignment panel — only when READY & Grab active */}
+        {status === 'READY' && ((isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB')) && (
           <View style={styles.block}>
             <RowTitle title="Nearby drivers" />
             <View style={{ marginTop: 8 }} />
@@ -807,10 +926,10 @@ export default function OrderDetails() {
                 {drivers.map((d) => (
                   <View key={String(d.id)} style={styles.driverRow}>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.driverName} numberOfLines={1}>{d.name}</Text>
+                      <Text style={styles.driverName} numberOfLines={1}>{toText(d.name)}</Text>
                       <Text style={styles.driverMeta} numberOfLines={1}>
                         {d.rating != null ? `★ ${Number(d.rating).toFixed(1)} • ` : '★ — • '}
-                        {d.vehicle_type || '—'}
+                        {toText(d.vehicle_type || '—')}
                         {d.distance_km != null ? ` • ${Number(d.distance_km).toFixed(1)} km` : ''}
                       </Text>
                     </View>
@@ -858,7 +977,7 @@ export default function OrderDetails() {
           <RowTitle title="Items" />
           {(order?.raw_items || []).map((it, idx) => (
             <View key={`${it.item_id || idx}`} style={styles.itemRow}>
-              <Text style={styles.itemName} numberOfLines={1}>{it.item_name || 'Item'}</Text>
+              <Text style={styles.itemName} numberOfLines={1}>{toText(it.item_name || 'Item')}</Text>
               <Text style={styles.itemQty}>×{Number(it.quantity ?? 1)}</Text>
             </View>
           ))}
@@ -882,9 +1001,7 @@ export default function OrderDetails() {
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Decline order</Text>
-            <Text style={styles.modalSub}>
-              A reason is required:
-            </Text>
+            <Text style={styles.modalSub}>A reason is required:</Text>
             <TextInput
               style={styles.input}
               placeholder="Reason (min 3 characters)"
@@ -896,17 +1013,11 @@ export default function OrderDetails() {
               {canDecline ? 'Looks good.' : 'Please enter at least 3 characters.'}
             </Text>
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-              <Pressable
-                style={[styles.dialogBtn, { backgroundColor: '#f1f5f9' }]}
-                onPress={() => { setDeclineOpen(false); }}
-              >
+              <Pressable style={[styles.dialogBtn, { backgroundColor: '#f1f5f9' }]} onPress={() => { setDeclineOpen(false); }}>
                 <Text style={[styles.dialogBtnText, { color: '#0f172a' }]}>Cancel</Text>
               </Pressable>
               <Pressable
-                style={({ pressed }) => [
-                  styles.dialogBtn,
-                  { backgroundColor: canDecline ? '#ef4444' : '#fecaca', opacity: pressed ? 0.85 : 1 },
-                ]}
+                style={({ pressed }) => [styles.dialogBtn, { backgroundColor: canDecline ? '#ef4444' : '#fecaca', opacity: pressed ? 0.85 : 1 }]}
                 onPress={confirmDecline}
                 disabled={!canDecline}
               >
@@ -971,34 +1082,35 @@ const styles = StyleSheet.create({
   stepLabel: { marginTop: 4, fontSize: 10.5, fontWeight: '700', textAlign: 'center', color: '#334155' },
   stepTime: { marginTop: 1, fontSize: 10, color: '#64748b' },
 
-  terminalRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
-  terminalText: { fontWeight: '700' },
+  // Meta & note
+  noteBox: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 10,
+    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 12,
+    backgroundColor: '#ecfeff', borderWidth: 1, borderColor: '#99f6e4',
+  },
+  noteText: { flex: 1, color: '#115e59', fontWeight: '600' },
 
   sectionTitle: { marginTop: 14, marginBottom: 8, fontWeight: '700', color: '#0f172a' },
   terminalNote: { color: '#64748b', marginBottom: 10 },
 
-  noteBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    marginTop: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: '#ecfeff',
-    borderWidth: 1,
-    borderColor: '#99f6e4',
+  // BOTH selector (only at READY)
+  segmentWrap: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  segmentBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10,
+    backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0',
   },
-  noteText: { flex: 1, color: '#115e59', fontWeight: '600' },
+  segmentBtnActive: { backgroundColor: '#16a34a', borderColor: '#16a34a' },
+  segmentText: { fontWeight: '800' },
+  segmentHint: { marginTop: 8, color: '#64748b', fontWeight: '600' },
 
+  // Actions
   actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8 },
-
   primaryBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: '#16a34a', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10,
   },
   primaryBtnText: { color: '#fff', fontWeight: '800' },
-
   secondaryBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 10,
@@ -1008,20 +1120,20 @@ const styles = StyleSheet.create({
 
   block: { backgroundColor: '#fff', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#e2e8f0', marginTop: 12 },
   blockTitle: { fontWeight: '800', color: '#0f172a' },
-
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   rowText: { color: '#475569', fontWeight: '600', flex: 1 },
 
+  // Items & totals
   itemRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
   itemName: { color: '#0f172a', fontWeight: '600', flexShrink: 1, paddingRight: 8 },
   itemQty: { color: '#64748b', fontWeight: '700' },
-
   totRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
   totLabel: { color: '#64748b', fontWeight: '700' },
   totValue: { color: '#0f172a', fontWeight: '700' },
   totLabelStrong: { color: '#0f172a', fontWeight: '800' },
   totValueStrong: { color: '#0f172a', fontWeight: '900' },
 
+  // Modal
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center', padding: 24 },
   modalCard: { backgroundColor: '#fff', padding: 16, borderRadius: 16, width: '100%' },
   modalTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
@@ -1036,37 +1148,21 @@ const styles = StyleSheet.create({
 
   // Driver UI
   driverRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 12,
-    paddingHorizontal: 10,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingVertical: 10, borderWidth: 1, borderColor: '#e2e8f0',
+    borderRadius: 12, paddingHorizontal: 10,
   },
   driverName: { color: '#0f172a', fontWeight: '800' },
   driverMeta: { color: '#475569', fontWeight: '600', marginTop: 2 },
   offerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#2563eb',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: '#2563eb', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10,
   },
   offerBtnText: { color: '#fff', fontWeight: '800' },
   waitingTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#eff6ff',
-    borderWidth: 1,
-    borderColor: '#bfdbfe',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe',
+    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10,
   },
   waitingText: { color: '#1d4ed8', fontWeight: '800' },
   infoHint: { flexDirection: 'row', gap: 8, alignItems: 'center', backgroundColor: '#eef2ff', borderColor: '#c7d2fe', borderWidth: 1, padding: 10, borderRadius: 10 },

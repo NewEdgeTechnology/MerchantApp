@@ -213,7 +213,7 @@ const normalizeOwnerType = (v) => {
   return s || 'food';
 };
 
-/* ---------------- KPI/Orders helpers (wide + resilient) ---------------- */
+/* ---------------- KPI/Orders helpers (matched to OrdersTab logic) ---------------- */
 const toNumber = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const isTodayLocal = (iso) => {
   if (!iso) return false;
@@ -300,29 +300,56 @@ const pluckOrdersLight = (payload) => {
   return [];
 };
 
-// Count KPIs and per-status
-const countFromOrders = (rows, kind = 'food') => {
-  const baseActive = ['CONFIRMED', 'READY', 'OUT_FOR_DELIVERY', 'ACCEPTED', 'ASSIGNED', 'DISPATCHED'];
-  const ACTIVE_SET = new Set(kind === 'food' ? [...baseActive, 'PREPARING'] : baseActive);
+/* ✅ KPI counter exactly like GrabMerchantHomeScreen/OrdersTab semantics */
+const UP = (s) => String(s || '').toUpperCase();
+const countKpisLikeOrdersTab = (rows, kind = 'food') => {
+  // Active:
+  //  - Food: PENDING, CONFIRMED, PREPARING, READY, OUT_FOR_DELIVERY
+  //  - Mart: PENDING, CONFIRMED, READY, OUT_FOR_DELIVERY
+  const ACTIVE_SET = new Set(
+    String(kind).toLowerCase() === 'mart'
+      ? ['PENDING','CONFIRMED','READY','OUT_FOR_DELIVERY']
+      : ['PENDING','CONFIRMED','PREPARING','READY','OUT_FOR_DELIVERY']
+  );
+
+  // What we treat as "cancellation" (today-only)
+  const CANCEL_SET = new Set(['CANCELLED','CANCELED','REJECTED','DECLINED']);
+
+  // Accepted set for acceptanceRate denominator (active + completed, excludes cancels)
   const ACCEPTED_SET = new Set([...ACTIVE_SET, 'COMPLETED']);
 
-  let active = 0, rejected = 0, accepted = 0, salesToday = 0;
+  let active = 0;
+  let cancelledToday = 0;
+  let accepted = 0;
+  let salesToday = 0;
+
   const statusCounts = Object.create(null);
 
-  for (const r of rows) {
-    const st = r.status;
+  for (const r of rows || []) {
+    const st = UP(r.status);
+    const today = isTodayLocal(r.created_at);
+
     statusCounts[st] = (statusCounts[st] || 0) + 1;
+
     if (ACTIVE_SET.has(st)) active += 1;
-    if (st === 'REJECTED' || st === 'CANCELLED' || st === 'CANCELED') rejected += 1;
+    if ((st === 'CANCELLED' || st === 'CANCELED' || st === 'REJECTED' || st === 'DECLINED') && today) {
+      cancelledToday += 1;
+    }
     if (ACCEPTED_SET.has(st)) accepted += 1;
-    if (st !== 'REJECTED' && isTodayLocal(r.created_at)) salesToday += toNumber(r.total);
+    if (!CANCEL_SET.has(st) && today) salesToday += toNumber(r.total);
   }
 
-  const denom = accepted + rejected;
-  const acceptanceRate = denom > 0 ? accepted / denom : 0;
+  const denom = accepted + cancelledToday;
+  const acceptanceRate = denom > 0 ? Math.round((accepted / denom) * 100) : 0;
 
   return {
-    kpis: { salesToday, salesCurrency: 'Nu', activeOrders: active, acceptanceRate, cancellations: rejected },
+    kpis: {
+      salesToday,
+      salesCurrency: 'Nu',
+      activeOrders: active,
+      cancellations: cancelledToday,
+      acceptanceRate,
+    },
     statusCounts,
   };
 };
@@ -516,11 +543,9 @@ async function probeOrdersPayload({ baseCandidates, businessId, kind }) {
     try {
       const payload = await fetchJSON(url, { headers: { Accept: 'application/json' } });
       const rows = pluckOrdersLight(payload);
-      // if (__DEV__) console.log('[HomeTab KPI] probe matched:', url, 'rows:', rows.length);
       return rows;
     } catch (e) {
       lastErr = e;
-      // if (__DEV__) console.log('[HomeTab KPI] probe failed:', url, e?.message);
     }
   }
   if (lastErr) throw lastErr;
@@ -535,6 +560,7 @@ export default function HomeTab({
   ownerType: ownerTypeProp,
   businessId: businessIdProp,          // ← from parent
   serviceConfig,                        // ← from parent
+  kpis: kpisProp,                       // ← NEW: parent KPIs (preferred if present)
 }) {
   const navigation = useNavigation();
   const route = useRoute();
@@ -545,12 +571,6 @@ export default function HomeTab({
     [ownerTypeProp, route?.params?.owner_type, route?.params?.ownerType]
   );
   const isMart = ownerType === 'mart';
-
-  // Status labels (hide PREPARING for Mart)
-  // const STATUS_LABELS = useMemo(
-  //   () => (isMart ? BASE_STATUS_LABELS.filter(s => s.key !== 'PREPARING') : BASE_STATUS_LABELS),
-  //   [isMart]
-  // );
 
   // Nouns
   const nouns = useMemo(() => {
@@ -582,7 +602,7 @@ export default function HomeTab({
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // KPIs + status counts (computed here from orders)
+  // KPIs + status counts (local, but secondary to parent kpisProp)
   const [kpis, setKpis] = useState({ salesToday: 0, salesCurrency: 'Nu', activeOrders: 0, acceptanceRate: 0, cancellations: 0 });
   const [statusCounts, setStatusCounts] = useState({});
 
@@ -804,7 +824,7 @@ export default function HomeTab({
     }
   }, [LIST_BASE, BUSINESS_ID, buildFetchUrl, extractItemsFromResponse, normalizeItem, filterMenusForOwner, nouns.nounPlural, nouns.emptyText]);
 
-  /* ------------ Orders → KPIs (multi-probe like Home screen) ------------ */
+  /* ------------ Orders → KPIs (multi-probe like Home screen), EXACT logic as OrdersTab ------------ */
   const fetchKpis = useCallback(async () => {
     const id = normalizeBusinessId(BUSINESS_ID);
     if (!isValidBusinessId(id)) return;
@@ -812,11 +832,10 @@ export default function HomeTab({
     try {
       const baseCandidates = buildBaseCandidates(ownerType, serviceConfig?.orders);
       const rows = await probeOrdersPayload({ baseCandidates, businessId: id, kind: ownerType });
-      const { kpis: computed, statusCounts: counts } = countFromOrders(rows, ownerType);
+      const { kpis: computed, statusCounts: counts } = countKpisLikeOrdersTab(rows, ownerType);
       setKpis(computed);
       setStatusCounts(counts);
     } catch (e) {
-      // if (__DEV__) console.log('[HomeTab] KPI fetch error:', e?.message);
       // keep prior KPIs instead of clearing to zeros
     }
   }, [BUSINESS_ID, ownerType, serviceConfig?.orders]);
@@ -900,12 +919,16 @@ export default function HomeTab({
     }
   }, [BUSINESS_ID, BANNERS_ENDPOINT, BANNERS_BY_BUSINESS_ENDPOINT, BANNERS_IMG_BASE, ownerType]);
 
-  // Only fetch when both businessId and list base are known
+  // Only fetch when both businessId and list base are known (for menus/banners)
   const ready = useMemo(() => Boolean(BUSINESS_ID && LIST_BASE), [BUSINESS_ID, LIST_BASE]);
 
-  // initial + on focus
-  useFocusEffect(useCallback(() => { if (ready) { fetchMenus(); fetchBanners(); fetchKpis(); } }, [ready, fetchMenus, fetchBanners, fetchKpis]));
-  useEffect(() => { if (ready) { fetchMenus(); fetchBanners(); fetchKpis(); } }, [ownerId, BUSINESS_ID, ownerType, ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  // initial + on focus (menus/banners use ready; KPIs decoupled)
+  useFocusEffect(useCallback(() => { if (ready) { fetchMenus(); fetchBanners(); } }, [ready, fetchMenus, fetchBanners]));
+  useEffect(() => { if (ready) { fetchMenus(); fetchBanners(); } }, [ownerId, BUSINESS_ID, ownerType, ready]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 🚀 KPI fetch decoupled from LIST_BASE — only needs businessId + ownerType
+  useFocusEffect(useCallback(() => { if (BUSINESS_ID) { fetchKpis(); } }, [BUSINESS_ID, ownerType, fetchKpis]));
+  useEffect(() => { if (BUSINESS_ID) { fetchKpis(); } }, [BUSINESS_ID, ownerType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // money / pct helpers
   const fmtMoney = useCallback(
@@ -913,13 +936,17 @@ export default function HomeTab({
       (typeof moneyProp === 'function' ? moneyProp(n, ccy) : `${ccy} ${Number(n || 0).toFixed(2)}`),
     [moneyProp]
   );
-  const pct = useCallback((v) => `${Math.round((Number.isFinite(v) ? v : 0) * 100)}%`, []);
+  const pct = useCallback((v) => `${Math.round((Number.isFinite(v) ? v : 0))}%`, []);
 
-  const salesToday = Number(kpis?.salesToday ?? 0);
-  const salesCurrency = kpis?.salesCurrency || 'Nu';
-  const activeOrders = Number(kpis?.activeOrders ?? 0);
-  const acceptanceRate = Number.isFinite(kpis?.acceptanceRate) ? kpis.acceptanceRate : 0;
-  const cancellations = Number(kpis?.cancellations ?? 0);
+  // ✅ Prefer parent KPIs if provided; fall back to local computed
+  const eff = (obj) => (obj && typeof obj === 'object' ? obj : {});
+  const mergedKpis = { salesToday: 0, salesCurrency: 'Nu', activeOrders: 0, acceptanceRate: 0, cancellations: 0,
+    ...eff(kpis), ...eff(kpisProp) };
+  const salesToday = Number(mergedKpis.salesToday ?? 0);
+  const salesCurrency = mergedKpis.salesCurrency || 'Nu';
+  const activeOrders = Number(mergedKpis.activeOrders ?? 0);
+  const acceptanceRate = Number.isFinite(mergedKpis.acceptanceRate) ? mergedKpis.acceptanceRate : 0;
+  const cancellations = Number(mergedKpis.cancellations ?? 0);
 
   const visibleMenus = useMemo(() => allMenus.slice(0, 3), [allMenus]);
   const showCountNote = allMenus.length > 3;
@@ -996,7 +1023,8 @@ export default function HomeTab({
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ alignItems: 'center', paddingVertical: 6, gap: 8 }}
         >
-          {/* <StatusChip
+          {/* Example to enable later:
+          <StatusChip
             label="All"
             count={totalStatusCount}
             onPress={() => onPressNav('Orders')}
@@ -1008,8 +1036,8 @@ export default function HomeTab({
               label={s.label}
               count={Number(statusCounts?.[s.key]) || 0}
               onPress={() => onPressNav('Orders')}
-            /> */}
-          {/* ))} */}
+            />
+          ))} */}
         </ScrollView>
       </View>
 
@@ -1088,7 +1116,7 @@ export default function HomeTab({
     acceptanceRate, cancellations, pct, navigation, BUSINESS_ID,
     allMenus.length, showCountNote, quickActions, actionMeta, onShortcutPress,
     loading, errorMsg, visibleMenus.length, fetchMenus, nouns, isMart, actionIconFor, actionLabelFor, ownerType,
-    , statusCounts, totalStatusCount, onPressNav
+    statusCounts, totalStatusCount, onPressNav
   ]);
 
   /* ---------------- Data composition: menus/items + sentinel for banners ---------------- */
@@ -1165,7 +1193,11 @@ export default function HomeTab({
   const onRefreshBoth = useCallback(async () => {
     setLoading(true);
     setBannersLoading(true);
-    await Promise.allSettled([fetchMenus(), fetchBanners(), fetchKpis()]);
+    await Promise.allSettled([
+      fetchMenus(),
+      fetchBanners(),
+      fetchKpis(), // ← always attempt KPIs
+    ]);
     setLoading(false);
     setBannersLoading(false);
   }, [fetchMenus, fetchBanners, fetchKpis]);
