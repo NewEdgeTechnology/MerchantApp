@@ -1,9 +1,13 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import 'react-native-gesture-handler';
-import { NavigationContainer } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  useNavigationContainerRef,
+  CommonActions,
+} from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { TouchableOpacity, Platform, UIManager } from 'react-native';
+import { TouchableOpacity, Platform, UIManager, DeviceEventEmitter } from 'react-native';
 
 if (!TouchableOpacity.defaultProps) {
   TouchableOpacity.defaultProps = {};
@@ -66,13 +70,50 @@ import CreateWalletScreen from './screens/wallet/CreateWalletScreen';
 import AddMoneyScreen from './screens/wallet/AddMoneyScreen';
 import WithdrawScreen from './screens/wallet/WithdrawScreen';
 import SendToFriendScreen from './screens/wallet/SendToFriendScreen';
+import MartOrdersTab from './screens/food/OrderTab';
 const Stack = createStackNavigator();
 
 export default function App() {
+  // Nav ref so overlay (outside tree) can navigate
+  const navRef = useNavigationContainerRef();
+
+  // Catch-all for 'open-order-details' from anywhere (overlay, bridges, etc.)
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('open-order-details', (params = {}) => {
+      if (!navRef?.isReady?.()) return;
+
+      // Optional guard: avoid repeatedly navigating to the same order
+      const current = navRef.getCurrentRoute?.();
+      if (current?.name === 'OrderDetails' && current?.params?.orderId === params.orderId) {
+        return;
+      }
+
+      try {
+        navRef.dispatch(
+          CommonActions.navigate({
+            name: 'OrderDetails',
+            params,
+            merge: true,
+          })
+        );
+      } catch (err) {
+        console.warn('Navigation to OrderDetails failed:', err);
+      }
+    });
+
+    return () => sub.remove();
+  }, [navRef]);
+
   return (
     <SafeAreaProvider>
-      <NavigationContainer>
-        {/* Gate EVERYTHING behind biometrics when enabled */}
+      <NavigationContainer
+        ref={navRef}
+        onReady={() => {
+          // Expose nav only when ready so helpers can use it safely
+          global.__nav = navRef;
+        }}
+      >
+        {/* Gate everything behind biometrics when enabled */}
         <AppLockGate>
           <Stack.Navigator initialRouteName="Welcome" screenOptions={{ headerShown: false }}>
             <Stack.Screen name="Welcome" component={WelcomeScreen} />
@@ -120,12 +161,13 @@ export default function App() {
             <Stack.Screen name="AddMoneyScreen" component={AddMoneyScreen} />
             <Stack.Screen name="WithdrawScreen" component={WithdrawScreen} />
             <Stack.Screen name="SendToFriendScreen" component={SendToFriendScreen} />
+            <Stack.Screen name="MartOrdersTab" component={MartOrdersTab} />
           </Stack.Navigator>
         </AppLockGate>
       </NavigationContainer>
 
-      {/* ⬇️ Always-mounted overlay that listens to DeviceEventEmitter and pops the toast */}
-      <OrderNotifyOverlay />
+      {/* Overlay is outside the tree, pass navRef for direct navigation */}
+      <OrderNotifyOverlay navigation={navRef} />
     </SafeAreaProvider>
   );
 }

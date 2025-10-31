@@ -106,13 +106,7 @@ export default function TermsOfService() {
 
         <View style={[styles.divider, { borderBottomColor: isDark ? "#223046" : "#e2e8f0" }]} />
 
-        {/* Consent checkboxes */}
-        <Checkbox
-          isDark={isDark}
-          value={consentFlags.over18}
-          onChange={(v) => setConsentFlags((s) => ({ ...s, over18: v }))}
-          label={t.consent.over18}
-        />
+        
         <Checkbox
           isDark={isDark}
           value={consentFlags.authorized}
@@ -329,7 +323,6 @@ const stringsEN = {
   },
   actions: { accept: "Accept & Continue", decline: "Decline" },
   consent: {
-    over18: "I am at least 18 years old.",
     authorized: "I am authorized to act on behalf of this business/merchant.",
     agree: "I have read and agree to these Terms of Service.",
   },

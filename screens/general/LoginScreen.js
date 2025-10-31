@@ -402,6 +402,16 @@ const LoginScreen = () => {
         success.data?.license_number ??
         success.data?.license ?? '';
 
+      // ── NEW: pick delivery_option from any likely place, normalize to SELF|GRAB|BOTH
+      const delivery_option_raw =
+        profile?.delivery_option ??
+        userInfo?.delivery_option ??
+        userInfo?.deliveryOption ??
+        success.data?.delivery_option ??
+        success.data?.deliveryOption ??
+        '';
+      const delivery_option = String(delivery_option_raw || '').trim().toUpperCase(); // NEW
+
       const userPayload = {
         user_id,
         user: userInfo,
@@ -415,6 +425,7 @@ const LoginScreen = () => {
         token: success.data?.token || null,
         owner_type: ownerType || null,
         profile_image,
+        delivery_option, // NEW
       };
 
       try { await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(userPayload)); } catch {}
@@ -425,8 +436,17 @@ const LoginScreen = () => {
       // Connect merchant socket globally
       connectMerchantSocket({ user_id, business_id });
 
-      // Navigate home
-      navigateHome({ business_name, business_logo, profile_image, business_address, business_id, owner_type: ownerType, ownerType });
+      // Navigate home (pass delivery_option forward)
+      navigateHome({
+        business_name,
+        business_logo,
+        profile_image,
+        business_address,
+        business_id,
+        owner_type: ownerType,
+        ownerType,
+        delivery_option, // NEW
+      });
     } catch (err) {
       const msg = err?.message?.toString() ?? 'Login failed';
       Alert.alert('Login failed', msg);

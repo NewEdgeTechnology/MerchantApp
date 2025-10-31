@@ -14,7 +14,7 @@ import {
   NOTIFICATION_READ_ENDPOINT as ENV_NOTIF_READ_ENDPOINT,
   NOTIFICATION_READ_ALL_ENDPOINT as ENV_NOTIF_READ_ALL_ENDPOINT,
   NOTIFICATION_DELETE_ENDPOINT as ENV_NOTIF_DELETE_ENDPOINT,
-  ORDER_ENDPOINT as ENV_ORDER_ENDPOINT, // 👈 used to build grouped orders URL
+  ORDER_ENDPOINT as ENV_ORDER_ENDPOINT, // 👈 used to build grouped orders URL + fetch one order
 } from '@env';
 
 const STORAGE_KEY_READMAP = '@notifications_readmap_v1';
@@ -83,8 +83,8 @@ const buildReadAllUrl = (businessId) =>
 const buildDeleteUrl = (notificationId) =>
   DELETE_BASE ? DELETE_BASE.replace('{notificationId}', String(notificationId)) : null;
 
-// Grouped orders URL to hand to OrderDetails (so it can hydrate exactly like OrdersTab)
-const buildOrdersGroupedUrlForNav = (businessId, ownerType) => {
+// Grouped orders URL (same one OrdersTab uses)
+const buildOrdersGroupedUrl = (businessId, ownerType) => {
   if (!ORDER_BASE || !businessId) return null;
   let url = ORDER_BASE
     .replace('{businessId}', String(businessId))
@@ -125,7 +125,65 @@ async function buildHeaders(hasBody) {
   return h;
 }
 
-/* ---------- UI helpers ---------- */
+/* ---------- TIME HELPERS (no timezone change for absolute; local for “ago”) ---------- */
+
+/** Pretty-print EXACTLY what backend sent; no timezone conversion */
+const showAsGiven = (s) => {
+  if (!s) return '';
+  const d = String(s);
+  const isoish = d.includes('T') ? d : d.replace(' ', 'T');
+  const y = isoish.slice(0, 4), m = isoish.slice(5, 7), dd = isoish.slice(8, 10);
+  const hh = isoish.slice(11, 13), mm = isoish.slice(14, 16);
+  const monNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const mon = monNames[(+m || 1) - 1] || m;
+  if (!y || !m || !dd || !hh || !mm) return d;
+  return `${mon} ${dd}, ${hh}:${mm}`;
+};
+
+/** Parse the payload string as a LOCAL wall-clock time (ignores trailing Z) */
+const parseLocalFromGiven = (s) => {
+  if (!s) return null;
+  const str = String(s).replace(' ', 'T');
+  const m = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return null;
+  const [, y, mo, d, hh, mm, ss] = m;
+  return new Date(
+    Number(y),
+    Number(mo) - 1,
+    Number(d),
+    Number(hh),
+    Number(mm),
+    Number(ss || '0')
+  );
+};
+
+/** “x ago” based on LOCAL now − LOCAL parsed time (doesn’t shift the wall clock) */
+const timeAgoLocal = (s) => {
+  const dt = parseLocalFromGiven(s) || new Date(s);
+  if (!dt || isNaN(+dt)) return '';
+  const diffSec = Math.max(1, Math.floor((Date.now() - dt.getTime()) / 1000));
+  if (diffSec < 60) return `${diffSec}s`;
+  const m = Math.floor(diffSec / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  const d = Math.floor(h / 24);
+  return `${d}d`;
+};
+
+/** Is the payload timestamp “today” in LOCAL calendar terms? */
+const isTodayLocal = (s) => {
+  const dt = parseLocalFromGiven(s) || new Date(s);
+  if (!dt || isNaN(+dt)) return false;
+  const now = new Date();
+  return (
+    dt.getFullYear() === now.getFullYear() &&
+    dt.getMonth() === now.getMonth() &&
+    dt.getDate() === now.getDate()
+  );
+};
+
+/* ---------- type & order helpers ---------- */
 const typeIcon = (type) => {
   switch (type) {
     case 'order':   return 'receipt-outline';
@@ -146,41 +204,7 @@ const typeTint = (type) => {
     default:        return '#0ea5e9';
   }
 };
-const timeAgo = (isoOrDateLike) => {
-  try {
-    const t = new Date(isoOrDateLike).getTime();
-    if (!Number.isFinite(t)) return '';
-    const s = Math.max(1, Math.floor((Date.now() - t) / 1000));
-    if (s < 60) return `${s}s`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h`;
-    const d = Math.floor(h / 24);
-    return `${d}d`;
-  } catch { return ''; }
-};
-const fmtTime = (iso) => {
-  try {
-    const d = new Date(iso);
-    const mo = d.toLocaleString(undefined, { month: 'short' });
-    const day = String(d.getDate());
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    return `${mo} ${day}, ${hh}:${mm}`;
-  } catch { return ''; }
-};
-const normalizeType = (raw) => {
-  const t = String(raw || '').toLowerCase();
-  if (t.startsWith('order')) return 'order';
-  if (t.includes('payout'))  return 'payout';
-  if (t.includes('warn'))    return 'warning';
-  if (t.includes('success')) return 'success';
-  if (t.includes('promo') || t.includes('offer')) return 'promo';
-  return 'system';
-};
 
-/* ---------- order id extraction (returns BOTH pretty + numeric) ---------- */
 const toOrderParts = (val) => {
   if (!val) return { orderCode: null, orderIdNumeric: null };
   const raw = String(val).trim();
@@ -193,16 +217,12 @@ const toOrderParts = (val) => {
 
 const parseOrderFromText = (text = '') => {
   const str = String(text);
-
   let m = str.match(/\b(ORD[-_]\d+)\b/i) || str.match(/#\s*(ORD[-_]\d+)\b/i);
   if (m?.[1]) return toOrderParts(m[1]);
-
   m = str.match(/order(?:\s*id)?\s*[:#-]?\s*([A-Za-z0-9-]+)/i);
   if (m?.[1]) return toOrderParts(m[1]);
-
   m = str.match(/#\s*([0-9]{4,})\b/);
   if (m?.[1]) return toOrderParts(m[1]);
-
   return { orderCode: null, orderIdNumeric: null };
 };
 
@@ -220,7 +240,6 @@ const resolveOrderFromRecord = (n) => {
   return parseOrderFromText(n.body_preview ?? n.body ?? n.message ?? n.description ?? '');
 };
 
-/* ---------- infer minimal ORDER status from title/body ---------- */
 const inferStatusFromText = (title = '', body = '') => {
   const t = `${title} ${body}`.toLowerCase();
   if (t.includes('completed') || t.includes('delivered')) return 'COMPLETED';
@@ -231,7 +250,7 @@ const inferStatusFromText = (title = '', body = '') => {
   return 'PENDING';
 };
 
-/* ---------- map API → UI ---------- */
+/* ---------- map API → UI (with today→timeAgo, else absolute as-given) ---------- */
 const mapApiNotif = (n, readMap) => {
   const id = String(n.notification_id ?? n.id ?? n._id ?? '');
   if (!id) return null;
@@ -251,29 +270,105 @@ const mapApiNotif = (n, readMap) => {
 
   const { orderCode, orderIdNumeric } = resolveOrderFromRecord(n);
 
-  // Minimal order-like stub ONLY for id/timestamps (OrderDetails will fetch the full record)
   const orderId = orderIdNumeric ?? orderCode ?? null;
   const createdISO = created || null;
   const status = inferStatusFromText(title, body);
 
-  const minimalOrder = orderId ? {
+  const absolute = createdISO ? showAsGiven(createdISO) : '';
+  const relative = createdISO ? timeAgoLocal(createdISO) : '';
+  const chip = createdISO && isTodayLocal(createdISO) ? relative : absolute;
+
+  const minimalOrder = orderId ? ({
     id: String(orderId),
     created_at: createdISO,
-    time: createdISO ? fmtTime(createdISO) : '',
+    time: absolute,   // keep absolute for details
     status,
-  } : null;
+  }) : null;
 
   return {
     id, orderCode, orderIdNumeric,
     title: String(title),
     body: String(body),
-    timeAgo: created ? timeAgo(created) : '',
+    displayChip: chip,          // 👈 use this in the list row
     type,
     read,
     _created_at: created ?? null,
     _order_like: minimalOrder,
   };
 };
+
+/* ---------- fetch a single order from grouped endpoint ---------- */
+const sameId = (a, b) => String(a ?? '').replace(/^ORD[-_]?/i, '') === String(b ?? '').replace(/^ORD[-_]?/i, '');
+
+function coalesce(...vals) {
+  for (const v of vals) if (v != null && v !== '') return v;
+  return null;
+}
+
+function normalizeOrderRecord(row = {}, user = {}) {
+  const items =
+    row.order_items ??
+    row.items ??
+    row.raw_items ??
+    [];
+
+  const normalizedItems = Array.isArray(items)
+    ? items.map((it, idx) => ({
+        item_id: coalesce(it.item_id, it.id, idx),
+        item_name: coalesce(it.item_name, it.name, it.title, 'Item'),
+        quantity: Number(coalesce(it.quantity, it.qty, 1)),
+      }))
+    : [];
+
+  return {
+    id: coalesce(row.order_code, row.orderCode, row.id, row.order_id),
+    order_code: coalesce(row.order_code, row.orderCode, row.id, row.order_id),
+    customer_name: coalesce(row.customer_name, user.user_name, user.name, ''),
+    payment_method: coalesce(row.payment_method, row.payment, ''),
+    type: coalesce(row.type, row.fulfillment_type, row.delivery_option, row.delivery_type, ''),
+    delivery_address: coalesce(row.delivery_address, row.address, ''),
+    note_for_restaurant: coalesce(row.note_for_restaurant, row.restaurant_note, row.note_for_store, row.note, ''),
+    total: Number(coalesce(row.total, row.total_amount, 0)),
+    raw_items: normalizedItems,
+    status: String(row.status || 'PENDING').toUpperCase(),
+  };
+}
+
+async function fetchOrderHydrated({ businessId, ownerType, orderId }) {
+  const base = buildOrdersGroupedUrl(businessId, ownerType);
+  if (!base) return null;
+
+  try {
+    const headers = await buildHeaders(false);
+    const res = await fetch(base, { headers });
+    const text = await res.text();
+    let json = {};
+    try { json = text ? JSON.parse(text) : {}; } catch {}
+
+    let groups = [];
+    if (Array.isArray(json?.data)) groups = json.data;
+    else if (Array.isArray(json)) groups = json;
+    else return null;
+
+    const flattened = [];
+    for (const g of groups) {
+      if (Array.isArray(g?.orders)) {
+        for (const o of g.orders) flattened.push({ row: o, user: g.user || {} });
+      } else {
+        flattened.push({ row: g, user: g.user || {} });
+      }
+    }
+
+    const hit = flattened.find(({ row }) =>
+      sameId(row?.order_code ?? row?.id ?? row?.order_id, orderId)
+    );
+    if (!hit) return null;
+
+    return normalizeOrderRecord(hit.row, hit.user);
+  } catch {
+    return null;
+  }
+}
 
 /* ---------- API calls (PATCH only) ---------- */
 const ok = (r) => r && (r.status === 200 || r.status === 204 || r.ok);
@@ -320,7 +415,6 @@ export default function NotificationsTab({
   const [bizId, setBizId] = useState(null);
   const readMapRef = useRef({});
 
-  // ownerType to pass through (supports both owner types)
   const ownerType = String(route?.params?.ownerType || 'food').toLowerCase() === 'mart' ? 'mart' : 'food';
 
   useEffect(() => {
@@ -389,21 +483,25 @@ export default function NotificationsTab({
   };
 
   const onPressItem = async (item) => {
-    // Use the most reliable id and let OrderDetails hydrate from backend (same as OrdersTab)
     const orderId = item.orderIdNumeric ?? item.orderCode ?? item._order_like?.id ?? null;
     if (orderId) {
-      const groupedUrl = buildOrdersGroupedUrlForNav(bizId, ownerType);
+      const hydrated = await fetchOrderHydrated({
+        businessId: bizId,
+        ownerType,
+        orderId: String(orderId),
+      });
+
+      const groupedUrl = buildOrdersGroupedUrl(bizId, ownerType);
+
       navigation.navigate(detailsRoute, {
         orderId: String(orderId),
         businessId: bizId,
-        ownerType,                  // 'food' | 'mart'
+        ownerType,
         ordersGroupedUrl: groupedUrl,
-        // Do not prefill fields; backend is the source of truth
-        order: { id: String(orderId) },
+        order: hydrated ? hydrated : { id: String(orderId) },
       });
     }
 
-    // Optimistic mark read
     if (!item.read) {
       setList((cur) => cur.map((n) => (n.id === item.id ? { ...n, read: true } : n)));
       const nextReadMap = { ...readMapRef.current, [item.id]: true };
@@ -455,7 +553,8 @@ export default function NotificationsTab({
             <Text style={[styles.itemTitle, !item.read && styles.itemTitleUnread]} numberOfLines={1}>
               {item.title}
             </Text>
-            <Text style={styles.time}>{item.timeAgo}</Text>
+            {/* 👇 if today → “x ago”, else show exact (no tz change) */}
+            <Text style={styles.time}>{item.displayChip}</Text>
           </View>
           <Text style={styles.itemBody} numberOfLines={2}>{item.body}</Text>
         </View>
@@ -543,3 +642,14 @@ const styles = StyleSheet.create({
   emptyTitle: { color: '#111827', fontWeight: '700' },
   emptyBody: { color: '#6b7280' },
 });
+
+/* ---------- local helpers used above ---------- */
+function normalizeType(raw) {
+  const t = String(raw || '').toLowerCase();
+  if (t.startsWith('order')) return 'order';
+  if (t.includes('payout'))  return 'payout';
+  if (t.includes('warn'))    return 'warning';
+  if (t.includes('success')) return 'success';
+  if (t.includes('promo') || t.includes('offer')) return 'promo';
+  return 'system';
+}

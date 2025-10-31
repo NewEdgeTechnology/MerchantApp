@@ -18,7 +18,6 @@
         "NSPhotoLibraryUsageDescription": "We need access to your photo library to upload business logo.",
         "NSCameraUsageDescription": "We need access to your camera to take a business logo photo.",
         "NSFaceIDUsageDescription": "Allow Face ID/Touch ID to unlock your account."
-      
       }
     },
     "android": {
@@ -29,17 +28,25 @@
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE"
       ],
       "edgeToEdgeEnabled": true,
       "softwareKeyboardLayoutMode": "resize",
-      "usesCleartextTraffic": true
+      "usesCleartextTraffic": true,
+      "package": "com.anonymous.GrabMerchant"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-secure-store"
-    ]
+    ],
+    "updates": {
+      "enabled": false
+    },
+    "runtimeVersion": "1.0.0"
   }
 }

@@ -2,6 +2,7 @@
 // Mart Orders list tab — same API contract as Food.
 // Wrapped payload: { success, data:[ { user, orders:[...] } ] } OR legacy flat rows.
 // Reuses the same ORDER endpoint; optionally appends owner_type=mart.
+// UPDATE: Accepts businessId from route params or SecureStore as fallback.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -20,8 +21,9 @@ import {
   TouchableOpacity,
   Alert,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import * as SecureStore from 'expo-secure-store';
 import { ORDER_ENDPOINT as ENV_ORDER_ENDPOINT } from '@env';
 
 const BASE_STATUS_LABELS = [
@@ -77,7 +79,6 @@ const FulfillmentPill = ({ type }) => {
 };
 
 const ItemPreview = ({ items, raw }) => {
-  // Prefer raw array to build preview (+N more), else fallback to the flat string
   if (Array.isArray(raw) && raw.length) {
     const [a, b] = raw;
     const t1 = a ? `${a.item_name ?? 'Item'} ×${Number(a.quantity ?? 1)}` : '';
@@ -94,68 +95,46 @@ const ItemPreview = ({ items, raw }) => {
 };
 
 /* ---------------- helpers (dates, numbers) ---------------- */
+
+// Show exactly what backend sent (no timezone conversion)
+const showAsGiven = (s) => {
+  if (!s) return '';
+  const d = String(s);
+  const isoish = d.includes('T') ? d : d.replace(' ', 'T');
+  const y = isoish.slice(0, 4), m = isoish.slice(5, 7), dd = isoish.slice(8, 10);
+  const hh = isoish.slice(11, 13), mm = isoish.slice(14, 16);
+  const monNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const mon = monNames[(+m || 1) - 1] || m;
+  if (!y || !m || !dd || !hh || !mm) return d;
+  return `${mon} ${dd}, ${hh}:${mm}`;
+};
+
+const parseForSort = (v) => {
+  if (!v) return 0;
+  const s = String(v);
+  const n = Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
+  return Number.isFinite(n) ? n : 0;
+};
+
 const safeNum = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
 
-// Robust date parser for MySQL DATETIME / ISO / epoch
-const parseMaybeMySQLDate = (v) => {
-  if (!v) return null;
-  if (v instanceof Date) return v;
-  if (typeof v === 'number') {
-    const d = new Date(v);
-    return isNaN(d) ? null : d;
-  }
-  const s = String(v).trim();
-
-  // Try native first
-  let d = new Date(s);
-  if (!isNaN(d)) return d;
-
-  // Common MySQL DATETIME: "YYYY-MM-DD HH:mm:ss"
-  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
-    d = new Date(s.replace(' ', 'T')); // treat as local time on device
-    if (!isNaN(d)) return d;
-    // If your DB stores Bhutan local clock and you want to force +06:00:
-    // d = new Date(s.replace(' ', 'T') + '+06:00');
-    // if (!isNaN(d)) return d;
-  }
-
-  // "YYYY-MM-DDTHH:mm:ss" (no timezone) – treat as local
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(s)) {
-    d = new Date(s);
-    if (!isNaN(d)) return d;
-  }
-
-  // Last resort: assume UTC by appending Z
-  d = new Date(s + 'Z');
-  return isNaN(d) ? null : d;
-};
-
-const fmtTime = (val) => {
-  const d = parseMaybeMySQLDate(val);
-  if (!d) return '';
-  const m = d.toLocaleString(undefined, { month: 'short' });
-  const day = String(d.getDate());
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${m} ${day}, ${hh}:${mm}`;
-};
-
-// pull a note string from common item-level fields
+// pull a note string from common item-level fields (kept if you need later)
 const getItemNote = (it = {}) =>
   it.note_for_restaurant ||
   it.note ||
   it.special_request ||
   it.instructions ||
   it.customization ||
-  it.item_note || // legacy
+  it.item_note ||
   '';
 
-/* ---------------- UI ---------------- */
+/* ---------------- CARD: OrderItem ---------------- */
 const OrderItem = ({ item, isTablet, money, onPress }) => {
   const isDelivery = item.type === 'Delivery';
+  const moneyFmt = money || ((n, c = 'Nu') => `${c} ${Number(n || 0).toFixed(2)}`);
   return (
     <TouchableOpacity
       activeOpacity={0.75}
@@ -177,7 +156,7 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
           <Text style={[styles.orderTime, { fontSize: isTablet ? 13 : 12 }]}> • {item.time}</Text>
         </View>
         <Text style={[styles.orderTotal, { fontSize: isTablet ? 18 : 17 }]}>
-          {money(item.total, 'Nu')}
+          {moneyFmt(item.total, 'Nu')}
         </Text>
       </View>
 
@@ -202,7 +181,6 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
           <Ionicons name="person-outline" size={16} color="#64748b" />
           <Text style={styles.customerText} numberOfLines={1}>
             {item.customer_name || 'Customer'}
-            {item.customer_phone ? ` • ${item.customer_phone}` : ''}
             {!item.customer_phone && item.customer_email ? ` • ${item.customer_email}` : ''}
           </Text>
         </View>
@@ -255,14 +233,11 @@ const groupOrders = (rows = []) => {
     g.itemsArr.push(`${nm} ×${qty}`);
     g.raw_items.push({ item_name: nm, quantity: qty });
 
-    // Robust created_at extraction
     const rowCreated =
       r.created_at || r.createdAt || r.placed_at || r.order_time || r.createdOn || null;
-    const parsedRowCreated = parseMaybeMySQLDate(rowCreated);
-    const parsedExisting = parseMaybeMySQLDate(g.created_at);
-    if (!parsedExisting || (parsedRowCreated && parsedRowCreated < parsedExisting)) {
-      g.created_at = rowCreated || g.created_at;
-    }
+    const prev = g.created_at ? parseForSort(g.created_at) : 0;
+    const cur  = rowCreated ? parseForSort(rowCreated) : 0;
+    if (!prev || (cur && cur < prev)) g.created_at = rowCreated || g.created_at;
 
     if (r.fulfillment_type === 'Delivery') g.type = 'Delivery';
 
@@ -275,18 +250,10 @@ const groupOrders = (rows = []) => {
         null;
     }
 
-    const itemLevelNote =
-      r.item_note ||
-      r.item_instructions ||
-      r.item_customization ||
-      r.special_request ||
-      r.item_note_for_restaurant ||
-      '';
+    const itemLevelNote = getItemNote(r) || '';
     if (!g.note_target && (itemLevelNote && String(itemLevelNote).trim())) {
       g.note_target = r.item_name || 'Item';
-      if (!g.note_for_restaurant) {
-        g.note_for_restaurant = itemLevelNote;
-      }
+      if (!g.note_for_restaurant) g.note_for_restaurant = itemLevelNote;
     }
 
     byId.set(id, g);
@@ -295,11 +262,11 @@ const groupOrders = (rows = []) => {
   const list = Array.from(byId.values()).map((g) => {
     const total = g.totals.length > 0 ? g.totals.reduce((a, b) => a + b, 0) / g.totals.length : 0;
     const createdISO = g.created_at || null;
-    const createdParsed = parseMaybeMySQLDate(createdISO);
+
     return {
       id: String(g.id),
       type: g.type,
-      time: createdParsed ? fmtTime(createdParsed) : '',
+      time: showAsGiven(createdISO),
       created_at: createdISO,
       items: g.itemsArr.join(', '),
       total,
@@ -319,11 +286,7 @@ const groupOrders = (rows = []) => {
     };
   });
 
-  return list.sort(
-    (a, b) =>
-      (parseMaybeMySQLDate(b.created_at)?.getTime?.() || 0) -
-      (parseMaybeMySQLDate(a.created_at)?.getTime?.() || 0)
-  );
+  return list.sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
 };
 
 const buildOrdersUrl = (base, businessId, { appendOwnerType = false, ownerType = 'mart' } = {}) => {
@@ -351,11 +314,7 @@ const buildOrdersUrl = (base, businessId, { appendOwnerType = false, ownerType =
 
 const parseJSON = async (res) => {
   const text = await res.text();
-  try {
-    return text ? JSON.parse(text) : null;
-  } catch {
-    return null;
-  }
+  try { return text ? JSON.parse(text) : null; } catch { return null; }
 };
 
 const normalizeOrdersFromApi = (payload) => {
@@ -367,9 +326,7 @@ const normalizeOrdersFromApi = (payload) => {
       const u = block?.user || {};
       const orders = Array.isArray(block?.orders) ? block.orders : [];
       for (const o of orders) {
-        // Robust created_at extraction
         const createdISO = o.created_at || o.createdAt || o.placed_at || o.order_time || null;
-        const createdParsed = parseMaybeMySQLDate(createdISO);
 
         let noteTarget = '';
         if (Array.isArray(o.items)) {
@@ -396,7 +353,7 @@ const normalizeOrdersFromApi = (payload) => {
         list.push({
           id: String(o.order_id ?? o.id),
           type: o.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
-          time: createdParsed ? fmtTime(createdParsed) : '',
+          time: showAsGiven(createdISO),
           created_at: createdISO,
           items: itemsStr,
           total: Number(o.total_amount ?? 0),
@@ -416,11 +373,7 @@ const normalizeOrdersFromApi = (payload) => {
         });
       }
     }
-    return list.sort(
-      (a, b) =>
-        (parseMaybeMySQLDate(b.created_at)?.getTime?.() || 0) -
-        (parseMaybeMySQLDate(a.created_at)?.getTime?.() || 0)
-    );
+    return list.sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
   } catch {
     return [];
   }
@@ -434,10 +387,26 @@ export default function MartOrdersTab({
   businessId,
   orderEndpoint,
   appendOwnerType = true,
-  ownerType = 'mart',  // <- drive UI (chips) with this
+  ownerType = 'mart',
   detailsRoute = 'OrderDetails',
+  delivery_option: deliveryOptionProp,             // NEW (accept from parent)
 }) {
   const navigation = useNavigation();
+  const route = useRoute();
+
+  // Resolve business id from prop -> params -> SecureStore
+  const [bizId, setBizId] = useState(
+    businessId || route?.params?.businessId || null
+  );
+
+  // NEW: delivery option state (SELF | GRAB | BOTH…)
+  const [deliveryOption, setDeliveryOption] = useState(                    // NEW
+    (route?.params?.delivery_option || route?.params?.deliveryOption ||   // NEW
+     deliveryOptionProp || null)                                          // NEW
+      ? String(route?.params?.delivery_option || route?.params?.deliveryOption || deliveryOptionProp).toUpperCase()
+      : null
+  );                                                                       // NEW
+
   const [loading, setLoading] = useState(false);
   const [orders, setOrders] = useState(ordersProp || []);
   const [error, setError] = useState(null);
@@ -447,12 +416,9 @@ export default function MartOrdersTab({
   const [selectedStatus, setSelectedStatus] = useState(null); // null = All
   const abortRef = useRef(null);
 
-
   const STATUS_LABELS = useMemo(() => {
     const isMart = String(ownerType || '').toLowerCase() === 'mart';
-    return isMart
-      ? BASE_STATUS_LABELS.filter(s => s.key !== 'PREPARING')
-      : BASE_STATUS_LABELS;
+    return isMart ? BASE_STATUS_LABELS.filter(s => s.key !== 'PREPARING') : BASE_STATUS_LABELS;
   }, [ownerType]);
 
   useEffect(() => {
@@ -461,6 +427,7 @@ export default function MartOrdersTab({
     }
   }, [STATUS_LABELS, selectedStatus]);
 
+  // Keyboard padding
   useEffect(() => {
     const showSub = Keyboard.addListener(
       Platform.OS === 'android' ? 'keyboardDidShow' : 'keyboardWillShow',
@@ -476,14 +443,65 @@ export default function MartOrdersTab({
     };
   }, []);
 
+  // Hydrate bizId and delivery_option from secure storage on focus if missing
+  useFocusEffect(                                                    // NEW (expanded)
+    useCallback(() => {
+      let alive = true;
+      (async () => {
+        // business id fallback
+        if (!bizId) {
+          try {
+            const blob = await SecureStore.getItemAsync('business_details');
+            let id = null;
+            if (blob) {
+              try {
+                const parsed = JSON.parse(blob);
+                id = parsed?.business_id ?? parsed?.id ?? null;
+                // also try delivery_option if not set
+                if (!deliveryOption && parsed?.delivery_option) {
+                  setDeliveryOption(String(parsed.delivery_option).toUpperCase());
+                }
+              } catch {}
+            }
+            if (!id) {
+              const single = await SecureStore.getItemAsync('business_id');
+              if (single) id = Number(single);
+            }
+            if (alive && id) setBizId(id);
+          } catch {}
+        }
+        // also probe merchant_login for delivery_option if still missing
+        if (!deliveryOption) {
+          try {
+            const raw = await SecureStore.getItemAsync('merchant_login');
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              const opt =
+                parsed?.delivery_option ||
+                parsed?.user?.delivery_option ||
+                parsed?.user?.deliveryOption ||
+                null;
+              if (opt && alive) setDeliveryOption(String(opt).toUpperCase());
+            }
+          } catch {}
+        }
+      })();
+      return () => { alive = false; };
+    }, [bizId, deliveryOption])
+  );
+
+  const buildUrl = useCallback(() => {
+    const base = (orderEndpoint ?? ENV_ORDER_ENDPOINT) || '';
+    return buildOrdersUrl(base, bizId, { appendOwnerType, ownerType });
+  }, [bizId, orderEndpoint, appendOwnerType, ownerType]);
+
   const fetchOrders = useCallback(
     async (opts = { silent: false }) => {
-      if (!businessId) {
+      if (!bizId) {
         setError('Missing businessId');
         return;
       }
-      const base = (orderEndpoint ?? ENV_ORDER_ENDPOINT) || '';
-      const url = buildOrdersUrl(base, businessId, { appendOwnerType, ownerType });
+      const url = buildUrl();
       if (!url) {
         setError('Invalid ORDER_ENDPOINT or businessId');
         return;
@@ -504,18 +522,6 @@ export default function MartOrdersTab({
           throw new Error(msg);
         }
         const json = await parseJSON(res);
-
-        // __DEV__ sample logging (optional)
-        // if (__DEV__) {
-        //   const sample = Array.isArray(json?.data) ? json.data[0]?.orders?.[0] : (Array.isArray(json) ? json[0] : null);
-        //   console.log('[OrdersTab] sample date fields:', {
-        //     created_at: sample?.created_at,
-        //     createdAt: sample?.createdAt,
-        //     placed_at: sample?.placed_at,
-        //     order_time: sample?.order_time,
-        //   });
-        // }
-
         const list = normalizeOrdersFromApi(json);
         setOrders(list);
       } catch (e) {
@@ -524,7 +530,7 @@ export default function MartOrdersTab({
         if (!opts.silent) setLoading(false);
       }
     },
-    [businessId, orderEndpoint, appendOwnerType, ownerType]
+    [bizId, buildUrl]
   );
 
   useEffect(() => {
@@ -545,7 +551,6 @@ export default function MartOrdersTab({
         const o = payload?.order;
         if (!o) return;
         const createdISO = o.created_at || o.createdAt || o.placed_at || o.order_time || new Date().toISOString();
-        const createdParsed = parseMaybeMySQLDate(createdISO);
 
         let liveNoteTarget = '';
         if (Array.isArray(o.items)) {
@@ -564,7 +569,7 @@ export default function MartOrdersTab({
           id: String(o.order_id || o.id),
           type: o.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
           created_at: createdISO,
-          time: createdParsed ? fmtTime(createdParsed) : '',
+          time: showAsGiven(createdISO),
           items: (o.items || []).map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`).join(', '),
           total: safeNum(o.total_amount ?? o.total),
           status: o.status || 'PENDING',
@@ -583,7 +588,7 @@ export default function MartOrdersTab({
         };
         setOrders((prev) => {
           const without = prev.filter((x) => String(x.id) !== String(normalized.id));
-          return [normalized, ...without];
+          return [normalized, ...without].sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
         });
       } catch {}
     });
@@ -603,7 +608,6 @@ export default function MartOrdersTab({
     (o) => {
       Keyboard.dismiss();
       try {
-        // Validate that the route exists; if not, fail gracefully.
         const state = navigation.getState?.();
         const routeExists = !!state?.routeNames?.includes?.(detailsRoute);
         if (!routeExists) {
@@ -614,9 +618,15 @@ export default function MartOrdersTab({
           return;
         }
       } catch {}
-      navigation.navigate(detailsRoute, { orderId: o.id, businessId, order: o, ownerType });
+      navigation.navigate(detailsRoute, {
+        orderId: o.id,
+        businessId: bizId,
+        order: o,
+        ownerType,
+        delivery_option: deliveryOption,    // NEW: pass along
+      });
     },
-    [navigation, businessId, detailsRoute, ownerType]
+    [navigation, bizId, detailsRoute, ownerType, deliveryOption] // NEW dep
   );
 
   const statusCounts = useMemo(() => {
@@ -659,7 +669,7 @@ export default function MartOrdersTab({
         isTablet={isTablet}
         money={money}
         item={item}
-        onPress={openOrder}            // direct handler (clickable)
+        onPress={openOrder}
       />
     ),
     [isTablet, money, openOrder]
@@ -716,14 +726,13 @@ export default function MartOrdersTab({
       pointerEvents="box-none"
     >
       <View style={{ flex: 1, paddingHorizontal: 16 }} pointerEvents="box-none">
-        {/* Title + Status Tabs together in one horizontal scroll (UNCHANGED) */}
+        {/* Title + Status Tabs */}
         <View style={{ marginTop: 12, marginBottom: 8 }} pointerEvents="box-none">
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ alignItems: 'center', paddingVertical: 8, gap: 8 }}
           >
-            {/* ✅ real "All" chip (UNCHANGED) */}
             <TouchableOpacity
               onPress={() => setSelectedStatus(null)}
               style={[styles.statusChip, selectedStatus === null && styles.statusChipActive]}
@@ -740,7 +749,9 @@ export default function MartOrdersTab({
               </View>
             </TouchableOpacity>
 
-            {STATUS_LABELS.map((s) => {
+            {BASE_STATUS_LABELS
+              .filter(s => STATUS_LABELS.some(t => t.key === s.key))
+              .map((s) => {
               const active = selectedStatus === s.key;
               const count = statusCounts[s.key] || 0;
               return (
@@ -767,7 +778,7 @@ export default function MartOrdersTab({
           </ScrollView>
         </View>
 
-        {/* Search bar (UNCHANGED) */}
+        {/* Search bar */}
         <View style={styles.searchWrap} pointerEvents="auto">
           <Ionicons name="search-outline" size={18} color="#64748b" />
           <TextInput
@@ -838,7 +849,7 @@ const styles = StyleSheet.create({
   badgeText: { color: '#0f172a', fontSize: 12, fontWeight: '700' },
   badgeTextActive: { color: 'white' },
 
-  // search (UNCHANGED)
+  // search
   searchWrap: {
     marginBottom: 10,
     flexDirection: 'row',
@@ -854,7 +865,7 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, color: '#0f172a', paddingVertical: 0 },
   clearBtn: { padding: 4, borderRadius: 999 },
 
-  /* --- Updated card + internals --- */
+  /* card + internals */
   card: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -878,14 +889,9 @@ const styles = StyleSheet.create({
   // row 2
   row2: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
   pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    maxWidth: '70%',
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+    borderWidth: 1, maxWidth: '70%',
   },
   pillText: { fontWeight: '800', fontSize: 12 },
 
@@ -901,16 +907,9 @@ const styles = StyleSheet.create({
 
   // note bubble
   noteRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    marginTop: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: '#ecfeff',
-    borderWidth: 1,
-    borderColor: '#99f6e4',
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 8,
+    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 12,
+    backgroundColor: '#ecfeff', borderWidth: 1, borderColor: '#99f6e4',
   },
   noteText: { flex: 1, color: '#115e59', fontWeight: '600' },
   noteMeta: { marginTop: 4, color: '#0f766e', fontWeight: '700' },

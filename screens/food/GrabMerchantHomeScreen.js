@@ -1,11 +1,4 @@
 // screens/food/GrabMerchantHomeScreen.js
-// Simplified: direct URLs for merchant & profile images (ENV-ONLY bases), with promo URL overrides via env
-// UPDATE: "Add" tab now routes conditionally:
-//   - Food → ./AddMenuTab
-//   - Mart → ../mart/AddItemTab
-//
-// UPDATE 2025-10-19: Live KPIs (activeOrders, cancellations, acceptanceRate, salesToday)
-
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
@@ -32,15 +25,15 @@ import {
   LOGIN_USERNAME_MERCHANT_ENDPOINT,
   PROFILE_ENDPOINT,
   BUSINESS_DETAILS,
-  MERCHANT_LOGO,                 // e.g. https://grab.newedge.bt/merchant/
+  MERCHANT_LOGO,
   ITEM_ENDPOINT as MART_ITEM_ENDPOINT,
   DISPLAY_ITEM_ENDPOINT as MART_DISPLAY_ITEM_ENDPOINT,
-  PROFILE_IMAGE as PROFILE_IMAGE_ENDPOINT, // e.g. https://grab.newedge.bt/driver/
-  // Optional env overrides for promos:
-  PROMOS_ENDPOINT,           // fallback for both kinds
-  PROMOS_FOOD_ENDPOINT,      // specific override for food
-  PROMOS_MART_ENDPOINT,      // specific override for mart
-  MEDIA_BASE_URL,            // general media base (optional fallback)
+  PROFILE_IMAGE as PROFILE_IMAGE_ENDPOINT,
+  PROMOS_ENDPOINT,
+  PROMOS_FOOD_ENDPOINT,
+  PROMOS_MART_ENDPOINT,
+  MEDIA_BASE_URL,
+  STATUS_COUNT_ENDPOINT as ENV_STATUS_COUNT_ENDPOINT, // ✅ FINAL KPI SOURCE
 } from '@env';
 
 // Tabs / footer
@@ -72,15 +65,12 @@ const DEFAULT_DEV_ORIGIN = Platform.select({
 // Auto-refresh cadence (while this screen is focused & app is active)
 const HEADER_REFRESH_MS = 12000;
 
-// normalize owner type from codes/strings/spaces/casing
 const normalizeOwnerType = (v) => {
   const s = String(v ?? '').trim().toLowerCase();
   if (s === '2' || s === 'mart') return 'mart';
   if (s === '1' || s === 'food') return 'food';
   return s || 'food';
 };
-
-// only apply kind when a real value was provided (prevents clobbering to "food")
 const maybeApplyKind = (incoming, set) => {
   const raw = incoming ?? '';
   if (String(raw).trim() === '') return;
@@ -132,20 +122,15 @@ const candidateProfileUrls = () => {
   return [`${base}/api/merchant/me`, `${base}/api/merchant/profile`, `${base}/api/profile/me`];
 };
 
-/* ───────────────────────── ENV-ONLY image URL helpers ─────────────────────────
-   Force ALL images to use only the hosts defined in .env.
-   - Merchant logos  → MERCHANT_LOGO base
-   - Profile avatars → PROFILE_IMAGE_ENDPOINT base
-   If API returns an absolute URL, we strip its host and keep only pathname + query.
--------------------------------------------------------------------------------*/
-const BASE_MERCHANT = String(MERCHANT_LOGO || MEDIA_BASE_URL || '').replace(/\/+$/,'');
-const BASE_PROFILE  = String(PROFILE_IMAGE_ENDPOINT || MEDIA_BASE_URL || '').replace(/\/+$/,'');
+/* ───────────────────────── ENV-ONLY image URL helpers ───────────────────────── */
+const BASE_MERCHANT = String(MERCHANT_LOGO || MEDIA_BASE_URL || '').replace(/\/+$/, '');
+const BASE_PROFILE  = String(PROFILE_IMAGE_ENDPOINT || MEDIA_BASE_URL || '').replace(/\/+$/, '');
 
 const makeEnvImageUrl = (input, kind = 'merchant') => {
   if (!input) return null;
   const raw = String(input).trim();
   const base = kind === 'profile' ? BASE_PROFILE : BASE_MERCHANT;
-  if (!base) return null; // no base provided in env
+  if (!base) return null;
 
   try {
     if (/^https?:\/\//i.test(raw)) {
@@ -163,88 +148,89 @@ const makeEnvImageUrl = (input, kind = 'merchant') => {
 };
 
 const money = (n, c = 'Nu') => `${c} ${Number(n ?? 0).toFixed(2)}`;
-const DEFAULT_KPIS = { salesToday: 0, salesCurrency: 'Nu', activeOrders: 0, cancellations: 0, acceptanceRate: 0 };
 
-// ───────────────────── helpers for KPI stats ─────────────────────
-const UPPER = (s) => String(s || '').toUpperCase();
-const isTodayLocal = (iso) => {
-  if (!iso) return false;
-  const d = new Date(iso);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() &&
-         d.getMonth() === now.getMonth() &&
-         d.getDate() === now.getDate();
-};
-const toNumber = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-
-// understand both wrapped and legacy orders payloads; return light rows
-const pluckOrdersLight = (payload) => {
-  // wrapped: { data: [ { user, orders:[{ status, total_amount, created_at, ...}] } ] }
-  if (payload && Array.isArray(payload.data)) {
-    const out = [];
-    for (const block of payload.data) {
-      const orders = Array.isArray(block?.orders) ? block.orders : [];
-      for (const o of orders) {
-        out.push({
-          status: UPPER(o.status),
-          total: toNumber(o.total_amount ?? o.total),
-          created_at: o.created_at || o.createdAt || o.created || null,
-        });
-      }
+// 🔐 get auth header for protected endpoints
+async function getAuthHeader() {
+  try {
+    const raw = await SecureStore.getItemAsync('merchant_login');
+    let token = null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      token = parsed?.token?.access_token || parsed?.token || null;
     }
-    return out;
+    if (!token) token = await SecureStore.getItemAsync('auth_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
   }
-  // legacy: array of flat rows
-  if (Array.isArray(payload)) {
-    return payload.map((r) => ({
-      status: UPPER(r.status),
-      total: toNumber(r.total_amount ?? r.total),
-      created_at: r.created_at || r.createdAt || r.created || null,
-    }));
-  }
-  return [];
+}
+
+/* ───────────────────── KPI helpers ───────────────────── */
+const UP = (s) => String(s || '').toUpperCase();
+
+const DEFAULT_KPIS = {
+  salesToday: 0,              // counts endpoint can't compute this
+  salesCurrency: 'Nu',
+  activeOrders: 0,
+  cancellations: 0,           // total cancels (not "today") from counts
+  acceptanceRate: 0,          // accepted / (accepted + cancels) using counts
+  perStatus: {},              // map of status -> count
+  totalsByStatus: {},         // N/A with counts; keep empty
+  lastUpdatedAt: null,
 };
 
-const countKpis = (rows) => {
-  const ACTIVE_SET = new Set(['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY']);
-  const ACCEPTED_SET = new Set(['CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']);
+// Which statuses are considered "active" per module (food has PREPARING tab)
+const ACTIVE_FOOD = ['PENDING','CONFIRMED','PREPARING','READY','OUT_FOR_DELIVERY'];
+const ACTIVE_MART = ['PENDING','CONFIRMED','READY','OUT_FOR_DELIVERY'];
+const CANCEL_SET  = new Set(['CANCELLED','CANCELED','REJECTED','DECLINED']);
 
-  let active = 0;
-  let cancelled = 0;
-  let accepted = 0;
-  let salesToday = 0;
+// Build URL from .env template
+const buildStatusCountsUrl = (businessId) => {
+  const tpl = (ENV_STATUS_COUNT_ENDPOINT || '').trim();
+  if (!tpl) return '';
+  // template uses {business_id}
+  return tpl.replace('{business_id}', encodeURIComponent(String(businessId)));
+};
 
-  for (const r of rows) {
-    const st = r.status;
-    if (ACTIVE_SET.has(st)) active += 1;
-    if (st === 'CANCELLED') cancelled += 1;
-    if (ACCEPTED_SET.has(st)) accepted += 1;
-    if (st !== 'CANCELLED' && isTodayLocal(r.created_at)) {
-      salesToday += toNumber(r.total);
-    }
+// Turn the counts JSON into KPIs
+function kpisFromStatusCounts(counts = {}, ownerType = 'food') {
+  const entries = Object.entries(counts || {});
+  const perStatus = {};
+  for (const [k, v] of entries) perStatus[UP(k)] = Number(v || 0);
+
+  const isMart = String(ownerType).toLowerCase() === 'mart';
+  const activeSet = new Set(isMart ? ACTIVE_MART : ACTIVE_FOOD);
+
+  let total = 0;
+  let cancels = 0;
+  let activeOrders = 0;
+
+  for (const [k, vRaw] of Object.entries(perStatus)) {
+    const v = Number(vRaw || 0);
+    total += v;
+    if (CANCEL_SET.has(k)) cancels += v;
+    if (activeSet.has(k)) activeOrders += v;
   }
 
-  const denom = accepted + cancelled;
-  const acceptanceRate = denom > 0 ? Math.round((accepted / denom) * 100) : 0;
+  // ✅ New field from backend:
+  // "order_declined_today": number of today's declines/cancels
+  const cancelledToday = Number(counts?.order_declined_today || 0);
+
+  const accepted = Math.max(0, total - cancels);
+  const acceptanceRate = total > 0 ? Math.round((accepted / total) * 100) : 0;
 
   return {
-    salesToday,
+    salesToday: 0,
     salesCurrency: 'Nu',
-    activeOrders: active,
-    cancellations: cancelled,
-    acceptanceRate, // %
+    activeOrders,
+    cancellations: cancelledToday, // ✅ use daily cancels from API
+    acceptanceRate,
+    perStatus,
+    totalsByStatus: {},
+    lastUpdatedAt: new Date().toISOString(),
   };
-};
+}
 
-// build orders URL, appending business & kind safely
-const buildOrdersUrl = (ordersBase, businessId, ownerType) => {
-  const base = (ordersBase || '').trim();
-  if (!base) return null;
-  const sep1 = base.includes('?') ? '&' : '?';
-  const q1 = `business_id=${encodeURIComponent(String(businessId || ''))}`;
-  const q2 = `owner_type=${encodeURIComponent(String(ownerType || ''))}`;
-  return `${base}${sep1}${q1}&${q2}`;
-};
 
 export default function GrabMerchantHomeScreen() {
   const route = useRoute();
@@ -264,8 +250,8 @@ export default function GrabMerchantHomeScreen() {
 
   // ───────── Merchant & UI state ─────────
   const [merchantName, setMerchantName] = useState(DEFAULT_NAME);
-  const [merchantLogo, setMerchantLogo] = useState(null); // ENV-ONLY absolute URL
-  const [profileAvatar, setProfileAvatar] = useState(null); // ENV-ONLY absolute URL
+  const [merchantLogo, setMerchantLogo] = useState(null);
+  const [profileAvatar, setProfileAvatar] = useState(null);
   const [businessAddress, setBusinessAddress] = useState('');
   const [businessLicense, setBusinessLicense] = useState('');
   const [refreshing, setRefreshing] = useState(false);
@@ -283,7 +269,7 @@ export default function GrabMerchantHomeScreen() {
 
   const isFood = ownerType === 'food';
 
-  // cache-buster to force logo refresh when pulling to refresh or when backend says logo changed
+  // cache-buster
   const [logoVersion, setLogoVersion] = useState(0);
   const addBuster = (u, v) => {
     if (!u) return u;
@@ -295,11 +281,17 @@ export default function GrabMerchantHomeScreen() {
   // ───────── KPIs state ─────────
   const [kpis, setKpis] = useState(DEFAULT_KPIS);
 
+  // NEW: delivery option state (SELF | GRAB | BOTH, etc.)
+  const [deliveryOption, setDeliveryOption] = useState(                  // NEW
+    (route?.params?.delivery_option || route?.params?.deliveryOption || '') // NEW
+      ? String(route.params.delivery_option || route.params.deliveryOption).toUpperCase()
+      : null                                                                // NEW
+  );                                                                        // NEW
+
   // Central service config (tabs can choose paths by kind)
   const serviceConfig = React.useMemo(() => {
     const base = getBaseOrigin();
 
-    // Resolve promo endpoints with env overrides (and Android localhost fix)
     const resolvedFoodPromos =
       normalizeHost(PROMOS_FOOD_ENDPOINT || PROMOS_ENDPOINT || `${base}/api/food/promos`);
     const resolvedMartPromos =
@@ -333,7 +325,7 @@ export default function GrabMerchantHomeScreen() {
     };
   }, [ownerType]);
 
-  // sync params outward so children see current kind & ids
+  // sync params outward
   useEffect(() => {
     navigation.setParams({
       businessId,
@@ -346,8 +338,9 @@ export default function GrabMerchantHomeScreen() {
       business_address: businessAddress,
       business_license: businessLicense,
       serviceConfig,
+      delivery_option: deliveryOption, // NEW
     });
-  }, [navigation, businessId, ownerType, userId, authContext, merchantName, merchantLogo, businessAddress, businessLicense, serviceConfig]);
+  }, [navigation, businessId, ownerType, userId, authContext, merchantName, merchantLogo, businessAddress, businessLicense, serviceConfig, deliveryOption]); // NEW
 
   // Build profile/business endpoints
   const buildProfileUrl = useCallback((uid) => {
@@ -361,7 +354,7 @@ export default function GrabMerchantHomeScreen() {
     return `${base}/${encodeURIComponent(String(bid))}`;
   }, []);
 
-  // Tiny snapshot helper to detect meaningful header changes
+  // snapshot helper
   const headerSnapRef = useRef({ name: null, addr: null, logo: null, profile: null });
 
   const applyHeaderIfChanged = useCallback((payload = {}) => {
@@ -383,16 +376,14 @@ export default function GrabMerchantHomeScreen() {
       headerSnapRef.current.addr = next.addr;
     }
     if (next.logo) {
-      // ENV-ONLY: always re-root to MERCHANT_LOGO base
       const resolved = makeEnvImageUrl(String(next.logo), 'merchant');
       if (resolved && resolved !== headerSnapRef.current.logo) {
         setMerchantLogo(resolved);
         headerSnapRef.current.logo = resolved;
-        bumped = true; // bust caches for header image
+        bumped = true;
       }
     }
     if (next.profile) {
-      // ENV-ONLY: always re-root to PROFILE_IMAGE base
       const resolvedP = makeEnvImageUrl(String(next.profile), 'profile');
       if (resolvedP && resolvedP !== headerSnapRef.current.profile) {
         setProfileAvatar(resolvedP);
@@ -403,10 +394,10 @@ export default function GrabMerchantHomeScreen() {
     if (bumped) setLogoVersion((v) => v + 1);
   }, []);
 
-  // Hydrate from SecureStore (fast)
+  // Hydrate from SecureStore
   const loadFromStore = useCallback(async () => {
     try {
-      const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
+      const raw = await SecureStore.getItemAsync('merchant_login');
       if (!raw) return;
       let blob = {};
       try { blob = JSON.parse(raw); } catch { }
@@ -432,8 +423,15 @@ export default function GrabMerchantHomeScreen() {
       const licenseCandidate =
         blob?.business_license || user?.business_license || user?.business_license_number || blob?.business_license_number || '';
       if (licenseCandidate) setBusinessLicense(String(licenseCandidate));
+
+      // NEW: hydrate delivery_option from store if present
+      const storedDelivery =
+        (blob?.delivery_option || user?.delivery_option || user?.deliveryOption || '')
+          ?.toString()
+          ?.toUpperCase();
+      if (storedDelivery && !deliveryOption) setDeliveryOption(storedDelivery); // NEW
     } catch { }
-  }, [userId, applyHeaderIfChanged]);
+  }, [userId, applyHeaderIfChanged, deliveryOption]); // NEW dep
 
   // Authoritative: fetch from PROFILE_ENDPOINT/:userId
   const loadFromBackend = useCallback(async (uid) => {
@@ -441,7 +439,6 @@ export default function GrabMerchantHomeScreen() {
     if (!url) return;
     try {
       const data = await fetchJSON(url, { method: 'GET' });
-
       applyHeaderIfChanged(data);
       maybeApplyKind(data?.owner_type, setOwnerType);
 
@@ -451,9 +448,14 @@ export default function GrabMerchantHomeScreen() {
       const license = data?.business_license || data?.business_license_number || '';
       if (license) setBusinessLicense(String(license));
 
+      // NEW: capture delivery option from profile response
+      if (data?.delivery_option && !deliveryOption) {
+        setDeliveryOption(String(data.delivery_option).toUpperCase());
+      }
+
       // persist minimal fields
       try {
-        const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
+        const raw = await SecureStore.getItemAsync('merchant_login');
         let blob = {};
         try { blob = raw ? JSON.parse(raw) : {}; } catch { }
         const providedKind = (data?.owner_type != null && String(data.owner_type).trim() !== '')
@@ -470,26 +472,27 @@ export default function GrabMerchantHomeScreen() {
           owner_type: providedKind ?? (blob?.owner_type ?? ownerType),
           business_id: (data?.business_id ?? data?.id) ?? blob?.business_id,
           user_id: data?.user_id ?? blob?.user_id,
+          delivery_option: (data?.delivery_option || blob?.delivery_option || '').toString().toUpperCase(), // NEW
           user: {
             ...(blob.user || {}),
             business_license: license || blob?.user?.business_license,
             business_name: data?.business_name ?? blob?.user?.business_name,
             business_address: (data?.business_address ?? data?.address ?? data?.location) ?? blob?.user?.business_address,
             business_logo: data?.business_logo ?? blob?.user?.business_logo,
-            profile_image: data?.profile_image ?? blob?.user?.profile_image,
             owner_type: providedKind ?? (blob?.user?.owner_type ?? ownerType),
             business_id: (data?.business_id ?? data?.id) ?? blob?.user?.business_id,
             user_id: data?.user_id ?? blob?.user?.user_id,
+            delivery_option: (data?.delivery_option || blob?.user?.delivery_option || '').toString().toUpperCase(), // NEW
           },
         };
-        await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
+        await SecureStore.setItemAsync('merchant_login', JSON.stringify(merged));
       } catch { }
     } catch (e) {
       if (__DEV__) console.log('[Home] profile fetch failed:', e?.message);
     }
-  }, [buildProfileUrl, ownerType, applyHeaderIfChanged]);
+  }, [buildProfileUrl, ownerType, applyHeaderIfChanged, deliveryOption]); // NEW dep
 
-  // Business details by businessId (name, address, logo)
+  // Business details by businessId
   const loadBusinessFromBackend = useCallback(async (bid) => {
     const url = buildBusinessUrl(bid);
     if (!url) return;
@@ -504,7 +507,7 @@ export default function GrabMerchantHomeScreen() {
 
       // persist minimal fields
       try {
-        const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
+        const raw = await SecureStore.getItemAsync('merchant_login');
         const blob = raw ? JSON.parse(raw) : {};
         const merged = {
           ...blob,
@@ -520,7 +523,7 @@ export default function GrabMerchantHomeScreen() {
             business_id: bid ?? blob?.user?.business_id,
           },
         };
-        await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
+        await SecureStore.setItemAsync('merchant_login', JSON.stringify(merged));
       } catch { }
     } catch (e) {
       if (__DEV__) console.log('[Home] loadBusinessFromBackend failed:', e?.message);
@@ -530,7 +533,7 @@ export default function GrabMerchantHomeScreen() {
   // Token-based “/me” fetch
   const refreshFromServerMe = useCallback(async () => {
     try {
-      const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
+      const raw = await SecureStore.getItemAsync('merchant_login');
       const parsed = raw ? JSON.parse(raw) : null;
       const token =
         parsed?.token?.access_token ||
@@ -559,8 +562,13 @@ export default function GrabMerchantHomeScreen() {
           const bid = user?.business_id || user?.id || data?.business_id || null;
           if (bid) setBusinessId(String(bid));
 
+          // NEW: hydrate from /me if present
+          if (user?.delivery_option && !deliveryOption) {
+            setDeliveryOption(String(user.delivery_option).toUpperCase());
+          }
+
           const merged = { ...(parsed || {}), user: { ...(parsed?.user || {}), ...user } };
-          await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
+          await SecureStore.setItemAsync('merchant_login', JSON.stringify(merged));
           break;
         } catch (e) {
           if (__DEV__) console.log('[Home] /me fetch failed for', url, e?.message);
@@ -569,23 +577,33 @@ export default function GrabMerchantHomeScreen() {
     } catch (e) {
       if (__DEV__) console.log('[Home] refreshFromServerMe unexpected:', e?.message);
     }
-  }, [applyHeaderIfChanged]);
+  }, [applyHeaderIfChanged, deliveryOption]); // NEW dep
 
-  // ───────── KPI loader ─────────
+  /* ──────────── KPI fetch (only .env STATUS_COUNT_ENDPOINT) ──────────── */
   const fetchKpis = useCallback(async (bid, kind) => {
-    if (!bid || !serviceConfig?.orders) return;
+    const business = String(bid || '').trim();
+    if (!business) return;
+
     try {
-      const url = buildOrdersUrl(serviceConfig.orders, bid, kind);
+      const headers = {
+        Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(await getAuthHeader()),
+      };
+
+      const url = buildStatusCountsUrl(business); // 🔗 from .env only
       if (!url) return;
-      const payload = await fetchJSON(url, { method: 'GET', headers: { Accept: 'application/json' } });
-      const rows = pluckOrdersLight(payload);
-      const next = countKpis(rows);
+
+      const payload = await fetchJSON(url, { headers });
+      // payload is an object map of status -> count
+      const next = kpisFromStatusCounts(payload, kind);
       setKpis(next);
     } catch (e) {
-      // if (__DEV__) console.log('[Home] fetchKpis failed:', e?.message);
-      // keep previous KPIs on failure
+      if (__DEV__) console.log('[KPI] status-count fetch failed:', e?.message);
+      // keep last KPIs on error
     }
-  }, [serviceConfig?.orders]);
+  }, []);
+  /* ──────────── end KPI fetch ──────────── */
 
   // Initial
   useEffect(() => {
@@ -603,6 +621,11 @@ export default function GrabMerchantHomeScreen() {
         await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
       }
       if (route?.params?.authContext) setAuthContext(route.params.authContext);
+
+      // NEW: accept delivery option from initial params on first mount
+      if ((route?.params?.delivery_option || route?.params?.deliveryOption) && !deliveryOption) {
+        setDeliveryOption(String(route.params.delivery_option || route.params.deliveryOption).toUpperCase());
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route?.params?.user_id]);
@@ -671,7 +694,7 @@ export default function GrabMerchantHomeScreen() {
     return () => { stop(); unsubFocus(); unsubBlur(); };
   }, [navigation, businessId, userId, route?.params?.user_id, ownerType, loadBusinessFromBackend, loadFromBackend, fetchKpis]);
 
-  // Menus (ownerType-aware storage key to prevent cross-kind bleed)
+  // Menus
   const loadMenusFromStorage = useCallback(async (bid, kind) => {
     if (!bid) return;
     try {
@@ -686,7 +709,7 @@ export default function GrabMerchantHomeScreen() {
     if (businessId) loadMenusFromStorage(businessId, ownerType);
   }, [businessId, ownerType, loadMenusFromStorage]);
 
-  // Live reactions from other parts of the app
+  // Reactions
   const belongsToCurrentContext = useCallback((incoming = {}) => {
     const incKind = normalizeOwnerType(incoming.owner_type ?? incoming.kind);
     const incBid = incoming.business_id ?? incoming.businessId ?? null;
@@ -727,8 +750,11 @@ export default function GrabMerchantHomeScreen() {
         maybeApplyKind(params.owner_type, setOwnerType);
       }
       if (params.authContext) setAuthContext(params.authContext);
+      // NEW: absorb delivery_option from event
+      if (params.delivery_option || params.deliveryOption) {
+        setDeliveryOption(String(params.delivery_option || params.deliveryOption).toUpperCase());
+      }
       try { await SecureStore.setItemAsync(KEY_LAST_CTX, JSON.stringify(params)); } catch { }
-      // refresh KPIs when context changes
       const bid = params.businessId || params.business_id || businessId;
       const kind = normalizeOwnerType(params.owner_type ?? ownerType);
       if (bid) await fetchKpis(String(bid), kind);
@@ -743,6 +769,10 @@ export default function GrabMerchantHomeScreen() {
         if (payload?.business_address || payload?.address || payload?.location) {
           applyHeaderIfChanged({ business_address: payload?.business_address ?? payload?.address ?? payload?.location });
         }
+        // NEW: update delivery_option if provided in payload
+        if (payload?.delivery_option || payload?.deliveryOption) {
+          setDeliveryOption(String(payload.delivery_option || payload.deliveryOption).toUpperCase());
+        }
       } catch { }
       const uid = route?.params?.user_id || userId;
       if (uid) await loadFromBackend(String(uid));
@@ -751,7 +781,6 @@ export default function GrabMerchantHomeScreen() {
         await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
       }
     });
-    // real-time order updates should bump KPIs
     const sub5 = DeviceEventEmitter.addListener('order-updated', async () => {
       if (businessId) await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
     });
@@ -768,7 +797,7 @@ export default function GrabMerchantHomeScreen() {
     const uid = route?.params?.user_id || userId;
     if (uid) await loadFromBackend(String(uid));
     if (businessId) await loadMenusFromStorage(businessId, ownerType);
-    if (businessId) await loadBusinessFromBackend(String(businessId)); // ← update header (name/location/logo)
+    if (businessId) await loadBusinessFromBackend(String(businessId));
     if (businessId) await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
     setRefreshing(false);
     setLogoVersion((v) => v + 1);
@@ -778,7 +807,7 @@ export default function GrabMerchantHomeScreen() {
     if (activeTab !== 'Home' && showWelcome) setShowWelcome(false);
   }, [activeTab, showWelcome]);
 
-  // Android back: if not on Home tab, go to Home instead of popping stack
+  // Android back behavior
   useEffect(() => {
     const onBack = () => {
       if (activeTab !== 'Home') {
@@ -804,6 +833,10 @@ export default function GrabMerchantHomeScreen() {
       maybeApplyKind(p.owner_type, setOwnerType);
     }
     if (p.authContext) setAuthContext(p.authContext);
+    // NEW: take delivery_option from route params when switching tabs via params
+    if (p.delivery_option || p.deliveryOption) {
+      setDeliveryOption(String(p.delivery_option || p.deliveryOption).toUpperCase());
+    }
     navigation.setParams({ openTab: undefined, nonce: undefined });
   }, [route?.params?.nonce, belongsToCurrentContext, navigation, applyHeaderIfChanged]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -820,11 +853,12 @@ export default function GrabMerchantHomeScreen() {
       owner_type: normalizeOwnerType(ownerType),
       authContext,
       serviceConfig,
+      delivery_option: deliveryOption, // NEW
     };
     const safeNav = (target, fallback) => {
       try { navigation.navigate(target, params); }
       catch {
-        if (fallback) try { navigation.navigate(fallback, params); } catch {}
+        if (fallback) try { navigation.navigate(fallback, params); } catch { }
       }
     };
     const goToAccountSettings = () => safeNav('AccountSettings', 'ProfileBusinessDetails');
@@ -845,7 +879,6 @@ export default function GrabMerchantHomeScreen() {
 
         <View style={styles.headerRow}>
           <View style={styles.inlineRow}>
-            {/* Tap logo to open business details */}
             <TouchableOpacity
               onPress={goToProfileBusinessDetails}
               activeOpacity={0.85}
@@ -882,7 +915,7 @@ export default function GrabMerchantHomeScreen() {
               <Image
                 source={{ uri: profileAvatar || DEFAULT_AVATAR }}
                 style={[styles.profileCircle, { width: avatarSize, height: avatarSize }]}
-                onError={() => {}}
+                onError={() => { }}
               />
             </TouchableOpacity>
           </View>
@@ -902,7 +935,6 @@ export default function GrabMerchantHomeScreen() {
     );
   };
 
-  // Bottom nav items
   const NAV_ITEMS = [
     { key: 'Home', label: 'Home', icon: 'home-outline' },
     { key: 'Orders', label: 'Orders', icon: 'receipt-outline' },
@@ -911,7 +943,6 @@ export default function GrabMerchantHomeScreen() {
     { key: 'Payouts', label: 'Payouts', icon: 'card-outline' },
   ];
 
-  // Decide which component to render for the Add tab
   const AddTabComponent = isFood ? FoodAddMenuTab : MartAddItemTab;
 
   return (
@@ -927,7 +958,7 @@ export default function GrabMerchantHomeScreen() {
           <Header />
           <HomeTab
             isTablet={isTablet}
-            kpis={kpis}      
+            kpis={kpis}
             money={money}
             onPressNav={setActiveTab}
             businessId={businessId}
@@ -940,6 +971,7 @@ export default function GrabMerchantHomeScreen() {
             address={businessAddress}
             businessLicense={businessLicense}
             serviceConfig={serviceConfig}
+            delivery_option={deliveryOption} // NEW
           />
         </ScrollView>
       )}
@@ -953,6 +985,7 @@ export default function GrabMerchantHomeScreen() {
             context={authContext}
             ownerType={ownerType}
             serviceConfig={serviceConfig}
+            delivery_option={deliveryOption} // NEW
           />
         </View>
       )}
@@ -967,6 +1000,7 @@ export default function GrabMerchantHomeScreen() {
             businessId={businessId}
             ownerType={ownerType}
             serviceConfig={serviceConfig}
+            delivery_option={deliveryOption} // NEW
           />
         </View>
       )}
@@ -984,6 +1018,7 @@ export default function GrabMerchantHomeScreen() {
             userId={userId}
             context={authContext}
             serviceConfig={serviceConfig}
+            delivery_option={deliveryOption} // NEW
           />
         </View>
       )}
@@ -997,6 +1032,7 @@ export default function GrabMerchantHomeScreen() {
             context={authContext}
             ownerType={ownerType}
             serviceConfig={serviceConfig}
+            delivery_option={deliveryOption} // NEW
           />
         </View>
       )}
@@ -1010,6 +1046,7 @@ export default function GrabMerchantHomeScreen() {
             context={authContext}
             ownerType={ownerType}
             serviceConfig={serviceConfig}
+            delivery_option={deliveryOption} // NEW
           />
         </View>
       )}
