@@ -10,23 +10,20 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
 // ✅ Use legacy API to avoid deprecation warnings in SDK 54+
 import * as FileSystem from 'expo-file-system/legacy';
 
 import {
   PROFILE_ENDPOINT,
   PROFILE_IMAGE as PROFILE_IMAGE_ENDPOINT,
-  LOGOUT_ENDPOINT as ENV_LOGOUT_ENDPOINT,                // ⬅️ bring the .env logout here
+  LOGOUT_ENDPOINT as ENV_LOGOUT_ENDPOINT,
 } from '@env';
 
 const { width } = Dimensions.get('window');
 const KEY_MERCHANT_LOGIN = 'merchant_login';
-
 const DEFAULT_AVATAR =
   'https://images.unsplash.com/photo-1612198182421-3f5dff0c9b40?q=80&w=400&auto=format&fit=crop';
 
-// ───────────────────────── URL helpers (minimal) ─────────────────────────
 const DEFAULT_DEV_ORIGIN = Platform.select({
   android: 'http://10.0.2.2:3000',
   ios: 'http://localhost:3000',
@@ -48,7 +45,6 @@ function normalizeHost(url) {
   }
 }
 
-// add ?v=version once server-side image actually changes (cache-bust)
 function withVersion(url, version) {
   if (!url || !version) return url;
   try {
@@ -60,11 +56,10 @@ function withVersion(url, version) {
   }
 }
 
-// Convert relative -> absolute using PROFILE_IMAGE_ENDPOINT base
 const makeAbsolute = (maybeRelative, base = PROFILE_IMAGE_ENDPOINT) => {
   if (!maybeRelative) return null;
   const s = String(maybeRelative);
-  if (/^https?:\/\//i.test(s)) return s; // already absolute
+  if (/^https?:\/\//i.test(s)) return s;
   const b = (base || '').replace(/\/+$/, '');
   const p = s.startsWith('/') ? s.slice(1) : s;
   return `${b}/${p}`;
@@ -77,7 +72,7 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
     const res = await fetch(url, { ...options, signal: controller.signal });
     const text = await res.text();
     let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch {}
+    try { json = text ? JSON.parse(text) : null; } catch { }
     if (!res.ok) {
       const msg = (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
       throw new Error(msg);
@@ -88,7 +83,6 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
   }
 }
 
-// ───────────────────────── Logout helpers ─────────────────────────
 const SECURE_KEYS = [
   KEY_MERCHANT_LOGIN,
   'auth_token',
@@ -100,10 +94,8 @@ const SECURE_KEYS = [
 async function clearCredentialStores() {
   try {
     await Promise.allSettled(SECURE_KEYS.map(k => SecureStore.deleteItemAsync(k)));
-  } catch {}
-  try {
-    await AsyncStorage.clear();
-  } catch {}
+  } catch { }
+  try { await AsyncStorage.clear(); } catch { }
 }
 
 async function clearImageCacheAsync() {
@@ -115,11 +107,9 @@ async function clearImageCacheAsync() {
     ];
     for (const dir of dirs) {
       const info = await FileSystem.getInfoAsync(dir);
-      if (info.exists) {
-        await FileSystem.deleteAsync(dir, { idempotent: true });
-      }
+      if (info.exists) await FileSystem.deleteAsync(dir, { idempotent: true });
     }
-  } catch {}
+  } catch { }
 }
 
 function resetLocalState(setters) {
@@ -140,7 +130,6 @@ function resetLocalState(setters) {
   DeviceEventEmitter.emit('logged-out');
 }
 
-/** Try to obtain an existing merchant socket from your shared connector. */
 function getExistingMerchantSocket() {
   try {
     const mod = require('../realtime/merchantSocket');
@@ -150,7 +139,6 @@ function getExistingMerchantSocket() {
   }
 }
 
-/** Politely notify server + disconnect socket; always safe to call. */
 async function disconnectSocketGracefully({ userId, businessId }) {
   try {
     const sock = getExistingMerchantSocket();
@@ -160,20 +148,17 @@ async function disconnectSocketGracefully({ userId, businessId }) {
       try {
         sock.emit?.('merchant:logout', { userId, businessId });
         await new Promise(r => setTimeout(r, 120));
-      } catch {}
+      } catch { }
     }
 
-    try { sock.removeAllListeners?.(); } catch {}
-    try { sock.disconnect?.(); } catch {}
-    try { sock.close?.(); } catch {}
-  } catch {
-    // swallow — logout must not crash
-  } finally {
-    try { if (global?.merchantSocket) global.merchantSocket = null; } catch {}
+    try { sock.removeAllListeners?.(); } catch { }
+    try { sock.disconnect?.(); } catch { }
+    try { sock.close?.(); } catch { }
+  } catch { } finally {
+    try { if (global?.merchantSocket) global.merchantSocket = null; } catch { }
   }
 }
 
-/** Build the concrete logout URL from .env pattern like .../logout/{user_id} */
 function resolveLogoutUrlFromEnv(userId) {
   const raw = (ENV_LOGOUT_ENDPOINT || '').trim();
   if (!raw) return null;
@@ -182,16 +167,10 @@ function resolveLogoutUrlFromEnv(userId) {
   return raw.replace('{user_id}', id);
 }
 
-/** Optionally tell backend to invalidate tokens. Accepts explicit endpoint or falls back to .env */
 async function attemptServerLogout({ explicitEndpoint, userId }) {
-  const endpoint =
-    explicitEndpoint ||
-    resolveLogoutUrlFromEnv(userId) ||
-    null;
-
+  const endpoint = explicitEndpoint || resolveLogoutUrlFromEnv(userId) || null;
   if (!endpoint) return;
 
-  // Prefer POST; if the server rejects body, we retry with GET (many simple logout routes are GET)
   const refresh = await SecureStore.getItemAsync('refresh_token');
   const access = await SecureStore.getItemAsync('auth_token');
   const baseHeaders = { 'Content-Type': 'application/json' };
@@ -204,16 +183,10 @@ async function attemptServerLogout({ explicitEndpoint, userId }) {
       body: JSON.stringify({ refresh_token: refresh || undefined }),
     });
   } catch {
-    // Retry once with GET (no body)
-    try {
-      await fetchJSON(endpoint, { method: 'GET', headers: baseHeaders });
-    } catch {
-      // non-fatal; continue local logout
-    }
+    try { await fetchJSON(endpoint, { method: 'GET', headers: baseHeaders }); } catch { }
   }
 }
 
-// ───────────────────────── Component ─────────────────────────
 const AccountSettings = () => {
   const route = useRoute();
   const navigation = useNavigation();
@@ -238,9 +211,7 @@ const AccountSettings = () => {
     longitude: '',
   });
 
-  const [businessLicense, setBusinessLicense] = useState(
-    route?.params?.business_license || ''
-  );
+  const [businessLicense, setBusinessLicense] = useState(route?.params?.business_license || '');
 
   const buildProfileUrl = useCallback((uid) => {
     if (!uid || !PROFILE_ENDPOINT) return '';
@@ -248,7 +219,6 @@ const AccountSettings = () => {
     return `${base}/${encodeURIComponent(String(uid))}`;
   }, []);
 
-  // Centralized: resolve with PROFILE_IMAGE base; add version when known
   const setAvatarFrom = useCallback(async (raw, version = null) => {
     if (!raw) {
       setImageUri(DEFAULT_AVATAR);
@@ -267,10 +237,9 @@ const AccountSettings = () => {
     }
   }, []);
 
-  // Optional warm-cache
   useEffect(() => {
     if (imageUri && /^https?:\/\//i.test(imageUri)) {
-      RNImage.prefetch(imageUri).catch(() => {});
+      RNImage.prefetch(imageUri).catch(() => { });
     }
   }, [imageUri]);
 
@@ -349,9 +318,7 @@ const AccountSettings = () => {
         blob?.merchant?.business_license_number ||
         '';
       if (licenseCandidate) setBusinessLicense(String(licenseCandidate));
-    } catch {
-      // ignore
-    }
+    } catch { }
   }, [userId, businessId, setAvatarFrom]);
 
   const loadFromBackend = useCallback(async (uid) => {
@@ -395,7 +362,7 @@ const AccountSettings = () => {
       try {
         const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
         let blob = {};
-        try { blob = raw ? JSON.parse(raw) : {}; } catch {}
+        try { blob = raw ? JSON.parse(raw) : {}; } catch { }
         const merged = {
           ...blob,
           user_id: data?.user_id ?? blob.user_id,
@@ -426,13 +393,10 @@ const AccountSettings = () => {
           },
         };
         await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
-      } catch {}
-    } catch {
-      // keep store values silently
-    }
+      } catch { }
+    } catch { }
   }, [buildProfileUrl, biz, businessId, setAvatarFrom]);
 
-  // First load
   useEffect(() => {
     (async () => {
       if (!userId) await loadFromStore();
@@ -440,7 +404,6 @@ const AccountSettings = () => {
     })();
   }, [userId, loadFromStore, loadFromBackend]);
 
-  // On focus: refresh store + backend
   useEffect(() => {
     const unsub = navigation.addListener('focus', async () => {
       await loadFromStore();
@@ -449,7 +412,6 @@ const AccountSettings = () => {
     return unsub;
   }, [navigation, userId, loadFromStore, loadFromBackend]);
 
-  // Listen for upstream updates
   useEffect(() => {
     const subA = DeviceEventEmitter.addListener('profile-updated', async (payload) => {
       if (payload?.name) setName(String(payload.name));
@@ -464,7 +426,6 @@ const AccountSettings = () => {
     return () => { subA.remove(); subB.remove(); };
   }, [userId, loadFromBackend, setAvatarFrom, imgVersion]);
 
-  // Local image picker (long-press on avatar)
   const pickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
@@ -479,13 +440,10 @@ const AccountSettings = () => {
     });
     if (!result.cancelled && !result.canceled) {
       const uri = result?.assets?.[0]?.uri || result?.uri;
-      if (uri) {
-        await setAvatarFrom(uri, null);
-      }
+      if (uri) await setAvatarFrom(uri, null);
     }
   };
 
-  // Navigate helpers
   const goToPersonalInformation = () => {
     navigation.navigate('PersonalInformation', {
       user_id: userId,
@@ -508,60 +466,61 @@ const AccountSettings = () => {
     });
   };
 
-  /** Full, graceful logout pipeline: revoke server session → disconnect socket → clear stores → reset nav */
+  // ✅ Use route param first, then fall back to local state
+  const goToFeedback = useCallback(() => {
+    const rawBid = route?.params?.business_id ?? businessId;   // <— changed line
+    const bidStr = String(rawBid ?? '').trim();
+    const bidNum = /^\d+$/.test(bidStr) ? parseInt(bidStr, 10) : NaN;
+
+    if (!Number.isInteger(bidNum) || bidNum <= 0) {
+      Alert.alert('Feedback', 'Business ID is missing or invalid.');
+      if (__DEV__) console.log('[AccountSettings] invalid businessId', { rawBid, businessId, routeParams: route?.params });
+      return;
+    }
+
+    if (__DEV__) {
+      console.log('[AccountSettings] navigating to RestaurantFeedback with:', {
+        businessIdRaw: rawBid,
+        businessIdParsed: bidNum,
+        businessName: biz?.business_name || name || '',
+      });
+    }
+
+    // 👇 make sure this name matches your registered screen (you had a typo earlier)
+    navigation.navigate('FeedbackScreen', {
+      business_id: bidNum,
+      business_name: biz?.business_name || name || '',
+      authContext,
+    });
+  }, [navigation, route?.params?.business_id, businessId, biz?.business_name, name, authContext]);
+
+
   const handleLogoutNow = useCallback(async () => {
     try {
-      // 1) Hook for app-specific side effects
-      if (authContext?.onBeforeLogout) {
-        try { await authContext.onBeforeLogout(); } catch {}
-      }
+      if (authContext?.onBeforeLogout) { try { await authContext.onBeforeLogout(); } catch { } }
 
-      // 2) Server-side token/session invalidation
       const explicitEndpoint =
         authContext?.logoutEndpoint ||
         route?.params?.logoutEndpoint ||
         null;
 
-      await attemptServerLogout({
-        explicitEndpoint,           // if passed via route/context, this wins
-        userId,                     // else we build from ENV_LOGOUT_ENDPOINT with {user_id}
-      });
-
-      // 3) Disconnect realtime socket & notify server presence
+      await attemptServerLogout({ explicitEndpoint, userId });
       await disconnectSocketGracefully({ userId, businessId });
-
-      // 4) Local cleanup
       await clearCredentialStores();
       await clearImageCacheAsync();
       resetLocalState({ setName, setImageUri, setImgVersion, setBiz, setBusinessLicense });
 
-      // 5) Post-logout hook
-      if (authContext?.onAfterLogout) {
-        try { await authContext.onAfterLogout(); } catch {}
-      }
+      if (authContext?.onAfterLogout) { try { await authContext.onAfterLogout(); } catch { } }
     } finally {
-      // 6) Always reset to login
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'LoginScreen' }],
-      });
+      navigation.reset({ index: 0, routes: [{ name: 'LoginScreen' }] });
     }
   }, [authContext, route?.params, userId, businessId, navigation]);
 
-  // Hard logout: confirm then run pipeline
   const logOut = useCallback(() => {
-    Alert.alert(
-      'Log out',
-      'Are you sure you want to log out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Log out',
-          style: 'destructive',
-          onPress: handleLogoutNow,
-        },
-      ]
-    );
+    Alert.alert('Log out', 'Are you sure you want to log out?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Log out', style: 'destructive', onPress: handleLogoutNow },
+    ]);
   }, [handleLogoutNow]);
 
   return (
@@ -569,7 +528,6 @@ const AccountSettings = () => {
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         {/* Profile Header */}
         <View style={styles.profileHeader}>
-          {/* Avatar (tap → PersonalInformation, long-press → pick local) */}
           <TouchableOpacity
             style={styles.profileIconContainer}
             activeOpacity={0.7}
@@ -580,10 +538,7 @@ const AccountSettings = () => {
               <RNImage
                 source={{ uri: imageUri }}
                 style={styles.profileImage}
-                onError={() => {
-                  setImageUri(DEFAULT_AVATAR);
-                  setImgError(null);
-                }}
+                onError={() => { setImageUri(DEFAULT_AVATAR); setImgError(null); }}
               />
             ) : (
               <View style={{ alignItems: 'center', justifyContent: 'center' }}>
@@ -606,7 +561,6 @@ const AccountSettings = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Sections */}
         <TouchableOpacity style={styles.section} onPress={goToPersonalInformation}>
           <Text style={styles.text}>Personal Information</Text>
           <Ionicons name="chevron-forward" size={24} color="#16a34a" />
@@ -629,19 +583,16 @@ const AccountSettings = () => {
           <Ionicons name="chevron-forward" size={24} color="#16a34a" />
         </TouchableOpacity>
 
-        {/* Wallet */}
         <TouchableOpacity style={styles.section} onPress={() => navigation.navigate('WalletScreen', { authContext })}>
           <Text style={styles.text}>Wallet</Text>
           <Ionicons name="chevron-forward" size={24} color="#16a34a" />
         </TouchableOpacity>
 
-        {/* Feedback */}
-        <TouchableOpacity style={styles.section} onPress={() => navigation.navigate('FeedbackScreen', { authContext })}>
-          <Text style={styles.text}>Feedback</Text>
+        <TouchableOpacity style={styles.section} onPress={goToFeedback}>
+          <Text style={styles.text}>Feedback and Rating</Text>
           <Ionicons name="chevron-forward" size={24} color="#16a34a" />
         </TouchableOpacity>
 
-        {/* Log Out */}
         <TouchableOpacity style={styles.logoutSection} onPress={logOut}>
           <Text style={[styles.text, styles.logoutText]}>Log Out</Text>
           <Ionicons name="log-out-outline" size={24} color="#F44336" />
@@ -656,12 +607,7 @@ const styles = StyleSheet.create({
   scrollContainer: { paddingHorizontal: 20, paddingTop: 8 },
   profileHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 30, marginTop: 20 },
   profileIconContainer: {
-    marginRight: 20,
-    borderWidth: 2,
-    borderColor: '#ddd',
-    borderRadius: 50,
-    padding: 2,
-    backgroundColor: '#fff',
+    marginRight: 20, borderWidth: 2, borderColor: '#ddd', borderRadius: 50, padding: 2, backgroundColor: '#fff',
   },
   profileImage: { width: 80, height: 80, borderRadius: 40 },
   nameContainer: { flex: 1 },

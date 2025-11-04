@@ -47,6 +47,12 @@
     "updates": {
       "enabled": false
     },
-    "runtimeVersion": "1.0.0"
+    "runtimeVersion": "1.0.0",
+    "extra": {
+      "eas": {
+        "projectId": "f5377050-a920-4fd2-9af2-9cd2bcc537d5"
+      }
+    },
+    "owner": "chospa"
   }
 }

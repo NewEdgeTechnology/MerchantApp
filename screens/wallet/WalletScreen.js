@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as Clipboard from 'expo-clipboard'; // ⬅️ NEW
 import { WALLET_ENDPOINT as ENV_WALLET, TANSACTION_HISTORY_ENDPOINT as ENV_WALLET_TXN } from '@env';
 
 const { width } = Dimensions.get('window');
@@ -86,6 +87,7 @@ export default function WalletScreen() {
   const [promoBalance, setPromoBalance] = useState(0);
   const [txns, setTxns] = useState([]); // ⬅️ start empty only
   const [locked, setLocked] = useState(true);
+  const [walletId, setWalletId] = useState(null); // ⬅️ NEW
 
   // Header top padding (consistent with PersonalInformation.js)
   const headerTopPad = Math.max(insets.top, 8) + 18;
@@ -168,12 +170,12 @@ export default function WalletScreen() {
     return `${raw}${sep}user_id=${encodeURIComponent(String(userId))}`;
   }, []);
 
-  const buildTxnUrl = useCallback((walletId) => {
+  const buildTxnUrl = useCallback((walletIdParam) => {
     const raw = String(ENV_WALLET_TXN || '').trim();
-    if (!raw || !walletId) return null;
-    if (raw.includes('{wallet_id}')) return raw.replace('{wallet_id}', String(walletId));
+    if (!raw || !walletIdParam) return null;
+    if (raw.includes('{wallet_id}')) return raw.replace('{wallet_id}', String(walletIdParam));
     const sep = raw.includes('?') ? '&' : '?';
-    return `${raw}${sep}wallet_id=${encodeURIComponent(String(walletId))}`;
+    return `${raw}${sep}wallet_id=${encodeURIComponent(String(walletIdParam))}`;
   }, []);
 
   const parseWalletPayload = (payload) => {
@@ -222,9 +224,9 @@ export default function WalletScreen() {
     });
   };
 
-  const fetchHistory = useCallback(async (walletId) => {
+  const fetchHistory = useCallback(async (walletIdParam) => {
     try {
-      const url = buildTxnUrl(walletId);
+      const url = buildTxnUrl(walletIdParam);
       if (!url) return null;
 
       const res = await fetch(url);
@@ -273,6 +275,7 @@ export default function WalletScreen() {
           const w = parseWalletPayload(payload);
           setBalance(w.bal);
           setPromoBalance(w.promo);
+          setWalletId(w.id || null); // ⬅️ NEW
           if (w.status === 'ACTIVE' || w.id) walletFlag = true;
 
           // ⬇ Fetch real history when we have wallet_id
@@ -291,10 +294,12 @@ export default function WalletScreen() {
         setBalance(0);
         setPromoBalance(0);
         setTxns([]); // keep empty
+        setWalletId(null); // ⬅️ NEW
       }
     } catch (e) {
       Alert.alert('Wallet', e?.message || 'Failed to load wallet info.');
       setTxns([]);
+      setWalletId(null);
     } finally {
       setLoading(false);
     }
@@ -340,6 +345,7 @@ export default function WalletScreen() {
       setBalance(0);
       setPromoBalance(0);
       setTxns([]);
+      setWalletId(null);
     });
     return () => sub.remove();
   }, []);
@@ -388,6 +394,14 @@ export default function WalletScreen() {
       </View>
     </SafeAreaView>
   );
+
+  const onCopyWalletId = useCallback(async () => {
+    if (!walletId) return;
+    try {
+      await Clipboard.setStringAsync(String(walletId));
+      Alert.alert('Copied', 'Wallet ID copied to clipboard.');
+    } catch {}
+  }, [walletId]);
 
   if (locked) {
     return (
@@ -450,10 +464,22 @@ export default function WalletScreen() {
             <>
               {/* Balance Card */}
               <View style={[styles.card, { backgroundColor: balanceColor }]}>
-                <View style={styles.balanceRow}>
-                  <Ionicons name="wallet-outline" size={24} color="#fff" style={{ marginRight: 6 }} />
-                  <Text style={styles.balanceLabel}>Wallet Balance</Text>
+                <View style={[styles.balanceRow, { justifyContent: 'space-between' }]}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="wallet-outline" size={24} color="#fff" style={{ marginRight: 6 }} />
+                    <Text style={styles.balanceLabel}>Wallet Balance</Text>
+                  </View>
+
+                  {!!walletId && (
+                    <View style={styles.walletIdWrap}>
+                      <Text numberOfLines={1} style={styles.walletIdText}>{String(walletId)}</Text>
+                      <TouchableOpacity onPress={onCopyWalletId} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Ionicons name="copy-outline" size={16} color="#fff" />
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
+
                 <Text style={styles.balanceValue}>{money(balance)}</Text>
               </View>
 
@@ -525,6 +551,27 @@ const styles = StyleSheet.create({
   balanceRow: { flexDirection: 'row', alignItems: 'center' },
   balanceLabel: { color: '#fff', opacity: 0.9, fontSize: width > 400 ? 14 : 13, fontWeight: '600' },
   balanceValue: { color: '#fff', marginTop: 6, fontSize: width > 400 ? 28 : 24, fontWeight: '800', letterSpacing: 0.3 },
+
+  // Wallet ID pill (right side of the header row)
+  walletIdWrap: {
+    maxWidth: '58%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+  },
+  walletIdText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 12,
+    letterSpacing: 0.3,
+    maxWidth: '85%',
+  },
 
   // Primary CTA (outlined)
   primaryBtn: {

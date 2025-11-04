@@ -65,16 +65,6 @@ const absJoin = (base, raw) => {
 };
 const isLocalUri = (u) => !!u && !/^https?:\/\//i.test(String(u));
 
-// Always give backend a real filename + mime (fixes Android content:// with no ext)
-const buildImagePart = (uri) => {
-  const lower = (uri || '').toLowerCase();
-  const isPng = lower.endsWith('.png');
-  return {
-    uri,
-    name: `upload_${Date.now()}.${isPng ? 'png' : 'jpg'}`,
-    type: isPng ? 'image/png' : 'image/jpeg',
-  };
-};
 const addCacheBuster = (url) => {
   if (!url) return url;
   try {
@@ -223,7 +213,6 @@ export default function MenuScreen() {
 
   /* ---------- Update endpoints ---------- */
 
-  // JSON update (no local file; keep it minimal & compatible)
   const apiUpdateJson = useCallback(async (id, data) => {
     if (!MODIFY_ENDPOINT) throw new Error('Missing modify endpoint');
     const token = (await SecureStore.getItemAsync('auth_token')) || '';
@@ -260,7 +249,6 @@ export default function MenuScreen() {
     return json || {};
   }, [MODIFY_ENDPOINT, isMart]);
 
-  // Multipart update for local content:// file (Android-safe)
   const apiUpdateMultipart = useCallback(async (id, data) => {
     if (!MODIFY_ENDPOINT) throw new Error('Missing modify endpoint');
     const token = (await SecureStore.getItemAsync('auth_token')) || '';
@@ -269,17 +257,14 @@ export default function MenuScreen() {
 
     const fd = new FormData();
 
-    // ids / aliases
     fd.append('id', String(id));
     fd.append('item_id', String(id));
     fd.append('menu_id', String(id));
     if (data.business_id != null) fd.append('business_id', String(data.business_id));
 
-    // owner hints
     fd.append('owner_type', isMart ? '2' : '1');
     fd.append('service', isMart ? 'mart' : 'food');
 
-    // fields
     const nm = data.item_name ?? '';
     const cat = data.category ?? '';
     fd.append('item_name', nm);
@@ -308,13 +293,11 @@ export default function MenuScreen() {
     fd.append('is_available', avail);
     fd.append('in_stock', avail);
 
-    // optional current remote url
     if (data.image_url) {
       const u = String(data.image_url);
       fd.append(isMart ? 'item_image_url' : 'image_url', u);
     }
 
-    // *** file last, correct field name ***
     if (!data.image_local_uri) throw new Error('Missing image_local_uri');
     const fileField = isMart ? 'item_image' : 'image';
     const lower = (data.image_local_uri || '').toLowerCase();
@@ -328,7 +311,6 @@ export default function MenuScreen() {
     const headers = {
       Accept: 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      // don't set Content-Type; RN adds the boundary
     };
 
     const res = await fetch(url, { method: 'PUT', headers, body: fd });
@@ -428,7 +410,8 @@ export default function MenuScreen() {
 
   const saveItem = async () => {
     const priceNum = Number(form.price);
-    const discountNum = form.discount === '' ? '' : Number(form.discount);
+    theDiscount = form.discount === '' ? '' : Number(form.discount);
+    const discountNum = theDiscount;
     const taxNum = form.taxRate === '' ? '' : Number(form.taxRate);
     if (!form.name.trim()) return Alert.alert('Name required', `Please enter a ${isMart ? 'item' : 'menu'} name.`);
     if (Number.isNaN(priceNum)) return Alert.alert('Invalid price', 'Please enter a numeric price.');
@@ -451,12 +434,10 @@ export default function MenuScreen() {
 
     try {
       if (isEditing) {
-        // choose path based on local vs remote
         const resp = payload.image_local_uri
           ? await apiUpdateMultipart(form.id, payload)
           : await apiUpdateJson(form.id, payload);
 
-        // server image hint (if returned)
         const serverImg = resp?.image_url || resp?.item_image_url || resp?.image || '';
         const updatedImage = addCacheBuster(
           serverImg
@@ -464,21 +445,20 @@ export default function MenuScreen() {
             : (payload.image_url ? absJoin(IMAGE_BASE || API_ORIGIN, payload.image_url) : form.image)
         );
 
-        // optimistic local update
         setMenus((prev) =>
           prev.map((m) =>
             m.id === form.id
               ? {
-                ...m,
-                name: payload.item_name,
-                category: payload.category,
-                price: payload.actual_price,
-                discount: payload.discount_percentage ?? '',
-                taxRate: payload.tax_rate ?? '',
-                currency: payload.currency,
-                inStock: !!payload.is_available,
-                image: updatedImage,
-              }
+                  ...m,
+                  name: payload.item_name,
+                  category: payload.category,
+                  price: payload.actual_price,
+                  discount: payload.discount_percentage ?? '',
+                  taxRate: payload.tax_rate ?? '',
+                  currency: payload.currency,
+                  inStock: !!payload.is_available,
+                  image: updatedImage,
+                }
               : m
           )
         );
@@ -513,42 +493,39 @@ export default function MenuScreen() {
     ]);
   };
 
-  const renderChip = ({ item }) => {
-    const active = item === activeCat;
-    return (
-      <Pressable
-        onPress={() => setActiveCat(item)}
-        android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: false }}
-        style={({ pressed }) => [styles.chip, active && styles.chipActive, pressed && { transform: [{ scale: 0.98 }] }]}
+  // ===== Header with scrollable category chips (inside the list) =====
+  const ListHeader = useMemo(() => (
+    <View style={styles.chipsRow} onStartShouldSetResponderCapture={() => true}>
+      <ScrollView
+        horizontal
+        nestedScrollEnabled
+        directionalLockEnabled
+        keyboardShouldPersistTaps="handled"
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipsScroll}
+        contentContainerStyle={styles.chipsContent}
       >
-        <Text style={[styles.chipText, active && styles.chipTextActive]}>{item}</Text>
-      </Pressable>
-    );
-  };
-
-  const renderMenu = ({ item }) => (
-    <View style={styles.card}>
-      {item.image ? <Image source={{ uri: item.image }} style={styles.thumb} /> : (
-        <View style={[styles.thumb, styles.thumbFallback]}><Ionicons name="image-outline" size={18} color="#64748b" /></View>
-      )}
-      <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={styles.title}>{item.name}</Text>
-        <Text numberOfLines={1} style={styles.meta}>{item.category || '—'}</Text>
-        <Text style={styles.price}>{money(item.price, item.currency || 'Nu')}</Text>
-      </View>
-      <View style={styles.rightCol}>
-        <View style={styles.stockRow}><Text style={styles.stockLabel}>{item.inStock ? 'In stock' : 'Out'}</Text></View>
-        <View style={styles.actions}>
-          <Pressable onPress={() => openEdit(item)} style={styles.iconBtn} android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}>
-            <Ionicons name="create-outline" size={20} color="#0f172a" />
-          </Pressable>
-          <Pressable onPress={() => deleteItem(item.id)} style={styles.iconBtn} android_ripple={{ color: 'rgba(185,28,28,0.12)', borderless: true }}>
-            <Ionicons name="trash-outline" size={20} color="#b91c1c" />
-          </Pressable>
-        </View>
-      </View>
+        {categories.map((c, i) => {
+          const active = c === activeCat;
+          return (
+            <Pressable
+              key={`${c}-${i}`}
+              onPress={() => setActiveCat(c)}
+              android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: false }}
+              style={({ pressed }) => [
+                styles.chip,
+                active && styles.chipActive,
+                pressed && { transform: [{ scale: 0.98 }] },
+                { marginRight: 8 },
+              ]}
+            >
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>{c}</Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
     </View>
-  );
+  ), [categories, activeCat]);
 
   useEffect(() => () => {
     if (route?.params?.onSaveMenus) route.params.onSaveMenus(menus);
@@ -586,11 +563,6 @@ export default function MenuScreen() {
         )}
       </View>
 
-      <View style={styles.chipsRow}>
-        <FlatList horizontal data={categories} keyExtractor={(c, i) => `${c}-${i}`} renderItem={renderChip}
-          showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingRight: 12 }} />
-      </View>
-
       {loading ? (
         <View style={{ paddingTop: 40, alignItems: 'center' }}>
           <ActivityIndicator />
@@ -610,6 +582,8 @@ export default function MenuScreen() {
           data={filtered}
           keyExtractor={(item) => String(item.id)}
           renderItem={renderMenu}
+          ListHeaderComponent={ListHeader}         // ⬅️ chips live inside the list
+          stickyHeaderIndices={[0]}                // ⬅️ keep chips visible while scrolling (optional)
           contentContainerStyle={{ padding: 16, paddingBottom: (insets.bottom || 0) + 120 }}
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           ListEmptyComponent={
@@ -743,12 +717,23 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, color: '#0f172a', paddingVertical: 0 },
   clearBtn: { padding: 4, borderRadius: 999 },
 
-  chipsRow: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 2 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: '#e2e8f0', marginHorizontal: 4 },
+  // Chips header (inside FlatList)
+  chipsRow: {
+    minHeight: 44,     // never collapses
+    paddingTop: 10,
+    paddingBottom: 2,
+    backgroundColor: '#fff',
+    zIndex: 1,
+    elevation: 1,
+  },
+  chipsScroll: { flexGrow: 0 },
+  chipsContent: { paddingHorizontal: 12, alignItems: 'center' },
+  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, backgroundColor: '#e2e8f0' },
   chipActive: { backgroundColor: '#00b14f' },
   chipText: { color: '#0f172a', fontWeight: '700' },
   chipTextActive: { color: 'white' },
 
+  // Cards
   card: { backgroundColor: '#fff', borderRadius: 16, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
   thumb: { width: 54, height: 54, borderRadius: 10, backgroundColor: '#e2e8f0' },
   thumbFallback: { alignItems: 'center', justifyContent: 'center' },
@@ -768,6 +753,7 @@ const styles = StyleSheet.create({
   fab: { position: 'absolute', right: 16, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#00b14f', paddingHorizontal: 16, paddingVertical: 12, borderRadius: 999, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, elevation: 5 },
   fabText: { color: '#fff', fontWeight: '800' },
 
+  // Modal / edit sheet
   modalWrap: { flex: 1, backgroundColor: 'rgba(15, 23, 42, 0.35)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: 'white', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 16, paddingTop: 12, maxHeight: '90%' },
   sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
