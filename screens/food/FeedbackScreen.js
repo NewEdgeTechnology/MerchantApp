@@ -1,152 +1,190 @@
-// screens/foods/RestaurantFeedbackScreen.js
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert, FlatList,
-  RefreshControl, ActivityIndicator, Platform
+  RefreshControl, ActivityIndicator, Platform, Image
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { FEEDBACK_ENDPOINT } from '@env';
 
-/* ============ helpers (kept) ============ */
-function normalizeHost(url) {
+/* ---------- helpers (no URL() so braces won't be encoded) ---------- */
+function normalizeHostLoose(url) {
   if (!url) return '';
-  try {
-    const u = new URL(url);
-    if (Platform.OS === 'android' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')) {
-      u.hostname = '10.0.2.2';
-    }
-    return u.toString();
-  } catch {
-    return url;
+  let out = String(url).replace('/marchant/', '/merchant/');
+  if (Platform.OS === 'android') {
+    out = out.replace('://localhost', '://10.0.2.2')
+             .replace('://127.0.0.1', '://10.0.2.2');
   }
+  return out;
 }
+
+function absoluteUrl(pathOrUrl, base) {
+  if (!pathOrUrl) return '';
+  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  try {
+    const m = /^https?:\/\/[^/]+/i.exec(base || '');
+    const origin = m ? m[0] : '';
+    const p = String(pathOrUrl).startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
+    return `${origin}${p}`;
+  } catch { return pathOrUrl; }
+}
+
 async function fetchJSON(url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
+  const tid = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { ...options, signal: controller.signal });
     const text = await res.text();
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch {}
     if (!res.ok) {
-      throw new Error((json && (json.error || json.message)) || text || `HTTP ${res.status}`);
+      const msg = (json && (json.error || json.message)) || text || `HTTP ${res.status}`;
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
     }
     return json;
-  } finally {
-    clearTimeout(t);
-  }
+  } finally { clearTimeout(tid); }
 }
 
-/**
- * Navigate with:
- * navigation.navigate('RestaurantFeedback', {
- *   business_id: merchant.business_id,     // REQUIRED
- *   business_name: merchant.business_name, // optional (header)
- * });
- */
+/* ---------- component ---------- */
 export default function RestaurantFeedbackScreen() {
   const route = useRoute();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
 
-  const businessId = String(route?.params?.business_id ?? '');
   const businessName = route?.params?.business_name || '';
+  const businessIdRaw = route?.params?.business_id;
+  const businessIdStr = String(businessIdRaw ?? '').trim();
+  const businessIdNum = Number.isInteger(businessIdRaw)
+    ? businessIdRaw
+    : (/^\d+$/.test(businessIdStr) ? parseInt(businessIdStr, 10) : NaN);
 
-  const endpoint = useMemo(() => normalizeHost(FEEDBACK_ENDPOINT || ''), []);
+  const endpointTpl = useMemo(() => normalizeHostLoose(FEEDBACK_ENDPOINT || ''), []);
+
+  const buildUrl = useCallback(() => {
+    if (!Number.isInteger(businessIdNum) || businessIdNum <= 0) return '';
+    let base = endpointTpl;
+    base = base
+      .replace(/\{business_id\}/ig, String(businessIdNum))
+      .replace(/%7Bbusiness_id%7D/ig, String(businessIdNum));
+    if (/\/ratings\/?$/i.test(base) && !/\/\d+(\?|$)/.test(base)) {
+      base = base.replace(/\/?$/, `/${encodeURIComponent(String(businessIdNum))}`);
+    }
+    return base;
+  }, [endpointTpl, businessIdNum]);
+
   const [items, setItems] = useState([]);
-  const [cursor, setCursor] = useState(null);      // optional if your API supports cursor
+  const [meta, setMeta] = useState(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
+  const [debugUrl, setDebugUrl] = useState('');
+  const alerted = useRef(false);
 
-  const headerTopPad = Math.max(insets.top, 8) + 18;
-
-  const load = useCallback(async (opts = { reset: false }) => {
-    if (!endpoint || !businessId) return;
-    try {
-      if (opts.reset) {
-        setLoading(true);
-        setCursor(null);
-      } else if (cursor === undefined) {
-        // No more pages
-        return;
+  const load = useCallback(async () => {
+    if (!Number.isInteger(businessIdNum) || businessIdNum <= 0) {
+      if (!alerted.current) {
+        alerted.current = true;
+        Alert.alert('Feedback', 'Missing or invalid business_id.');
       }
+      return;
+    }
 
-      // Only the essentials: we fetch by business_id; status/tabs removed
-      const q = new URLSearchParams();
-      q.set('business_id', businessId);
-      q.set('limit', '20');
-      if (!opts.reset && cursor) q.set('cursor', cursor);
+    try {
+      setLoading(true);
+      const url = buildUrl();
+      setDebugUrl(url);
 
-      const url = `${endpoint}?${q.toString()}`;
-      const data = await fetchJSON(url);
+      const payload = await fetchJSON(url);
 
-      // Accept array or {items, nextCursor}
-      const listRaw = Array.isArray(data) ? data : (data?.items || []);
-      // Normalize ONLY the fields we care about
-      const list = listRaw.map((it, idx) => ({
-        id: it.id ?? `${it.user_id || 'u'}_${it.menu_id || 'm'}_${idx}`,
-        menu_id: it.menu_id,
-        user_id: it.user_id,
+      const listRaw = Array.isArray(payload)
+        ? payload
+        : (payload?.data || payload?.items || []);
+
+      const mapped = listRaw.map((it, idx) => ({
+        id: it.id ?? `${it.user?.user_id || 'u'}_${idx}`,
         rating: it.rating,
         comment: it.comment,
         created_at: it.created_at || it.createdAt || null,
+        user_name: it.user?.user_name || 'Anonymous',
+        profile_image: it.user?.profile_image || '',
+        owner_type: it.owner_type || null,
+        business_id: it.business_id || null,
       }));
 
-      const next = Array.isArray(data) ? undefined : (data?.nextCursor ?? undefined);
-
-      setItems(prev => opts.reset ? list : [...prev, ...list]);
-      setCursor(next); // undefined means no more
+      setMeta(Array.isArray(payload) ? null : (payload?.meta || null));
+      setItems(mapped);
     } catch (e) {
-      Alert.alert('Load failed', e?.message || 'Unable to load feedback.');
+      if (!alerted.current) {
+        alerted.current = true;
+        const msg = e?.message || 'Load failed';
+        Alert.alert('Load failed', msg);
+      }
+      console.error('[Feedback] load error', e);
     } finally {
       setLoading(false);
       setRefreshing(false);
       setInitialLoad(false);
     }
-  }, [endpoint, businessId, cursor]);
+  }, [businessIdNum, buildUrl]);
 
   useEffect(() => {
     setItems([]);
-    setCursor(null);
+    setMeta(null);
     setInitialLoad(true);
-    load({ reset: true });
-  }, [businessId]);
+    alerted.current = false;
+    load();
+  }, [businessIdNum, endpointTpl, load]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    load({ reset: true });
+    load();
   }, [load]);
 
-  const loadMore = useCallback(() => {
-    if (!loading && cursor !== undefined) load();
-  }, [loading, cursor, load]);
+  const renderHeader = () => {
+    if (!meta?.totals) return null;
+    const t = meta.totals;
+    return (
+      <View>
+        <View style={styles.summary}>
+          <View style={styles.summaryLeft}>
+            <Ionicons name="star" size={18} color="#f59e0b" />
+            <Text style={styles.summaryScore}>
+              {Number(t.avg_rating ?? 0).toFixed(1)} / 5
+            </Text>
+          </View>
+          <Text style={styles.summaryText}>
+            {t.total_ratings ?? 0} ratings • {t.total_comments ?? 0} comments
+          </Text>
+        </View>
+      </View>
+    );
+  };
 
-  /* ======== Render ======== */
   const renderItem = ({ item }) => {
     const created = item.created_at ? new Date(item.created_at) : null;
+    const avatar = absoluteUrl(item.profile_image, debugUrl || endpointTpl);
     return (
       <View style={styles.card}>
-        {/* Rating */}
         <View style={styles.cardHead}>
+          <View style={styles.userRow}>
+            <Image source={{ uri: avatar }} style={styles.avatar} resizeMode="cover" />
+            <Text style={styles.userName} numberOfLines={1}>{item.user_name}</Text>
+          </View>
           <View style={styles.ratingPill}>
             <Ionicons name="star" size={14} color="#f59e0b" />
             <Text style={styles.ratingText}>{Number(item.rating ?? 0)}/5</Text>
           </View>
-          {created ? (
-            <Text style={styles.cardTime}>{created.toLocaleString()}</Text>
-          ) : null}
         </View>
 
-        {/* Comment */}
-        <Text style={styles.cardBody}>{item.comment || ''}</Text>
+        {item.comment ? <Text style={styles.cardBody}>{item.comment}</Text> : null}
 
-        {/* Tiny meta */}
-        <Text style={styles.cardMeta}>
-          menu_id: {String(item.menu_id ?? '')} • user_id: {String(item.user_id ?? '')}
-        </Text>
+        <View style={styles.cardFoot}>
+          {created ? <Text style={styles.cardTime}>{created.toLocaleString()}</Text> : <View />}
+          {item.owner_type ? <Text style={styles.cardMeta}>{String(item.owner_type).toUpperCase()}</Text> : null}
+        </View>
       </View>
     );
   };
@@ -154,7 +192,7 @@ export default function RestaurantFeedbackScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['left','right','bottom']}>
       {/* Header */}
-      <View style={[styles.header, { paddingTop: headerTopPad }]}>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top, 8) + 18 }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
@@ -162,60 +200,55 @@ export default function RestaurantFeedbackScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      {/* List (only) */}
       <FlatList
         data={items}
         keyExtractor={(it, idx) => String(it.id ?? idx)}
         contentContainerStyle={styles.listPad}
         renderItem={renderItem}
+        ListHeaderComponent={renderHeader}
         ListEmptyComponent={!initialLoad && !loading ? (
           <View style={styles.empty}>
             <Ionicons name="mail-open-outline" size={36} color="#94a3b8" />
             <Text style={styles.emptyText}>No feedback yet.</Text>
           </View>
         ) : null}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        onEndReachedThreshold={0.3}
-        onEndReached={loadMore}
-        ListFooterComponent={
-          loading ? (
-            <View style={{ paddingVertical: 16 }}><ActivityIndicator /></View>
-          ) : null
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        ListFooterComponent={loading ? <View style={{ paddingVertical: 16 }}><ActivityIndicator /></View> : null}
       />
     </SafeAreaView>
   );
 }
 
-/* ============ styles (trimmed) ============ */
+/* ---------- styles ---------- */
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#fff' },
-
   header: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomColor: '#e5e7eb',
-    borderBottomWidth: 1,
-    backgroundColor: '#fff',
+    minHeight: 52, paddingHorizontal: 12, paddingBottom: 8,
+    flexDirection: 'row', alignItems: 'center',
+    borderBottomColor: '#e5e7eb', borderBottomWidth: 1, backgroundColor: '#fff',
   },
   backBtn: { height: 40, width: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   title: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '700', color: '#0f172a' },
-
   listPad: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
-
+  summary: {
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12,
+    padding: 12, marginVertical: 6, backgroundColor: '#f8fafc',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'
+  },
+  summaryLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  summaryScore: { fontWeight: '800', color: '#0f172a' },
+  summaryText: { color: '#475569' },
   card: { borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 12, padding: 12, marginVertical: 6, backgroundColor: '#fff' },
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  userRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#e5e7eb' },
+  userName: { color: '#0f172a', fontWeight: '700', flexShrink: 1 },
   ratingPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa' },
   ratingText: { color: '#92400e', fontWeight: '800' },
+  cardBody: { color: '#0f172a', fontSize: 15, marginTop: 2, marginBottom: 8 },
+  cardFoot: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   cardTime: { color: '#64748b', fontSize: 12 },
-  cardBody: { color: '#0f172a', fontSize: 15, marginBottom: 6 },
-  cardMeta: { color: '#64748b', fontSize: 12 },
-
+  cardMeta: { color: '#64748b', fontSize: 12, fontWeight: '600' },
   empty: { alignItems: 'center', justifyContent: 'center', paddingVertical: 36 },
   emptyText: { color: '#64748b', marginTop: 10, fontWeight: '600' },
 });

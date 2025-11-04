@@ -1,14 +1,20 @@
-// PromosTab.js — banners CRUD + auto pricing
-// Now SHOWS: “Days Active” and “Amount (Nu.)” for each banner row.
-// - Days = inclusive days between start_date and end_date
-// - Amount = days * amount_per_day (from BANNER_BASE_PRICE_ENDPOINT)
-// - owner_type stays internal (not shown)
+// PromosTab.js — banners CRUD + auto pricing + payment alert on save/reactivate
+// - Owner type is NOT shown anywhere (still sent to API)
+// - Image + "Select Image" are together in the form field (inline preview + buttons)
+// - Amount recalculates & displays immediately after date selection (create & edit)
+// - total_amount is sent on create, and on edit if dates are present
+// - In list rows: if inactive or expired => show "Paid: Nu. X" instead of amount
+// - Reactivate flow shows previously paid in button, and live amount in the sheet
+// - NEW: After successful POST/PUT, show Alert with message & journal/payment details
+// - NEW: Reactivating sends ONLY { user_id, start_date, end_date, total_amount, is_active:1 } to UPDATE_BANNER_ENDPOINT
+// - NEW: Dates sent as MySQL-friendly "YYYY-MM-DD" (no timezone) to avoid DB error.
+// - NEW: Unified error alert for any failure, including {success:false,message:"Insufficient wallet balance"}
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, TextInput,
   RefreshControl, Switch, Modal, Pressable, Platform, KeyboardAvoidingView,
-  Alert, Image, ActivityIndicator,
+  Alert, Image, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -25,7 +31,7 @@ import {
 
 /* ================= helpers ================= */
 const toHuman = (d) => (d ? new Date(d).toDateString() : '—');
-const isHttpLike = (s='') => /^https?:\/\//i.test(String(s));
+const isHttpLike = (s = '') => /^https?:\/\//i.test(String(s));
 const toYMD = (dateLike) => {
   if (!dateLike) return '';
   const d = typeof dateLike === 'string' ? new Date(dateLike) : dateLike;
@@ -34,7 +40,7 @@ const toYMD = (dateLike) => {
   const dd = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${dd}`;
 };
-const addDaysYMD = (dateLike, days=0) => {
+const addDaysYMD = (dateLike, days = 0) => {
   const d = typeof dateLike === 'string' ? new Date(dateLike) : new Date(dateLike);
   const base = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   base.setDate(base.getDate() + days);
@@ -42,10 +48,13 @@ const addDaysYMD = (dateLike, days=0) => {
 };
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const originFrom = (u) => { try { return new URL(u).origin; } catch { return ''; } };
-const hostOnly = (u='') => { try { return new URL(u).origin; } catch { return ''; } };
-const sanitizePath = (p='') => String(p).replace(/^\/(merchant\/)?uploads\/uploads\//i, '/$1uploads/').replace(/([^:]\/)\/+/g, '$1');
-const encodePathSegments = (p='') => String(p).split('/').map(seg => (seg ? encodeURIComponent(seg) : '')).join('/');
-const absJoin = (base='', raw='') => {
+const hostOnly = (u = '') => { try { return new URL(u).origin; } catch { return ''; } };
+const sanitizePath = (p = '') =>
+  String(p).replace(/^\/(merchant\/)?uploads\/uploads\//i, '/$1uploads/').replace(/([^:]\/)\/+/g, '$1');
+const encodePathSegments = (p = '') =>
+  String(p).split('/').map(seg => (seg ? encodeURIComponent(seg) : '')).join('/');
+
+const absJoin = (base = '', raw = '') => {
   const s = String(raw || '').trim();
   if (!s) return '';
   if (isHttpLike(s)) return s;
@@ -79,14 +88,14 @@ const buildBannerImg = (rawPath) => {
 
 const isInactive = (b) => {
   const disabled = Number(b.is_active) !== 1;
-  const expired = b?.end_date ? String(b.end_date).slice(0,10) <= todayISO() : false;
+  const expired = b?.end_date ? String(b.end_date).slice(0, 10) <= todayISO() : false;
   return disabled || expired;
 };
 
-const emptyForm = (business_id = 0, ownerType='food') => ({
+const emptyForm = (business_id = 0, ownerType = 'food') => ({
   id: null,
   business_id,
-  owner_type: ownerType,  // locked internally
+  owner_type: ownerType, // internal only
   title: '',
   description: '',
   banner_image: '',
@@ -113,22 +122,85 @@ function mostCommonOwnerType(arr) {
     return m;
   }, {});
   let best = ''; let n = -1;
-  Object.entries(counts).forEach(([k, v]) => { if (v > n) { best = k; n = v; }});
+  Object.entries(counts).forEach(([k, v]) => { if (v > n) { best = k; n = v; } });
   return best || '';
 }
 
-// Inclusive days: 2025-10-01..2025-10-03 => 3
+// Inclusive days
 const daysInclusive = (startYMD, endYMD) => {
   if (!startYMD || !endYMD) return 0;
   const s = new Date(startYMD + 'T00:00:00');
   const e = new Date(endYMD + 'T00:00:00');
   const ms = e - s;
   if (!isFinite(ms)) return 0;
-  return Math.floor(ms / (24*3600*1000)) + 1;
+  return Math.floor(ms / (24 * 3600 * 1000)) + 1;
 };
 
 const currency = (n) =>
   `Nu. ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/* ===== unified error alert helpers ===== */
+function extractApiErrorMessage(input) {
+  if (!input) return 'Something went wrong.';
+  if (typeof input === 'string') {
+    try {
+      const j = JSON.parse(input);
+      return extractApiErrorMessage(j);
+    } catch {
+      return input;
+    }
+  }
+  if (typeof input === 'object') {
+    if (typeof input.message === 'string') return input.message;
+    if (typeof input.error === 'string') return input.error;
+    if (input.errors && typeof input.errors === 'object') {
+      const lines = [];
+      Object.entries(input.errors).forEach(([k, v]) => {
+        if (Array.isArray(v)) v.forEach(s => lines.push(`${k}: ${s}`));
+        else if (v) lines.push(`${k}: ${String(v)}`);
+      });
+      if (lines.length) return lines.join('\n');
+    }
+    if (Array.isArray(input.details)) {
+      const lines = input.details.map(d => (d.message || d.msg || d) + '');
+      if (lines.length) return lines.join('\n');
+    }
+    try { return JSON.stringify(input); } catch { return 'Unexpected error.'; }
+  }
+  return 'Unexpected error.';
+}
+function showErrorAlert(payload, title = 'Error') {
+  Alert.alert(title, extractApiErrorMessage(payload));
+}
+
+/* ===== success alert with payment/journal details ===== */
+function showBannerPaymentAlert(json, { isEdit = false } = {}) {
+  const msg =
+    String(json?.message || (isEdit ? 'Banner updated successfully.' : 'Banner created successfully.'));
+
+  const p = json?.payment;
+  if (p && (p.journal_code || p.amount != null || p.debit_txn_id || p.credit_txn_id)) {
+    const lines = [
+      msg,
+      '',
+      p.journal_code ? `Journal: ${p.journal_code}` : null,
+      p.amount != null ? `Amount: ${currency(p.amount)}` : null,
+      p.debited_from_wallet ? `Debited from: ${p.debited_from_wallet}` : null,
+      p.credited_to_wallet ? `Credited to: ${p.credited_to_wallet}` : null,
+      p.debit_txn_id ? `Debit Txn: ${p.debit_txn_id}` : null,
+      p.credit_txn_id ? `Credit Txn: ${p.credit_txn_id}` : null,
+    ].filter(Boolean).join('\n');
+
+    Alert.alert('Success', lines);
+  } else {
+    Alert.alert('Success', msg);
+  }
+}
+
+/* ===== use plain MySQL-friendly date strings (YYYY-MM-DD) ===== */
+function ymdToMySQLDate(ymd) {
+  return ymd || '';
+}
 
 /* ================= component ================= */
 export default function PromosTab({
@@ -148,8 +220,8 @@ export default function PromosTab({
 
   const [userId, setUserId] = useState(null);
 
-  // NEW: base price for per-day billing (used to SHOW amount & compute on create)
-  const [basePrice, setBasePrice] = useState(null);      // number | null
+  // per-day base price
+  const [basePrice, setBasePrice] = useState(null);
   const [basePriceLoading, setBasePriceLoading] = useState(false);
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -163,6 +235,17 @@ export default function PromosTab({
   const [enableEnd, setEnableEnd] = useState('');
   const [showEnableStartPicker, setShowEnableStartPicker] = useState(false);
   const [showEnableEndPicker, setShowEnableEndPicker] = useState(false);
+
+  // Live calc for reactivate sheet
+  const enableDays = useMemo(
+    () => daysInclusive(enableStart, enableEnd),
+    [enableStart, enableEnd]
+  );
+  const enableAmount = useMemo(() => {
+    if (!Number.isFinite(basePrice)) return null;
+    if (!enableDays || enableDays < 0) return null;
+    return Number((enableDays * basePrice).toFixed(2));
+  }, [enableDays, basePrice]);
 
   // Date pickers for create/edit
   const [showStartPicker, setShowStartPicker] = useState(false);
@@ -218,7 +301,7 @@ export default function PromosTab({
         const url = `${base}/${encodeURIComponent(businessId)}`;
         const res = await fetchWithTimeout(url);
         const raw = await res.text();
-        if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${raw || 'Failed to load banners'}`);
+        if (!res.ok) { showErrorAlert(raw || 'Failed to load banners', 'Network error'); return; }
         const json = raw ? JSON.parse(raw) : [];
         const arr = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
         setBanners(arr);
@@ -230,7 +313,7 @@ export default function PromosTab({
       } else {
         const res = await fetchWithTimeout(BANNERS_ENDPOINT);
         const raw = await res.text();
-        if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${raw || 'Failed to load banners'}`);
+        if (!res.ok) { showErrorAlert(raw || 'Failed to load banners', 'Network error'); return; }
         const json = raw ? JSON.parse(raw) : [];
         const arr = Array.isArray(json) ? json : (Array.isArray(json.data) ? json.data : []);
         const filtered = arr.filter(b => Number(b.business_id) === Number(businessId));
@@ -243,7 +326,7 @@ export default function PromosTab({
       }
     } catch (e) {
       console.error(e);
-      Alert.alert('Network error', String(e.message || e));
+      showErrorAlert(e?.message || e, 'Network error');
     } finally {
       setLoading(false);
     }
@@ -272,12 +355,22 @@ export default function PromosTab({
     );
   }, [banners, query]);
 
-  /* ------------- pricing helpers ------------- */
-  const computeDaysFor = (b) => daysInclusive(
-    String(b?.start_date || '').slice(0,10),
-    String(b?.end_date || '').slice(0,10)
+  /* ---------- live draft days & amount (modal) ---------- */
+  const draftDays = useMemo(
+    () => daysInclusive(form.start_date, form.end_date),
+    [form.start_date, form.end_date]
   );
+  const draftAmount = useMemo(() => {
+    if (!Number.isFinite(basePrice)) return null;
+    if (!draftDays || draftDays < 0) return null;
+    return Number((draftDays * basePrice).toFixed(2));
+  }, [draftDays, basePrice]);
 
+  /* ------------- list-row helpers ------------- */
+  const computeDaysFor = (b) => daysInclusive(
+    String(b?.start_date || '').slice(0, 10),
+    String(b?.end_date || '').slice(0, 10)
+  );
   const computeAmountFor = (b) => {
     const d = computeDaysFor(b);
     if (!d || !Number.isFinite(basePrice)) return null;
@@ -306,7 +399,7 @@ export default function PromosTab({
     setModalOpen(true);
   };
 
-  const validate = (needPricing=false) => {
+  const validate = (needPricing = false) => {
     if (!form.business_id) return 'Missing business_id';
     if (!String(resolvedOwnerType || '').trim()) return 'owner_type missing';
     const isEdit = !!form.id;
@@ -327,11 +420,9 @@ export default function PromosTab({
     if (err) throw new Error(err);
     const days = daysInclusive(startYMD, endYMD);
     if (days <= 0) throw new Error('Invalid date range');
-    // Prefer cached basePrice if present
     if (Number.isFinite(basePrice) && basePrice > 0) {
       return Number((days * basePrice).toFixed(2));
     }
-    // Fallback: fetch now
     const url = (BANNER_BASE_PRICE_ENDPOINT || '').replace(/\/$/, '');
     if (!url) throw new Error('BANNER_BASE_PRICE_ENDPOINT missing');
     const res = await fetchWithTimeout(url, {}, 8000);
@@ -344,109 +435,80 @@ export default function PromosTab({
     return Number((days * per).toFixed(2));
   };
 
+  /* ===== save(): parse response JSON and show payment alert ===== */
   const save = async () => {
     const isEdit = !!form.id;
     const url = isEdit ? `${baseUpdate}/${encodeURIComponent(form.id)}` : baseCreate;
 
     try {
-      if (!isEdit) {
-        const pricingErr = validate(true);
-        if (pricingErr) return Alert.alert('Missing', pricingErr);
-        const totalAmount = await fetchTotalAmount(form.start_date, form.end_date);
-
-        if (form._localImage) {
-          const fd = new FormData();
-          fd.append('business_id', String(form.business_id));
-          fd.append('owner_type', String(resolvedOwnerType));
-          if (form.title) fd.append('title', form.title.trim());
-          if (form.description) fd.append('description', form.description.trim());
-          fd.append('is_active', String(Number(form.is_active) ? 1 : 0));
-          fd.append('start_date', form.start_date);
-          fd.append('end_date', form.end_date);
-          fd.append('total_amount', String(totalAmount));
-          fd.append('user_id', String(Number(userId)));   // auto-fetched
-
-          const asset = form._localImage;
-          const filename = asset?.fileName || asset?.uri?.split('/').pop() || `banner_${Date.now()}.jpg`;
-          const ext = /\.(\w+)$/.exec(filename || '')?.[1]?.toLowerCase() || 'jpg';
-          const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-          fd.append('banner_image', { uri: asset.uri, name: filename, type: mime });
-
-          const res = await fetchWithTimeout(url, { method: 'POST', body: fd }, 15000);
-          const text = await res.text();
-          if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Create failed'}`);
-        } else {
-          const payload = {
-            business_id: Number(form.business_id),
-            owner_type: String(resolvedOwnerType),
-            title: (form.title || '').trim(),
-            description: (form.description || '').trim(),
-            banner_image: form.banner_image || '',
-            is_active: Number(form.is_active) ? 1 : 0,
-            start_date: form.start_date,
-            end_date: form.end_date,
-            total_amount: totalAmount,
-            user_id: Number(userId),                      // auto-fetched
-          };
-          const res = await fetchWithTimeout(
-            url,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
-            12000
-          );
-          const text = await res.text();
-          if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Create failed'}`);
-        }
-      } else {
-        // UPDATE (pricing is not recalculated here)
-        if (form._localImage) {
-          const fd = new FormData();
-          fd.append('business_id', String(form.business_id));
-          fd.append('owner_type', String(resolvedOwnerType));
-          if (form.title) fd.append('title', form.title.trim());
-          if (form.description) fd.append('description', form.description.trim());
-          fd.append('is_active', String(Number(form.is_active) ? 1 : 0));
-          if (form.start_date) fd.append('start_date', form.start_date);
-          if (form.end_date) fd.append('end_date', form.end_date);
-          if (Number.isFinite(Number(userId)) && Number(userId) > 0) fd.append('user_id', String(Number(userId)));
-
-          const asset = form._localImage;
-          const filename = asset?.fileName || asset?.uri?.split('/').pop() || `banner_${Date.now()}.jpg`;
-          const ext = /\.(\w+)$/.exec(filename || '')?.[1]?.toLowerCase() || 'jpg';
-          const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-          fd.append('banner_image', { uri: asset.uri, name: filename, type: mime });
-
-          const res = await fetchWithTimeout(url, { method: 'PUT', body: fd }, 15000);
-          const text = await res.text();
-          if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Update failed'}`);
-        } else {
-          const payload = {
-            business_id: Number(form.business_id),
-            owner_type: String(resolvedOwnerType),
-            title: (form.title || '').trim(),
-            description: (form.description || '').trim(),
-            banner_image: form.banner_image || '',
-            is_active: Number(form.is_active) ? 1 : 0,
-            start_date: form.start_date || '',
-            end_date: form.end_date || '',
-          };
-          if (Number.isFinite(Number(userId)) && Number(userId) > 0) payload.user_id = Number(userId);
-
-          const res = await fetchWithTimeout(
-            url,
-            { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
-            12000
-          );
-          const text = await res.text();
-          if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Update failed'}`);
-        }
+      // Calculate total on BOTH create & edit if dates present
+      let totalAmount = null;
+      if (form.start_date && form.end_date) {
+        totalAmount = await fetchTotalAmount(form.start_date, form.end_date);
       }
 
+      let res, text, json;
+
+      if (form._localImage) {
+        const fd = new FormData();
+        fd.append('business_id', String(form.business_id));
+        fd.append('owner_type', String(resolvedOwnerType));
+        if (form.title) fd.append('title', form.title.trim());
+        if (form.description) fd.append('description', form.description.trim());
+        fd.append('is_active', String(Number(form.is_active) ? 1 : 0));
+        if (form.start_date) fd.append('start_date', form.start_date);
+        if (form.end_date) fd.append('end_date', form.end_date);
+        if (Number.isFinite(totalAmount)) fd.append('total_amount', String(totalAmount));
+        if (Number.isFinite(Number(userId)) && Number(userId) > 0) fd.append('user_id', String(Number(userId)));
+
+        const asset = form._localImage;
+        const filename = asset?.fileName || asset?.uri?.split('/').pop() || `banner_${Date.now()}.jpg`;
+        const ext = /\.(\w+)$/.exec(filename || '')?.[1]?.toLowerCase() || 'jpg';
+        const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+        fd.append('banner_image', { uri: asset.uri, name: filename, type: mime });
+
+        res = await fetchWithTimeout(url, { method: isEdit ? 'PUT' : 'POST', body: fd }, 15000);
+        text = await res.text();
+      } else {
+        const payload = {
+          business_id: Number(form.business_id),
+          owner_type: String(resolvedOwnerType),
+          title: (form.title || '').trim(),
+          description: (form.description || '').trim(),
+          banner_image: form.banner_image || '',
+          is_active: Number(form.is_active) ? 1 : 0,
+          start_date: form.start_date || '',
+          end_date: form.end_date || '',
+        };
+        if (Number.isFinite(totalAmount)) payload.total_amount = totalAmount;
+        if (Number.isFinite(Number(userId)) && Number(userId) > 0) payload.user_id = Number(userId);
+
+        res = await fetchWithTimeout(
+          url,
+          { method: isEdit ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
+          12000
+        );
+        text = await res.text();
+      }
+
+      // ✅ parse without redeclaring json
+      try { json = text ? JSON.parse(text) : {}; } catch { json = {}; }
+
+      if (!res.ok || json?.success === false) {
+        showErrorAlert(text || json || (isEdit ? 'Update failed' : 'Create failed'), 'Save Error');
+        return;
+      }
+
+      // ✅ success alert with optional payment/journal
+      showBannerPaymentAlert(json, { isEdit });
+
+      // Clean up and refresh
       setModalOpen(false);
       setForm(emptyForm(form.business_id, resolvedOwnerType));
       await loadAll();
     } catch (e) {
       console.error(e);
-      Alert.alert('Save Error', String(e.message || e));
+      showErrorAlert(e?.message || e, 'Save Error');
     }
   };
 
@@ -458,14 +520,12 @@ export default function PromosTab({
         onPress: async () => {
           try {
             const res = await fetchWithTimeout(`${baseUpdate}/${encodeURIComponent(id)}`, { method: 'DELETE' }, 10000);
-            if (!res.ok) {
-              const t = await res.text().catch(() => '');
-              throw new Error(t || 'Delete failed');
-            }
+            const t = await res.text().catch(() => '');
+            if (!res.ok) { showErrorAlert(t || 'Delete failed'); return; }
             await loadAll();
           } catch (e) {
             console.error(e);
-            Alert.alert('Error', String(e.message || e));
+            showErrorAlert(e?.message || e);
           }
         },
       },
@@ -499,45 +559,77 @@ export default function PromosTab({
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       }, 10000);
       const text = await res.text();
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Failed to update status'}`);
+      if (!res.ok) { showErrorAlert(text || `HTTP ${res.status} ${res.statusText}`); return; }
       await loadAll();
     } catch (e) {
       console.error(e);
-      Alert.alert('Error', String(e.message || e));
+      showErrorAlert(e?.message || e);
     }
   };
 
+  /* ===== confirmEnable(): send YMD dates ===== */
   const confirmEnable = async () => {
     const b = enableTarget;
     if (!b) return;
+
     if (enableStart && enableEnd && new Date(enableStart) > new Date(enableEnd)) {
-      Alert.alert('Invalid dates', 'Start date must be before or equal to End date');
+      showErrorAlert('Start date must be before or equal to End date', 'Invalid dates');
       return;
     }
-    const url = `${baseUpdate}/${encodeURIComponent(b.id)}`;
-    const payload = {
-      business_id: Number(b.business_id ?? businessId),
-      owner_type: String((b.owner_type || '').toLowerCase() || resolvedOwnerType),
-      title: b.title ?? '',
-      description: b.description ?? '',
-      banner_image: b.banner_image ?? '',
-      is_active: 1,
-      start_date: enableStart || '',
-      end_date: enableEnd || '',
-    };
+
+    const uid = Number(userId);
+    if (!Number.isFinite(uid) || uid <= 0) {
+      showErrorAlert('user_id missing for this business');
+      return;
+    }
 
     try {
+      // Compute total_amount for the selected range
+      const totalAmount = await fetchTotalAmount(enableStart, enableEnd);
+
+      // Use plain MySQL-friendly dates
+      const startStr = ymdToMySQLDate(enableStart);
+      const endStr   = ymdToMySQLDate(enableEnd);
+
+      const url = `${baseUpdate}/${encodeURIComponent(b.id)}`;
+
+      // Send ONLY these fields to UPDATE_BANNER_ENDPOINT
+      const payload = {
+        user_id: uid,
+        start_date: startStr,
+        end_date: endStr,
+        total_amount: totalAmount,
+        is_active: 1,
+      };
+
       const res = await fetchWithTimeout(url, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
       }, 10000);
+
       const text = await res.text();
-      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} — ${text || 'Failed to activate'}`);
+      let json = {};
+      try { json = text ? JSON.parse(text) : {}; } catch {}
+
+      if (!res.ok || json?.success === false) {
+        showErrorAlert(text || json || 'Failed to activate');
+        return;
+      }
+
+      // If backend returns message/payment on activation, show the detailed alert.
+      if (json?.payment || json?.message) {
+        showBannerPaymentAlert(json, { isEdit: true });
+      } else {
+        Alert.alert('Success', 'Banner reactivated and dates updated.');
+      }
+
       setEnableSheetOpen(false);
       setEnableTarget(null);
       await loadAll();
     } catch (e) {
       console.error(e);
-      Alert.alert('Error', String(e.message || e));
+      showErrorAlert(e?.message || e);
     }
   };
 
@@ -546,7 +638,8 @@ export default function PromosTab({
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (perm.status !== 'granted') {
-        return Alert.alert('Permission needed', 'Please allow photo library access to upload an image.');
+        showErrorAlert('Please allow photo library access to upload an image.', 'Permission needed');
+        return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -559,19 +652,17 @@ export default function PromosTab({
       setForm((s) => ({ ...s, _localImage: asset, banner_image: '' }));
     } catch (e) {
       console.error(e);
-      Alert.alert('Image Error', String(e.message || e));
+      showErrorAlert(e?.message || e, 'Image Error');
     }
   };
 
   const removePickedImage = () => setForm((s) => ({ ...s, _localImage: null, banner_image: '' }));
 
-  /* ------------- render row (now shows Days & Amount) ------------- */
+  /* ------------- render row ------------- */
   const renderBanner = ({ item }) => {
     const img = buildBannerImg(item.banner_image);
     const active = Number(item.is_active) === 1;
     const showInactive = isInactive(item);
-    const owner = String(item.owner_type || '').toLowerCase();
-
     const days = computeDaysFor(item);
     const amount = computeAmountFor(item); // null if basePrice missing
 
@@ -584,11 +675,6 @@ export default function PromosTab({
             <Text style={styles.meta} numberOfLines={2}>{item.description || '—'}</Text>
           </View>
           <View>
-            {!!owner && (
-              <View style={[styles.badge, { backgroundColor: owner === 'food' ? '#bae6fd' : '#bbf7d0', marginBottom: 6 }]}>
-                <Text style={[styles.badgeText, { color: owner === 'food' ? '#0c4a6e' : '#14532d' }]}>{owner}</Text>
-              </View>
-            )}
             <View style={[styles.badge, { backgroundColor: showInactive ? '#f3f4f6' : '#e8f5e9' }]}>
               <Text style={[styles.badgeText, { color: showInactive ? '#334155' : '#166534' }]}>
                 {showInactive ? 'Inactive' : 'Active'}
@@ -602,22 +688,31 @@ export default function PromosTab({
           <Text style={styles.meta}>End: {toHuman(item.end_date)}</Text>
         </View>
 
-        {/* NEW: Days & Amount row */}
+        {/* Days & Amount (or "Paid: Nu. X" when inactive/expired) */}
         <View style={[styles.rowBetween, { marginTop: 6 }]}>
           <View style={[styles.badge, { backgroundColor: '#eef2ff' }]}>
             <Text style={[styles.badgeText, { color: '#3730a3' }]}>
               Days Active: {days || '—'}
             </Text>
           </View>
-          <View style={[styles.badge, { backgroundColor: '#ecfeff' }]}>
-            <Text style={[styles.badgeText, { color: '#0369a1' }]}>
-              Amount: {Number.isFinite(amount) ? currency(amount) : (basePriceLoading ? '…' : '—')}
-            </Text>
-          </View>
+
+          {showInactive ? (
+            <View style={[styles.badge, { backgroundColor: '#ecfeff' }]}>
+              <Text style={[styles.badgeText, { color: '#0369a1' }]}>
+                Paid: {Number.isFinite(amount) ? currency(amount) : (basePriceLoading ? '…' : '—')}
+              </Text>
+            </View>
+          ) : (
+            <View style={[styles.badge, { backgroundColor: '#ecfeff' }]}>
+              <Text style={[styles.badgeText, { color: '#0369a1' }]}>
+                Amount: {Number.isFinite(amount) ? currency(amount) : (basePriceLoading ? '…' : '—')}
+              </Text>
+            </View>
+          )}
         </View>
 
         <View style={[styles.rowBetween, { marginTop: 10 }]}>
-          <View style={styles.row}>
+          <View className="row" style={styles.row}>
             <Text style={styles.meta}>Enabled</Text>
             <Switch
               value={active}
@@ -628,14 +723,19 @@ export default function PromosTab({
           </View>
           <View style={styles.row}>
             {showInactive && (
-              <TouchableOpacity style={[styles.iconBtn, { marginRight: 10 }]} onPress={() => {
-                setEnableTarget(item);
-                setEnableStart(toYMD(item.start_date) || todayISO());
-                setEnableEnd(toYMD(item.end_date) || addDaysYMD(new Date(), 7));
-                setEnableSheetOpen(true);
-              }}>
+              <TouchableOpacity
+                style={[styles.iconBtn, { marginRight: 10 }]}
+                onPress={() => {
+                  setEnableTarget(item);
+                  setEnableStart(toYMD(item.start_date) || todayISO());
+                  setEnableEnd(toYMD(item.end_date) || addDaysYMD(new Date(), 7));
+                  setEnableSheetOpen(true);
+                }}
+              >
                 <Feather name="rotate-ccw" size={16} color="#a16207" />
-                <Text style={[styles.iconBtnText, { color: '#a16207' }]}>Reactivate</Text>
+                <Text style={[styles.iconBtnText, { color: '#a16207' }]}>
+                  Reactivate{Number.isFinite(amount) ? ` • ${currency(amount)}` : ''}
+                </Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity style={styles.iconBtn} onPress={() => openEdit(item)}>
@@ -719,171 +819,208 @@ export default function PromosTab({
       )}
 
       {/* Create / Edit Modal */}
-      <Modal visible={modalOpen} animationType="slide" transparent onRequestClose={() => setModalOpen(false)}>
+      <Modal
+        visible={modalOpen}
+        animationType="slide"
+        transparent
+        presentationStyle="overFullScreen"
+        onRequestClose={() => setModalOpen(false)}
+      >
         <Pressable style={styles.backdrop} onPress={() => setModalOpen(false)} />
-        <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.modalWrap}>
-          <View style={styles.sheet}>
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>{form.id ? 'Edit Banner' : 'New Banner'}</Text>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={() => setModalOpen(false)}>
-                  <Ionicons name="close" size={16} color="#111827" />
-                  <Text style={styles.cancelText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.saveBtn, { opacity: (form.banner_image || form._localImage || form.id) ? 1 : 0.6 }]}
-                  onPress={save}
-                  disabled={!(form.banner_image || form._localImage || form.id)}
-                >
-                  <Ionicons name="checkmark" size={16} color="#fff" />
-                  <Text style={styles.saveText}>{form.id ? 'Update' : 'Save'}</Text>
-                </TouchableOpacity>
+        <View style={styles.modalWrap}>
+          <KeyboardAvoidingView
+            style={{ flex: 1, justifyContent: 'flex-end' }}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
+          >
+            <View style={styles.sheet}>
+              {/* Fixed header */}
+              <View style={styles.sheetHeader}>
+                <Text style={styles.sheetTitle}>{form.id ? 'Edit Banner' : 'New Banner'}</Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity style={styles.cancelBtn} onPress={() => setModalOpen(false)}>
+                    <Ionicons name="close" size={16} color="#111827" />
+                    <Text style={styles.cancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.saveBtn,
+                      { opacity: (form.start_date && form.end_date && (form._localImage || form.banner_image || form.id)) ? 1 : 0.6 }
+                    ]}
+                    onPress={save}
+                    disabled={!(form.start_date && form.end_date && (form._localImage || form.banner_image || form.id))}
+                  >
+                    <Ionicons name="checkmark" size={16} color="#fff" />
+                    <Text style={styles.saveText}>{form.id ? 'Update' : 'Save'}</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
 
-            {/* Preview (shows live days & amount if basePrice known) */}
-            <View style={styles.previewCard}>
-              <View style={{ flex: 1, paddingRight: 12 }}>
-                <Text style={styles.previewTitle} numberOfLines={2}>{form.title || 'Offer headline'}</Text>
-                <Text style={styles.previewDesc} numberOfLines={3}>{form.description || 'Short description of the banner'}</Text>
-
-                {/* days/amount preview */}
-                <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
-                  <View style={[styles.badge, { backgroundColor: '#eef2ff' }]}>
-                    <Text style={[styles.badgeText, { color: '#3730a3' }]}>
-                      Days: {daysInclusive(form.start_date, form.end_date) || '—'}
-                    </Text>
+              {/* Scrollable content */}
+              <ScrollView
+                style={styles.modalScroll}
+                contentContainerStyle={styles.sheetScroll}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {/* Live mini preview header */}
+                <View style={styles.previewCard}>
+                  <View style={{ flex: 1, paddingRight: 12 }}>
+                    <Text style={styles.previewTitle} numberOfLines={2}>{form.title || 'Offer headline'}</Text>
+                    <Text style={styles.previewDesc} numberOfLines={3}>{form.description || 'Short description of the banner'}</Text>
+                    <View style={[styles.badge, { alignSelf: 'flex-start', backgroundColor: Number(form.is_active) ? '#e8f5e9' : '#f3f4f6', marginTop: 6 }]}>
+                      <Text style={[styles.badgeText, { color: Number(form.is_active) ? '#166534' : '#334155' }]}>
+                        {Number(form.is_active) ? 'Active' : 'Paused'}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={[styles.badge, { backgroundColor: '#ecfeff' }]}>
-                    <Text style={[styles.badgeText, { color: '#0369a1' }]}>
-                      Amount: {Number.isFinite(basePrice)
-                        ? currency((daysInclusive(form.start_date, form.end_date) || 0) * basePrice)
-                        : (basePriceLoading ? '…' : '—')}
-                    </Text>
+
+                  <View style={styles.previewImageWrap}>
+                    {(form._localImage || form.banner_image) ? (
+                      <Image
+                        source={{ uri: form._localImage ? form._localImage.uri : buildBannerImg(form.banner_image) }}
+                        style={styles.previewImage}
+                      />
+                    ) : (
+                      <View style={styles.previewImagePlaceholder}>
+                        <Ionicons name="image" size={28} color="#86efac" />
+                      </View>
+                    )}
                   </View>
                 </View>
 
-                <View style={[styles.badge, { alignSelf: 'flex-start', backgroundColor: Number(form.is_active) ? '#e8f5e9' : '#f3f4f6', marginTop: 6 }]}>
-                  <Text style={[styles.badgeText, { color: Number(form.is_active) ? '#166534' : '#334155' }]}>
-                    {Number(form.is_active) ? 'Active' : 'Paused'}
+                {/* Business ID (read-only) */}
+                <Field label="Business ID">
+                  <View style={styles.disabledInput}>
+                    <Text style={styles.disabledInputText}>{String(form.business_id || '')}</Text>
+                  </View>
+                </Field>
+
+                {/* Title */}
+                <Field label="Title">
+                  <TextInput
+                    value={form.title}
+                    onChangeText={(t) => setForm((s) => ({ ...s, title: t }))}
+                    placeholder="Offer 100%"
+                    placeholderTextColor="#94a3b8"
+                    style={styles.input}
+                    returnKeyType="next"
+                  />
+                </Field>
+
+                {/* Description */}
+                <Field label="Description">
+                  <TextInput
+                    value={form.description}
+                    onChangeText={(t) => setForm((s) => ({ ...s, description: t }))}
+                    placeholder="Back to school"
+                    placeholderTextColor="#94a3b8"
+                    style={[styles.input, { height: 100, textAlignVertical: 'top', paddingTop: 8 }]}
+                    multiline
+                  />
+                </Field>
+
+                {/* Image + Select together */}
+                <Field label="Banner Image">
+                  <View style={styles.imageRow}>
+                    <View style={styles.imageThumbBox}>
+                      {(form._localImage || form.banner_image) ? (
+                        <Image
+                          source={{ uri: form._localImage ? form._localImage.uri : buildBannerImg(form.banner_image) }}
+                          style={styles.imageThumb}
+                        />
+                      ) : (
+                        <View style={styles.imageThumbEmpty}>
+                          <Ionicons name="image" size={22} color="#86efac" />
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <View style={{ flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity style={styles.pickBtn} onPress={pickImage}>
+                          <Ionicons name="image" size={16} color="#065f46" />
+                          <Text style={styles.pickBtnText}>{(form._localImage || form.banner_image) ? 'Change Image' : 'Select Image'}</Text>
+                        </TouchableOpacity>
+                        {(form._localImage || form.banner_image) ? (
+                          <TouchableOpacity style={styles.removeBtn} onPress={removePickedImage}>
+                            <Ionicons name="trash" size={14} color="#fff" />
+                            <Text style={styles.removeBtnText}>Remove</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                      <Text style={[styles.meta, { marginTop: 6 }]} numberOfLines={1}>
+                        {form._localImage ? (form._localImage.fileName || 'Selected image') :
+                          (form.banner_image ? form.banner_image : 'No image selected')}
+                      </Text>
+                    </View>
+                  </View>
+                </Field>
+
+                {/* Active */}
+                <Field label="Active">
+                  <View style={styles.row}>
+                    <Switch
+                      value={Number(form.is_active) === 1}
+                      onValueChange={(v) => setForm((s) => ({ ...s, is_active: v ? 1 : 0 }))}
+                      trackColor={{ false: '#cbd5e1', true: '#86efac' }}
+                      thumbColor={Number(form.is_active) === 1 ? '#16a34a' : '#f8fafc'}
+                    />
+                    <Text style={[styles.meta, { marginLeft: 8, color: Number(form.is_active) ? '#166534' : '#64748b' }]}>
+                      {Number(form.is_active) ? 'Enabled' : 'Disabled'}
+                    </Text>
+                  </View>
+                </Field>
+
+                {/* Dates */}
+                <View style={styles.grid2}>
+                  <Field label="Start date">
+                    <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowStartPicker(true)}>
+                      <Ionicons name="calendar" size={14} color="#065f46" />
+                      <Text style={styles.dateBtnTextGreen}>{form.start_date || 'Pick a date'}</Text>
+                    </TouchableOpacity>
+                  </Field>
+                  <Field label="End date">
+                    <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowEndPicker(true)}>
+                      <Ionicons name="calendar" size={14} color="#065f46" />
+                      <Text style={styles.dateBtnTextGreen}>{form.end_date || 'Pick a date'}</Text>
+                    </TouchableOpacity>
+                  </Field>
+                </View>
+
+                {/* LIVE: Amount under dates */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20, marginTop: 12 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>
+                    Days Active: {draftDays || '—'}
+                  </Text>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>
+                    Amount: {Number.isFinite(draftAmount) ? currency(draftAmount) : (basePriceLoading ? 'Calculating…' : '—')}
                   </Text>
                 </View>
-              </View>
 
-              <View style={styles.previewImageWrap}>
-                {(form._localImage || form.banner_image) ? (
-                  <>
-                    <Image
-                      source={{ uri: form._localImage ? form._localImage.uri : buildBannerImg(form.banner_image) }}
-                      style={styles.previewImage}
-                    />
-                    <TouchableOpacity style={styles.removeImgBtn} onPress={removePickedImage}>
-                      <Ionicons name="trash" size={14} color="#fff" />
-                      <Text style={styles.removeImgText}>Remove</Text>
-                    </TouchableOpacity>
-                  </>
-                ) : (
-                  <View style={styles.previewImagePlaceholder}>
-                    <Ionicons name="image" size={28} color="#86efac" />
-                  </View>
+                {/* Date pickers */}
+                {showStartPicker && (
+                  <DateTimePicker
+                    value={form.start_date ? new Date(form.start_date) : new Date()}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={(e, d) => { setShowStartPicker(false); if (d) setForm((s) => ({ ...s, start_date: toYMD(d) })); }}
+                    themeVariant="light"
+                  />
                 )}
-              </View>
+                {showEndPicker && (
+                  <DateTimePicker
+                    value={form.end_date ? new Date(form.end_date) : new Date()}
+                    mode="date"
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    onChange={(e, d) => { setShowEndPicker(false); if (d) setForm((s) => ({ ...s, end_date: toYMD(d) })); }}
+                    themeVariant="light"
+                  />
+                )}
+              </ScrollView>
             </View>
-
-            {/* Business ID (read-only) */}
-            <Field label="Business ID">
-              <View style={styles.disabledInput}>
-                <Text style={styles.disabledInputText}>{String(form.business_id || '')}</Text>
-              </View>
-            </Field>
-
-            {/* Title */}
-            <Field label="Title">
-              <TextInput
-                value={form.title}
-                onChangeText={(t) => setForm((s) => ({ ...s, title: t }))}
-                placeholder="Offer 100%"
-                placeholderTextColor="#94a3b8"
-                style={styles.input}
-              />
-            </Field>
-
-            {/* Description */}
-            <Field label="Description">
-              <TextInput
-                value={form.description}
-                onChangeText={(t) => setForm((s) => ({ ...s, description: t }))}
-                placeholder="Back to school"
-                placeholderTextColor="#94a3b8"
-                style={[styles.input, { height: 80, textAlignVertical: 'top', paddingTop: 8 }]}
-                multiline
-              />
-            </Field>
-
-            {/* Image */}
-            <Field label="Banner Image">
-              <View style={styles.rowBetween}>
-                <TouchableOpacity style={styles.pickBtn} onPress={pickImage}>
-                  <Ionicons name="image" size={16} color="#065f46" />
-                  <Text style={styles.pickBtnText}>Pick from gallery</Text>
-                </TouchableOpacity>
-                <Text style={[styles.meta, { marginLeft: 8, flex: 1, textAlign: 'right' }]} numberOfLines={1}>
-                  {form._localImage ? 'Selected image' : (form.banner_image ? form.banner_image : 'No image')}
-                </Text>
-              </View>
-            </Field>
-
-            {/* Active */}
-            <Field label="Active">
-              <View style={styles.row}>
-                <Switch
-                  value={Number(form.is_active) === 1}
-                  onValueChange={(v) => setForm((s) => ({ ...s, is_active: v ? 1 : 0 }))}
-                  trackColor={{ false: '#cbd5e1', true: '#86efac' }}
-                  thumbColor={Number(form.is_active) === 1 ? '#16a34a' : '#f8fafc'}
-                />
-                <Text style={[styles.meta, { marginLeft: 8, color: Number(form.is_active) ? '#166534' : '#64748b' }]}>
-                  {Number(form.is_active) ? 'Enabled' : 'Disabled'}
-                </Text>
-              </View>
-            </Field>
-
-            {/* Dates */}
-            <View style={styles.grid2}>
-              <Field label="Start date">
-                <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowStartPicker(true)}>
-                  <Ionicons name="calendar" size={14} color="#065f46" />
-                  <Text style={styles.dateBtnTextGreen}>{form.start_date || 'Pick a date'}</Text>
-                </TouchableOpacity>
-              </Field>
-              <Field label="End date">
-                <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowEndPicker(true)}>
-                  <Ionicons name="calendar" size={14} color="#065f46" />
-                  <Text style={styles.dateBtnTextGreen}>{form.end_date || 'Pick a date'}</Text>
-                </TouchableOpacity>
-              </Field>
-            </View>
-
-            {showStartPicker && (
-              <DateTimePicker
-                value={form.start_date ? new Date(form.start_date) : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(e, d) => { setShowStartPicker(false); if (d) setForm((s)=>({ ...s, start_date: toYMD(d) })); }}
-                themeVariant="light"
-              />
-            )}
-            {showEndPicker && (
-              <DateTimePicker
-                value={form.end_date ? new Date(form.end_date) : new Date()}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(e, d) => { setShowEndPicker(false); if (d) setForm((s)=>({ ...s, end_date: toYMD(d) })); }}
-                themeVariant="light"
-              />
-            )}
-          </View>
-        </KeyboardAvoidingView>
+          </KeyboardAvoidingView>
+        </View>
       </Modal>
 
       {/* Enable with dates sheet */}
@@ -891,16 +1028,18 @@ export default function PromosTab({
         <Pressable style={styles.backdrop} onPress={() => setEnableSheetOpen(false)} />
         <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.modalWrap}>
           <View style={styles.sheet}>
-            <View style={styles.sheetHeader}>
+            <View className="sheetHeader" style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>Activate Banner</Text>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flexDirection: 'row', gap: 6 }}>
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => setEnableSheetOpen(false)}>
                   <Ionicons name="close" size={16} color="#111827" />
                   <Text style={styles.cancelText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.saveBtn} onPress={confirmEnable}>
                   <Ionicons name="checkmark" size={16} color="#fff" />
-                  <Text style={styles.saveText}>Activate</Text>
+                  <Text style={styles.saveText}>
+                    Activate{Number.isFinite(enableAmount) ? ` • ${currency(enableAmount)}` : ''}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -918,6 +1057,16 @@ export default function PromosTab({
                   <Text style={styles.dateBtnTextGreen}>{enableEnd || 'Pick a date'}</Text>
                 </TouchableOpacity>
               </Field>
+            </View>
+
+            {/* LIVE: Amount for reactivate */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20, marginTop: 12 }}>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>
+                Days: {enableDays || '—'}
+              </Text>
+              <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>
+                Amount: {Number.isFinite(enableAmount) ? currency(enableAmount) : (basePriceLoading ? 'Calculating…' : '—')}
+              </Text>
             </View>
 
             {showEnableStartPicker && (
@@ -997,9 +1146,14 @@ const styles = StyleSheet.create({
 
   backdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.3)' },
   modalWrap: { position: 'absolute', bottom: 0, left: 0, right: 0 },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, borderTopWidth: 1, borderColor: '#e2e8f0' },
-  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 16,
+    borderTopRightRadius: 16, padding: 16,
+    borderTopWidth: 1, borderColor: '#e2e8f0' },
+  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center' },
   sheetTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
+  modalScroll: { maxHeight: '89%' },
+  sheetScroll: { paddingBottom: 24 },
 
   fieldLabel: { fontSize: 12, color: '#475569', marginBottom: 6, fontWeight: '700' },
   input: {
@@ -1023,17 +1177,24 @@ const styles = StyleSheet.create({
   previewImage: { width: '100%', height: '100%' },
   previewImagePlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  removeImgBtn: {
-    position: 'absolute', top: 6, right: 6, backgroundColor: 'rgba(185,28,28,0.95)',
-    paddingHorizontal: 8, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6,
-  },
-  removeImgText: { color: '#fff', fontWeight: '800', fontSize: 11 },
+  // Inline "Image + Select" field
+  imageRow: { flexDirection: 'row', alignItems: 'center' },
+  imageThumbBox: { width: 64, height: 64, borderRadius: 10, overflow: 'hidden', backgroundColor: '#dcfce7' },
+  imageThumb: { width: '100%', height: '100%' },
+  imageThumbEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   pickBtn: {
     backgroundColor: '#ecfdf5', borderColor: '#86efac', borderWidth: 1,
     height: 40, paddingHorizontal: 12, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 6,
   },
   pickBtnText: { color: '#065f46', fontWeight: '700', fontSize: 12 },
+
+  removeBtn: {
+    backgroundColor: '#b91c1c',
+    height: 40, paddingHorizontal: 12, borderRadius: 10,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+  },
+  removeBtnText: { color: '#fff', fontWeight: '800', fontSize: 12 },
 
   dateBtnGreen: {
     height: 40, borderRadius: 10, borderWidth: 1, borderColor: '#86efac', paddingHorizontal: 10,
@@ -1042,14 +1203,16 @@ const styles = StyleSheet.create({
   dateBtnTextGreen: { color: '#065f46', fontWeight: '700', fontSize: 12 },
 
   cancelBtn: {
-    height: 36, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#f1f5f9',
+    height: 36, paddingHorizontal: 12,
+    borderRadius: 10, backgroundColor: '#f1f5f9',
     flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginLeft: 8
   },
   cancelText: { color: '#111827', fontWeight: '700', fontSize: 12 },
 
   saveBtn: {
     height: 36, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#16a34a',
-    flexDirection: 'row', alignItems: 'center', gap: 6,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
   },
   saveText: { color: '#fff', fontWeight: '800', fontSize: 12 },
 });
