@@ -2,13 +2,13 @@
 // - Owner type is NOT shown anywhere (still sent to API)
 // - Image + "Select Image" are together in the form field (inline preview + buttons)
 // - Amount recalculates & displays immediately after date selection (create & edit)
-// - total_amount is sent on create, and on edit if dates are present
+// - total_amount is sent on create, and on edit/reactivate ONLY when dates are changed
 // - In list rows: if inactive or expired => show "Paid: Nu. X" instead of amount
-// - Reactivate flow shows previously paid in button, and live amount in the sheet
-// - NEW: After successful POST/PUT, show Alert with message & journal/payment details
-// - NEW: Reactivating sends ONLY { user_id, start_date, end_date, total_amount, is_active:1 } to UPDATE_BANNER_ENDPOINT
-// - NEW: Dates sent as MySQL-friendly "YYYY-MM-DD" (no timezone) to avoid DB error.
-// - NEW: Unified error alert for any failure, including {success:false,message:"Insufficient wallet balance"}
+// - Reactivate flow shows live days/amount, but wallet is charged only if dates change
+// - After successful POST/PUT, show Alert with message & journal/payment details
+// - Reactivating sends ONLY { user_id, start_date, end_date, total_amount, is_active:1 } when charging
+// - Dates sent as MySQL-friendly "YYYY-MM-DD" (no timezone) to avoid DB error.
+// - Unified error alert for any failure, including {success:false,message:"Insufficient wallet balance"}
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -23,6 +23,7 @@ import {
   BANNERS_ENDPOINT,
   CREATE_BANNER_ENDPOINT,
   UPDATE_BANNER_ENDPOINT,
+  REACTIVATING_BANNER_ENDPOINT,
   BANNERS_BY_BUSINESS_ENDPOINT,
   BANNERS_IMAGE_ENDPOINT,
   BANNER_BASE_PRICE_ENDPOINT,
@@ -103,6 +104,8 @@ const emptyForm = (business_id = 0, ownerType = 'food') => ({
   start_date: '',
   end_date: '',
   _localImage: null,
+  _originalStart: '',
+  _originalEnd: '',
 });
 
 const fetchWithTimeout = (url, options = {}, ms = 10000) =>
@@ -113,6 +116,7 @@ const fetchWithTimeout = (url, options = {}, ms = 10000) =>
 
 const baseUpdate = (UPDATE_BANNER_ENDPOINT || BANNERS_ENDPOINT).replace(/\/$/, '');
 const baseCreate = (CREATE_BANNER_ENDPOINT || BANNERS_ENDPOINT).replace(/\/$/, '');
+const baseReactivate = (REACTIVATING_BANNER_ENDPOINT || UPDATE_BANNER_ENDPOINT || BANNERS_ENDPOINT).replace(/\/$/, '');
 
 function mostCommonOwnerType(arr) {
   const counts = arr.reduce((m, b) => {
@@ -246,6 +250,28 @@ export default function PromosTab({
     if (!enableDays || enableDays < 0) return null;
     return Number((enableDays * basePrice).toFixed(2));
   }, [enableDays, basePrice]);
+
+  // Dates changed vs original for reactivation
+  const reactivateOriginalStart = enableTarget ? toYMD(enableTarget.start_date) : '';
+  const reactivateOriginalEnd = enableTarget ? toYMD(enableTarget.end_date) : '';
+  const reactivateDatesChanged =
+    !!enableTarget &&
+    !!enableStart &&
+    !!enableEnd &&
+    (enableStart !== reactivateOriginalStart || enableEnd !== reactivateOriginalEnd);
+
+  // For disabling date changes when end date not ended
+  const endNotEndedEdit = useMemo(() => {
+    if (!form._originalEnd) return false;
+    return form._originalEnd >= todayISO(); // YYYY-MM-DD lexicographical works
+  }, [form._originalEnd]);
+
+  const endNotEndedReactivate = useMemo(() => {
+    if (!enableTarget?.end_date) return false;
+    const orig = toYMD(enableTarget.end_date);
+    if (!orig) return false;
+    return orig >= todayISO();
+  }, [enableTarget]);
 
   // Date pickers for create/edit
   const [showStartPicker, setShowStartPicker] = useState(false);
@@ -384,6 +410,8 @@ export default function PromosTab({
   };
 
   const openEdit = (b) => {
+    const sd = (b.start_date || '').slice(0, 10);
+    const ed = (b.end_date || '').slice(0, 10);
     setForm({
       id: b.id,
       business_id: Number(b.business_id ?? businessId),
@@ -392,9 +420,11 @@ export default function PromosTab({
       description: b.description ?? '',
       banner_image: b.banner_image ?? '',
       is_active: Number(b.is_active ?? 1),
-      start_date: (b.start_date || '').slice(0, 10),
-      end_date: (b.end_date || '').slice(0, 10),
+      start_date: sd,
+      end_date: ed,
       _localImage: null,
+      _originalStart: sd,
+      _originalEnd: ed,
     });
     setModalOpen(true);
   };
@@ -415,9 +445,15 @@ export default function PromosTab({
     return null;
   };
 
-  const fetchTotalAmount = async (startYMD, endYMD) => {
-    const err = validate(true);
-    if (err) throw new Error(err);
+  const fetchTotalAmount = async (startYMD, endYMD, options = {}) => {
+    const { skipValidation = false } = options;
+
+    // For create/edit we validate; for reactivation we skip (no image required)
+    if (!skipValidation) {
+      const err = validate(true);
+      if (err) throw new Error(err);
+    }
+
     const days = daysInclusive(startYMD, endYMD);
     if (days <= 0) throw new Error('Invalid date range');
     if (Number.isFinite(basePrice) && basePrice > 0) {
@@ -429,7 +465,7 @@ export default function PromosTab({
     const text = await res.text();
     if (!res.ok) throw new Error(`HTTP ${res.status} — ${text || 'Failed to fetch base price'}`);
     let json = {};
-    try { json = text ? JSON.parse(text) : {}; } catch {}
+    try { json = text ? JSON.parse(text) : {}; } catch { }
     const per = Number(json?.amount_per_day);
     if (!Number.isFinite(per) || per <= 0) throw new Error('Invalid amount_per_day from server');
     return Number((days * per).toFixed(2));
@@ -441,9 +477,19 @@ export default function PromosTab({
     const url = isEdit ? `${baseUpdate}/${encodeURIComponent(form.id)}` : baseCreate;
 
     try {
-      // Calculate total on BOTH create & edit if dates present
+      const hasDates = !!(form.start_date && form.end_date);
+      // ✅ ONLY charge when:
+      // - creating with dates
+      // - editing AND dates changed
+      const datesChangedOnEdit =
+        isEdit &&
+        hasDates &&
+        (form.start_date !== form._originalStart || form.end_date !== form._originalEnd);
+
+      const shouldCharge = (!isEdit && hasDates) || (isEdit && datesChangedOnEdit);
+
       let totalAmount = null;
-      if (form.start_date && form.end_date) {
+      if (shouldCharge) {
         totalAmount = await fetchTotalAmount(form.start_date, form.end_date);
       }
 
@@ -458,7 +504,7 @@ export default function PromosTab({
         fd.append('is_active', String(Number(form.is_active) ? 1 : 0));
         if (form.start_date) fd.append('start_date', form.start_date);
         if (form.end_date) fd.append('end_date', form.end_date);
-        if (Number.isFinite(totalAmount)) fd.append('total_amount', String(totalAmount));
+        if (shouldCharge && Number.isFinite(totalAmount)) fd.append('total_amount', String(totalAmount));
         if (Number.isFinite(Number(userId)) && Number(userId) > 0) fd.append('user_id', String(Number(userId)));
 
         const asset = form._localImage;
@@ -480,7 +526,7 @@ export default function PromosTab({
           start_date: form.start_date || '',
           end_date: form.end_date || '',
         };
-        if (Number.isFinite(totalAmount)) payload.total_amount = totalAmount;
+        if (shouldCharge && Number.isFinite(totalAmount)) payload.total_amount = totalAmount;
         if (Number.isFinite(Number(userId)) && Number(userId) > 0) payload.user_id = Number(userId);
 
         res = await fetchWithTimeout(
@@ -491,7 +537,6 @@ export default function PromosTab({
         text = await res.text();
       }
 
-      // ✅ parse without redeclaring json
       try { json = text ? JSON.parse(text) : {}; } catch { json = {}; }
 
       if (!res.ok || json?.success === false) {
@@ -499,7 +544,7 @@ export default function PromosTab({
         return;
       }
 
-      // ✅ success alert with optional payment/journal
+      // success alert with optional payment/journal
       showBannerPaymentAlert(json, { isEdit });
 
       // Clean up and refresh
@@ -535,6 +580,7 @@ export default function PromosTab({
   const toggleActive = async (b) => {
     const next = Number(b.is_active) ? 0 : 1;
     if (next === 1) {
+      // opening reactivation sheet, keep original dates
       setEnableTarget(b);
       setEnableStart(toYMD(b.start_date) || todayISO());
       setEnableEnd(toYMD(b.end_date) || addDaysYMD(new Date(), 7));
@@ -567,11 +613,12 @@ export default function PromosTab({
     }
   };
 
-  /* ===== confirmEnable(): send YMD dates ===== */
+  /* ===== confirmEnable(): reactivation ===== */
   const confirmEnable = async () => {
     const b = enableTarget;
     if (!b) return;
 
+    // validation
     if (enableStart && enableEnd && new Date(enableStart) > new Date(enableEnd)) {
       showErrorAlert('Start date must be before or equal to End date', 'Invalid dates');
       return;
@@ -583,24 +630,45 @@ export default function PromosTab({
       return;
     }
 
+    const originalStart = toYMD(b.start_date) || enableStart;
+    const originalEnd = toYMD(b.end_date) || enableEnd;
+
+    const datesChanged =
+      !!enableStart &&
+      !!enableEnd &&
+      (enableStart !== originalStart || enableEnd !== originalEnd);
+
+    const endDatePassed = new Date(enableEnd) < new Date(todayISO());
+    if (endDatePassed) {
+      Alert.alert(
+        'Invalid End Date',
+        'The selected end date has already passed. Please select a valid future date.'
+      );
+      return; // 🚫 stop here — do not charge or enable
+    }
+
+    const shouldCharge = datesChanged && new Date(enableEnd) >= new Date(todayISO());
+
     try {
-      // Compute total_amount for the selected range
-      const totalAmount = await fetchTotalAmount(enableStart, enableEnd);
+      let totalAmount = null;
+      if (shouldCharge) {
+        totalAmount = await fetchTotalAmount(enableStart, enableEnd, { skipValidation: true });
+      }
 
-      // Use plain MySQL-friendly dates
       const startStr = ymdToMySQLDate(enableStart);
-      const endStr   = ymdToMySQLDate(enableEnd);
+      const endStr = ymdToMySQLDate(enableEnd);
 
-      const url = `${baseUpdate}/${encodeURIComponent(b.id)}`;
-
-      // Send ONLY these fields to UPDATE_BANNER_ENDPOINT
+      const url = `${baseReactivate}/${encodeURIComponent(b.id)}`;
       const payload = {
         user_id: uid,
         start_date: startStr,
         end_date: endStr,
-        total_amount: totalAmount,
         is_active: 1,
       };
+
+      if (shouldCharge && Number.isFinite(totalAmount)) {
+        payload.total_amount = totalAmount;
+      }
 
       const res = await fetchWithTimeout(url, {
         method: 'PUT',
@@ -610,18 +678,22 @@ export default function PromosTab({
 
       const text = await res.text();
       let json = {};
-      try { json = text ? JSON.parse(text) : {}; } catch {}
+      try { json = text ? JSON.parse(text) : {}; } catch { }
 
       if (!res.ok || json?.success === false) {
         showErrorAlert(text || json || 'Failed to activate');
         return;
       }
 
-      // If backend returns message/payment on activation, show the detailed alert.
       if (json?.payment || json?.message) {
         showBannerPaymentAlert(json, { isEdit: true });
       } else {
-        Alert.alert('Success', 'Banner reactivated and dates updated.');
+        Alert.alert(
+          'Success',
+          datesChanged
+            ? 'Banner reactivated successfully.'
+            : 'Banner reactivated with no extra charge.'
+        );
       }
 
       setEnableSheetOpen(false);
@@ -632,6 +704,7 @@ export default function PromosTab({
       showErrorAlert(e?.message || e);
     }
   };
+
 
   /* ------------- image picking ------------- */
   const pickImage = async () => {
@@ -656,7 +729,11 @@ export default function PromosTab({
     }
   };
 
-  const removePickedImage = () => setForm((s) => ({ ...s, _localImage: null, banner_image: '' }));
+  const removePickedImage = () => setForm((s) => ({
+    ...s,
+    _localImage: null,
+    banner_image: '',
+  }));
 
   /* ------------- render row ------------- */
   const renderBanner = ({ item }) => {
@@ -734,7 +811,7 @@ export default function PromosTab({
               >
                 <Feather name="rotate-ccw" size={16} color="#a16207" />
                 <Text style={[styles.iconBtnText, { color: '#a16207' }]}>
-                  Reactivate{Number.isFinite(amount) ? ` • ${currency(amount)}` : ''}
+                  Reactivate
                 </Text>
               </TouchableOpacity>
             )}
@@ -975,18 +1052,32 @@ export default function PromosTab({
                 {/* Dates */}
                 <View style={styles.grid2}>
                   <Field label="Start date">
-                    <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowStartPicker(true)}>
+                    <TouchableOpacity
+                      style={[styles.dateBtnGreen, endNotEndedEdit && styles.dateBtnDisabled]}
+                      onPress={() => !endNotEndedEdit && setShowStartPicker(true)}
+                      disabled={endNotEndedEdit}
+                    >
                       <Ionicons name="calendar" size={14} color="#065f46" />
                       <Text style={styles.dateBtnTextGreen}>{form.start_date || 'Pick a date'}</Text>
                     </TouchableOpacity>
                   </Field>
                   <Field label="End date">
-                    <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowEndPicker(true)}>
+                    <TouchableOpacity
+                      style={[styles.dateBtnGreen, endNotEndedEdit && styles.dateBtnDisabled]}
+                      onPress={() => !endNotEndedEdit && setShowEndPicker(true)}
+                      disabled={endNotEndedEdit}
+                    >
                       <Ionicons name="calendar" size={14} color="#065f46" />
                       <Text style={styles.dateBtnTextGreen}>{form.end_date || 'Pick a date'}</Text>
                     </TouchableOpacity>
                   </Field>
                 </View>
+
+                {endNotEndedEdit && (
+                  <Text style={[styles.meta, { marginTop: 6, color: '#b45309' }]}>
+                    End date has not passed yet – dates cannot be edited.
+                  </Text>
+                )}
 
                 {/* LIVE: Amount under dates */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20, marginTop: 12 }}>
@@ -1038,7 +1129,9 @@ export default function PromosTab({
                 <TouchableOpacity style={styles.saveBtn} onPress={confirmEnable}>
                   <Ionicons name="checkmark" size={16} color="#fff" />
                   <Text style={styles.saveText}>
-                    Activate{Number.isFinite(enableAmount) ? ` • ${currency(enableAmount)}` : ''}
+                    {reactivateDatesChanged && Number.isFinite(enableAmount)
+                      ? `Activate • ${currency(enableAmount)}`
+                      : 'Activate'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1046,18 +1139,32 @@ export default function PromosTab({
 
             <View style={styles.grid2}>
               <Field label="Start date">
-                <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowEnableStartPicker(true)}>
+                <TouchableOpacity
+                  style={[styles.dateBtnGreen, endNotEndedReactivate && styles.dateBtnDisabled]}
+                  onPress={() => !endNotEndedReactivate && setShowEnableStartPicker(true)}
+                  disabled={endNotEndedReactivate}
+                >
                   <Ionicons name="calendar" size={14} color="#065f46" />
                   <Text style={styles.dateBtnTextGreen}>{enableStart || 'Pick a date'}</Text>
                 </TouchableOpacity>
               </Field>
               <Field label="End date">
-                <TouchableOpacity style={styles.dateBtnGreen} onPress={() => setShowEnableEndPicker(true)}>
+                <TouchableOpacity
+                  style={[styles.dateBtnGreen, endNotEndedReactivate && styles.dateBtnDisabled]}
+                  onPress={() => !endNotEndedReactivate && setShowEnableEndPicker(true)}
+                  disabled={endNotEndedReactivate}
+                >
                   <Ionicons name="calendar" size={14} color="#065f46" />
                   <Text style={styles.dateBtnTextGreen}>{enableEnd || 'Pick a date'}</Text>
                 </TouchableOpacity>
               </Field>
             </View>
+
+            {endNotEndedReactivate && (
+              <Text style={[styles.meta, { marginTop: 6, color: '#b45309' }]}>
+                End date has not passed yet – dates cannot be edited. Reactivation will not charge extra.
+              </Text>
+            )}
 
             {/* LIVE: Amount for reactivate */}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20, marginTop: 12 }}>
@@ -1065,7 +1172,10 @@ export default function PromosTab({
                 Days: {enableDays || '—'}
               </Text>
               <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>
-                Amount: {Number.isFinite(enableAmount) ? currency(enableAmount) : (basePriceLoading ? 'Calculating…' : '—')}
+                Amount:{' '}
+                {reactivateDatesChanged && Number.isFinite(enableAmount)
+                  ? currency(enableAmount)
+                  : 'No extra charge'}
               </Text>
             </View>
 
@@ -1146,11 +1256,15 @@ const styles = StyleSheet.create({
 
   backdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.3)' },
   modalWrap: { position: 'absolute', bottom: 0, left: 0, right: 0 },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 16,
+  sheet: {
+    backgroundColor: '#fff', borderTopLeftRadius: 16,
     borderTopRightRadius: 16, padding: 16,
-    borderTopWidth: 1, borderColor: '#e2e8f0' },
-  sheetHeader: { flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center' },
+    borderTopWidth: 1, borderColor: '#e2e8f0'
+  },
+  sheetHeader: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center'
+  },
   sheetTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
   modalScroll: { maxHeight: '89%' },
   sheetScroll: { paddingBottom: 24 },
@@ -1201,6 +1315,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#dcfce7', alignItems: 'center', flexDirection: 'row', gap: 6,
   },
   dateBtnTextGreen: { color: '#065f46', fontWeight: '700', fontSize: 12 },
+  dateBtnDisabled: {
+    opacity: 0.5,
+  },
 
   cancelBtn: {
     height: 36, paddingHorizontal: 12,

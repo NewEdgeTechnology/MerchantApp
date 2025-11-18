@@ -56,6 +56,7 @@ export default function WithdrawScreen() {
   const initialBalance = Number(route?.params?.balance ?? 0);
 
   const [userId, setUserId] = useState(route?.params?.userId ?? '');
+  const [walletId, setWalletId] = useState(route?.params?.walletId ?? ''); // ⬅️ NEW
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [balance, setBalance] = useState(isNaN(initialBalance) ? 0 : initialBalance);
@@ -64,6 +65,13 @@ export default function WithdrawScreen() {
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
   const primary = '#f97316';
+
+  // Sync walletId from route params
+  useEffect(() => {
+    if (route?.params?.walletId) {
+      setWalletId(String(route.params.walletId));
+    }
+  }, [route?.params?.walletId]);
 
   // ── Respect grace from WalletScreen (skipBiometric + authGraceUntil)
   useEffect(() => {
@@ -131,8 +139,9 @@ export default function WithdrawScreen() {
       const raw = String(ENV_WALLET || '').trim();
       if (!raw) return;
       setLoadingBalance(true);
-      const url = raw.includes('{user_id}') ? raw.replace('{user_id}', String(uid))
-                                            : `${raw}${raw.includes('?') ? '&' : '?'}user_id=${encodeURIComponent(String(uid))}`;
+      const url = raw.includes('{user_id}')
+        ? raw.replace('{user_id}', String(uid))
+        : `${raw}${raw.includes('?') ? '&' : '?'}user_id=${encodeURIComponent(String(uid))}`;
       const res = await fetch(url);
       const isJson = (res.headers.get('content-type') || '').includes('application/json');
       const data = isJson ? await res.json() : await res.text();
@@ -171,7 +180,7 @@ export default function WithdrawScreen() {
       const url = String(ENV_WITHDRAW || '').trim();
       if (!url) throw new Error('WITHDRAW_ENDPOINT missing in .env');
 
-      // Basic payload – adjust to your backend as needed
+      // Backend still uses user_id; walletId is for display only
       const payload = {
         user_id: Number(userId),
         amount: Number(amount),
@@ -255,10 +264,12 @@ export default function WithdrawScreen() {
             <Text style={styles.hint}>Minimum 1.00 Nu</Text>
           </View>
 
-          {/* User */}
+          {/* Wallet ID (readonly) */}
           <View style={[styles.field, { marginTop: 10 }]}>
-            <Text style={styles.label}>User ID</Text>
-            <Text style={styles.readonlyBox}>{userId ? String(userId) : 'Detecting…'}</Text>
+            <Text style={styles.label}>Wallet ID</Text>
+            <Text style={styles.readonlyBox}>
+              {walletId ? String(walletId) : 'Linked to your account'}
+            </Text>
           </View>
 
           {/* Optional note / reference */}
@@ -277,9 +288,14 @@ export default function WithdrawScreen() {
             disabled={loading}
             onPress={handleWithdraw}
             activeOpacity={0.9}
-            style={[styles.primaryBtnFilled, { backgroundColor: loading ? '#fb923c' : primary, opacity: loading ? 0.9 : 1 }]}
+            style={[
+              styles.primaryBtnFilled,
+              { backgroundColor: loading ? '#fb923c' : primary, opacity: loading ? 0.9 : 1 },
+            ]}
           >
-            {loading ? <ActivityIndicator color="#fff" /> : (
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="card-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
                 <Text style={styles.primaryBtnTextFilled}>WITHDRAW</Text>

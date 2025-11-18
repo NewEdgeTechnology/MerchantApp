@@ -53,11 +53,19 @@ export default function AddMoneyScreen() {
   const insets = useSafeAreaInsets();
 
   const [userId, setUserId] = useState(route?.params?.userId ?? '');
+  const [walletId, setWalletId] = useState(route?.params?.walletId ?? ''); // ⬅️ NEW
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
   const primary = '#f97316';
+
+  // Sync walletId from params if it changes
+  useEffect(() => {
+    if (route?.params?.walletId) {
+      setWalletId(String(route.params.walletId));
+    }
+  }, [route?.params?.walletId]);
 
   // ── Respect grace from WalletScreen (skipBiometric + authGraceUntil)
   useEffect(() => {
@@ -98,6 +106,7 @@ export default function AddMoneyScreen() {
     }, [])
   );
 
+  // Auto-detect user_id from login if not passed
   useEffect(() => {
     (async () => {
       if (userId) return;
@@ -135,6 +144,7 @@ export default function AddMoneyScreen() {
       const url = String(ENV_ADD_MONEY || '').trim();
       if (!url) throw new Error('ADD_MONEY_ENDPOINT missing in .env');
 
+      // Backend is still using user_id; walletId is just for display
       const payload = { user_id: Number(userId), amount: Number(amount) };
 
       const res = await fetch(url, {
@@ -211,19 +221,26 @@ export default function AddMoneyScreen() {
             <Text style={styles.hint}>Minimum 1.00 Nu</Text>
           </View>
 
-          {/* User */}
+          {/* Wallet ID (readonly) */}
           <View style={[styles.field, { marginTop: 10 }]}>
-            <Text style={styles.label}>User ID</Text>
-            <Text style={styles.readonlyBox}>{userId ? String(userId) : 'Detecting…'}</Text>
+            <Text style={styles.label}>Wallet ID</Text>
+            <Text style={styles.readonlyBox}>
+              {walletId ? String(walletId) : 'Linked to your account'}
+            </Text>
           </View>
 
           <TouchableOpacity
             disabled={loading}
             onPress={handleAddMoney}
             activeOpacity={0.9}
-            style={[styles.primaryBtnFilled, { backgroundColor: loading ? '#fb923c' : primary, opacity: loading ? 0.9 : 1 }]}
+            style={[
+              styles.primaryBtnFilled,
+              { backgroundColor: loading ? '#fb923c' : primary, opacity: loading ? 0.9 : 1 },
+            ]}
           >
-            {loading ? <ActivityIndicator color="#fff" /> : (
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="add-circle-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
                 <Text style={styles.primaryBtnTextFilled}>ADD MONEY</Text>

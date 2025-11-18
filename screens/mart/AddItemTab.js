@@ -234,6 +234,27 @@ export default function AddItemTab({ isTablet }) {
     ).trim();
   }, [route?.params]);
 
+  /* Owner type (mart) */
+  const OWNER_TYPE = useMemo(() => {
+    const p = route?.params ?? {};
+    return p.owner_type || p.ownerType || 'mart';
+  }, [route?.params]);
+
+  /* Helper to go to MenuScreen with params */
+  const goToMenu = useCallback(() => {
+    if (!BUSINESS_ID) {
+      navigation.navigate('MenuScreen');
+      return;
+    }
+    const bidNum = Number(BUSINESS_ID);
+    navigation.navigate('MenuScreen', {
+      businessId: bidNum,
+      business_id: bidNum,
+      owner_type: OWNER_TYPE,
+      refreshAt: Date.now(),
+    });
+  }, [navigation, BUSINESS_ID, OWNER_TYPE]);
+
   /* Categories URL (force owner_type=mart) */
   const CATEGORY_BASE = useMemo(() => (ENV_CATEGORY_ENDPOINT || '').replace(/\/$/, ''), []);
   const CATEGORIES_URL = useMemo(() => {
@@ -712,8 +733,8 @@ export default function AddItemTab({ isTablet }) {
       Alert.alert(
         'Saved',
         'Item added successfully.',
-        [{ text: 'OK', onPress: () => navigation.navigate('MenuScreen') }],
-        { cancelable: true, onDismiss: () => navigation.navigate('MenuScreen') }
+        [{ text: 'OK', onPress: goToMenu }],
+        { cancelable: true, onDismiss: goToMenu }
       );
     } catch (e) {
       derr(`(click:${clickId}) failed:`, e?.message);
@@ -1029,7 +1050,7 @@ export default function AddItemTab({ isTablet }) {
 
           <TouchableOpacity
             style={[styles.secondaryBtn, { paddingVertical: isTablet ? 14 : 12 }]}
-            onPress={() => navigation.navigate('MenuScreen')}
+            onPress={goToMenu}
             activeOpacity={0.9}
             disabled={saving}
           >
@@ -1061,6 +1082,7 @@ export default function AddItemTab({ isTablet }) {
       onSave,
       saving,
       fetchCategoryDetails,
+      goToMenu,
     ]
   );
 

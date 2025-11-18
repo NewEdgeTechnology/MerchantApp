@@ -48,15 +48,15 @@ import FoodMenuSetupScreen from './screens/food/FoodMenuSetupScreen';
 import GrabMerchantHomeScreen from './screens/food/GrabMerchantHomeScreen';
 import MenuScreen from './screens/food/MenuScreen';
 import AccountSettings from './screens/food/AccountSettings';
-import PasswordManagement from './screens/food/PasswordManagement';
-import SecuritySettings from './screens/food/SecuritySettings';
+import PasswordManagement from './screens/profile/PasswordManagement';
+import SecuritySettings from './screens/profile/SecuritySettings';
 import NotificationSettings from './screens/food/NotificationSettings';
-import PersonalInformation from './screens/food/PersonalInformation';
-import ProfileBusinessDetails from './screens/food/ProfileBusinessDetails';
+import PersonalInformation from './screens/profile/PersonalInformation';
+import ProfileBusinessDetails from './screens/profile/ProfileBusinessDetails';
 import './screens/food/secureStorePatch';
 import ManageQuickActionsScreen from './screens/food/ManageQuickActionsScreen';
 import OrderDetails from './screens/food/OrderDetails';
-import FeedbackScreen from './screens/food/FeedbackScreen';
+import FeedbackScreen from './screens/profile/FeedbackScreen';
 import AppLockGate from './AppLockGate';
 import TwoFactorPromptScreen from './screens/food/TwoFactorPromptScreen';
 import TermsOfService from './screens/food/TermsOfService';
@@ -71,6 +71,9 @@ import AddMoneyScreen from './screens/wallet/AddMoneyScreen';
 import WithdrawScreen from './screens/wallet/WithdrawScreen';
 import SendToFriendScreen from './screens/wallet/SendToFriendScreen';
 import MartOrdersTab from './screens/food/OrderTab';
+import MessageScreen from './screens/message/MessageScreen';
+import ChatDetailScreen from './screens/message/ChatDetailScreen';
+
 const Stack = createStackNavigator();
 
 export default function App() {
@@ -162,6 +165,8 @@ export default function App() {
             <Stack.Screen name="WithdrawScreen" component={WithdrawScreen} />
             <Stack.Screen name="SendToFriendScreen" component={SendToFriendScreen} />
             <Stack.Screen name="MartOrdersTab" component={MartOrdersTab} />
+            <Stack.Screen name="MessageScreen" component={MessageScreen} />
+            <Stack.Screen name="ChatDetailScreen" component={ChatDetailScreen} />
           </Stack.Navigator>
         </AppLockGate>
       </NavigationContainer>

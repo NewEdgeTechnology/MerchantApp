@@ -53,7 +53,7 @@ export default function SendToFriendScreen() {
   const insets = useSafeAreaInsets();
 
   const [userId, setUserId] = useState(route?.params?.userId ?? '');
-  const [recipient, setRecipient] = useState(route?.params?.recipient ?? '');
+  const [recipient, setRecipient] = useState(route?.params?.recipient ?? ''); // Wallet ID of recipient
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
@@ -117,7 +117,9 @@ export default function SendToFriendScreen() {
 
   const validate = useCallback(() => {
     const n = Number(amount);
-    if (!recipient || String(recipient).trim().length < 3) return 'Enter a valid recipient (phone or user ID).';
+    const rec = String(recipient).trim();
+
+    if (!rec || rec.length < 4) return 'Enter a valid Wallet ID of your friend.';
     if (!amount || isNaN(n)) return 'Enter a valid amount.';
     if (n <= 0) return 'Amount must be greater than 0.';
     if (!userId) return 'Missing user session. Please sign in again.';
@@ -128,18 +130,14 @@ export default function SendToFriendScreen() {
     const n = Number(amount);
     const rec = String(recipient).trim();
 
+    // Sender identified by user_id, recipient by wallet id
     const payload = {
-      user_id: Number(userId),   // sender
+      user_id: Number(userId),
       amount: n,
+      to_wallet_id: rec,            // ⬅️ NEW: wallet ID of recipient
       note: note?.trim() || undefined,
     };
 
-    if (/^\d+$/.test(rec)) {
-      payload.to_user_id = Number(rec);
-      payload.to_phone = rec;
-    } else {
-      payload.to_phone = rec;
-    }
     return payload;
   }
 
@@ -199,16 +197,16 @@ export default function SendToFriendScreen() {
             </View>
             <Text style={styles.title}>Send money instantly</Text>
             <Text style={styles.sub}>
-              Enter your friend’s phone or user ID and an amount to transfer from your Wallet.
+              Enter your friend’s Wallet ID and an amount to transfer from your Wallet.
             </Text>
           </View>
 
-          {/* Recipient */}
+          {/* Recipient Wallet ID */}
           <View style={styles.field}>
-            <Text style={styles.label}>Recipient (phone or user ID)</Text>
+            <Text style={styles.label}>Recipient Wallet ID</Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g., 17345678 or 42"
+              placeholder="e.g., NET0000002"
               placeholderTextColor="#94a3b8"
               value={recipient}
               onChangeText={setRecipient}
@@ -219,7 +217,7 @@ export default function SendToFriendScreen() {
               autoCorrect={false}
             />
             <Text style={styles.hint}>
-              You can paste a phone number or their user ID.
+              Ask your friend to share their Wallet ID (shown in their Wallet screen).
             </Text>
           </View>
 
@@ -257,19 +255,20 @@ export default function SendToFriendScreen() {
             />
           </View>
 
-          {/* Sender */}
-          <View style={[styles.field, { marginTop: 10 }]}>
-            <Text style={styles.label}>Your User ID</Text>
-            <Text style={styles.readonlyBox}>{userId ? String(userId) : 'Detecting…'}</Text>
-          </View>
+          {/* (Sender userId is resolved silently; no need to show it) */}
 
           <TouchableOpacity
             disabled={loading}
             onPress={handleSend}
             activeOpacity={0.9}
-            style={[styles.primaryBtnFilled, { backgroundColor: loading ? '#fb923c' : primary, opacity: loading ? 0.9 : 1 }]}
+            style={[
+              styles.primaryBtnFilled,
+              { backgroundColor: loading ? '#fb923c' : primary, opacity: loading ? 0.9 : 1 },
+            ]}
           >
-            {loading ? <ActivityIndicator color="#fff" /> : (
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons name="paper-plane-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
                 <Text style={styles.primaryBtnTextFilled}>SEND MONEY</Text>

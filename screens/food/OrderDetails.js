@@ -3,7 +3,7 @@
 // PENDING → CONFIRMED → READY → OUT_FOR_DELIVERY → COMPLETED
 // If delivery_option=BOTH, show Self/Grab chooser ONLY at READY.
 // - Grab at READY: show nearby drivers with rating, block Next until assigned.
-// - Self at READY: allow Next → OUT_FOR_DELIVERY directly.
+// - Self at READY: allow Next → OUT_FOR_DELIVERY directly (now custom for self).
 // Back nav preserves headers/footers. Hydrates from grouped-orders.
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
@@ -20,7 +20,7 @@ import {
   UPDATE_ORDER_STATUS_ENDPOINT as ENV_UPDATE_ORDER,
   NEARBY_DRIVERS_ENDPOINT as ENV_NEARBY_DRIVERS,
   DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING,
-  BUSINESS_DETAILS as ENV_BUSINESS_DETAILS,            // ⬅️ NEW
+  BUSINESS_DETAILS as ENV_BUSINESS_DETAILS,            // ⬅️ business details (lat/lng + delivery_option)
 } from '@env';
 
 /* ---------------- Money + utils ---------------- */
@@ -59,15 +59,15 @@ const addressToLine = (val) => {
 
 /* ---------------- Status config ---------------- */
 const STATUS_META = {
-  PENDING:           { label: 'Pending',   color: '#0ea5e9', bg: '#e0f2fe', border: '#bae6fd', icon: 'time-outline' },
-  CONFIRMED:         { label: 'Accepted',  color: '#16a34a', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-circle-outline' },
-  READY:             { label: 'Ready',     color: '#2563eb', bg: '#dbeafe', border: '#bfdbfe', icon: 'cube-outline' },
-  OUT_FOR_DELIVERY:  { label: 'Out for delivery', color: '#f59e0b', bg: '#fef3c7', border: '#fde68a', icon: 'bicycle-outline' },
-  COMPLETED:         { label: 'Delivered', color: '#047857', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-done-outline' },
-  DECLINED:          { label: 'Declined',  color: '#b91c1c', bg: '#fee2e2', border: '#fecaca', icon: 'close-circle-outline' },
+  PENDING: { label: 'Pending', color: '#0ea5e9', bg: '#e0f2fe', border: '#bae6fd', icon: 'time-outline' },
+  CONFIRMED: { label: 'Accepted', color: '#16a34a', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-circle-outline' },
+  READY: { label: 'Ready', color: '#2563eb', bg: '#dbeafe', border: '#bfdbfe', icon: 'cube-outline' },
+  OUT_FOR_DELIVERY: { label: 'Out for delivery', color: '#f59e0b', bg: '#fef3c7', border: '#fde68a', icon: 'bicycle-outline' },
+  COMPLETED: { label: 'Delivered', color: '#047857', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-done-outline' },
+  DECLINED: { label: 'Declined', color: '#b91c1c', bg: '#fee2e2', border: '#fecaca', icon: 'close-circle-outline' },
 };
 const TERMINAL_NEGATIVE = new Set(['DECLINED']);
-const TERMINAL_SUCCESS  = new Set(['COMPLETED']);
+const TERMINAL_SUCCESS = new Set(['COMPLETED']);
 
 /* ---------------- Order code helpers ---------------- */
 const normalizeOrderCode = (raw) => {
@@ -86,18 +86,18 @@ const sameOrder = (a, b) => {
 };
 
 const buildUpdateUrl = (base, orderCode) => {
-  const clean = String(base || '').trim().replace(/\/+$/, '');
-  if (!clean || !orderCode) return null;
-  let url = clean
+  const cleanBase = String(base || '').trim().replace(/\/+$/, '');
+  if (!cleanBase || !orderCode) return null;
+  let url = cleanBase
     .replace(/\{\s*order_id\s*\}/gi, orderCode)
     .replace(/\{\s*order\s*\}/gi, orderCode)
     .replace(/:order_id/gi, orderCode)
     .replace(/:order/gi, orderCode);
-  if (url !== clean) {
+  if (url !== cleanBase) {
     if (!/\/status(?:\?|$)/i.test(url)) url = `${url}/status`;
     return url;
   }
-  return `${clean}/${orderCode}/status`;
+  return `${cleanBase}/${orderCode}/status`;
 };
 
 /* ---------------- NORMALIZERS ---------------- */
@@ -105,8 +105,8 @@ const buildUpdateUrl = (base, orderCode) => {
 const normDelivery = (v) => {
   const s = String(v || '').trim().toUpperCase();
   if (!s) return 'UNKNOWN';
-  if (['SELF','SELF_ONLY','PICKUP','PICK_UP','SELF_PICKUP','SELF-DELIVERY','SELF_DELIVERY'].includes(s)) return 'SELF';
-  if (['GRAB','GRAB_ONLY','DELIVERY','PLATFORM','PLATFORM_DELIVERY','PLATFORM-DELIVERY'].includes(s)) return 'GRAB';
+  if (['SELF', 'SELF_ONLY', 'PICKUP', 'PICK_UP', 'SELF_PICKUP', 'SELF-DELIVERY', 'SELF_DELIVERY'].includes(s)) return 'SELF';
+  if (['GRAB', 'GRAB_ONLY', 'DELIVERY', 'PLATFORM', 'PLATFORM_DELIVERY', 'PLATFORM-DELIVERY'].includes(s)) return 'GRAB';
   if (s === 'BOTH' || s === 'ALL') return 'BOTH';
   if (s === '1' || s === 'TRUE') return 'GRAB';
   if (s === '0' || s === 'FALSE') return 'SELF';
@@ -146,6 +146,7 @@ function resolveFulfillmentType(from) {
     if (!s) continue;
     if (['delivery', 'deliver', 'platform_delivery', 'self-delivery'].includes(s)) return 'Delivery';
     if (['pickup', 'self-pickup', 'pick_up', 'takeaway', 'take-away'].includes(s)) return 'Pickup';
+    return '';
   }
   return '';
 }
@@ -170,11 +171,10 @@ async function fetchBusinessDetails({ token, business_id }) {
       const r = await fetch(url, { headers });
       const text = await r.text();
       let data = null;
-      try { data = text ? JSON.parse(text) : null; } catch {}
+      try { data = text ? JSON.parse(text) : null; } catch { }
       if (!r.ok) continue;
       const maybe = data?.data && typeof data.data === 'object' ? data.data : data;
       if (maybe && (maybe.business_id || maybe.business_name || maybe.delivery_option)) {
-        // console.log('[OrderDetails] BUSINESS_DETAILS fetched from:', url);
         return maybe;
       }
     } catch (e) {
@@ -200,7 +200,7 @@ async function updateStatusApi({ endpoint, orderCode, payload, token }) {
   });
   const text = await res.text();
   let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch {}
+  try { json = text ? JSON.parse(text) : null; } catch { }
   if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
   return json;
 }
@@ -217,15 +217,7 @@ const expandNearbyUrl = (baseUrl, { cityId, lat, lng, radiusKm, limit }) => {
     .replace(/\{radius\}/gi, encodeURIComponent(radiusKm ?? '5'))
     .replace(/\{radiusKm\}/gi, encodeURIComponent(radiusKm ?? '5'))
     .replace(/\{limit\}/gi, encodeURIComponent(limit ?? '20'));
-  try {
-    const url = new URL(u);
-    if (!url.searchParams.get('cityId') && cityId) url.searchParams.set('cityId', cityId);
-    if (!url.searchParams.get('lat') && lat != null) url.searchParams.set('lat', String(lat));
-    if (!url.searchParams.get('lng') && lng != null) url.searchParams.set('lng', String(lng));
-    if (!url.searchParams.get('radiusKm') && radiusKm != null) url.searchParams.set('radiusKm', String(radiusKm));
-    if (!url.searchParams.get('limit') && limit != null) url.searchParams.set('limit', String(limit));
-    return url.toString();
-  } catch { return u; }
+  return u;
 };
 
 /* ---------------- Driver rating helpers ---------------- */
@@ -257,6 +249,32 @@ const computeAverageRating = (payload) => {
   if (!vals.length) return null;
   const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
   return Math.round(avg * 10) / 10;
+};
+
+/* ---------------- Distance & ETA helpers (Haversine) ---------------- */
+const toRad = (deg) => (deg * Math.PI) / 180;
+
+const computeHaversineKm = (from, to) => {
+  if (!from || !to) return null;
+  const { lat: lat1, lng: lon1 } = from;
+  const { lat: lat2, lng: lon2 } = to;
+
+  if (
+    !Number.isFinite(lat1) || !Number.isFinite(lon1) ||
+    !Number.isFinite(lat2) || !Number.isFinite(lon2)
+  ) {
+    return null;
+  }
+
+  const R = 6371; // Earth radius in km
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // km
 };
 
 /* ---------------- Tiny UI atoms ---------------- */
@@ -294,7 +312,7 @@ const Step = ({ label, ringColor, fill, icon, time, onPress, disabled, dimmed })
 const Row = ({ icon, text }) => (
   <View style={styles.row}>
     <Ionicons name={icon} size={16} color="#64748b" />
-    <Text style={styles.rowText} numberOfLines={2}>{toText(text)}</Text>
+    <Text style={styles.rowText} numberOfLines={4}>{toText(text)}</Text>
   </View>
 );
 
@@ -331,8 +349,8 @@ export default function OrderDetails() {
         names.find(n => /^(Orders|OrderTab|OrdersTab|MartOrders|FoodOrders)$/i.test(n)) ||
         names.find(n => /Order/i.test(n));
       if (parent && target) { parent.navigate(target); return; }
-    } catch {}
-    navigation.dispatch(CommonActions.navigate({ name: 'MainTabs', params: { screen: 'Orders' }}));
+    } catch { }
+    navigation.dispatch(CommonActions.navigate({ name: 'MainTabs', params: { screen: 'Orders' } }));
   }, [navigation]);
 
   useFocusEffect(
@@ -343,37 +361,65 @@ export default function OrderDetails() {
     }, [goBackToOrders])
   );
 
-  /* ---------- Merchant delivery option (BUSINESS_DETAILS) ---------- */
+  /* ---------- Merchant delivery option & location (BUSINESS_DETAILS) ---------- */
   const [merchantDeliveryOpt, setMerchantDeliveryOpt] = useState('UNKNOWN'); // SELF|GRAB|BOTH|UNKNOWN
   const [businessId, setBusinessId] = useState(paramBusinessId);
+  const [businessCoords, setBusinessCoords] = useState(null); // {lat,lng} from BUSINESS_DETAILS
 
   useEffect(() => {
     (async () => {
       try {
         const token = await SecureStore.getItemAsync('auth_token');
-        if (!businessId) {
+        let finalBizId = businessId || paramBusinessId;
+
+        if (!finalBizId) {
           const saved = await SecureStore.getItemAsync('merchant_login');
           if (saved) {
             try {
               const j = JSON.parse(saved);
-              setBusinessId(j?.business_id || j?.user?.business_id || j?.user?.businessId || j?.id || j?.user?.id || null);
-            } catch {}
+              finalBizId =
+                j?.business_id ||
+                j?.user?.business_id ||
+                j?.user?.businessId ||
+                j?.id ||
+                j?.user?.id ||
+                null;
+              if (finalBizId) setBusinessId(finalBizId);
+            } catch { }
           }
         }
-        const finalBizId = businessId || paramBusinessId;
+
         const bd = await fetchBusinessDetails({ token, business_id: finalBizId });
-        const opt = normDelivery(bd?.delivery_option ?? bd?.deliveryOption);
-        setMerchantDeliveryOpt(opt);
-        // console.log('[OrderDetails] merchant delivery_option (BUSINESS_DETAILS) →', bd?.delivery_option, 'normalized →', opt);
+        if (bd) {
+          const opt = normDelivery(bd?.delivery_option ?? bd?.deliveryOption);
+          setMerchantDeliveryOpt(opt);
+
+          // extract lat/lng from BUSINESS_DETAILS response
+          const latRaw =
+            bd.latitude ?? bd.lat ?? bd.business_latitude ?? bd.business_lat ?? null;
+          const lngRaw =
+            bd.longitude ?? bd.lng ?? bd.business_longitude ?? bd.business_lng ?? null;
+
+          const latNum = latRaw != null ? Number(latRaw) : NaN;
+          const lngNum = lngRaw != null ? Number(lngRaw) : NaN;
+
+          if (!Number.isNaN(latNum) && !Number.isNaN(lngNum)) {
+            setBusinessCoords({ lat: latNum, lng: lngNum });
+          }
+        }
       } catch (e) {
         console.log('[OrderDetails] BUSINESS_DETAILS fetch error:', e?.message || e);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once on mount (token/biz id from secure storage)
+  }, []); // run once on mount
 
   /* ---------- Normalize Fulfillment vs Delivery-by ---------- */
   const fulfillment = useMemo(() => resolveFulfillmentType({ ...order, params }), [order, params]);
+  const isPickupFulfillment = useMemo(
+    () => (fulfillment || '').toLowerCase() === 'pickup',
+    [fulfillment]
+  );
 
   // Order-level hint (fallback)
   const orderDeliveryHint = useMemo(() => resolveDeliveryOptionFromOrder({ ...order, params }), [order, params]);
@@ -388,7 +434,7 @@ export default function OrderDetails() {
   // When BOTH, merchant chooses at READY. Otherwise auto-choose.
   const [deliveryChoice, setDeliveryChoice] = useState(
     deliveryOptionInitial === 'SELF' ? 'self' :
-    deliveryOptionInitial === 'GRAB' ? 'grab' : ''
+      deliveryOptionInitial === 'GRAB' ? 'grab' : ''
   );
 
   useEffect(() => {
@@ -397,7 +443,7 @@ export default function OrderDetails() {
     }
   }, [deliveryOptionInitial, deliveryChoice]);
 
-  const isBothOption   = deliveryOptionInitial === 'BOTH';
+  const isBothOption = deliveryOptionInitial === 'BOTH';
   const isSelfSelected = (deliveryChoice || '').toLowerCase() === 'self';
   const isGrabSelected = (deliveryChoice || '').toLowerCase() === 'grab';
 
@@ -427,12 +473,17 @@ export default function OrderDetails() {
   }, [isBothOption, isSelfSelected, isGrabSelected, deliveryOptionInitial, status]);
 
   /* ---------- Sequence ---------- */
+  // Only Pickup stops at READY. Delivery (Self / Grab) goes till COMPLETED.
   const STATUS_SEQUENCE = useMemo(
-    () => ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'],
-    []
+    () => (isPickupFulfillment
+      ? ['PENDING', 'CONFIRMED', 'READY']
+      : ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']),
+    [isPickupFulfillment]
   );
+
   const isTerminalNegative = TERMINAL_NEGATIVE.has(status);
-  const isTerminalSuccess  = TERMINAL_SUCCESS.has(status);
+  const isTerminalSuccess =
+    TERMINAL_SUCCESS.has(status) || (isPickupFulfillment && status === 'READY');
 
   // Block NEXT at READY only when Grab is active (BOTH+Grab chosen OR direct Grab)
   const shouldBlockAtReady =
@@ -440,19 +491,31 @@ export default function OrderDetails() {
 
   const nextFor = useCallback((curr) => {
     const s = (curr || '').toUpperCase();
-    if (TERMINAL_NEGATIVE.has(s) || TERMINAL_SUCCESS.has(s)) return null;
-    if (s === 'READY' && shouldBlockAtReady) return null; // must assign driver
+
+    // Stop on Declined / Completed
+    if (TERMINAL_NEGATIVE.has(s) || TERMINAL_SUCCESS.has(s)) {
+      return null;
+    }
+
+    // For Pickup, READY is the last status
+    if (isPickupFulfillment && s === 'READY') {
+      return null;
+    }
+
+    // For Delivery with Grab, block at READY until driver assigned
+    if (s === 'READY' && shouldBlockAtReady) return null;
+
     const idx = STATUS_SEQUENCE.indexOf(s);
     if (idx === -1) return 'CONFIRMED';
     return STATUS_SEQUENCE[idx + 1] || null;
-  }, [STATUS_SEQUENCE, shouldBlockAtReady]);
+  }, [STATUS_SEQUENCE, shouldBlockAtReady, isPickupFulfillment]);
 
   const stepIndex = findStepIndex(status, STATUS_SEQUENCE);
   const lastIndex = STATUS_SEQUENCE.length - 1;
   const progressIndex = clamp(stepIndex === -1 ? 0 : stepIndex, 0, lastIndex);
   const progressPct = isTerminalNegative ? 0
     : isTerminalSuccess ? 100
-    : ((progressIndex + 1) / STATUS_SEQUENCE.length) * 100;
+      : ((progressIndex + 1) / STATUS_SEQUENCE.length) * 100;
 
   const stamps = useMemo(() => {
     const s = order?.status_timestamps || {};
@@ -471,7 +534,7 @@ export default function OrderDetails() {
     return String(n || '').trim();
   }, [order]);
 
-  /* ---------- Hydrate from grouped endpoint ---------- */
+  /* ---------- Hydrate from grouped endpoint (ORDER_ENDPOINT) ---------- */
   const hydrateFromGrouped = useCallback(async () => {
     try {
       if (!ordersGroupedUrl || !routeOrderId) return;
@@ -489,7 +552,7 @@ export default function OrderDetails() {
       });
       const text = await res.text();
       let json = null;
-      try { json = text ? JSON.parse(text) : null; } catch {}
+      try { json = text ? JSON.parse(text) : null; } catch { }
       if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
       const groups = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
@@ -510,9 +573,12 @@ export default function OrderDetails() {
         customer_name: match?.customer_name ?? match?.user_name ?? match?.user?.user_name ?? '',
         payment_method: match?.payment_method ?? match?.payment ?? '',
         delivery_address: match?.delivery_address ?? match?.address ?? '',
+        // also expose delivery lat/lng at top-level for easy access
+        delivery_lat: match?.delivery_address?.lat ?? match?.delivery_lat ?? null,
+        delivery_lng: match?.delivery_address?.lng ?? match?.delivery_lng ?? null,
         raw_items: Array.isArray(match?.raw_items) ? match.raw_items
-                  : Array.isArray(match?.items) ? match.items
-                  : [],
+          : Array.isArray(match?.items) ? match.items
+            : [],
         total: match?.total ?? match?.total_amount ?? 0,
         status: (match?.status ?? order?.status ?? 'PENDING').toUpperCase(),
         type: match?.type ?? match?.fulfillment_type ?? match?.delivery_type ?? order?.type ?? '',
@@ -535,9 +601,18 @@ export default function OrderDetails() {
     COMPLETED: 'Order delivered',
   };
 
+  /* ---------- Distance & ETA (Haversine on-device) ---------- */
+  const [routeInfo, setRouteInfo] = useState(null); // { distanceKm, etaMin }
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState('');
+  const [manualPrepMin, setManualPrepMin] = useState(''); // time to prepare (minutes)
+
   const doUpdate = useCallback(async (newStatus, opts = {}) => {
     try {
-      let payload;
+      const currentStatus = (order?.status || 'PENDING').toUpperCase();
+      const fLower = (fulfillment || '').toLowerCase();
+      const needsPrep = fLower === 'delivery' || fLower === 'pickup';
+
       if (newStatus === 'DECLINED') {
         const r = String(opts?.reason ?? '').trim();
         if (r.length < 3) {
@@ -545,11 +620,38 @@ export default function OrderDetails() {
           Alert.alert('Reason required', 'Please provide at least 3 characters explaining why the order is declined.');
           return;
         }
-        payload = { status: 'DECLINED', reason: `Merchant declined: ${r}` };
-      } else {
-        payload = { status: newStatus };
-        if (DEFAULT_REASON[newStatus]) payload.reason = DEFAULT_REASON[newStatus];
+        const payload = { status: 'DECLINED', reason: `Merchant declined: ${r}` };
+
+        setUpdating(true);
+        const token = await SecureStore.getItemAsync('auth_token');
+        const raw = order?.order_code || order?.id || routeOrderId;
+        const orderCode = normalizeOrderCode(raw);
+        await updateStatusApi({ endpoint: ENV_UPDATE_ORDER || '', orderCode, payload, token });
+
+        const patch = { status: 'DECLINED' };
+        setOrder((prev) => ({ ...prev, ...patch }));
+        DeviceEventEmitter.emit('order-updated', { id: routeOrderId || order?.id, patch });
+        return;
       }
+
+      // Make prep time REQUIRED when accepting from PENDING for Delivery or Pickup
+      if (
+        needsPrep &&
+        currentStatus === 'PENDING' &&
+        newStatus === 'CONFIRMED'
+      ) {
+        const prepVal = Number(manualPrepMin);
+        if (!Number.isFinite(prepVal) || prepVal <= 0) {
+          Alert.alert(
+            'Time required',
+            'Please enter the time to prepare (in minutes) before accepting the order.'
+          );
+          return;
+        }
+      }
+
+      let payload = { status: newStatus };
+      if (DEFAULT_REASON[newStatus]) payload.reason = DEFAULT_REASON[newStatus];
 
       // Always send the chosen/active delivery_option
       const deliveryBy =
@@ -557,6 +659,17 @@ export default function OrderDetails() {
           ? (isSelfSelected ? 'SELF' : 'GRAB')
           : (deliveryOptionInitial || '');
       if (deliveryBy) payload.delivery_option = deliveryBy;
+
+      // Attach ETA minutes: prep + delivery (if available)
+      const prepVal = Number(manualPrepMin);
+      const hasPrep = Number.isFinite(prepVal) && prepVal > 0;
+      const deliveryVal = routeInfo?.etaMin ?? null;
+      const hasDelivery = fLower === 'delivery' && deliveryVal != null && Number.isFinite(deliveryVal);
+
+      if (hasPrep || hasDelivery) {
+        const total = (hasPrep ? prepVal : 0) + (hasDelivery ? deliveryVal : 0);
+        if (total > 0) payload.eta_minutes = Math.round(total);
+      }
 
       setUpdating(true);
       const token = await SecureStore.getItemAsync('auth_token');
@@ -567,6 +680,7 @@ export default function OrderDetails() {
 
       const patch = { status: newStatus };
       if (payload.delivery_option) patch.delivery_option = payload.delivery_option;
+      if (payload.eta_minutes) patch.eta_minutes = payload.eta_minutes;
       setOrder((prev) => ({ ...prev, ...patch }));
       DeviceEventEmitter.emit('order-updated', { id: routeOrderId || order?.id, patch });
     } catch (e) {
@@ -574,14 +688,26 @@ export default function OrderDetails() {
     } finally {
       setUpdating(false);
     }
-  }, [routeOrderId, order?.id, order?.order_code, isBothOption, isSelfSelected, isGrabSelected, deliveryOptionInitial]);
+  }, [
+    routeOrderId,
+    order?.id,
+    order?.order_code,
+    order?.status,
+    isBothOption,
+    isSelfSelected,
+    isGrabSelected,
+    deliveryOptionInitial,
+    manualPrepMin,
+    routeInfo,
+    fulfillment,
+  ]);
 
   const next = nextFor(status);
   const primaryLabel = status === 'PENDING'
     ? 'Accept'
     : next
-    ? STATUS_META[next]?.label || 'Next'
-    : null;
+      ? STATUS_META[next]?.label || 'Next'
+      : null;
 
   const onPrimaryAction = useCallback(() => {
     if (!next || updating) return;
@@ -601,6 +727,84 @@ export default function OrderDetails() {
     setDeclineReason('');
   }, [declineReason, doUpdate]);
 
+  /* ---------- Delivery coordinates (from ORDER + address) ---------- */
+  const refCoords = useMemo(() => {
+    const addr = order?.delivery_address;
+    const addrLat = addr ? (addr.lat ?? addr.latitude) : null;
+    const addrLng = addr ? (addr.lng ?? addr.lon ?? addr.longitude) : null;
+
+    const lat =
+      (addrLat != null ? addrLat : null) ??
+      order?.delivery_lat ??
+      order?.lat ??
+      order?.destination?.lat ??
+      order?.geo?.lat ??
+      27.4775469;
+
+    const lng =
+      (addrLng != null ? addrLng : null) ??
+      order?.delivery_lng ??
+      order?.lng ??
+      order?.destination?.lng ??
+      order?.geo?.lng ??
+      89.6387255;
+
+    const cityId =
+      order?.city_id ??
+      order?.city ??
+      (typeof addr === 'object' ? (addr.city ?? addr.town ?? addr.dzongkhag) : null) ??
+      'thimphu';
+
+    return {
+      lat: Number(lat),
+      lng: Number(lng),
+      cityId: String(cityId || 'thimphu').toLowerCase(),
+    };
+  }, [order]);
+
+  /* ---------- Distance & ETA (Haversine on-device) ---------- */
+  useEffect(() => {
+    // Only for delivery-type orders
+    if ((fulfillment || '').toLowerCase() !== 'delivery') {
+      setRouteInfo(null);
+      setRouteError('');
+      return;
+    }
+    if (!businessCoords) return;
+
+    const from = businessCoords;
+    const to = { lat: refCoords.lat, lng: refCoords.lng };
+
+    if (
+      !Number.isFinite(from.lat) || !Number.isFinite(from.lng) ||
+      !Number.isFinite(to.lat) || !Number.isFinite(to.lng)
+    ) {
+      setRouteInfo(null);
+      setRouteError('');
+      return;
+    }
+
+    try {
+      setRouteLoading(true);
+      setRouteError('');
+
+      const distanceKm = computeHaversineKm(from, to); // straight-line distance
+      if (distanceKm == null) {
+        setRouteInfo(null);
+        setRouteError('Failed to compute distance');
+      } else {
+        const avgSpeedKmh = 20; // adjust this if needed
+        const etaMin = distanceKm > 0 ? (distanceKm / avgSpeedKmh) * 60 : 0;
+        setRouteInfo({ distanceKm, etaMin });
+      }
+    } catch (e) {
+      setRouteInfo(null);
+      setRouteError('Failed to compute distance');
+    } finally {
+      setRouteLoading(false);
+    }
+  }, [businessCoords, refCoords.lat, refCoords.lng, fulfillment]);
+
   /* ---------- Nearby drivers (READY + Grab active) ---------- */
   const [drivers, setDrivers] = useState([]);
   const [loadingDrivers, setLoadingDrivers] = useState(false);
@@ -608,13 +812,6 @@ export default function OrderDetails() {
   const [offerPendingDriver, setOfferPendingDriver] = useState(null);
   const [waitingDriverAccept, setWaitingDriverAccept] = useState(false);
   const acceptTimerRef = useRef(null);
-
-  const refCoords = useMemo(() => {
-    const lat = order?.delivery_lat ?? order?.lat ?? order?.destination?.lat ?? order?.geo?.lat ?? 27.4775469;
-    const lng = order?.delivery_lng ?? order?.lng ?? order?.destination?.lng ?? order?.geo?.lng ?? 89.6387255;
-    const cityId = order?.city_id ?? order?.city ?? 'thimphu';
-    return { lat: Number(lat), lng: Number(lng), cityId: String(cityId || 'thimphu').toLowerCase() };
-  }, [order]);
 
   const buildNearby = useCallback(() => expandNearbyUrl(ENV_NEARBY_DRIVERS, {
     cityId: refCoords.cityId, lat: refCoords.lat, lng: refCoords.lng, radiusKm: 5, limit: 20,
@@ -628,7 +825,7 @@ export default function OrderDetails() {
       const resp = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
       const text = await resp.text();
       let json = null;
-      try { json = text ? JSON.parse(text) : null; } catch {}
+      try { json = text ? JSON.parse(text) : null; } catch { }
       if (!resp.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
       return computeAverageRating(json);
     } catch { return null; }
@@ -646,7 +843,7 @@ export default function OrderDetails() {
       const resp = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
       const text = await resp.text();
       let json = null;
-      try { json = text ? JSON.parse(text) : null; } catch {}
+      try { json = text ? JSON.parse(text) : null; } catch { }
       if (!resp.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
 
       let arr = [];
@@ -718,8 +915,47 @@ export default function OrderDetails() {
     return () => sub?.remove?.();
   }, [routeOrderId]);
 
+  /* ---------------- ETA text builder (Delivery) ---------------- */
+  const etaText = useMemo(() => {
+    if (routeLoading) return 'Distance & ETA: calculating…';
+
+    const prepVal = Number(manualPrepMin);
+    const hasPrep = Number.isFinite(prepVal) && prepVal > 0;
+    const distanceKm = routeInfo?.distanceKm;
+    const deliveryVal = routeInfo?.etaMin;
+    const hasDelivery = deliveryVal != null && Number.isFinite(deliveryVal);
+
+    const parts = [];
+
+    if (hasDelivery && distanceKm != null) {
+      parts.push(`Distance: ${distanceKm.toFixed(1)} km`);
+      parts.push(`Delivery time ~${Math.round(deliveryVal)} min`);
+    } else if (hasDelivery) {
+      parts.push(`Delivery time ~${Math.round(deliveryVal)} min`);
+    } else if (routeError) {
+      parts.push('Distance & ETA not available');
+    } else {
+      parts.push('Distance & ETA: —');
+    }
+
+    if (hasPrep) {
+      const detailLine = hasDelivery
+        ? `Prep ~${Math.round(prepVal)} min + Delivery ~${Math.round(deliveryVal)} min`
+        : `Prep time ~${Math.round(prepVal)} min`;
+
+      const total = prepVal + (hasDelivery ? deliveryVal : 0);
+      const totalLine = `Total time ~${Math.round(total)} min`;
+
+      parts.push(detailLine);
+      parts.push(totalLine);
+    }
+
+    return parts.join('\n');
+  }, [routeLoading, routeInfo, routeError, manualPrepMin]);
+
   /* ---------------- UI ---------------- */
   const headerTopPad = Math.max(insets.top, 8) + 18;
+  const fulfillmentLower = (fulfillment || '').toLowerCase();
 
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
@@ -754,12 +990,12 @@ export default function OrderDetails() {
 
           {/* Steps */}
           <View style={styles.stepsRow}>
-            {['PENDING','CONFIRMED','READY','OUT_FOR_DELIVERY','COMPLETED'].map((k, i) => {
+            {STATUS_SEQUENCE.map((k, i) => {
               const isActiveStep = k === status;
               const done = isTerminalSuccess ? true : !isTerminalNegative && i <= progressIndex;
               const fill = done;
               let ring = '#cbd5e1';
-              if (isTerminalNegative) ring = isActiveStep ? (STATUS_META.DECLINED.color) : '#cbd5e1';
+              if (isTerminalNegative) ring = isActiveStep ? STATUS_META.DECLINED.color : '#cbd5e1';
               else if (isTerminalSuccess) ring = '#16a34a';
               else ring = (done || isActiveStep) ? '#16a34a' : '#cbd5e1';
               const dimmed = !isActiveStep && !(done || isTerminalSuccess);
@@ -785,8 +1021,79 @@ export default function OrderDetails() {
             <Row icon="bicycle-outline" text={`Fulfillment: ${fulfillment || '—'}`} />
             <Row icon="swap-horizontal-outline" text={`Delivery by: ${deliveryOptionDisplay || '—'}`} />
             <Row icon="card-outline" text={`Payment: ${order.payment_method || '—'}`} />
-            {/* SAFE: delivery_address can be object or string */}
-            <Row icon="navigate-outline" text={order.delivery_address || '—'} />
+
+            {/* Hide delivery location when fulfillment is Pickup */}
+            {fulfillmentLower !== 'pickup' && (
+              <Row icon="navigate-outline" text={order.delivery_address || '—'} />
+            )}
+
+            {/* Delivery: ETA text + prep time (editable only while PENDING) */}
+            {fulfillmentLower === 'delivery' && (
+              <>
+                <Row icon="map-outline" text={etaText} />
+
+                {status === 'PENDING' ? (
+                  // While pending: allow typing prep time
+                  <View style={styles.timeRow}>
+                    <Ionicons name="time-outline" size={16} color="#64748b" />
+                    <TextInput
+                      placeholder="Time to prepare (minutes)"
+                      keyboardType="numeric"
+                      value={manualPrepMin}
+                      onChangeText={setManualPrepMin}
+                      style={styles.timeInput}
+                    />
+                  </View>
+                ) : (
+                  // After accepted: show the typed time instead of an input
+                  <View style={styles.timeRow}>
+                    <Ionicons name="time-outline" size={16} color="#64748b" />
+                    <Text style={styles.timeHint}>
+                      Time to prepare
+                      {Number(manualPrepMin) > 0
+                        ? ` ~${Math.round(Number(manualPrepMin))} min`
+                        : ' not set'}
+                    </Text>
+                  </View>
+                )}
+              </>
+            )}
+
+            {/* Pickup/Self: prep time (input only while PENDING) + estimated ready time */}
+            {fulfillmentLower === 'pickup' && (
+              <View style={styles.timeBlock}>
+                {status === 'PENDING' ? (
+                  // While pending: allow typing prep time
+                  <View style={styles.timeRow}>
+                    <Ionicons name="time-outline" size={16} color="#64748b" />
+                    <TextInput
+                      placeholder="Time to prepare (minutes)"
+                      keyboardType="numeric"
+                      value={manualPrepMin}
+                      onChangeText={setManualPrepMin}
+                      style={styles.timeInput}
+                    />
+                  </View>
+                ) : (
+                  // After accepted: show the typed time instead of an input
+                  <View style={styles.timeRow}>
+                    <Ionicons name="time-outline" size={16} color="#64748b" />
+                    <Text style={styles.timeHint}>
+                      Time to prepare
+                      {Number(manualPrepMin) > 0
+                        ? ` ~${Math.round(Number(manualPrepMin))} min`
+                        : ' not set'}
+                    </Text>
+                  </View>
+                )}
+
+                {Number(manualPrepMin) > 0 && (
+                  <Text style={styles.timeHint}>
+                    Estimated time to get ready ~{Math.round(Number(manualPrepMin))} min
+                  </Text>
+                )}
+              </View>
+            )}
           </View>
 
           {/* Restaurant note */}
@@ -820,15 +1127,15 @@ export default function OrderDetails() {
             </View>
             <Text style={styles.segmentHint}>
               {isSelfSelected
-                ? 'Proceed directly to Out for delivery.'
+                ? 'Proceed directly to Ready.'
                 : isGrabSelected
-                ? 'Assign a driver below to continue.'
-                : 'Pick one to continue.'}
+                  ? 'Assign a driver below to continue.'
+                  : 'Pick one to continue.'}
             </Text>
           </View>
         )}
 
-        {/* Update actions */}
+        {/* Update status actions */}
         <Text style={styles.sectionTitle}>Update status</Text>
         {isTerminalNegative || isTerminalSuccess ? (
           <Text style={styles.terminalNote}>No further actions.</Text>
@@ -858,7 +1165,7 @@ export default function OrderDetails() {
               <>
                 {primaryLabel ? (
                   <Pressable
-                    onPress={() => { if (primaryLabel) { const n = next; if (n) onPrimaryAction(); }}}
+                    onPress={() => { if (next) onPrimaryAction(); }}
                     disabled={
                       updating ||
                       (status === 'READY' && (
@@ -867,8 +1174,8 @@ export default function OrderDetails() {
                     }
                     style={({ pressed }) => [styles.primaryBtn, {
                       opacity: (updating ||
-                               (status === 'READY' && ((isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB'))) ||
-                               pressed) ? 0.85 : 1
+                        (status === 'READY' && ((isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB'))) ||
+                        pressed) ? 0.85 : 1
                     }]}
                   >
                     <Ionicons name="arrow-forward-circle" size={18} color="#fff" />
@@ -1118,7 +1425,14 @@ const styles = StyleSheet.create({
   },
   secondaryBtnText: { fontWeight: '800' },
 
-  block: { backgroundColor: '#fff', borderRadius: 16, padding: 14, borderWidth: 1, borderColor: '#e2e8f0', marginTop: 12 },
+  block: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginTop: 12,
+  },
   blockTitle: { fontWeight: '800', color: '#0f172a' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   rowText: { color: '#475569', fontWeight: '600', flex: 1 },
@@ -1132,6 +1446,33 @@ const styles = StyleSheet.create({
   totValue: { color: '#0f172a', fontWeight: '700' },
   totLabelStrong: { color: '#0f172a', fontWeight: '800' },
   totValueStrong: { color: '#0f172a', fontWeight: '900' },
+
+  // Manual time input
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  timeInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 13,
+    color: '#0f172a',
+  },
+  timeBlock: {
+    marginTop: 4,
+  },
+  timeHint: {
+    marginTop: 4,
+    color: '#0f172a',
+    fontWeight: '700',
+    fontSize: 12,
+  },
 
   // Modal
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center', padding: 24 },
@@ -1165,6 +1506,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10,
   },
   waitingText: { color: '#1d4ed8', fontWeight: '800' },
-  infoHint: { flexDirection: 'row', gap: 8, alignItems: 'center', backgroundColor: '#eef2ff', borderColor: '#c7d2fe', borderWidth: 1, padding: 10, borderRadius: 10 },
+  infoHint: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+    backgroundColor: '#eef2ff',
+    borderColor: '#c7d2fe',
+    borderWidth: 1,
+    padding: 10,
+    borderRadius: 10,
+  },
   infoHintText: { color: '#3730a3', fontWeight: '700', flex: 1 },
 });

@@ -33,10 +33,9 @@ import {
   PROMOS_FOOD_ENDPOINT,
   PROMOS_MART_ENDPOINT,
   MEDIA_BASE_URL,
-  STATUS_COUNT_ENDPOINT as ENV_STATUS_COUNT_ENDPOINT, // ✅ FINAL KPI SOURCE
+  STATUS_COUNT_ENDPOINT as ENV_STATUS_COUNT_ENDPOINT,
 } from '@env';
 
-// Tabs / footer
 import HomeTab from './HomeTab';
 import OrdersTab from './OrderTab';
 import FoodAddMenuTab from './AddMenuTab';
@@ -62,7 +61,6 @@ const DEFAULT_DEV_ORIGIN = Platform.select({
   default: 'http://localhost:3000',
 });
 
-// Auto-refresh cadence (while this screen is focused & app is active)
 const HEADER_REFRESH_MS = 12000;
 
 const normalizeOwnerType = (v) => {
@@ -97,7 +95,9 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
     const res = await fetch(url, { ...options, signal: controller.signal });
     const text = await res.text();
     let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch { }
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch { }
     if (!res.ok) {
       const msg = (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
       throw new Error(msg);
@@ -108,7 +108,6 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
   }
 }
 
-// Where to GET the logged-in merchant (token auth) if needed
 const getBaseOrigin = () => {
   try {
     if (typeof globalThis.URL === 'function' && LOGIN_USERNAME_MERCHANT_ENDPOINT) {
@@ -124,7 +123,7 @@ const candidateProfileUrls = () => {
 
 /* ───────────────────────── ENV-ONLY image URL helpers ───────────────────────── */
 const BASE_MERCHANT = String(MERCHANT_LOGO || MEDIA_BASE_URL || '').replace(/\/+$/, '');
-const BASE_PROFILE  = String(PROFILE_IMAGE_ENDPOINT || MEDIA_BASE_URL || '').replace(/\/+$/, '');
+const BASE_PROFILE = String(PROFILE_IMAGE_ENDPOINT || MEDIA_BASE_URL || '').replace(/\/+$/, '');
 
 const makeEnvImageUrl = (input, kind = 'merchant') => {
   if (!input) return null;
@@ -149,7 +148,6 @@ const makeEnvImageUrl = (input, kind = 'merchant') => {
 
 const money = (n, c = 'Nu') => `${c} ${Number(n ?? 0).toFixed(2)}`;
 
-// 🔐 get auth header for protected endpoints
 async function getAuthHeader() {
   try {
     const raw = await SecureStore.getItemAsync('merchant_login');
@@ -169,30 +167,26 @@ async function getAuthHeader() {
 const UP = (s) => String(s || '').toUpperCase();
 
 const DEFAULT_KPIS = {
-  salesToday: 0,              // counts endpoint can't compute this
+  salesToday: 0,
   salesCurrency: 'Nu',
   activeOrders: 0,
-  cancellations: 0,           // total cancels (not "today") from counts
-  acceptanceRate: 0,          // accepted / (accepted + cancels) using counts
-  perStatus: {},              // map of status -> count
-  totalsByStatus: {},         // N/A with counts; keep empty
+  cancellations: 0,
+  acceptanceRate: 0,
+  perStatus: {},
+  totalsByStatus: {},
   lastUpdatedAt: null,
 };
 
-// Which statuses are considered "active" per module (food has PREPARING tab)
-const ACTIVE_FOOD = ['PENDING','CONFIRMED','PREPARING','READY','OUT_FOR_DELIVERY'];
-const ACTIVE_MART = ['PENDING','CONFIRMED','READY','OUT_FOR_DELIVERY'];
-const CANCEL_SET  = new Set(['CANCELLED','CANCELED','REJECTED','DECLINED']);
+const ACTIVE_FOOD = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY'];
+const ACTIVE_MART = ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY'];
+const CANCEL_SET = new Set(['CANCELLED', 'CANCELED', 'REJECTED', 'DECLINED']);
 
-// Build URL from .env template
 const buildStatusCountsUrl = (businessId) => {
   const tpl = (ENV_STATUS_COUNT_ENDPOINT || '').trim();
   if (!tpl) return '';
-  // template uses {business_id}
   return tpl.replace('{business_id}', encodeURIComponent(String(businessId)));
 };
 
-// Turn the counts JSON into KPIs
 function kpisFromStatusCounts(counts = {}, ownerType = 'food') {
   const entries = Object.entries(counts || {});
   const perStatus = {};
@@ -212,10 +206,7 @@ function kpisFromStatusCounts(counts = {}, ownerType = 'food') {
     if (activeSet.has(k)) activeOrders += v;
   }
 
-  // ✅ New field from backend:
-  // "order_declined_today": number of today's declines/cancels
   const cancelledToday = Number(counts?.order_declined_today || 0);
-
   const accepted = Math.max(0, total - cancels);
   const acceptanceRate = total > 0 ? Math.round((accepted / total) * 100) : 0;
 
@@ -223,14 +214,13 @@ function kpisFromStatusCounts(counts = {}, ownerType = 'food') {
     salesToday: 0,
     salesCurrency: 'Nu',
     activeOrders,
-    cancellations: cancelledToday, // ✅ use daily cancels from API
+    cancellations: cancelledToday,
     acceptanceRate,
     perStatus,
     totalsByStatus: {},
     lastUpdatedAt: new Date().toISOString(),
   };
 }
-
 
 export default function GrabMerchantHomeScreen() {
   const route = useRoute();
@@ -248,7 +238,6 @@ export default function GrabMerchantHomeScreen() {
   const fabBottom = bottomBarHeight + 20;
   const avatarSize = isTablet ? 56 : isLargePhone ? 48 : 44;
 
-  // ───────── Merchant & UI state ─────────
   const [merchantName, setMerchantName] = useState(DEFAULT_NAME);
   const [merchantLogo, setMerchantLogo] = useState(null);
   const [profileAvatar, setProfileAvatar] = useState(null);
@@ -269,7 +258,6 @@ export default function GrabMerchantHomeScreen() {
 
   const isFood = ownerType === 'food';
 
-  // cache-buster
   const [logoVersion, setLogoVersion] = useState(0);
   const addBuster = (u, v) => {
     if (!u) return u;
@@ -278,17 +266,14 @@ export default function GrabMerchantHomeScreen() {
     return `${u}${sep}v=${v}`;
   };
 
-  // ───────── KPIs state ─────────
   const [kpis, setKpis] = useState(DEFAULT_KPIS);
 
-  // NEW: delivery option state (SELF | GRAB | BOTH, etc.)
-  const [deliveryOption, setDeliveryOption] = useState(                  // NEW
-    (route?.params?.delivery_option || route?.params?.deliveryOption || '') // NEW
+  const [deliveryOption, setDeliveryOption] = useState(
+    (route?.params?.delivery_option || route?.params?.deliveryOption || '')
       ? String(route.params.delivery_option || route.params.deliveryOption).toUpperCase()
-      : null                                                                // NEW
-  );                                                                        // NEW
+      : null
+  );
 
-  // Central service config (tabs can choose paths by kind)
   const serviceConfig = React.useMemo(() => {
     const base = getBaseOrigin();
 
@@ -325,7 +310,6 @@ export default function GrabMerchantHomeScreen() {
     };
   }, [ownerType]);
 
-  // sync params outward
   useEffect(() => {
     navigation.setParams({
       businessId,
@@ -338,11 +322,22 @@ export default function GrabMerchantHomeScreen() {
       business_address: businessAddress,
       business_license: businessLicense,
       serviceConfig,
-      delivery_option: deliveryOption, // NEW
+      delivery_option: deliveryOption,
     });
-  }, [navigation, businessId, ownerType, userId, authContext, merchantName, merchantLogo, businessAddress, businessLicense, serviceConfig, deliveryOption]); // NEW
+  }, [
+    navigation,
+    businessId,
+    ownerType,
+    userId,
+    authContext,
+    merchantName,
+    merchantLogo,
+    businessAddress,
+    businessLicense,
+    serviceConfig,
+    deliveryOption,
+  ]);
 
-  // Build profile/business endpoints
   const buildProfileUrl = useCallback((uid) => {
     if (!uid || !PROFILE_ENDPOINT) return '';
     const base = normalizeHost((PROFILE_ENDPOINT || '').trim()).replace(/\/+$/, '');
@@ -354,7 +349,6 @@ export default function GrabMerchantHomeScreen() {
     return `${base}/${encodeURIComponent(String(bid))}`;
   }, []);
 
-  // snapshot helper
   const headerSnapRef = useRef({ name: null, addr: null, logo: null, profile: null });
 
   const applyHeaderIfChanged = useCallback((payload = {}) => {
@@ -362,7 +356,12 @@ export default function GrabMerchantHomeScreen() {
       name: payload.business_name ?? payload.name ?? null,
       addr: payload.business_address ?? payload.address ?? payload.location ?? null,
       logo: payload.business_logo ?? payload.logo_url ?? null,
-      profile: payload.profile_image ?? payload.avatar ?? payload.profile_photo ?? payload.photo_url ?? null,
+      profile:
+        payload.profile_image ??
+        payload.avatar ??
+        payload.profile_photo ??
+        payload.photo_url ??
+        null,
     };
 
     let bumped = false;
@@ -394,192 +393,267 @@ export default function GrabMerchantHomeScreen() {
     if (bumped) setLogoVersion((v) => v + 1);
   }, []);
 
-  // Hydrate from SecureStore
   const loadFromStore = useCallback(async () => {
     try {
-      const raw = await SecureStore.getItemAsync('merchant_login');
+      const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
       if (!raw) return;
       let blob = {};
-      try { blob = JSON.parse(raw); } catch { }
+      try {
+        blob = JSON.parse(raw);
+      } catch { }
       const user = blob?.user ?? blob;
 
+      // 🔑 pull token from merchant_login / auth_token and push into authContext
+      let token =
+        (blob?.token && typeof blob.token === 'string' && blob.token) ||
+        (blob?.token?.access_token ?? null);
+      if (!token) {
+        const stored = await SecureStore.getItemAsync(KEY_AUTH_TOKEN);
+        if (stored && String(stored).trim()) token = String(stored).trim();
+      }
+
+      setAuthContext((prev) => ({
+        ...(prev || {}),
+        token: token || null,
+        raw: blob,
+        user,
+      }));
+
       const idCandidates = [
-        blob?.user?.user_id, blob?.user?.id, blob?.user_id, blob?.id, blob?.merchant?.user_id, blob?.merchant?.id,
-      ].filter(v => v !== undefined && v !== null && v !== '');
+        blob?.user?.user_id,
+        blob?.user?.id,
+        blob?.user_id,
+        blob?.id,
+        blob?.merchant?.user_id,
+        blob?.merchant?.id,
+      ].filter((v) => v !== undefined && v !== null && v !== '');
       if (!userId && idCandidates.length) setUserId(String(idCandidates[0]));
 
       applyHeaderIfChanged({
         business_name: blob?.business_name ?? user?.business_name,
-        business_address: user?.business_address ?? user?.address ?? user?.location ?? blob?.business_address ?? blob?.address,
+        business_address:
+          user?.business_address ??
+          user?.address ??
+          user?.location ??
+          blob?.business_address ??
+          blob?.address,
         business_logo: blob?.business_logo ?? user?.business_logo ?? user?.logo_url,
-        profile_image: blob?.profile_image ?? user?.profile_image ?? user?.avatar ?? user?.profile_photo ?? user?.photo_url,
+        profile_image:
+          blob?.profile_image ??
+          user?.profile_image ??
+          user?.avatar ??
+          user?.profile_photo ??
+          user?.photo_url,
       });
 
-      const bidCandidate = user?.business_id || user?.id || blob?.business_id || blob?.id || null;
+      const bidCandidate =
+        user?.business_id || user?.id || blob?.business_id || blob?.id || null;
       if (bidCandidate) setBusinessId(String(bidCandidate));
 
       maybeApplyKind(user?.owner_type ?? blob?.owner_type, setOwnerType);
 
       const licenseCandidate =
-        blob?.business_license || user?.business_license || user?.business_license_number || blob?.business_license_number || '';
+        blob?.business_license ||
+        user?.business_license ||
+        user?.business_license_number ||
+        blob?.business_license_number ||
+        '';
       if (licenseCandidate) setBusinessLicense(String(licenseCandidate));
 
-      // NEW: hydrate delivery_option from store if present
       const storedDelivery =
         (blob?.delivery_option || user?.delivery_option || user?.deliveryOption || '')
           ?.toString()
           ?.toUpperCase();
-      if (storedDelivery && !deliveryOption) setDeliveryOption(storedDelivery); // NEW
+      if (storedDelivery && !deliveryOption) setDeliveryOption(storedDelivery);
     } catch { }
-  }, [userId, applyHeaderIfChanged, deliveryOption]); // NEW dep
+  }, [userId, applyHeaderIfChanged, deliveryOption]);
 
-  // Authoritative: fetch from PROFILE_ENDPOINT/:userId
-  const loadFromBackend = useCallback(async (uid) => {
-    const url = buildProfileUrl(uid);
-    if (!url) return;
-    try {
-      const data = await fetchJSON(url, { method: 'GET' });
-      applyHeaderIfChanged(data);
-      maybeApplyKind(data?.owner_type, setOwnerType);
-
-      const bid = data?.business_id ?? data?.id ?? null;
-      if (bid) setBusinessId(String(bid));
-
-      const license = data?.business_license || data?.business_license_number || '';
-      if (license) setBusinessLicense(String(license));
-
-      // NEW: capture delivery option from profile response
-      if (data?.delivery_option && !deliveryOption) {
-        setDeliveryOption(String(data.delivery_option).toUpperCase());
-      }
-
-      // persist minimal fields
+  const loadFromBackend = useCallback(
+    async (uid) => {
+      const url = buildProfileUrl(uid);
+      if (!url) return;
       try {
-        const raw = await SecureStore.getItemAsync('merchant_login');
-        let blob = {};
-        try { blob = raw ? JSON.parse(raw) : {}; } catch { }
-        const providedKind = (data?.owner_type != null && String(data.owner_type).trim() !== '')
-          ? normalizeOwnerType(data.owner_type)
-          : null;
+        const data = await fetchJSON(url, { method: 'GET' });
+        applyHeaderIfChanged(data);
+        maybeApplyKind(data?.owner_type, setOwnerType);
 
-        const merged = {
-          ...blob,
-          business_license: license || blob?.business_license,
-          business_name: data?.business_name ?? blob?.business_name,
-          business_address: (data?.business_address ?? data?.address ?? data?.location) ?? blob?.business_address,
-          business_logo: data?.business_logo ?? blob?.business_logo,
-          profile_image: data?.profile_image ?? blob?.profile_image,
-          owner_type: providedKind ?? (blob?.owner_type ?? ownerType),
-          business_id: (data?.business_id ?? data?.id) ?? blob?.business_id,
-          user_id: data?.user_id ?? blob?.user_id,
-          delivery_option: (data?.delivery_option || blob?.delivery_option || '').toString().toUpperCase(), // NEW
-          user: {
-            ...(blob.user || {}),
-            business_license: license || blob?.user?.business_license,
-            business_name: data?.business_name ?? blob?.user?.business_name,
-            business_address: (data?.business_address ?? data?.address ?? data?.location) ?? blob?.user?.business_address,
-            business_logo: data?.business_logo ?? blob?.user?.business_logo,
-            owner_type: providedKind ?? (blob?.user?.owner_type ?? ownerType),
-            business_id: (data?.business_id ?? data?.id) ?? blob?.user?.business_id,
-            user_id: data?.user_id ?? blob?.user?.user_id,
-            delivery_option: (data?.delivery_option || blob?.user?.delivery_option || '').toString().toUpperCase(), // NEW
-          },
-        };
-        await SecureStore.setItemAsync('merchant_login', JSON.stringify(merged));
-      } catch { }
-    } catch (e) {
-      if (__DEV__) console.log('[Home] profile fetch failed:', e?.message);
-    }
-  }, [buildProfileUrl, ownerType, applyHeaderIfChanged, deliveryOption]); // NEW dep
+        const bid = data?.business_id ?? data?.id ?? null;
+        if (bid) setBusinessId(String(bid));
 
-  // Business details by businessId
-  const loadBusinessFromBackend = useCallback(async (bid) => {
-    const url = buildBusinessUrl(bid);
-    if (!url) return;
-    try {
-      const data = await fetchJSON(url, { method: 'GET' });
+        const license = data?.business_license || data?.business_license_number || '';
+        if (license) setBusinessLicense(String(license));
 
-      applyHeaderIfChanged({
-        business_name: data?.business_name ?? data?.name,
-        business_address: data?.business_address ?? data?.address ?? data?.location,
-        business_logo: data?.business_logo,
-      });
-
-      // persist minimal fields
-      try {
-        const raw = await SecureStore.getItemAsync('merchant_login');
-        const blob = raw ? JSON.parse(raw) : {};
-        const merged = {
-          ...blob,
-          business_name: (data?.business_name ?? data?.name) ?? blob?.business_name,
-          business_address: (data?.business_address ?? data?.address ?? data?.location) ?? blob?.business_address,
-          business_logo: data?.business_logo ?? blob?.business_logo,
-          business_id: bid ?? blob?.business_id,
-          user: {
-            ...(blob.user || {}),
-            business_name: (data?.business_name ?? data?.name) ?? blob?.user?.business_name,
-            business_address: (data?.business_address ?? data?.address ?? data?.location) ?? blob?.user?.business_address,
-            business_logo: data?.business_logo ?? blob?.user?.business_logo,
-            business_id: bid ?? blob?.user?.business_id,
-          },
-        };
-        await SecureStore.setItemAsync('merchant_login', JSON.stringify(merged));
-      } catch { }
-    } catch (e) {
-      if (__DEV__) console.log('[Home] loadBusinessFromBackend failed:', e?.message);
-    }
-  }, [buildBusinessUrl, applyHeaderIfChanged]);
-
-  // Token-based “/me” fetch
-  const refreshFromServerMe = useCallback(async () => {
-    try {
-      const raw = await SecureStore.getItemAsync('merchant_login');
-      const parsed = raw ? JSON.parse(raw) : null;
-      const token =
-        parsed?.token?.access_token ||
-        parsed?.token ||
-        (await SecureStore.getItemAsync(KEY_AUTH_TOKEN));
-      if (!token) return;
-
-      for (const url of candidateProfileUrls()) {
-        try {
-          const res = await fetch(url, {
-            headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
-          });
-          if (!res.ok) continue;
-          const data = await res.json();
-          const user = data?.user ?? data;
-
-          applyHeaderIfChanged({
-            business_name: user?.business_name,
-            business_address: user?.business_address ?? user?.address ?? user?.location,
-            business_logo: user?.logo_url ?? user?.business_logo,
-            profile_image: user?.profile_photo ?? user?.avatar ?? user?.profile_image ?? user?.photo_url,
-          });
-
-          maybeApplyKind(user?.owner_type, setOwnerType);
-
-          const bid = user?.business_id || user?.id || data?.business_id || null;
-          if (bid) setBusinessId(String(bid));
-
-          // NEW: hydrate from /me if present
-          if (user?.delivery_option && !deliveryOption) {
-            setDeliveryOption(String(user.delivery_option).toUpperCase());
-          }
-
-          const merged = { ...(parsed || {}), user: { ...(parsed?.user || {}), ...user } };
-          await SecureStore.setItemAsync('merchant_login', JSON.stringify(merged));
-          break;
-        } catch (e) {
-          if (__DEV__) console.log('[Home] /me fetch failed for', url, e?.message);
+        if (data?.delivery_option && !deliveryOption) {
+          setDeliveryOption(String(data.delivery_option).toUpperCase());
         }
-      }
-    } catch (e) {
-      if (__DEV__) console.log('[Home] refreshFromServerMe unexpected:', e?.message);
-    }
-  }, [applyHeaderIfChanged, deliveryOption]); // NEW dep
 
-  /* ──────────── KPI fetch (only .env STATUS_COUNT_ENDPOINT) ──────────── */
+        try {
+          const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
+          let blob = {};
+          try {
+            blob = raw ? JSON.parse(raw) : {};
+          } catch { }
+          const providedKind =
+            data?.owner_type != null && String(data.owner_type).trim() !== ''
+              ? normalizeOwnerType(data.owner_type)
+              : null;
+
+          const merged = {
+            ...blob,
+            business_license: license || blob?.business_license,
+            business_name: data?.business_name ?? blob?.business_name,
+            business_address:
+              (data?.business_address ?? data?.address ?? data?.location) ??
+              blob?.business_address,
+            business_logo: data?.business_logo ?? blob?.business_logo,
+            owner_type: providedKind ?? (blob?.owner_type ?? ownerType),
+            business_id: (data?.business_id ?? data?.id) ?? blob?.business_id,
+            user_id: data?.user_id ?? blob?.user_id,
+            delivery_option: (
+              data?.delivery_option ||
+              blob?.delivery_option ||
+              ''
+            )
+              .toString()
+              .toUpperCase(),
+            user: {
+              ...(blob.user || {}),
+              business_license: license || blob?.user?.business_license,
+              business_name: data?.business_name ?? blob?.user?.business_name,
+              business_address:
+                (data?.business_address ?? data?.address ?? data?.location) ??
+                blob?.user?.business_address,
+              business_logo: data?.business_logo ?? blob?.user?.business_logo,
+              owner_type: providedKind ?? (blob?.user?.owner_type ?? ownerType),
+              business_id: (data?.business_id ?? data?.id) ?? blob?.user?.business_id,
+              user_id: data?.user_id ?? blob?.user?.user_id,
+              delivery_option: (
+                data?.delivery_option ||
+                blob?.user?.delivery_option ||
+                ''
+              )
+                .toString()
+                .toUpperCase(),
+            },
+          };
+          await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
+        } catch { }
+      } catch (e) {
+        if (__DEV__) console.log('[Home] profile fetch failed:', e?.message);
+      }
+    },
+    [buildProfileUrl, ownerType, applyHeaderIfChanged, deliveryOption]
+  );
+
+  const loadBusinessFromBackend = useCallback(
+    async (bid) => {
+      const url = buildBusinessUrl(bid);
+      if (!url) return;
+      try {
+        const data = await fetchJSON(url, { method: 'GET' });
+
+        applyHeaderIfChanged({
+          business_name: data?.business_name ?? data?.name,
+          business_address: data?.business_address ?? data?.address ?? data?.location,
+          business_logo: data?.business_logo,
+        });
+
+        try {
+          const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
+          const blob = raw ? JSON.parse(raw) : {};
+          const merged = {
+            ...blob,
+            business_name:
+              (data?.business_name ?? data?.name) ?? blob?.business_name,
+            business_address:
+              (data?.business_address ?? data?.address ?? data?.location) ??
+              blob?.business_address,
+            business_logo: data?.business_logo ?? blob?.business_logo,
+            business_id: bid ?? blob?.business_id,
+            user: {
+              ...(blob.user || {}),
+              business_name:
+                (data?.business_name ?? data?.name) ?? blob?.user?.business_name,
+              business_address:
+                (data?.business_address ?? data?.address ?? data?.location) ??
+                blob?.user?.business_address,
+              business_logo: data?.business_logo ?? blob?.user?.business_logo,
+              business_id: bid ?? blob?.user?.business_id,
+            },
+          };
+          await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
+        } catch { }
+      } catch (e) {
+        if (__DEV__) console.log('[Home] loadBusinessFromBackend failed:', e?.message);
+      }
+    },
+    [buildBusinessUrl, applyHeaderIfChanged]
+  );
+
+  const refreshFromServerMe = useCallback(
+    async () => {
+      try {
+        const raw = await SecureStore.getItemAsync('merchant_login');
+        const parsed = raw ? JSON.parse(raw) : null;
+        const token =
+          parsed?.token?.access_token ||
+          parsed?.token ||
+          (await SecureStore.getItemAsync(KEY_AUTH_TOKEN));
+        if (!token) return;
+
+        for (const url of candidateProfileUrls()) {
+          try {
+            const res = await fetch(url, {
+              headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+            });
+            if (!res.ok) continue;
+            const data = await res.json();
+            const user = data?.user ?? data;
+
+            applyHeaderIfChanged({
+              business_name: user?.business_name,
+              business_address:
+                user?.business_address ?? user?.address ?? user?.location,
+              business_logo: user?.logo_url ?? user?.business_logo,
+              profile_image:
+                user?.profile_photo ??
+                user?.avatar ??
+                user?.profile_image ??
+                user?.photo_url,
+            });
+
+            maybeApplyKind(user?.owner_type, setOwnerType);
+
+            const bid = user?.business_id || user?.id || data?.business_id || null;
+            if (bid) setBusinessId(String(bid));
+
+            if (user?.delivery_option && !deliveryOption) {
+              setDeliveryOption(String(user.delivery_option).toUpperCase());
+            }
+
+            const merged = { ...(parsed || {}), user: { ...(parsed?.user || {}), ...user } };
+            await SecureStore.setItemAsync('merchant_login', JSON.stringify(merged));
+
+            // keep authContext token in sync
+            setAuthContext((prev) => ({
+              ...(prev || {}),
+              token,
+              raw: merged,
+              user,
+            }));
+
+            break;
+          } catch (e) {
+            if (__DEV__) console.log('[Home] /me fetch failed for', url, e?.message);
+          }
+        }
+      } catch (e) {
+        if (__DEV__) console.log('[Home] refreshFromServerMe unexpected:', e?.message);
+      }
+    },
+    [applyHeaderIfChanged, deliveryOption]
+  );
+
   const fetchKpis = useCallback(async (bid, kind) => {
     const business = String(bid || '').trim();
     if (!business) return;
@@ -591,21 +665,17 @@ export default function GrabMerchantHomeScreen() {
         ...(await getAuthHeader()),
       };
 
-      const url = buildStatusCountsUrl(business); // 🔗 from .env only
+      const url = buildStatusCountsUrl(business);
       if (!url) return;
 
       const payload = await fetchJSON(url, { headers });
-      // payload is an object map of status -> count
       const next = kpisFromStatusCounts(payload, kind);
       setKpis(next);
     } catch (e) {
       if (__DEV__) console.log('[KPI] status-count fetch failed:', e?.message);
-      // keep last KPIs on error
     }
   }, []);
-  /* ──────────── end KPI fetch ──────────── */
 
-  // Initial
   useEffect(() => {
     (async () => {
       await loadFromStore();
@@ -622,15 +692,31 @@ export default function GrabMerchantHomeScreen() {
       }
       if (route?.params?.authContext) setAuthContext(route.params.authContext);
 
-      // NEW: accept delivery option from initial params on first mount
-      if ((route?.params?.delivery_option || route?.params?.deliveryOption) && !deliveryOption) {
-        setDeliveryOption(String(route.params.delivery_option || route.params.deliveryOption).toUpperCase());
+      if (
+        (route?.params?.delivery_option || route?.params?.deliveryOption) &&
+        !deliveryOption
+      ) {
+        setDeliveryOption(
+          String(route.params.delivery_option || route.params.deliveryOption).toUpperCase()
+        );
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route?.params?.user_id]);
+  }, [
+    route?.params?.user_id,
+    loadFromStore,
+    userId,
+    loadFromBackend,
+    refreshFromServerMe,
+    businessId,
+    ownerType,
+    loadBusinessFromBackend,
+    fetchKpis,
+    deliveryOption,
+    route?.params?.delivery_option,
+    route?.params?.deliveryOption,
+    route?.params?.authContext,
+  ]);
 
-  // On focus → refresh once
   useEffect(() => {
     const unsub = navigation.addListener('focus', async () => {
       await loadFromStore();
@@ -642,9 +728,18 @@ export default function GrabMerchantHomeScreen() {
       }
     });
     return unsub;
-  }, [navigation, userId, route?.params?.user_id, businessId, ownerType, loadFromStore, loadFromBackend, loadBusinessFromBackend, fetchKpis]);
+  }, [
+    navigation,
+    userId,
+    route?.params?.user_id,
+    businessId,
+    ownerType,
+    loadFromStore,
+    loadFromBackend,
+    loadBusinessFromBackend,
+    fetchKpis,
+  ]);
 
-  // Foreground refresh
   useEffect(() => {
     const sub = AppState.addEventListener('change', async (s) => {
       if (s === 'active') {
@@ -658,9 +753,17 @@ export default function GrabMerchantHomeScreen() {
       }
     });
     return () => sub.remove();
-  }, [userId, route?.params?.user_id, businessId, ownerType, loadFromBackend, loadFromStore, loadBusinessFromBackend, fetchKpis]);
+  }, [
+    userId,
+    route?.params?.user_id,
+    businessId,
+    ownerType,
+    loadFromBackend,
+    loadFromStore,
+    loadBusinessFromBackend,
+    fetchKpis,
+  ]);
 
-  // Focused auto-refresh loop for header + KPIs
   useEffect(() => {
     let timer = null;
     let isActive = true;
@@ -683,18 +786,36 @@ export default function GrabMerchantHomeScreen() {
       timer = null;
     };
 
-    const onFocus = () => { isActive = true; start(); };
-    const onBlur = () => { isActive = false; stop(); };
+    const onFocus = () => {
+      isActive = true;
+      start();
+    };
+    const onBlur = () => {
+      isActive = false;
+      stop();
+    };
 
     const unsubFocus = navigation.addListener('focus', onFocus);
     const unsubBlur = navigation.addListener('blur', onBlur);
 
     if (navigation.isFocused?.()) onFocus();
 
-    return () => { stop(); unsubFocus(); unsubBlur(); };
-  }, [navigation, businessId, userId, route?.params?.user_id, ownerType, loadBusinessFromBackend, loadFromBackend, fetchKpis]);
+    return () => {
+      stop();
+      unsubFocus();
+      unsubBlur();
+    };
+  }, [
+    navigation,
+    businessId,
+    userId,
+    route?.params?.user_id,
+    ownerType,
+    loadBusinessFromBackend,
+    loadFromBackend,
+    fetchKpis,
+  ]);
 
-  // Menus
   const loadMenusFromStorage = useCallback(async (bid, kind) => {
     if (!bid) return;
     try {
@@ -709,18 +830,20 @@ export default function GrabMerchantHomeScreen() {
     if (businessId) loadMenusFromStorage(businessId, ownerType);
   }, [businessId, ownerType, loadMenusFromStorage]);
 
-  // Reactions
-  const belongsToCurrentContext = useCallback((incoming = {}) => {
-    const incKind = normalizeOwnerType(incoming.owner_type ?? incoming.kind);
-    const incBid = incoming.business_id ?? incoming.businessId ?? null;
-    if (incoming.hasOwnProperty('owner_type') || incoming.hasOwnProperty('kind')) {
-      if (incKind && incKind !== ownerType) return false;
-    }
-    if (incoming.hasOwnProperty('business_id') || incoming.hasOwnProperty('businessId')) {
-      if (incBid && String(incBid) !== String(businessId)) return false;
-    }
-    return true;
-  }, [ownerType, businessId]);
+  const belongsToCurrentContext = useCallback(
+    (incoming = {}) => {
+      const incKind = normalizeOwnerType(incoming.owner_type ?? incoming.kind);
+      const incBid = incoming.business_id ?? incoming.businessId ?? null;
+      if (incoming.hasOwnProperty('owner_type') || incoming.hasOwnProperty('kind')) {
+        if (incKind && incKind !== ownerType) return false;
+      }
+      if (incoming.hasOwnProperty('business_id') || incoming.hasOwnProperty('businessId')) {
+        if (incBid && String(incBid) !== String(businessId)) return false;
+      }
+      return true;
+    },
+    [ownerType, businessId]
+  );
 
   useEffect(() => {
     const sub1 = DeviceEventEmitter.addListener('merchant-updated', async () => {
@@ -741,7 +864,8 @@ export default function GrabMerchantHomeScreen() {
       const key = payload?.key;
       const params = payload?.params || {};
       if (key) setActiveTab(String(key));
-      if (params.businessId || params.business_id) setBusinessId(String(params.businessId || params.business_id));
+      if (params.businessId || params.business_id)
+        setBusinessId(String(params.businessId || params.business_id));
       if (params.business_name) setMerchantName(String(params.business_name));
       if (params.business_logo && belongsToCurrentContext(params)) {
         applyHeaderIfChanged({ business_logo: params.business_logo });
@@ -750,28 +874,41 @@ export default function GrabMerchantHomeScreen() {
         maybeApplyKind(params.owner_type, setOwnerType);
       }
       if (params.authContext) setAuthContext(params.authContext);
-      // NEW: absorb delivery_option from event
       if (params.delivery_option || params.deliveryOption) {
-        setDeliveryOption(String(params.delivery_option || params.deliveryOption).toUpperCase());
+        setDeliveryOption(
+          String(params.delivery_option || params.deliveryOption).toUpperCase()
+        );
       }
-      try { await SecureStore.setItemAsync(KEY_LAST_CTX, JSON.stringify(params)); } catch { }
+      try {
+        await SecureStore.setItemAsync(KEY_LAST_CTX, JSON.stringify(params));
+      } catch { }
       const bid = params.businessId || params.business_id || businessId;
       const kind = normalizeOwnerType(params.owner_type ?? ownerType);
       if (bid) await fetchKpis(String(bid), kind);
     });
     const sub4 = DeviceEventEmitter.addListener('profile-updated', async (payload) => {
       try {
-        if (payload?.profile_image) applyHeaderIfChanged({ profile_image: payload.profile_image });
+        if (payload?.profile_image)
+          applyHeaderIfChanged({ profile_image: payload.profile_image });
         if (payload?.business_logo && belongsToCurrentContext(payload)) {
           applyHeaderIfChanged({ business_logo: payload.business_logo });
         }
-        if (payload?.business_name) applyHeaderIfChanged({ business_name: payload.business_name });
-        if (payload?.business_address || payload?.address || payload?.location) {
-          applyHeaderIfChanged({ business_address: payload?.business_address ?? payload?.address ?? payload?.location });
+        if (payload?.business_name)
+          applyHeaderIfChanged({ business_name: payload.business_name });
+        if (
+          payload?.business_address ||
+          payload?.address ||
+          payload?.location
+        ) {
+          applyHeaderIfChanged({
+            business_address:
+              payload?.business_address ?? payload?.address ?? payload?.location,
+          });
         }
-        // NEW: update delivery_option if provided in payload
         if (payload?.delivery_option || payload?.deliveryOption) {
-          setDeliveryOption(String(payload.delivery_option || payload.deliveryOption).toUpperCase());
+          setDeliveryOption(
+            String(payload.delivery_option || payload.deliveryOption).toUpperCase()
+          );
         }
       } catch { }
       const uid = route?.params?.user_id || userId;
@@ -788,8 +925,27 @@ export default function GrabMerchantHomeScreen() {
       if (businessId) await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
     });
 
-    return () => { sub1.remove(); sub2.remove(); sub3.remove(); sub4.remove(); sub5.remove(); sub6.remove(); };
-  }, [businessId, ownerType, loadMenusFromStorage, loadFromBackend, loadFromStore, route?.params?.user_id, userId, belongsToCurrentContext, loadBusinessFromBackend, applyHeaderIfChanged, fetchKpis]);
+    return () => {
+      sub1.remove();
+      sub2.remove();
+      sub3.remove();
+      sub4.remove();
+      sub5.remove();
+      sub6.remove();
+    };
+  }, [
+    businessId,
+    ownerType,
+    loadMenusFromStorage,
+    loadFromBackend,
+    loadFromStore,
+    route?.params?.user_id,
+    userId,
+    belongsToCurrentContext,
+    loadBusinessFromBackend,
+    applyHeaderIfChanged,
+    fetchKpis,
+  ]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -798,16 +954,26 @@ export default function GrabMerchantHomeScreen() {
     if (uid) await loadFromBackend(String(uid));
     if (businessId) await loadMenusFromStorage(businessId, ownerType);
     if (businessId) await loadBusinessFromBackend(String(businessId));
-    if (businessId) await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
+    if (businessId)
+      await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
     setRefreshing(false);
     setLogoVersion((v) => v + 1);
-  }, [userId, route?.params?.user_id, businessId, ownerType, loadMenusFromStorage, loadFromBackend, loadFromStore, loadBusinessFromBackend, fetchKpis]);
+  }, [
+    userId,
+    route?.params?.user_id,
+    businessId,
+    ownerType,
+    loadMenusFromStorage,
+    loadFromBackend,
+    loadFromStore,
+    loadBusinessFromBackend,
+    fetchKpis,
+  ]);
 
   useEffect(() => {
     if (activeTab !== 'Home' && showWelcome) setShowWelcome(false);
   }, [activeTab, showWelcome]);
 
-  // Android back behavior
   useEffect(() => {
     const onBack = () => {
       if (activeTab !== 'Home') {
@@ -824,7 +990,8 @@ export default function GrabMerchantHomeScreen() {
     const p = route?.params;
     if (!p?.openTab) return;
     setActiveTab(String(p.openTab));
-    if (p.businessId || p.business_id) setBusinessId(String(p.businessId || p.business_id));
+    if (p.businessId || p.business_id)
+      setBusinessId(String(p.businessId || p.business_id));
     if (p.business_name) setMerchantName(String(p.business_name));
     if (p.business_logo && belongsToCurrentContext(p)) {
       applyHeaderIfChanged({ business_logo: p.business_logo });
@@ -833,15 +1000,34 @@ export default function GrabMerchantHomeScreen() {
       maybeApplyKind(p.owner_type, setOwnerType);
     }
     if (p.authContext) setAuthContext(p.authContext);
-    // NEW: take delivery_option from route params when switching tabs via params
     if (p.delivery_option || p.deliveryOption) {
-      setDeliveryOption(String(p.delivery_option || p.deliveryOption).toUpperCase());
+      setDeliveryOption(
+        String(p.delivery_option || p.deliveryOption).toUpperCase()
+      );
     }
     navigation.setParams({ openTab: undefined, nonce: undefined });
-  }, [route?.params?.nonce, belongsToCurrentContext, navigation, applyHeaderIfChanged]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    route?.params?.nonce,
+    belongsToCurrentContext,
+    navigation,
+    applyHeaderIfChanged,
+    route?.params?.openTab,
+    route?.params?.businessId,
+    route?.params?.business_id,
+    route?.params?.business_name,
+    route?.params?.business_logo,
+    route?.params?.owner_type,
+    route?.params?.authContext,
+    route?.params?.delivery_option,
+    route?.params?.deliveryOption,
+  ]);
+  /* ───────────────────────── Header ───────────────────────── */
 
   const Header = () => {
-    const navigation = useNavigation();
+    const nav = useNavigation();
+    // ✅ Prefer global root navigator if available
+    const rootNav = global.__nav || nav;
+
     const params = {
       user_id: userId,
       business_id: businessId,
@@ -853,16 +1039,26 @@ export default function GrabMerchantHomeScreen() {
       owner_type: normalizeOwnerType(ownerType),
       authContext,
       serviceConfig,
-      delivery_option: deliveryOption, // NEW
+      delivery_option: deliveryOption,
     };
-    const safeNav = (target, fallback) => {
-      try { navigation.navigate(target, params); }
-      catch {
-        if (fallback) try { navigation.navigate(fallback, params); } catch { }
+
+    const goToAccountSettings = () => {
+      console.log('[Header] goToAccountSettings pressed');
+      try {
+        rootNav.navigate('AccountSettings', params);
+      } catch (e) {
+        console.warn('[Header] failed to navigate to AccountSettings', e);
       }
     };
-    const goToAccountSettings = () => safeNav('AccountSettings', 'ProfileBusinessDetails');
-    const goToProfileBusinessDetails = () => safeNav('ProfileBusinessDetails');
+
+    const goToProfileBusinessDetails = () => {
+      console.log('[Header] goToProfileBusinessDetails pressed');
+      try {
+        rootNav.navigate('ProfileBusinessDetails', params);
+      } catch (e) {
+        console.warn('[Header] failed to navigate to ProfileBusinessDetails', e);
+      }
+    };
 
     return (
       <LinearGradient
@@ -875,7 +1071,9 @@ export default function GrabMerchantHomeScreen() {
           paddingHorizontal: isTablet ? 24 : 18,
         }}
       >
-        {showWelcome && activeTab === 'Home' && <Text style={styles.hi}>Welcome back</Text>}
+        {showWelcome && activeTab === 'Home' && (
+          <Text style={styles.hi}>Welcome back</Text>
+        )}
 
         <View style={styles.headerRow}>
           <View style={styles.inlineRow}>
@@ -894,14 +1092,22 @@ export default function GrabMerchantHomeScreen() {
               />
               {loadingAvatar && (
                 <ActivityIndicator
-                  style={{ position: 'absolute', left: avatarSize / 2 - 12, top: avatarSize / 2 - 12 }}
+                  style={{
+                    position: 'absolute',
+                    left: avatarSize / 2 - 12,
+                    top: avatarSize / 2 - 12,
+                  }}
                   size="small"
                   color="#00b14f"
                 />
               )}
             </TouchableOpacity>
 
-            <Text style={[styles.merchantName, { marginLeft: 6 }]} numberOfLines={1} ellipsizeMode="tail">
+            <Text
+              style={[styles.merchantName, { marginLeft: 6 }]}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
               {merchantName || DEFAULT_NAME}
             </Text>
           </View>
@@ -925,7 +1131,11 @@ export default function GrabMerchantHomeScreen() {
           <View style={{ marginTop: 10, alignItems: 'center', width: '100%' }}>
             <View style={styles.addressChip}>
               <Ionicons name="location-outline" size={16} color="#00b14f" />
-              <Text style={styles.addressText} numberOfLines={1} ellipsizeMode="tail">
+              <Text
+                style={styles.addressText}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
                 {businessAddress}
               </Text>
             </View>
@@ -934,6 +1144,7 @@ export default function GrabMerchantHomeScreen() {
       </LinearGradient>
     );
   };
+
 
   const NAV_ITEMS = [
     { key: 'Home', label: 'Home', icon: 'home-outline' },
@@ -949,12 +1160,9 @@ export default function GrabMerchantHomeScreen() {
     <SafeAreaView style={styles.safe} edges={['left', 'right']}>
       <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
 
+      {/* HOME TAB – no ScrollView wrapper, HomeTab's FlatList handles scroll */}
       {activeTab === 'Home' && (
-        <ScrollView
-          contentContainerStyle={[styles.container, { paddingBottom: bottomBarHeight + 20 }]}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-          showsVerticalScrollIndicator={false}
-        >
+        <View style={[styles.tabWrap, { paddingBottom: bottomBarHeight + 20 }]}>
           <Header />
           <HomeTab
             isTablet={isTablet}
@@ -971,9 +1179,9 @@ export default function GrabMerchantHomeScreen() {
             address={businessAddress}
             businessLicense={businessLicense}
             serviceConfig={serviceConfig}
-            delivery_option={deliveryOption} // NEW
+            delivery_option={deliveryOption}
           />
-        </ScrollView>
+        </View>
       )}
 
       {activeTab === 'Promos' && (
@@ -985,7 +1193,7 @@ export default function GrabMerchantHomeScreen() {
             context={authContext}
             ownerType={ownerType}
             serviceConfig={serviceConfig}
-            delivery_option={deliveryOption} // NEW
+            delivery_option={deliveryOption}
           />
         </View>
       )}
@@ -1000,7 +1208,7 @@ export default function GrabMerchantHomeScreen() {
             businessId={businessId}
             ownerType={ownerType}
             serviceConfig={serviceConfig}
-            delivery_option={deliveryOption} // NEW
+            delivery_option={deliveryOption}
           />
         </View>
       )}
@@ -1018,7 +1226,7 @@ export default function GrabMerchantHomeScreen() {
             userId={userId}
             context={authContext}
             serviceConfig={serviceConfig}
-            delivery_option={deliveryOption} // NEW
+            delivery_option={deliveryOption}
           />
         </View>
       )}
@@ -1032,7 +1240,7 @@ export default function GrabMerchantHomeScreen() {
             context={authContext}
             ownerType={ownerType}
             serviceConfig={serviceConfig}
-            delivery_option={deliveryOption} // NEW
+            delivery_option={deliveryOption}
           />
         </View>
       )}
@@ -1045,20 +1253,39 @@ export default function GrabMerchantHomeScreen() {
             businessId={businessId}
             context={authContext}
             ownerType={ownerType}
-            serviceConfig={serviceConfig}
-            delivery_option={deliveryOption} // NEW
+            userId={userId}
+            kpis={kpis}
           />
         </View>
       )}
 
-      {activeTab === 'Home' && isFood && (
-        <TouchableOpacity style={[styles.fab, { bottom: fabBottom }]} onPress={() => setActiveTab('Promos')} activeOpacity={0.9}>
-          <Ionicons name="pricetag-outline" size={isTablet ? 24 : 22} color="#fff" />
-          <Text style={[styles.fabText, { fontSize: isTablet ? 14 : 13 }]}>Display promos</Text>
+      {/* 🔁 FAB: Messages */}
+      {activeTab === 'Home' && (
+        <TouchableOpacity
+          style={[styles.fab, { bottom: fabBottom }]}
+          onPress={() =>
+            navigation.navigate('MessageScreen', {
+              business_id: businessId,
+              user_id: userId,
+              owner_type: ownerType,
+            })
+          }
+          activeOpacity={0.9}
+        >
+          <Ionicons
+            name="chatbubble-ellipses-outline"
+            size={isTablet ? 24 : 22}
+            color="#fff"
+          />
         </TouchableOpacity>
       )}
 
-      <MerchantBottomBar items={NAV_ITEMS} activeKey={activeTab} onChange={setActiveTab} isTablet={isTablet} />
+      <MerchantBottomBar
+        items={NAV_ITEMS}
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        isTablet={isTablet}
+      />
     </SafeAreaView>
   );
 }
@@ -1068,9 +1295,20 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#00b14f' },
   container: { backgroundColor: '#f6f7f8' },
   profileCircle: { borderRadius: 9999, backgroundColor: '#fff' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
   inlineRow: { flexDirection: 'row', alignItems: 'center' },
-  hi: { fontSize: 20, color: '#e8fff6', opacity: 0.9, fontWeight: '900', marginBottom: 2 },
+  hi: {
+    fontSize: 20,
+    color: '#e8fff6',
+    opacity: 0.9,
+    fontWeight: '900',
+    marginBottom: 2,
+  },
   merchantName: { color: 'white', fontWeight: '700' },
   avatar: { borderRadius: 12, backgroundColor: '#fff' },
   addressText: { color: '#2d2d2d', fontSize: 13, fontWeight: '700', maxWidth: 260 },
