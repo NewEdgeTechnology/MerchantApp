@@ -199,7 +199,7 @@ const AccountSettings = () => {
 
   const [userId, setUserId] = useState(route?.params?.user_id ? String(route.params.user_id) : '');
   const [businessId, setBusinessId] = useState(route?.params?.business_id ? String(route.params.business_id) : '');
-  const authContext = route?.params?.authContext || null;
+  const [authContext, setAuthContext] = useState(route?.params?.authContext || null);
 
   const [biz, setBiz] = useState({
     business_name: route?.params?.business_name || '',
@@ -248,6 +248,23 @@ const AccountSettings = () => {
       const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
       if (!raw) return;
       const blob = JSON.parse(raw);
+
+      // 🔑 Build / sync authContext.token from stored data
+      let token =
+        (blob?.token && typeof blob.token === 'string' && blob.token) ||
+        (blob?.token?.access_token ?? null);
+
+      if (!token) {
+        const stored = await SecureStore.getItemAsync('auth_token');
+        if (stored && String(stored).trim()) token = String(stored).trim();
+      }
+
+      setAuthContext(prev => ({
+        ...(prev || {}),
+        token: token || null,
+        raw: blob,
+        user: blob.user || blob,
+      }));
 
       const idCandidates = [
         blob?.user?.user_id,
@@ -397,6 +414,13 @@ const AccountSettings = () => {
     } catch { }
   }, [buildProfileUrl, biz, businessId, setAvatarFrom]);
 
+  // Keep in sync if parent passes a fresh authContext (e.g. from HomeScreen)
+  useEffect(() => {
+    if (route?.params?.authContext) {
+      setAuthContext(prev => ({ ...(prev || {}), ...route.params.authContext }));
+    }
+  }, [route?.params?.authContext]);
+
   useEffect(() => {
     (async () => {
       if (!userId) await loadFromStore();
@@ -468,32 +492,21 @@ const AccountSettings = () => {
 
   // ✅ Use route param first, then fall back to local state
   const goToFeedback = useCallback(() => {
-    const rawBid = route?.params?.business_id ?? businessId;   // <— changed line
+    const rawBid = route?.params?.business_id ?? businessId;
     const bidStr = String(rawBid ?? '').trim();
     const bidNum = /^\d+$/.test(bidStr) ? parseInt(bidStr, 10) : NaN;
 
     if (!Number.isInteger(bidNum) || bidNum <= 0) {
       Alert.alert('Feedback', 'Business ID is missing or invalid.');
-      if (__DEV__) console.log('[AccountSettings] invalid businessId', { rawBid, businessId, routeParams: route?.params });
       return;
     }
 
-    if (__DEV__) {
-      console.log('[AccountSettings] navigating to RestaurantFeedback with:', {
-        businessIdRaw: rawBid,
-        businessIdParsed: bidNum,
-        businessName: biz?.business_name || name || '',
-      });
-    }
-
-    // 👇 make sure this name matches your registered screen (you had a typo earlier)
     navigation.navigate('FeedbackScreen', {
       business_id: bidNum,
       business_name: biz?.business_name || name || '',
-      authContext,
+      authContext, // 👈 token is now present here too
     });
   }, [navigation, route?.params?.business_id, businessId, biz?.business_name, name, authContext]);
-
 
   const handleLogoutNow = useCallback(async () => {
     try {
@@ -573,17 +586,26 @@ const AccountSettings = () => {
           <Ionicons name="chevron-forward" size={24} color="#16a34a" />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.section} onPress={() => navigation.navigate('PasswordManagement', { authContext })}>
+        <TouchableOpacity
+          style={styles.section}
+          onPress={() => navigation.navigate('PasswordManagement', { authContext })}
+        >
           <Text style={styles.text}>Password Management</Text>
           <Ionicons name="chevron-forward" size={24} color="#16a34a" />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.section} onPress={() => navigation.navigate('SecuritySettings', { authContext })}>
+        <TouchableOpacity
+          style={styles.section}
+          onPress={() => navigation.navigate('SecuritySettings', { authContext })}
+        >
           <Text style={styles.text}>Security & Privacy</Text>
           <Ionicons name="chevron-forward" size={24} color="#16a34a" />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.section} onPress={() => navigation.navigate('WalletScreen', { authContext })}>
+        <TouchableOpacity
+          style={styles.section}
+          onPress={() => navigation.navigate('WalletScreen', { authContext })}
+        >
           <Text style={styles.text}>Wallet</Text>
           <Ionicons name="chevron-forward" size={24} color="#16a34a" />
         </TouchableOpacity>
