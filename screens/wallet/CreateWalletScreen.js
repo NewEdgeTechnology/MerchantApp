@@ -1,26 +1,23 @@
-// screens/food/CreateWalletScreen.js
-
 import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
-  TextInput,
-  Dimensions,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
   ActivityIndicator,
   ScrollView,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 import { CREATE_WALLET_ENDPOINT as ENV_CREATE_WALLET } from '@env';
+import { Dimensions } from 'react-native';
 
-const { width } = Dimensions.get('window');
+const { width } = Dimensions.get('window'); // Get the screen width
 
 export default function CreateWalletScreen() {
   const navigation = useNavigation();
@@ -44,7 +41,7 @@ export default function CreateWalletScreen() {
           const parsed = JSON.parse(raw);
           const id = parsed?.user_id ?? parsed?.id;
           if (id) { setUserId(String(id)); return; }
-        } catch {}
+        } catch { }
       }
     })();
   }, [userId]);
@@ -62,7 +59,7 @@ export default function CreateWalletScreen() {
         };
         await SecureStore.setItemAsync('user_login', JSON.stringify(updated));
       }
-    } catch {}
+    } catch { }
   }
 
   async function handleCreate() {
@@ -75,7 +72,7 @@ export default function CreateWalletScreen() {
       const url = String(ENV_CREATE_WALLET || '').trim();
       if (!url) throw new Error('CREATE_WALLET_ENDPOINT missing in .env');
 
-      // ✅ API expects: { "user_id": <number>, "status": "ACTIVE" }
+      // API expects: { "user_id": <number>, "status": "ACTIVE" }
       const payload = {
         user_id: Number(userId),
         status: 'ACTIVE',
@@ -91,8 +88,9 @@ export default function CreateWalletScreen() {
 
       const isJson = (res.headers.get('content-type') || '').includes('application/json');
       const data = isJson ? await res.json() : await res.text();
+      // console.log('Create Wallet Response:', data.data.wallet_id);  // Correctly log wallet_id
 
-      // 🧩 Gracefully handle "already exists" responses (message or 409)
+      // Gracefully handle "already exists" responses (message or 409)
       const msg = (typeof data === 'string' ? data : (data?.message || data?.error || '')) + '';
       if (/already exists/i.test(msg) || res.status === 409) {
         await setLocalWalletActive();
@@ -108,11 +106,21 @@ export default function CreateWalletScreen() {
         throw new Error(errMsg);
       }
 
-      await setLocalWalletActive({ wallet_id: (typeof data === 'object' ? data?.wallet_id : undefined) });
+      await setLocalWalletActive({ wallet_id: data.data.wallet_id });
 
-      Alert.alert('Success', 'Wallet created successfully.', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+      // Show the success alert after navigating
+      setTimeout(() => {
+        Alert.alert('Success', 'Wallet created successfully.', [
+          {
+            text: 'OK', 
+            onPress: () => navigation.navigate('CreateTPinScreen', {
+              userId: userId,
+              walletId: data.data.wallet_id,  // Pass walletId correctly
+            }),
+          }
+        ]);
+      }, 100); // Delay the alert for a brief moment to ensure navigation happens first
+
     } catch (e) {
       Alert.alert('Create Wallet', e.message || 'Something went wrong.');
     } finally {
@@ -121,7 +129,7 @@ export default function CreateWalletScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['left','right','bottom']}>
+    <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
       {/* Header */}
       <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
@@ -147,26 +155,16 @@ export default function CreateWalletScreen() {
             </Text>
           </View>
 
-          <View style={styles.field}>
-            <Text style={styles.label}>User ID</Text>
-            <TextInput
-              style={[styles.input, { backgroundColor: '#f9fafb', color: '#6b7280' }]}
-              value={String(userId ?? '')}
-              editable={false}
-              selectTextOnFocus={false}
-              placeholder="User ID not found"
-            />
-            <Text style={styles.hint}>
-              Your user ID is automatically detected from your signed-in account.
-            </Text>
-          </View>
+          <Text style={styles.label}>Wallet Setup</Text>
+          <Text style={styles.sub}>
+            You're about to create your wallet. Once done, you will be prompted to set up your TPIN.
+          </Text>
 
           <TouchableOpacity
             disabled={loading}
             onPress={handleCreate}
             activeOpacity={0.9}
-            style={[styles.primaryBtnFilled, { backgroundColor: loading ? '#fb923c' : '#f97316', opacity: loading ? 0.8 : 1 }]}
-          >
+            style={[styles.primaryBtnFilled, { backgroundColor: loading ? '#fb923c' : '#f97316', opacity: loading ? 0.8 : 1 }]}>
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnTextFilled}>CREATE WALLET</Text>}
           </TouchableOpacity>
         </ScrollView>

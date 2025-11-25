@@ -1,5 +1,3 @@
-// screens/food/WalletScreen.js
-
 import React, { useMemo, useEffect, useState, useCallback } from 'react';
 import {
   View,
@@ -24,7 +22,9 @@ import {
 } from '@env';
 
 const { width } = Dimensions.get('window');
-const money = (n, c = '') => `${c} ${Number(n ?? 0).toFixed(1)}`;
+
+// Always show Nu here
+const money = (n, c = 'Nu') => `${c}. ${Number(n ?? 0).toFixed(2)}`;
 
 // Masked money helper (stars + real decimals)
 const maskedMoney = (n, c = 'Nu') => {
@@ -41,7 +41,7 @@ async function setAuthGrace(seconds = AUTH_GRACE_SEC) {
   const until = Date.now() + seconds * 1000;
   try {
     await SecureStore.setItemAsync(KEY_WALLET_AUTH_GRACE, String(until));
-  } catch {}
+  } catch { }
   return until;
 }
 async function getAuthGraceUntil() {
@@ -59,16 +59,16 @@ async function isAuthGraceActive() {
 async function clearAuthGrace() {
   try {
     await SecureStore.deleteItemAsync(KEY_WALLET_AUTH_GRACE);
-  } catch {}
+  } catch { }
 }
 
 // kept, though not used by table rows (in case you re-use later)
 function iconForType(type) {
   switch (type) {
     case 'cashback': return { name: 'gift-outline', color: '#16a34a' };
-    case 'payment':  return { name: 'restaurant-outline', color: '#ef4444' };
-    case 'refund':   return { name: 'arrow-undo-outline', color: '#0ea5e9' };
-    default:         return { name: 'receipt-outline', color: '#64748b' };
+    case 'payment': return { name: 'restaurant-outline', color: '#ef4444' };
+    case 'refund': return { name: 'arrow-undo-outline', color: '#0ea5e9' };
+    default: return { name: 'receipt-outline', color: '#64748b' };
   }
 }
 
@@ -99,20 +99,17 @@ function TransactionItem({ item }) {
         style={[styles.tableCellText, { flex: 1.1, textAlign: 'right' }]}
         numberOfLines={1}
       >
-        {money(Math.abs(item.amount))}
+        {money(Math.abs(item.amount), 'Nu')}
       </Text>
 
       {/* Dr/Cr */}
       <Text
-        style={[
-          styles.tableCellText,
-          {
-            width: 50,
-            textAlign: 'right',
-            fontWeight: '700',
-            color: isDebit ? '#ef4444' : '#16a34a',
-          },
-        ]}
+        style={[styles.tableCellText, {
+          width: 50,
+          textAlign: 'right',
+          fontWeight: '700',
+          color: isDebit ? '#ef4444' : '#16a34a',
+        }]}
         numberOfLines={1}
       >
         {item.drcr}
@@ -146,12 +143,12 @@ export default function WalletScreen() {
         ...params,
         skipBiometric: true,
         authGraceUntil,
+        walletId,  // Pass walletId to the next screen
       });
     },
-    [navigation]
+    [navigation, walletId]
   );
 
-  // Action pills
   const actions = useMemo(
     () => [
       {
@@ -164,7 +161,10 @@ export default function WalletScreen() {
         key: 'send',
         label: 'Send to Friend',
         icon: 'paper-plane-outline',
-        onPress: () => goWithGrace('SendToFriendScreen', { walletId }),
+        onPress: () => goWithGrace('SendToFriendScreen', {
+          walletId,               // still pass original
+          senderWalletId: walletId,  // NEW — ensures sender wallet ID is passed
+        }),
       },
     ],
     [goWithGrace, walletId]
@@ -180,7 +180,7 @@ export default function WalletScreen() {
         if (parsed && (parsed.user_id || parsed.id)) {
           return { ...parsed, user_id: parsed.user_id ?? parsed.id, _source: k };
         }
-      } catch {}
+      } catch { }
     }
     return null;
   }, []);
@@ -258,8 +258,8 @@ export default function WalletScreen() {
     const list = Array.isArray(payload?.data)
       ? payload?.data
       : Array.isArray(payload)
-      ? payload
-      : payload?.transactions || [];
+        ? payload
+        : payload?.transactions || [];
     if (!Array.isArray(list) || list.length === 0) return [];
 
     return list.slice(0, 100).map((t, idx) => {
@@ -522,8 +522,7 @@ export default function WalletScreen() {
               userId: user?.user_id ?? null,
             })
           }
-          style={[styles.primaryBtnFilled, { backgroundColor: '#f97316' }]}
-        >
+          style={[styles.primaryBtnFilled, { backgroundColor: '#f97316' }]}>
           <Text style={styles.primaryBtnTextFilled}>CREATE WALLET</Text>
         </TouchableOpacity>
 
@@ -531,8 +530,7 @@ export default function WalletScreen() {
           <TouchableOpacity
             activeOpacity={0.9}
             onPress={() => navigation.navigate('LoginScreen')}
-            style={styles.secondaryBtn}
-          >
+            style={styles.secondaryBtn}>
             <Text style={styles.secondaryBtnText}>SIGN IN</Text>
           </TouchableOpacity>
         )}
@@ -545,15 +543,14 @@ export default function WalletScreen() {
     try {
       await Clipboard.setStringAsync(String(walletId));
       Alert.alert('Copied', 'Wallet ID copied to clipboard.');
-    } catch {}
+    } catch { }
   }, [walletId]);
 
   if (locked) {
     return (
       <SafeAreaView
         style={[styles.safe, { alignItems: 'center', justifyContent: 'center' }]}
-        edges={['left', 'right', 'bottom']}
-      >
+        edges={['left', 'right', 'bottom']}>
         <View style={styles.lockWrap}>
           <View style={styles.lockIcon}>
             <Ionicons name="lock-closed-outline" size={36} color="#f97316" />
@@ -565,18 +562,13 @@ export default function WalletScreen() {
           <TouchableOpacity
             onPress={authenticate}
             activeOpacity={0.9}
-            style={[
-              styles.primaryBtnFilled,
-              { backgroundColor: '#f97316', marginTop: 16 },
-            ]}
-          >
+            style={[styles.primaryBtnFilled, { backgroundColor: '#f97316', marginTop: 16 }]}>
             <Text style={styles.primaryBtnTextFilled}>UNLOCK</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => navigation.goBack()}
             activeOpacity={0.8}
-            style={styles.secondaryBtn}
-          >
+            style={styles.secondaryBtn}>
             <Text style={styles.secondaryBtnText}>GO BACK</Text>
           </TouchableOpacity>
         </View>
@@ -588,8 +580,7 @@ export default function WalletScreen() {
     return (
       <SafeAreaView
         style={[styles.safe, { alignItems: 'center', justifyContent: 'center' }]}
-        edges={['left', 'right', 'bottom']}
-      >
+        edges={['left', 'right', 'bottom']}>
         <ActivityIndicator size="large" />
       </SafeAreaView>
     );
@@ -610,8 +601,7 @@ export default function WalletScreen() {
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backBtn}
-          activeOpacity={0.7}
-        >
+          activeOpacity={0.7}>
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Wallet</Text>
@@ -621,22 +611,14 @@ export default function WalletScreen() {
       {/* Body */}
       <View style={{ flex: 1 }}>
         <FlatList
-          contentContainerStyle={[
-            styles.listPad,
-            { paddingBottom: 24 + insets.bottom },
-          ]}
+          contentContainerStyle={[styles.listPad, { paddingBottom: 24 + insets.bottom }]}
           data={txns}
           keyExtractor={(it, idx) => String(it?.id ?? idx)}
           ListHeaderComponent={
             <>
               {/* Balance Card */}
               <View style={[styles.card, { backgroundColor: balanceColor }]}>
-                <View
-                  style={[
-                    styles.balanceRow,
-                    { justifyContent: 'space-between' },
-                  ]}
-                >
+                <View style={[styles.balanceRow, { justifyContent: 'space-between' }]}>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                     <Ionicons
                       name="wallet-outline"
@@ -654,31 +636,20 @@ export default function WalletScreen() {
                       </Text>
                       <TouchableOpacity
                         onPress={onCopyWalletId}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <Ionicons
-                          name="copy-outline"
-                          size={16}
-                          color="#fff"
-                        />
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                        <Ionicons name="copy-outline" size={16} color="#fff" />
                       </TouchableOpacity>
                     </View>
                   )}
                 </View>
 
-                <View
-                  style={[
-                    styles.balanceRow,
-                    { justifyContent: 'space-between', marginTop: 6 },
-                  ]}
-                >
+                <View style={[styles.balanceRow, { justifyContent: 'space-between', marginTop: 6 }]}>
                   <Text style={styles.balanceValue}>
-                    {showBalance ? money(balance) : maskedMoney(balance)}
+                    {showBalance ? money(balance, 'Nu') : maskedMoney(balance, 'Nu')}
                   </Text>
                   <TouchableOpacity
                     onPress={() => setShowBalance((prev) => !prev)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                     <Ionicons
                       name={showBalance ? 'eye-outline' : 'eye-off-outline'}
                       size={22}
@@ -692,8 +663,7 @@ export default function WalletScreen() {
               <TouchableOpacity
                 style={[styles.primaryBtn, { borderColor: balanceColor }]}
                 activeOpacity={0.9}
-                onPress={() => goWithGrace('AddMoneyScreen', { walletId })}
-              >
+                onPress={() => goWithGrace('AddMoneyScreen', { walletId })}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Ionicons
                     name="add-circle-outline"
@@ -701,14 +671,7 @@ export default function WalletScreen() {
                     color={balanceColor}
                     style={{ marginRight: 8 }}
                   />
-                  <Text
-                    style={[
-                      styles.primaryBtnText,
-                      { color: balanceColor },
-                    ]}
-                  >
-                    ADD MONEY
-                  </Text>
+                  <Text style={[styles.primaryBtnText, { color: balanceColor }]}>ADD MONEY</Text>
                 </View>
               </TouchableOpacity>
 
@@ -719,8 +682,7 @@ export default function WalletScreen() {
                     key={a.key}
                     style={styles.actionPill}
                     onPress={a.onPress}
-                    activeOpacity={0.8}
-                  >
+                    activeOpacity={0.8}>
                     <Ionicons
                       name={a.icon}
                       size={20}
@@ -736,38 +698,20 @@ export default function WalletScreen() {
 
               {/* Table header row */}
               <View style={styles.tableHeaderRow}>
-                <Text style={[styles.tableHeaderText, { flex: 1.1 }]}>
-                  Date
-                </Text>
-                <Text
-                  style={[
-                    styles.tableHeaderText,
-                    { flex: 1.5, textAlign: 'center' },
-                  ]}
-                >
+                <Text style={[styles.tableHeaderText, { flex: 1.1 }]}>Date</Text>
+                <Text style={[styles.tableHeaderText, { flex: 1.5, textAlign: 'center' }]}>
                   Journal No.
                 </Text>
-                <Text
-                  style={[
-                    styles.tableHeaderText,
-                    { flex: 1.1, textAlign: 'right' },
-                  ]}
-                >
+                <Text style={[styles.tableHeaderText, { flex: 1.1, textAlign: 'right' }]}>
                   Amount (Nu)
                 </Text>
-                <Text
-                  style={[
-                    styles.tableHeaderText,
-                    { width: 50, textAlign: 'right' },
-                  ]}
-                >
+                <Text style={[styles.tableHeaderText, { width: 50, textAlign: 'right' }]}>
                   Dr/Cr
                 </Text>
               </View>
             </>
           }
           renderItem={({ item }) => <TransactionItem item={item} />}
-          // tableRow already has its own bottom border; no extra separator
           ItemSeparatorComponent={null}
           ListEmptyComponent={<ListEmpty />}
           ListFooterComponent={<View style={{ height: insets.bottom }} />}

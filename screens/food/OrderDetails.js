@@ -1,328 +1,57 @@
 // screens/food/OrderDetails.js
-// Sequence rail. Self & Grab share the same steps:
 // PENDING → CONFIRMED → READY → OUT_FOR_DELIVERY → COMPLETED
 // If delivery_option=BOTH, show Self/Grab chooser ONLY at READY.
-// - Grab at READY: show nearby drivers with rating, block Next until assigned.
-// - Self at READY: allow Next → OUT_FOR_DELIVERY directly (now custom for self).
-// Back nav preserves headers/footers. Hydrates from grouped-orders.
+// - Self at READY: merchant can continue as usual.
+// - Grab at READY: send broadcast-delivery request; when socket event "deliveryAccepted"
+//   comes, merchant manually taps Out for delivery.
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, Alert, Modal,
-  TextInput, ActivityIndicator, BackHandler,
+  View, Text, ScrollView, Pressable, Alert, ActivityIndicator, BackHandler,
 } from 'react-native';
 import { useRoute, useNavigation, useFocusEffect, CommonActions } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import { DeviceEventEmitter } from 'react-native';
+import io from 'socket.io-client';
 import {
   UPDATE_ORDER_STATUS_ENDPOINT as ENV_UPDATE_ORDER,
-  NEARBY_DRIVERS_ENDPOINT as ENV_NEARBY_DRIVERS,
-  DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING,
-  BUSINESS_DETAILS as ENV_BUSINESS_DETAILS,            // ⬅️ business details (lat/lng + delivery_option)
+  ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
+  SEND_REQUEST_DRIVER_ENDPOINT as ENV_SEND_REQUEST_DRIVER,
+  RIDE_SOCKET_ENDPOINT as ENV_RIDE_SOCKET,
+  DRIVER_DETAILS_ENDPOINT as ENV_DRIVER_DETAILS,
+  DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING, // <--- NEW
 } from '@env';
 
-/* ---------------- Money + utils ---------------- */
-const money = (n, c = 'Nu') => `${c} ${Number(n ?? 0).toFixed(2)}`;
-const norm = (s = '') => String(s).toLowerCase().trim();
-const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-const findStepIndex = (status, seq) => seq.indexOf((status || '').toUpperCase());
-const fmtStamp = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-};
+import {
+  money,
+  norm,
+  clamp,
+  findStepIndex,
+  fmtStamp,
+  STATUS_META,
+  TERMINAL_NEGATIVE,
+  TERMINAL_SUCCESS,
+  IF_UNAVAILABLE_LABELS,
+  normalizeOrderCode,
+  sameOrder,
+  resolveDeliveryOptionFromOrder,
+  resolveFulfillmentType,
+  fetchBusinessDetails,
+  updateStatusApi,
+  computeHaversineKm,
+} from './OrderDetails/orderDetailsUtils';
 
-/* ---------- stringify helpers (PREVENT RENDER ERROR) ---------- */
-const clean = (v) => (v == null ? '' : String(v).trim());
-const addressToLine = (val) => {
-  if (!val) return '';
-  if (typeof val === 'string') return val;
-  if (typeof val === 'object') {
-    const parts = [
-      clean(val.address || val.line1 || val.street),
-      clean(val.area || val.locality || val.block),
-      clean(val.city || val.town || val.dzongkhag),
-      clean(val.postcode || val.zip),
-    ].filter(Boolean);
-    if (!parts.length) {
-      const lat = val.lat ?? val.latitude;
-      const lng = val.lng ?? val.longitude;
-      const ll = [lat, lng].filter((n) => n != null).join(', ');
-      return ll ? `(${ll})` : '';
-    }
-    return parts.join(', ');
-  }
-  return String(val);
-};
+import { styles } from './OrderDetails/orderDetailsStyles';
+import StatusRail from './OrderDetails/StatusRail';
+import MetaSection from './OrderDetails/MetaSection';
+import DeliveryMethodChooser from './OrderDetails/DeliveryMethodChooser';
+import UpdateStatusActions from './OrderDetails/UpdateStatusActions';
+import ItemsBlock from './OrderDetails/ItemsBlock';
+import TotalsBlock from './OrderDetails/TotalsBlock';
+import DeclineModal from './OrderDetails/DeclineModal';
 
-/* ---------------- Status config ---------------- */
-const STATUS_META = {
-  PENDING: { label: 'Pending', color: '#0ea5e9', bg: '#e0f2fe', border: '#bae6fd', icon: 'time-outline' },
-  CONFIRMED: { label: 'Accepted', color: '#16a34a', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-circle-outline' },
-  READY: { label: 'Ready', color: '#2563eb', bg: '#dbeafe', border: '#bfdbfe', icon: 'cube-outline' },
-  OUT_FOR_DELIVERY: { label: 'Out for delivery', color: '#f59e0b', bg: '#fef3c7', border: '#fde68a', icon: 'bicycle-outline' },
-  COMPLETED: { label: 'Delivered', color: '#047857', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-done-outline' },
-  DECLINED: { label: 'Declined', color: '#b91c1c', bg: '#fee2e2', border: '#fecaca', icon: 'close-circle-outline' },
-};
-const TERMINAL_NEGATIVE = new Set(['DECLINED']);
-const TERMINAL_SUCCESS = new Set(['COMPLETED']);
-
-/* ---------------- Order code helpers ---------------- */
-const normalizeOrderCode = (raw) => {
-  if (!raw) return null;
-  const s = String(raw).trim();
-  const digits = (s.match(/\d+/) || [])[0];
-  if (!digits) return s.toUpperCase();
-  return `ORD-${digits}`;
-};
-const sameOrder = (a, b) => {
-  if (!a || !b) return false;
-  const A = normalizeOrderCode(a);
-  const B = normalizeOrderCode(b);
-  if (!A || !B) return false;
-  return A.replace(/\D/g, '') === B.replace(/\D/g, '');
-};
-
-const buildUpdateUrl = (base, orderCode) => {
-  const cleanBase = String(base || '').trim().replace(/\/+$/, '');
-  if (!cleanBase || !orderCode) return null;
-  let url = cleanBase
-    .replace(/\{\s*order_id\s*\}/gi, orderCode)
-    .replace(/\{\s*order\s*\}/gi, orderCode)
-    .replace(/:order_id/gi, orderCode)
-    .replace(/:order/gi, orderCode);
-  if (url !== cleanBase) {
-    if (!/\/status(?:\?|$)/i.test(url)) url = `${url}/status`;
-    return url;
-  }
-  return `${cleanBase}/${orderCode}/status`;
-};
-
-/* ---------------- NORMALIZERS ---------------- */
-/** 'SELF' | 'GRAB' | 'BOTH' | 'UNKNOWN' */
-const normDelivery = (v) => {
-  const s = String(v || '').trim().toUpperCase();
-  if (!s) return 'UNKNOWN';
-  if (['SELF', 'SELF_ONLY', 'PICKUP', 'PICK_UP', 'SELF_PICKUP', 'SELF-DELIVERY', 'SELF_DELIVERY'].includes(s)) return 'SELF';
-  if (['GRAB', 'GRAB_ONLY', 'DELIVERY', 'PLATFORM', 'PLATFORM_DELIVERY', 'PLATFORM-DELIVERY'].includes(s)) return 'GRAB';
-  if (s === 'BOTH' || s === 'ALL') return 'BOTH';
-  if (s === '1' || s === 'TRUE') return 'GRAB';
-  if (s === '0' || s === 'FALSE') return 'SELF';
-  if (s.includes('GRAB') || s.includes('PLATFORM')) return 'GRAB';
-  if (s.includes('SELF')) return 'SELF';
-  if (s.includes('BOTH')) return 'BOTH';
-  return 'UNKNOWN';
-};
-
-/** Returns 'SELF' | 'GRAB' | 'BOTH' | '' from raw order payload */
-function resolveDeliveryOptionFromOrder(from) {
-  const cands = [
-    from?.delivery_option, from?.deliveryOption, from?.delivery_by, from?.deliveryBy,
-    from?.courier, from?.courier_type, from?.courierType,
-    from?.fulfillment_option, from?.fulfillmentOption,
-    from?.owner_delivery_option, from?.ownerDeliveryOption,
-    from?.type, from?.delivery_type, from?.fulfillment_type,
-    from?.params?.delivery_option, from?.params?.deliveryOption, from?.params?.delivery_by,
-  ].map((v) => (v == null ? '' : String(v).trim()));
-
-  for (const val of cands) {
-    const n = normDelivery(val);
-    if (n !== 'UNKNOWN') return n;
-  }
-  return '';
-}
-
-/** Returns 'Delivery' | 'Pickup' | '' */
-function resolveFulfillmentType(from) {
-  const cands = [
-    from?.fulfillment_type, from?.fulfillmentType, from?.order_type, from?.orderType,
-    from?.type, from?.delivery_type, from?.service_type,
-  ].map((v) => (v == null ? '' : String(v).trim()));
-
-  for (const val of cands) {
-    const s = norm(val);
-    if (!s) continue;
-    if (['delivery', 'deliver', 'platform_delivery', 'self-delivery'].includes(s)) return 'Delivery';
-    if (['pickup', 'self-pickup', 'pick_up', 'takeaway', 'take-away'].includes(s)) return 'Pickup';
-    return '';
-  }
-  return '';
-}
-
-/* ---------------- BUSINESS_DETAILS fetcher ---------------- */
-async function fetchBusinessDetails({ token, business_id }) {
-  const base = (ENV_BUSINESS_DETAILS || '').trim().replace(/\/+$/, '');
-  if (!base) return null;
-
-  const headers = token
-    ? { Accept: 'application/json', Authorization: `Bearer ${token}` }
-    : { Accept: 'application/json' };
-
-  const candidates = [
-    `${base}`,
-    business_id ? `${base}/${business_id}` : null,
-    business_id ? `${base}?business_id=${encodeURIComponent(String(business_id))}` : null,
-  ].filter(Boolean);
-
-  for (const url of candidates) {
-    try {
-      const r = await fetch(url, { headers });
-      const text = await r.text();
-      let data = null;
-      try { data = text ? JSON.parse(text) : null; } catch { }
-      if (!r.ok) continue;
-      const maybe = data?.data && typeof data.data === 'object' ? data.data : data;
-      if (maybe && (maybe.business_id || maybe.business_name || maybe.delivery_option)) {
-        return maybe;
-      }
-    } catch (e) {
-      // continue
-    }
-  }
-  console.log('[OrderDetails] BUSINESS_DETAILS not available from any candidate URL.');
-  return null;
-}
-
-/* ---------------- API calls ---------------- */
-async function updateStatusApi({ endpoint, orderCode, payload, token }) {
-  const url = buildUpdateUrl(endpoint, orderCode);
-  if (!url) throw new Error('Invalid update endpoint');
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(payload),
-  });
-  const text = await res.text();
-  let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch { }
-  if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
-  return json;
-}
-
-/* ---------------- Nearby drivers ---------------- */
-const expandNearbyUrl = (baseUrl, { cityId, lat, lng, radiusKm, limit }) => {
-  const clean = String(baseUrl || '').trim();
-  if (!clean) return null;
-  let u = clean
-    .replace(/\{city\}/gi, encodeURIComponent(cityId ?? 'thimphu'))
-    .replace(/\{cityId\}/gi, encodeURIComponent(cityId ?? 'thimphu'))
-    .replace(/\{lat\}/gi, encodeURIComponent(lat ?? '27.4775469'))
-    .replace(/\{lng\}/gi, encodeURIComponent(lng ?? '89.6387255'))
-    .replace(/\{radius\}/gi, encodeURIComponent(radiusKm ?? '5'))
-    .replace(/\{radiusKm\}/gi, encodeURIComponent(radiusKm ?? '5'))
-    .replace(/\{limit\}/gi, encodeURIComponent(limit ?? '20'));
-  return u;
-};
-
-/* ---------------- Driver rating helpers ---------------- */
-const buildDriverRatingUrl = (baseUrl, driverId) => {
-  if (!baseUrl || !driverId) return null;
-  let u = String(baseUrl).trim()
-    .replace(/\{driver_id\}/gi, encodeURIComponent(driverId))
-    .replace(/:driver_id/gi, encodeURIComponent(driverId));
-  try {
-    const url = new URL(u);
-    if (!url.searchParams.get('driver_id')) url.searchParams.set('driver_id', String(driverId));
-    if (!url.searchParams.get('limit')) url.searchParams.set('limit', '20');
-    if (!url.searchParams.get('offset')) url.searchParams.set('offset', '0');
-    return url.toString();
-  } catch { return u; }
-};
-const computeAverageRating = (payload) => {
-  let arr = [];
-  if (!payload) return null;
-  if (Array.isArray(payload)) arr = payload;
-  else if (Array.isArray(payload?.data)) arr = payload.data;
-  else if (Array.isArray(payload?.ratings)) arr = payload.ratings;
-  else if (Array.isArray(payload?.items)) arr = payload.items;
-  const vals = arr
-    .map((r) => r?.rating ?? r?.score ?? r?.stars ?? r?.value ?? null)
-    .filter((v) => v != null)
-    .map(Number)
-    .filter((n) => !Number.isNaN(n));
-  if (!vals.length) return null;
-  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-  return Math.round(avg * 10) / 10;
-};
-
-/* ---------------- Distance & ETA helpers (Haversine) ---------------- */
-const toRad = (deg) => (deg * Math.PI) / 180;
-
-const computeHaversineKm = (from, to) => {
-  if (!from || !to) return null;
-  const { lat: lat1, lng: lon1 } = from;
-  const { lat: lat2, lng: lon2 } = to;
-
-  if (
-    !Number.isFinite(lat1) || !Number.isFinite(lon1) ||
-    !Number.isFinite(lat2) || !Number.isFinite(lon2)
-  ) {
-    return null;
-  }
-
-  const R = 6371; // Earth radius in km
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c; // km
-};
-
-/* ---------------- Tiny UI atoms ---------------- */
-const Chip = ({ label, color, bg, border, icon }) => (
-  <View style={[styles.pill, { backgroundColor: bg, borderColor: border }]}>
-    <Ionicons name={icon} size={14} color={color} />
-    <Text style={[styles.pillText, { color }]} numberOfLines={1}>{label}</Text>
-  </View>
-);
-
-const toText = (val) => {
-  if (val == null) return '—';
-  if (typeof val === 'object') return addressToLine(val) || '—';
-  const s = String(val).trim();
-  return s.length ? s : '—';
-};
-
-const Step = ({ label, ringColor, fill, icon, time, onPress, disabled, dimmed }) => {
-  const border = ringColor || '#cbd5e1';
-  const bg = fill ? border : '#fff';
-  const iconColor = fill ? '#fff' : border;
-  return (
-    <Pressable style={styles.stepWrap} onPress={onPress} disabled={disabled}>
-      <View style={[styles.stepDot, { borderColor: border, backgroundColor: bg }]}>
-        <Ionicons name={icon} size={14} color={iconColor} />
-      </View>
-      <Text style={[styles.stepLabel, { color: dimmed ? '#94a3b8' : '#334155' }]} numberOfLines={1}>
-        {label}
-      </Text>
-      {time ? <Text style={styles.stepTime}>{time}</Text> : null}
-    </Pressable>
-  );
-};
-
-const Row = ({ icon, text }) => (
-  <View style={styles.row}>
-    <Ionicons name={icon} size={16} color="#64748b" />
-    <Text style={styles.rowText} numberOfLines={4}>{toText(text)}</Text>
-  </View>
-);
-
-const RowTitle = ({ title }) => (
-  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-    <Text style={styles.blockTitle}>{title}</Text>
-  </View>
-);
-
-/* ======================= Screen ======================= */
 export default function OrderDetails() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -338,16 +67,23 @@ export default function OrderDetails() {
   const [updating, setUpdating] = useState(false);
   const [declineOpen, setDeclineOpen] = useState(false);
   const [declineReason, setDeclineReason] = useState('');
+  const [rideMessage, setRideMessage] = useState('');
+  const [driverAccepted, setDriverAccepted] = useState(false); // driver accepted flag
 
-  /* ---------- Back handling (keep header/footer/tab) ---------- */
+  const [driverDetails, setDriverDetails] = useState(null); // NEW
+  const [driverRating, setDriverRating] = useState(null);   // NEW { average, count }
+
+  const socketRef = useRef(null);
+
+  /* ---------- Back handling ---------- */
   const goBackToOrders = useCallback(() => {
     if (navigation.canGoBack()) { navigation.goBack(); return; }
     try {
       const parent = navigation.getParent?.();
       const names = parent?.getState?.()?.routeNames ?? [];
       const target =
-        names.find(n => /^(Orders|OrderTab|OrdersTab|MartOrders|FoodOrders)$/i.test(n)) ||
-        names.find(n => /Order/i.test(n));
+        names.find((n) => /^(Orders|OrderTab|OrdersTab|MartOrders|FoodOrders)$/i.test(n)) ||
+        names.find((n) => /Order/i.test(n));
       if (parent && target) { parent.navigate(target); return; }
     } catch { }
     navigation.dispatch(CommonActions.navigate({ name: 'MainTabs', params: { screen: 'Orders' } }));
@@ -361,10 +97,10 @@ export default function OrderDetails() {
     }, [goBackToOrders])
   );
 
-  /* ---------- Merchant delivery option & location (BUSINESS_DETAILS) ---------- */
+  /* ---------- Merchant delivery option & location ---------- */
   const [merchantDeliveryOpt, setMerchantDeliveryOpt] = useState('UNKNOWN'); // SELF|GRAB|BOTH|UNKNOWN
   const [businessId, setBusinessId] = useState(paramBusinessId);
-  const [businessCoords, setBusinessCoords] = useState(null); // {lat,lng} from BUSINESS_DETAILS
+  const [businessCoords, setBusinessCoords] = useState(null); // {lat,lng}
 
   useEffect(() => {
     (async () => {
@@ -391,10 +127,10 @@ export default function OrderDetails() {
 
         const bd = await fetchBusinessDetails({ token, business_id: finalBizId });
         if (bd) {
-          const opt = normDelivery(bd?.delivery_option ?? bd?.deliveryOption);
-          setMerchantDeliveryOpt(opt);
+          const opt = bd?.delivery_option ?? bd?.deliveryOption;
+          const nOpt = opt ? String(opt).toUpperCase() : 'UNKNOWN';
+          setMerchantDeliveryOpt(nOpt);
 
-          // extract lat/lng from BUSINESS_DETAILS response
           const latRaw =
             bd.latitude ?? bd.lat ?? bd.business_latitude ?? bd.business_lat ?? null;
           const lngRaw =
@@ -412,40 +148,34 @@ export default function OrderDetails() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // run once on mount
+  }, []);
 
-  /* ---------- Normalize Fulfillment vs Delivery-by ---------- */
-  const fulfillment = useMemo(() => resolveFulfillmentType({ ...order, params }), [order, params]);
+  /* ---------- Normalize fulfillment ---------- */
+  const fulfillment = useMemo(
+    () => resolveFulfillmentType({ ...order, params }),
+    [order, params],
+  );
   const isPickupFulfillment = useMemo(
     () => (fulfillment || '').toLowerCase() === 'pickup',
     [fulfillment]
   );
 
-  // Order-level hint (fallback)
-  const orderDeliveryHint = useMemo(() => resolveDeliveryOptionFromOrder({ ...order, params }), [order, params]);
+  const orderDeliveryHint = useMemo(
+    () => resolveDeliveryOptionFromOrder({ ...order, params }),
+    [order, params]
+  );
 
-  // Effective delivery option priority: BUSINESS_DETAILS > order hint > ''
   const deliveryOptionInitial = useMemo(() => {
     const m = merchantDeliveryOpt;
     if (m !== 'UNKNOWN') return m;
     return orderDeliveryHint || '';
   }, [merchantDeliveryOpt, orderDeliveryHint]);
 
-  // When BOTH, merchant chooses at READY. Otherwise auto-choose.
-  const [deliveryChoice, setDeliveryChoice] = useState(
-    deliveryOptionInitial === 'SELF' ? 'self' :
-      deliveryOptionInitial === 'GRAB' ? 'grab' : ''
-  );
-
-  useEffect(() => {
-    if (!deliveryChoice && (deliveryOptionInitial === 'SELF' || deliveryOptionInitial === 'GRAB')) {
-      setDeliveryChoice(deliveryOptionInitial === 'SELF' ? 'self' : 'grab');
-    }
-  }, [deliveryOptionInitial, deliveryChoice]);
+  const [deliveryChoice, setDeliveryChoice] = useState('self');
 
   const isBothOption = deliveryOptionInitial === 'BOTH';
-  const isSelfSelected = (deliveryChoice || '').toLowerCase() === 'self';
-  const isGrabSelected = (deliveryChoice || '').toLowerCase() === 'grab';
+  const isSelfSelected = deliveryChoice === 'self';
+  const isGrabSelected = deliveryChoice === 'grab';
 
   const status = (order?.status || 'PENDING').toUpperCase();
   const meta = STATUS_META[status] || STATUS_META.PENDING;
@@ -473,7 +203,6 @@ export default function OrderDetails() {
   }, [isBothOption, isSelfSelected, isGrabSelected, deliveryOptionInitial, status]);
 
   /* ---------- Sequence ---------- */
-  // Only Pickup stops at READY. Delivery (Self / Grab) goes till COMPLETED.
   const STATUS_SEQUENCE = useMemo(
     () => (isPickupFulfillment
       ? ['PENDING', 'CONFIRMED', 'READY']
@@ -485,24 +214,59 @@ export default function OrderDetails() {
   const isTerminalSuccess =
     TERMINAL_SUCCESS.has(status) || (isPickupFulfillment && status === 'READY');
 
-  // Block NEXT at READY only when Grab is active (BOTH+Grab chosen OR direct Grab)
+  // Detect customer-cancelled orders (no update buttons)
+  const isCancelledByCustomer = useMemo(() => {
+    const rawStatus = String(order?.status || '').toUpperCase();
+    const reasonRaw =
+      order?.status_reason ??
+      order?.cancel_reason ??
+      order?.cancellation_reason ??
+      '';
+    const reason = String(reasonRaw || '').toLowerCase();
+    const cancelledBy = String(order?.cancelled_by || order?.canceled_by || '').toLowerCase();
+
+    if (cancelledBy && (cancelledBy.includes('customer') || cancelledBy.includes('user'))) {
+      return true;
+    }
+
+    if (rawStatus.includes('CANCEL')) {
+      if (!reason) return true;
+      if (reason.includes('customer') || reason.includes('user')) return true;
+    }
+
+    if (rawStatus === 'DECLINED') {
+      if (
+        reason.includes('customer cancelled') ||
+        reason.includes('customer canceled') ||
+        reason.includes('cancelled by customer') ||
+        reason.includes('canceled by customer') ||
+        reason.includes('user cancelled') ||
+        reason.includes('user canceled')
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }, [
+    order?.status,
+    order?.status_reason,
+    order?.cancel_reason,
+    order?.cancellation_reason,
+    order?.cancelled_by,
+    order?.canceled_by,
+  ]);
+
+  // Only block at READY for platform delivery until driver has accepted
   const shouldBlockAtReady =
-    status === 'READY' && (isPlatformDelivery || (isBothOption && isGrabSelected));
+    status === 'READY' &&
+    (isPlatformDelivery || (isBothOption && isGrabSelected)) &&
+    !driverAccepted;
 
   const nextFor = useCallback((curr) => {
     const s = (curr || '').toUpperCase();
-
-    // Stop on Declined / Completed
-    if (TERMINAL_NEGATIVE.has(s) || TERMINAL_SUCCESS.has(s)) {
-      return null;
-    }
-
-    // For Pickup, READY is the last status
-    if (isPickupFulfillment && s === 'READY') {
-      return null;
-    }
-
-    // For Delivery with Grab, block at READY until driver assigned
+    if (TERMINAL_NEGATIVE.has(s) || TERMINAL_SUCCESS.has(s)) return null;
+    if (isPickupFulfillment && s === 'READY') return null;
     if (s === 'READY' && shouldBlockAtReady) return null;
 
     const idx = STATUS_SEQUENCE.indexOf(s);
@@ -524,20 +288,39 @@ export default function OrderDetails() {
     return out;
   }, [order?.status_timestamps, STATUS_SEQUENCE]);
 
-  /* ---------- Note ---------- */
   const restaurantNote = useMemo(() => {
     const n =
       order?.note_for_restaurant ??
       order?.restaurant_note ??
       order?.note_for_store ??
-      order?.note ?? '';
+      order?.note ??
+      '';
     return String(n || '').trim();
   }, [order]);
 
-  /* ---------- Hydrate from grouped endpoint (ORDER_ENDPOINT) ---------- */
+  const ifUnavailableDisplay = useMemo(() => {
+    const raw = order?.if_unavailable;
+    if (!raw) return '';
+    const key = String(raw).trim().toLowerCase();
+    if (IF_UNAVAILABLE_LABELS[key]) return IF_UNAVAILABLE_LABELS[key];
+    return String(raw).replace(/_/g, ' ');
+  }, [order?.if_unavailable]);
+
+  const estimatedArrivalDisplay = useMemo(() => {
+    const raw = order?.estimated_arrivial_time;
+    if (raw == null) return '';
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return `~${Math.round(n)} min`;
+    const s = String(raw).trim();
+     if (!s) return '';
+    return s;
+  }, [order?.estimated_arrivial_time]);
+
+  /* ---------- Hydrate from grouped endpoint ---------- */
   const hydrateFromGrouped = useCallback(async () => {
     try {
-      if (!ordersGroupedUrl || !routeOrderId) return;
+      if (!routeOrderId) return;
+
       const hasCore =
         (order?.raw_items && order.raw_items.length) ||
         order?.payment_method ||
@@ -545,8 +328,35 @@ export default function OrderDetails() {
         order?.delivery_address;
       if (hasCore) return;
 
+      const baseRaw = (ordersGroupedUrl || ENV_ORDER_ENDPOINT || '').trim();
+      if (!baseRaw) return;
+
+      let bizId = businessId || paramBusinessId;
+
+      if (!bizId && baseRaw.includes('{businessId}')) {
+        try {
+          const saved = await SecureStore.getItemAsync('merchant_login');
+          if (saved) {
+            const j = JSON.parse(saved);
+            bizId =
+              j?.business_id ||
+              j?.user?.business_id ||
+              j?.user?.businessId ||
+              j?.id ||
+              j?.user?.id ||
+              null;
+            if (bizId && !businessId) setBusinessId(bizId);
+          }
+        } catch { }
+      }
+
+      let groupedUrlFinal = baseRaw;
+      if (bizId) {
+        groupedUrlFinal = groupedUrlFinal.replace(/\{businessId\}/gi, encodeURIComponent(String(bizId)));
+      }
+
       const token = await SecureStore.getItemAsync('auth_token');
-      const res = await fetch(ordersGroupedUrl, {
+      const res = await fetch(groupedUrlFinal, {
         method: 'GET',
         headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       });
@@ -573,7 +383,6 @@ export default function OrderDetails() {
         customer_name: match?.customer_name ?? match?.user_name ?? match?.user?.user_name ?? '',
         payment_method: match?.payment_method ?? match?.payment ?? '',
         delivery_address: match?.delivery_address ?? match?.address ?? '',
-        // also expose delivery lat/lng at top-level for easy access
         delivery_lat: match?.delivery_address?.lat ?? match?.delivery_lat ?? null,
         delivery_lng: match?.delivery_address?.lng ?? match?.delivery_lng ?? null,
         raw_items: Array.isArray(match?.raw_items) ? match.raw_items
@@ -584,150 +393,23 @@ export default function OrderDetails() {
         type: match?.type ?? match?.fulfillment_type ?? match?.delivery_type ?? order?.type ?? '',
         delivery_option: match?.delivery_option ?? match?.delivery_by ?? order?.delivery_option ?? '',
         status_timestamps: match?.status_timestamps ?? order?.status_timestamps ?? {},
+        if_unavailable: match?.if_unavailable ?? order?.if_unavailable ?? '',
+        estimated_arrivial_time: match?.estimated_arrivial_time ?? order?.estimated_arrivial_time ?? null,
       };
       setOrder((prev) => ({ ...prev, ...normalized }));
     } catch (e) {
       console.warn('[OrderDetails] hydrate error:', e?.message);
     }
-  }, [ordersGroupedUrl, routeOrderId, order]);
+  }, [ordersGroupedUrl, routeOrderId, order, businessId, paramBusinessId]);
 
   useEffect(() => { hydrateFromGrouped(); }, [hydrateFromGrouped]);
 
-  /* ---------- Update handlers ---------- */
-  const DEFAULT_REASON = {
-    CONFIRMED: 'Order accepted by merchant',
-    READY: 'Order is ready',
-    OUT_FOR_DELIVERY: 'Order handed over for delivery',
-    COMPLETED: 'Order delivered',
-  };
-
-  /* ---------- Distance & ETA (Haversine on-device) ---------- */
+  /* ---------- Distance & ETA (device) ---------- */
   const [routeInfo, setRouteInfo] = useState(null); // { distanceKm, etaMin }
   const [routeLoading, setRouteLoading] = useState(false);
   const [routeError, setRouteError] = useState('');
-  const [manualPrepMin, setManualPrepMin] = useState(''); // time to prepare (minutes)
+  const [manualPrepMin, setManualPrepMin] = useState('');
 
-  const doUpdate = useCallback(async (newStatus, opts = {}) => {
-    try {
-      const currentStatus = (order?.status || 'PENDING').toUpperCase();
-      const fLower = (fulfillment || '').toLowerCase();
-      const needsPrep = fLower === 'delivery' || fLower === 'pickup';
-
-      if (newStatus === 'DECLINED') {
-        const r = String(opts?.reason ?? '').trim();
-        if (r.length < 3) {
-          setDeclineOpen(true);
-          Alert.alert('Reason required', 'Please provide at least 3 characters explaining why the order is declined.');
-          return;
-        }
-        const payload = { status: 'DECLINED', reason: `Merchant declined: ${r}` };
-
-        setUpdating(true);
-        const token = await SecureStore.getItemAsync('auth_token');
-        const raw = order?.order_code || order?.id || routeOrderId;
-        const orderCode = normalizeOrderCode(raw);
-        await updateStatusApi({ endpoint: ENV_UPDATE_ORDER || '', orderCode, payload, token });
-
-        const patch = { status: 'DECLINED' };
-        setOrder((prev) => ({ ...prev, ...patch }));
-        DeviceEventEmitter.emit('order-updated', { id: routeOrderId || order?.id, patch });
-        return;
-      }
-
-      // Make prep time REQUIRED when accepting from PENDING for Delivery or Pickup
-      if (
-        needsPrep &&
-        currentStatus === 'PENDING' &&
-        newStatus === 'CONFIRMED'
-      ) {
-        const prepVal = Number(manualPrepMin);
-        if (!Number.isFinite(prepVal) || prepVal <= 0) {
-          Alert.alert(
-            'Time required',
-            'Please enter the time to prepare (in minutes) before accepting the order.'
-          );
-          return;
-        }
-      }
-
-      let payload = { status: newStatus };
-      if (DEFAULT_REASON[newStatus]) payload.reason = DEFAULT_REASON[newStatus];
-
-      // Always send the chosen/active delivery_option
-      const deliveryBy =
-        (isBothOption && (isSelfSelected || isGrabSelected))
-          ? (isSelfSelected ? 'SELF' : 'GRAB')
-          : (deliveryOptionInitial || '');
-      if (deliveryBy) payload.delivery_option = deliveryBy;
-
-      // Attach ETA minutes: prep + delivery (if available)
-      const prepVal = Number(manualPrepMin);
-      const hasPrep = Number.isFinite(prepVal) && prepVal > 0;
-      const deliveryVal = routeInfo?.etaMin ?? null;
-      const hasDelivery = fLower === 'delivery' && deliveryVal != null && Number.isFinite(deliveryVal);
-
-      if (hasPrep || hasDelivery) {
-        const total = (hasPrep ? prepVal : 0) + (hasDelivery ? deliveryVal : 0);
-        if (total > 0) payload.eta_minutes = Math.round(total);
-      }
-
-      setUpdating(true);
-      const token = await SecureStore.getItemAsync('auth_token');
-      const raw = order?.order_code || order?.id || routeOrderId;
-      const orderCode = normalizeOrderCode(raw);
-
-      await updateStatusApi({ endpoint: ENV_UPDATE_ORDER || '', orderCode, payload, token });
-
-      const patch = { status: newStatus };
-      if (payload.delivery_option) patch.delivery_option = payload.delivery_option;
-      if (payload.eta_minutes) patch.eta_minutes = payload.eta_minutes;
-      setOrder((prev) => ({ ...prev, ...patch }));
-      DeviceEventEmitter.emit('order-updated', { id: routeOrderId || order?.id, patch });
-    } catch (e) {
-      Alert.alert('Update failed', String(e?.message || e));
-    } finally {
-      setUpdating(false);
-    }
-  }, [
-    routeOrderId,
-    order?.id,
-    order?.order_code,
-    order?.status,
-    isBothOption,
-    isSelfSelected,
-    isGrabSelected,
-    deliveryOptionInitial,
-    manualPrepMin,
-    routeInfo,
-    fulfillment,
-  ]);
-
-  const next = nextFor(status);
-  const primaryLabel = status === 'PENDING'
-    ? 'Accept'
-    : next
-      ? STATUS_META[next]?.label || 'Next'
-      : null;
-
-  const onPrimaryAction = useCallback(() => {
-    if (!next || updating) return;
-    doUpdate(next);
-  }, [next, updating, doUpdate]);
-
-  const onDecline = useCallback(() => setDeclineOpen(true), []);
-  const canDecline = useMemo(() => String(declineReason).trim().length >= 3, [declineReason]);
-  const confirmDecline = useCallback(() => {
-    const r = String(declineReason).trim();
-    if (r.length < 3) {
-      Alert.alert('Reason required', 'Please type a brief reason (min 3 characters).');
-      return;
-    }
-    setDeclineOpen(false);
-    doUpdate('DECLINED', { reason: r });
-    setDeclineReason('');
-  }, [declineReason, doUpdate]);
-
-  /* ---------- Delivery coordinates (from ORDER + address) ---------- */
   const refCoords = useMemo(() => {
     const addr = order?.delivery_address;
     const addrLat = addr ? (addr.lat ?? addr.latitude) : null;
@@ -762,9 +444,7 @@ export default function OrderDetails() {
     };
   }, [order]);
 
-  /* ---------- Distance & ETA (Haversine on-device) ---------- */
   useEffect(() => {
-    // Only for delivery-type orders
     if ((fulfillment || '').toLowerCase() !== 'delivery') {
       setRouteInfo(null);
       setRouteError('');
@@ -788,16 +468,16 @@ export default function OrderDetails() {
       setRouteLoading(true);
       setRouteError('');
 
-      const distanceKm = computeHaversineKm(from, to); // straight-line distance
+      const distanceKm = computeHaversineKm(from, to);
       if (distanceKm == null) {
         setRouteInfo(null);
         setRouteError('Failed to compute distance');
       } else {
-        const avgSpeedKmh = 20; // adjust this if needed
+        const avgSpeedKmh = 20;
         const etaMin = distanceKm > 0 ? (distanceKm / avgSpeedKmh) * 60 : 0;
         setRouteInfo({ distanceKm, etaMin });
       }
-    } catch (e) {
+    } catch {
       setRouteInfo(null);
       setRouteError('Failed to compute distance');
     } finally {
@@ -805,117 +485,196 @@ export default function OrderDetails() {
     }
   }, [businessCoords, refCoords.lat, refCoords.lng, fulfillment]);
 
-  /* ---------- Nearby drivers (READY + Grab active) ---------- */
-  const [drivers, setDrivers] = useState([]);
-  const [loadingDrivers, setLoadingDrivers] = useState(false);
-  const [driversError, setDriversError] = useState('');
-  const [offerPendingDriver, setOfferPendingDriver] = useState(null);
-  const [waitingDriverAccept, setWaitingDriverAccept] = useState(false);
-  const acceptTimerRef = useRef(null);
+  const DEFAULT_REASON = {
+    CONFIRMED: 'Order accepted by merchant',
+    READY: 'Order is ready',
+    OUT_FOR_DELIVERY: 'Order handed over for delivery',
+    COMPLETED: 'Order delivered',
+  };
 
-  const buildNearby = useCallback(() => expandNearbyUrl(ENV_NEARBY_DRIVERS, {
-    cityId: refCoords.cityId, lat: refCoords.lat, lng: refCoords.lng, radiusKm: 5, limit: 20,
-  }), [refCoords]);
-
-  const fetchDriverRating = useCallback(async (driverId) => {
+  const doUpdate = useCallback(async (newStatus, opts = {}) => {
     try {
-      if (!ENV_DRIVER_RATING) return null;
-      const url = buildDriverRatingUrl(ENV_DRIVER_RATING, driverId);
-      if (!url) return null;
-      const resp = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
-      const text = await resp.text();
-      let json = null;
-      try { json = text ? JSON.parse(text) : null; } catch { }
-      if (!resp.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
-      return computeAverageRating(json);
-    } catch { return null; }
-  }, []);
+      const currentStatus = (order?.status || 'PENDING').toUpperCase();
+      const fLower = (fulfillment || '').toLowerCase();
+      const needsPrep = fLower === 'delivery' || fLower === 'pickup';
 
-  const fetchNearbyDrivers = useCallback(async () => {
-    const grabActive = (isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB');
-    if (!(status === 'READY' && grabActive)) return;
+      if (newStatus === 'DECLINED') {
+        const r = String(opts?.reason ?? '').trim();
+        if (r.length < 3) {
+          setDeclineOpen(true);
+          Alert.alert(
+            'Reason required',
+            'Please provide at least 3 characters explaining why the order is declined.'
+          );
+          return;
+        }
 
-    const url = buildNearby();
-    if (!url) { setDriversError('NEARBY_DRIVERS_ENDPOINT not configured'); return; }
+        const statusReason = r;
 
-    setDriversError(''); setLoadingDrivers(true);
-    try {
-      const resp = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
-      const text = await resp.text();
-      let json = null;
-      try { json = text ? JSON.parse(text) : null; } catch { }
-      if (!resp.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
-
-      let arr = [];
-      if (Array.isArray(json?.drivers)) arr = json.drivers;
-      else if (Array.isArray(json?.data)) arr = json.data;
-      else if (Array.isArray(json)) arr = json;
-      else throw new Error('Unexpected driver API response');
-
-      const normalized = arr.map((d, i) => {
-        const driverNode = d.driver || {};
-        const userNode = d.user || {};
-        return {
-          id: d.id ?? driverNode.id ?? userNode.id ?? i,
-          driver_id: driverNode.id ?? d.driver_id ?? null,
-          name: userNode.user_name ?? userNode.name ?? d.name ?? 'Driver',
-          vehicle_type: driverNode.vehicle_type ?? d.vehicle_type ?? d.vehicle ?? 'Bike',
-          distance_km: d.distance_km ?? d.distance ?? null,
-          rating: null,
+        const payload = {
+          status: 'DECLINED',
+          status_reason: statusReason,
+          reason: statusReason,
+          cancel_reason: statusReason,
+          cancellation_reason: statusReason,
         };
+
+        setUpdating(true);
+        const token = await SecureStore.getItemAsync('auth_token');
+        const raw = order?.order_code || order?.id || routeOrderId;
+        const orderCode = normalizeOrderCode(raw);
+
+        await updateStatusApi({
+          endpoint: ENV_UPDATE_ORDER || '',
+          orderCode,
+          payload,
+          token,
+        });
+
+        const patch = {
+          status: 'DECLINED',
+          status_reason: statusReason,
+          cancel_reason: statusReason,
+          cancellation_reason: statusReason,
+        };
+
+        setOrder((prev) => ({ ...prev, ...patch }));
+        DeviceEventEmitter.emit('order-updated', {
+          id: routeOrderId || order?.id,
+          patch,
+        });
+        return;
+      }
+
+      if (
+        needsPrep &&
+        currentStatus === 'PENDING' &&
+        newStatus === 'CONFIRMED'
+      ) {
+        const prepVal = Number(manualPrepMin);
+        if (!Number.isFinite(prepVal) || prepVal <= 0) {
+          Alert.alert(
+            'Time required',
+            'Please enter the time to prepare (in minutes) before accepting the order.'
+          );
+          return;
+        }
+      }
+
+      let payload = { status: newStatus };
+
+      if (DEFAULT_REASON[newStatus]) {
+        const r = DEFAULT_REASON[newStatus];
+        payload.status_reason = r;
+        payload.reason = r;
+      }
+
+      const deliveryBy =
+        (isBothOption && (isSelfSelected || isGrabSelected))
+          ? (isSelfSelected ? 'SELF' : 'GRAB')
+          : (deliveryOptionInitial || '');
+      if (deliveryBy) payload.delivery_option = deliveryBy;
+
+      const prepVal = Number(manualPrepMin);
+      const hasPrep = Number.isFinite(prepVal) && prepVal > 0;
+      const deliveryVal = routeInfo?.etaMin ?? null;
+      const hasDelivery =
+        fLower === 'delivery' && deliveryVal != null && Number.isFinite(deliveryVal);
+
+      let computedEta = null;
+      if (hasPrep || hasDelivery) {
+        const total = (hasPrep ? prepVal : 0) + (hasDelivery ? deliveryVal : 0);
+        const totalRounded = Math.round(total);
+        if (totalRounded > 0) computedEta = totalRounded;
+      }
+
+      if (newStatus === 'CONFIRMED') {
+        if (computedEta != null) {
+          payload.estimated_minutes = computedEta;
+        }
+
+        const total = Number(order?.total ?? order?.total_amount ?? 0);
+        const platformFee = Number(
+          order?.platform_fee ?? order?.totals_for_business?.fee_share ?? 0
+        );
+        const discount = Number(order?.discount_amount ?? 0);
+
+        if (Number.isFinite(total)) payload.final_total_amount = total;
+        if (Number.isFinite(platformFee)) payload.final_platform_fee = platformFee;
+        if (Number.isFinite(discount)) payload.final_discount_amount = discount;
+      }
+
+      setUpdating(true);
+      const token = await SecureStore.getItemAsync('auth_token');
+      const raw = order?.order_code || order?.id || routeOrderId;
+      const orderCode = normalizeOrderCode(raw);
+
+      await updateStatusApi({
+        endpoint: ENV_UPDATE_ORDER || '',
+        orderCode,
+        payload,
+        token,
       });
 
-      const top = normalized.slice(0, 12);
-      const ratings = await Promise.all(top.map(async (d) => {
-        const idForRating = d.driver_id || d.id;
-        return idForRating ? await fetchDriverRating(idForRating) : null;
-      }));
-      top.forEach((d, idx) => { d.rating = ratings[idx]; });
-      const merged = top.concat(normalized.slice(12));
-      setDrivers(merged);
-    } catch (e) {
-      setDrivers([]); setDriversError(String(e?.message || e));
-    } finally {
-      setLoadingDrivers(false);
-    }
-  }, [status, isBothOption, isGrabSelected, deliveryOptionInitial, buildNearby, fetchDriverRating]);
+      const patch = { status: newStatus };
+      if (payload.status_reason) patch.status_reason = payload.status_reason;
+      if (payload.delivery_option) patch.delivery_option = payload.delivery_option;
+      if (computedEta != null) patch.estimated_arrivial_time = computedEta;
 
-  useEffect(() => {
-    const grabActive = (isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB');
-    if (status === 'READY' && grabActive) {
-      fetchNearbyDrivers();
-    } else {
-      setDrivers([]);
-      setOfferPendingDriver(null);
-      setWaitingDriverAccept(false);
-    }
-  }, [status, isBothOption, isGrabSelected, deliveryOptionInitial, refCoords.cityId, refCoords.lat, refCoords.lng, fetchNearbyDrivers]);
-
-  const offerToDriver = useCallback((driverId) => {
-    setOfferPendingDriver(driverId);
-    setWaitingDriverAccept(true);
-    if (acceptTimerRef.current) clearTimeout(acceptTimerRef.current);
-    const ms = 3000 + Math.floor(Math.random() * 3000);
-    acceptTimerRef.current = setTimeout(() => {
-      setWaitingDriverAccept(false);
-      setOfferPendingDriver(null);
-      const patch = { status: 'OUT_FOR_DELIVERY', assigned_driver: driverId };
       setOrder((prev) => ({ ...prev, ...patch }));
-      DeviceEventEmitter.emit('order-updated', { id: routeOrderId || order?.id, patch });
-    }, ms);
-  }, [order?.id, routeOrderId]);
+      DeviceEventEmitter.emit('order-updated', {
+        id: routeOrderId || order?.id,
+        patch,
+      });
+    } catch (e) {
+      Alert.alert('Update failed', String(e?.message || e));
+    } finally {
+      setUpdating(false);
+    }
+  }, [
+    routeOrderId,
+    order?.id,
+    order?.order_code,
+    order?.status,
+    order?.total,
+    order?.total_amount,
+    order?.platform_fee,
+    order?.discount_amount,
+    order?.totals_for_business,
+    isBothOption,
+    isSelfSelected,
+    isGrabSelected,
+    deliveryOptionInitial,
+    manualPrepMin,
+    routeInfo,
+    fulfillment,
+  ]);
 
-  useEffect(() => () => { if (acceptTimerRef.current) clearTimeout(acceptTimerRef.current); }, []);
+  const next = nextFor(status);
+  const primaryLabel = status === 'PENDING'
+    ? 'Accept'
+    : next
+      ? STATUS_META[next]?.label || 'Next'
+      : null;
 
-  /* ---------- Live patch listener ---------- */
-  useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('order-updated', ({ id, patch }) => {
-      if (String(id) === String(routeOrderId)) setOrder((prev) => ({ ...prev, ...patch }));
-    });
-    return () => sub?.remove?.();
-  }, [routeOrderId]);
+  const onPrimaryAction = useCallback(() => {
+    if (!next || updating) return;
+    doUpdate(next);
+  }, [next, updating, doUpdate]);
 
-  /* ---------------- ETA text builder (Delivery) ---------------- */
+  const onDecline = useCallback(() => setDeclineOpen(true), []);
+  const canDecline = useMemo(() => String(declineReason).trim().length >= 3, [declineReason]);
+  const confirmDecline = useCallback(() => {
+    const r = String(declineReason).trim();
+    if (r.length < 3) {
+      Alert.alert('Reason required', 'Please type a brief reason (min 3 characters).');
+      return;
+    }
+    setDeclineOpen(false);
+    doUpdate('DECLINED', { reason: r });
+    setDeclineReason('');
+  }, [declineReason, doUpdate]);
+
   const etaText = useMemo(() => {
     if (routeLoading) return 'Distance & ETA: calculating…';
 
@@ -939,23 +698,435 @@ export default function OrderDetails() {
     }
 
     if (hasPrep) {
-      const detailLine = hasDelivery
-        ? `Prep ~${Math.round(prepVal)} min + Delivery ~${Math.round(deliveryVal)} min`
-        : `Prep time ~${Math.round(prepVal)} min`;
-
       const total = prepVal + (hasDelivery ? deliveryVal : 0);
       const totalLine = `Total time ~${Math.round(total)} min`;
-
-      parts.push(detailLine);
       parts.push(totalLine);
     }
 
     return parts.join('\n');
   }, [routeLoading, routeInfo, routeError, manualPrepMin]);
 
+  const etaShortText = useMemo(() => {
+    const rawEta =
+      order?.eta_minutes ??
+      order?.estimated_arrivial_time ??
+      null;
+
+    const etaFromOrder = (() => {
+      if (rawEta == null) return null;
+      const n = Number(rawEta);
+      if (Number.isFinite(n) && n > 0) return Math.round(n);
+      const s = String(rawEta).trim();
+      if (!s) return null;
+      if (/min/i.test(s)) return s;
+      return null;
+    })();
+
+    if (typeof etaFromOrder === 'string') return `ETA ${etaFromOrder}`;
+    if (typeof etaFromOrder === 'number') return `ETA ~${etaFromOrder} min`;
+
+    const prepVal = Number(manualPrepMin);
+    const hasPrep = Number.isFinite(prepVal) && prepVal > 0;
+    const deliveryVal = routeInfo?.etaMin ?? null;
+    const hasDelivery = deliveryVal != null && Number.isFinite(deliveryVal);
+
+    const total = (hasPrep ? prepVal : 0) + (hasDelivery ? deliveryVal : 0);
+
+    if (total > 0) return `ETA ~${Math.round(total)} min`;
+    if (hasDelivery) return `ETA ~${Math.round(deliveryVal)} min`;
+
+    return 'ETA not available';
+  }, [order?.eta_minutes, order?.estimated_arrivial_time, manualPrepMin, routeInfo]);
+
+  /* ---------- Driver rating fetch ---------- */
+  const fetchDriverRating = useCallback(
+    async (driverId) => {
+      try {
+        if (!ENV_DRIVER_RATING) {
+          console.log('[OrderDetails] ENV_DRIVER_RATING not set, skipping rating fetch');
+          return;
+        }
+
+        let base = (ENV_DRIVER_RATING || '').trim();
+        if (!base) return;
+
+        let finalUrl = base;
+        if (base.includes('{driver_id}')) {
+          finalUrl = base.replace('{driver_id}', encodeURIComponent(String(driverId)));
+        } else {
+          const sep = base.includes('?') ? '&' : '?';
+          finalUrl = `${base}${sep}driver_id=${encodeURIComponent(String(driverId))}`;
+        }
+
+        const res = await fetch(finalUrl, {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+        });
+
+        const text = await res.text();
+        let json = null;
+        try { json = text ? JSON.parse(text) : null; } catch { }
+
+        if (!res.ok) {
+          throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+        }
+
+        // Try a few common shapes: data.summary, data, first of data array, etc.
+        let avg = null;
+        let count = null;
+
+        const d = json?.summary || json?.details || json?.data || json;
+
+        if (Array.isArray(d) && d.length > 0) {
+          const first = d[0];
+          avg = first.avg_rating ?? first.average_rating ?? first.rating ?? null;
+          count = first.total_ratings ?? first.count ?? first.rating_count ?? null;
+        } else if (d && typeof d === 'object') {
+          avg = d.avg_rating ?? d.average_rating ?? d.rating ?? null;
+          count = d.total_ratings ?? d.count ?? d.rating_count ?? null;
+        }
+
+        setDriverRating({ average: avg, count });
+        console.log('[OrderDetails] Driver rating fetched:', { avg, count });
+      } catch (err) {
+        console.log('[OrderDetails] Failed to fetch driver rating:', err?.message || err);
+      }
+    },
+    []
+  );
+
+  /* ---------- Driver details fetch using ENV_DRIVER_DETAILS ---------- */
+  const fetchDriverDetails = useCallback(
+    async (driverId) => {
+      try {
+        if (!ENV_DRIVER_DETAILS) {
+          console.log('[OrderDetails] ENV_DRIVER_DETAILS not set, skipping driver details fetch');
+          return;
+        }
+
+        let base = (ENV_DRIVER_DETAILS || '').trim();
+        if (!base) return;
+
+        let finalUrl = base;
+        if (base.includes('{driverId}')) {
+          finalUrl = base.replace('{driverId}', encodeURIComponent(String(driverId)));
+        } else {
+          const sep = base.includes('?') ? '&' : '?';
+          finalUrl = `${base}${sep}driverId=${encodeURIComponent(String(driverId))}`;
+        }
+
+        const res = await fetch(finalUrl, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+          },
+        });
+
+        const text = await res.text();
+        let json = null;
+        try { json = text ? JSON.parse(text) : null; } catch { }
+
+        if (!res.ok) {
+          throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+        }
+
+        // Your payload example:
+        // { ok: true, details: { user_id, user_name, phone, ... } }
+        const drv =
+          json?.details ||
+          json?.data ||
+          json?.driver ||
+          json;
+
+        setDriverDetails(drv);
+        console.log('[OrderDetails] Driver details fetched:', drv);
+
+        // Fetch rating as well
+        await fetchDriverRating(driverId);
+      } catch (err) {
+        console.log('[OrderDetails] Failed to fetch driver details:', err?.message || err);
+      }
+    },
+    [fetchDriverRating]
+  );
+
+  /* ---------- Grab broadcast-delivery + socket deliveryAccepted ---------- */
+  const [sendingGrab, setSendingGrab] = useState(false);
+
+  const grabLoopActiveRef = useRef(false);
+  const grabLoopTimeoutRef = useRef(null);
+  const driverAcceptedRef = useRef(false);
+
+  const stopGrabLoop = useCallback(() => {
+    grabLoopActiveRef.current = false;
+    driverAcceptedRef.current = false;
+    if (grabLoopTimeoutRef.current) {
+      clearTimeout(grabLoopTimeoutRef.current);
+      grabLoopTimeoutRef.current = null;
+    }
+  }, []);
+
+  const sendGrabDeliveryRequest = useCallback(async () => {
+    try {
+      if (!ENV_SEND_REQUEST_DRIVER) {
+        Alert.alert(
+          'Grab delivery not configured',
+          'SEND_REQUEST_DRIVER_ENDPOINT is missing in environment variables.'
+        );
+        return;
+      }
+
+      setSendingGrab(true);
+      setRideMessage('Searching for nearby drivers…');
+
+      const pickupLat = businessCoords?.lat ?? 27.472012;
+      const pickupLng = businessCoords?.lng ?? 89.639882;
+
+      const dropLat = Number.isFinite(refCoords.lat) ? refCoords.lat : 27.47395;
+      const dropLng = Number.isFinite(refCoords.lng) ? refCoords.lng : 89.64321;
+
+      const distanceM = (() => {
+        if (routeInfo?.distanceKm != null && Number.isFinite(routeInfo.distanceKm)) {
+          return Math.round(routeInfo.distanceKm * 1000);
+        }
+        return 2200;
+      })();
+
+      const durationS = (() => {
+        if (routeInfo?.etaMin != null && Number.isFinite(routeInfo.etaMin)) {
+          return Math.round(routeInfo.etaMin * 60);
+        }
+        return 480;
+      })();
+
+      const baseFare = Number(
+        order?.delivery_fee ??
+        order?.delivery_charges ??
+        40
+      );
+
+      const fare = Number(order?.total ?? order?.total_amount ?? 70);
+      const fareCents = Math.round(baseFare * 100);
+
+      const pmRaw = String(order?.payment_method || '').toUpperCase();
+      const paymentType = pmRaw.includes('WALLET') || pmRaw.includes('ONLINE')
+        ? 'WALLET'
+        : 'CASH_ON_DELIVERY';
+
+      const payload = {
+        passenger_id: order?.user_id ?? order?.customer_id ?? 59,
+        merchant_id: Number(businessId),
+        cityId: refCoords.cityId || 'thimphu',
+        service_code: 'D',
+        serviceType: 'delivery_bike',
+        pickup: [pickupLat, pickupLng],
+        dropoff: [dropLat, dropLng],
+        pickup_place: order?.business_name ?? order?.store_name,
+        dropoff_place: order?.delivery_address?.address ?? '',
+        distance_m: distanceM,
+        duration_s: durationS,
+        base_fare: baseFare,
+        fare: baseFare,
+        fare_cents: fareCents,
+        currency: 'BTN',
+        payment_method: { type: paymentType },
+        offer_code: null,
+        waypoints: [],
+      };
+
+      const res = await fetch(ENV_SEND_REQUEST_DRIVER, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      if (grabLoopActiveRef.current && !driverAcceptedRef.current) {
+        setRideMessage('Retrying to find nearby drivers…');
+      } else {
+        Alert.alert('Grab delivery failed', String(e?.message || e));
+      }
+    } finally {
+      setSendingGrab(false);
+    }
+  }, [businessCoords, refCoords, routeInfo, order, businessId]);
+
+  const scheduleNextGrabRequest = useCallback(() => {
+    if (!grabLoopActiveRef.current || driverAcceptedRef.current) return;
+    grabLoopTimeoutRef.current = setTimeout(async () => {
+      if (!grabLoopActiveRef.current || driverAcceptedRef.current) return;
+      await sendGrabDeliveryRequest();
+      scheduleNextGrabRequest();
+    }, 30000);
+  }, [sendGrabDeliveryRequest]);
+
+  const startGrabLoop = useCallback(async () => {
+    driverAcceptedRef.current = false;
+    setDriverAccepted(false); // reset when starting new search
+    grabLoopActiveRef.current = true;
+    setRideMessage('Searching for nearby drivers…');
+    await sendGrabDeliveryRequest();
+    scheduleNextGrabRequest();
+  }, [sendGrabDeliveryRequest, scheduleNextGrabRequest]);
+
+  useEffect(() => {
+    if (status !== 'READY' || isTerminalNegative || isTerminalSuccess) {
+      stopGrabLoop();
+    }
+  }, [status, isTerminalNegative, isTerminalSuccess, stopGrabLoop]);
+
+  // Summary text: name + phone + rating
+  const driverSummaryText = useMemo(() => {
+    if (!driverDetails) return '';
+
+    const name =
+      driverDetails.user_name ??
+      driverDetails.name ??
+      driverDetails.full_name ??
+      '';
+
+    const phone = driverDetails.phone ?? driverDetails.mobile ?? '';
+
+    const avg = driverRating?.average;
+    const count = driverRating?.count;
+
+    const ratingPart =
+      avg != null
+        ? `Rating: ${Number(avg).toFixed(1)}${count != null ? ` (${count})` : ''}`
+        : null;
+
+    const parts = [];
+    if (name) parts.push(name);
+    if (phone) parts.push(`+975${String(phone).replace(/^\+?975/, '')}`);
+    if (ratingPart) parts.push(ratingPart);
+
+    return parts.join(' · ');
+  }, [driverDetails, driverRating]);
+
+  // Socket: connect as merchant and listen to deliveryAccepted
+  useEffect(() => {
+    if (!ENV_RIDE_SOCKET) {
+      return;
+    }
+
+    let socket;
+    let handler;
+
+    (async () => {
+      let merchantId = businessId || paramBusinessId;
+
+      if (!merchantId) {
+        try {
+          const saved = await SecureStore.getItemAsync('merchant_login');
+          if (saved) {
+            const j = JSON.parse(saved);
+            merchantId =
+              j?.business_id ||
+              j?.user?.business_id ||
+              j?.user?.businessId ||
+              j?.id ||
+              j?.user?.id ||
+              null;
+          }
+        } catch (err) {
+          console.log('[OrderDetails] Failed to read merchant_login from SecureStore:', err);
+        }
+      }
+
+      if (!merchantId) {
+        console.log('[OrderDetails] No merchantId found, NOT connecting ride socket');
+        return;
+      }
+
+      socket = io(ENV_RIDE_SOCKET, {
+        transports: ['websocket'],
+        query: {
+          merchantId: String(merchantId),
+          role: 'merchant',
+        },
+      });
+      socketRef.current = socket;
+
+      handler = (payload) => {
+        console.log('[OrderDetails] deliveryAccepted event received:', payload);
+
+        try {
+          const thisOrderCode = normalizeOrderCode(
+            order?.order_code || order?.id || routeOrderId
+          );
+          const payloadOrder =
+            payload?.order_code || payload?.orderId || payload?.order_id;
+
+          if (payloadOrder && thisOrderCode && !sameOrder(payloadOrder, thisOrderCode)) {
+            return;
+          }
+        } catch (err) {
+          console.log(
+            '[OrderDetails] deliveryAccepted match error, proceeding anyway:',
+            err,
+          );
+        }
+
+        driverAcceptedRef.current = true;
+        setDriverAccepted(true);
+        stopGrabLoop();
+
+        // Get driverId from payload and fetch details + rating
+        const driverId =
+          payload?.driver_id ??
+          payload?.driverId ??
+          payload?.driver?.id ??
+          payload?.driver?.driver_id ??
+          null;
+
+        if (driverId != null) {
+          console.log('[OrderDetails] Fetching driver details for driverId:', driverId);
+          fetchDriverDetails(driverId);
+        } else {
+          console.log('[OrderDetails] No driverId found in deliveryAccepted payload');
+        }
+
+        setRideMessage(
+          'Driver has accepted the delivery request (first come first basis).',
+        );
+        Alert.alert(
+          'Driver accepted',
+          'Driver has accepted the delivery request (first come first basis).',
+        );
+      };
+
+      socket.on('deliveryAccepted', handler);
+    })();
+
+    return () => {
+      if (socket) {
+        if (handler) socket.off('deliveryAccepted', handler);
+        socket.disconnect();
+      }
+      stopGrabLoop();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order?.order_code, order?.id, routeOrderId, businessId, paramBusinessId, stopGrabLoop, fetchDriverDetails]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('order-updated', ({ id, patch }) => {
+      if (String(id) === String(routeOrderId)) setOrder((prev) => ({ ...prev, ...patch }));
+    });
+    return () => sub?.remove?.();
+  }, [routeOrderId]);
+
   /* ---------------- UI ---------------- */
   const headerTopPad = Math.max(insets.top, 8) + 18;
   const fulfillmentLower = (fulfillment || '').toLowerCase();
+  const items = order?.raw_items || [];
+  const totalLabel = money(order?.total ?? order?.total_amount ?? 0);
 
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
@@ -974,547 +1145,107 @@ export default function OrderDetails() {
           {/* Top row: id + status chip */}
           <View style={styles.idRow}>
             <Text style={styles.orderId}>#{order?.id || routeOrderId}</Text>
-            <Chip
-              label={STATUS_META[status]?.label}
-              color={meta.color}
-              bg={meta.bg}
-              border={meta.border}
-              icon={meta.icon}
-            />
+            <View>
+              <ActivityIndicator animating={false} size="small" color="transparent" />
+            </View>
           </View>
 
-          {/* Progress */}
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${progressPct}%` }]} />
-          </View>
+          <StatusRail
+            status={status}
+            statusSequence={STATUS_SEQUENCE}
+            isTerminalNegative={isTerminalNegative}
+            isTerminalSuccess={isTerminalSuccess}
+            progressPct={progressPct}
+            progressIndex={progressIndex}
+          />
 
-          {/* Steps */}
-          <View style={styles.stepsRow}>
-            {STATUS_SEQUENCE.map((k, i) => {
-              const isActiveStep = k === status;
-              const done = isTerminalSuccess ? true : !isTerminalNegative && i <= progressIndex;
-              const fill = done;
-              let ring = '#cbd5e1';
-              if (isTerminalNegative) ring = isActiveStep ? STATUS_META.DECLINED.color : '#cbd5e1';
-              else if (isTerminalSuccess) ring = '#16a34a';
-              else ring = (done || isActiveStep) ? '#16a34a' : '#cbd5e1';
-              const dimmed = !isActiveStep && !(done || isTerminalSuccess);
-              const icon = STATUS_META[k]?.icon || 'ellipse-outline';
-              return (
-                <Step
-                  key={k}
-                  label={STATUS_META[k].label}
-                  icon={icon}
-                  ringColor={ring}
-                  fill={fill}
-                  dimmed={dimmed}
-                  onPress={() => {}}
-                  disabled
-                />
-              );
-            })}
-          </View>
+          <MetaSection
+            order={order}
+            status={status}
+            fulfillment={fulfillment}
+            fulfillmentLower={fulfillmentLower}
+            deliveryOptionDisplay={deliveryOptionDisplay}
+            ifUnavailableDisplay={ifUnavailableDisplay}
+            estimatedArrivalDisplay={estimatedArrivalDisplay}
+            etaText={etaText}
+            etaShortText={etaShortText}
+            manualPrepMin={manualPrepMin}
+            setManualPrepMin={setManualPrepMin}
+            restaurantNote={restaurantNote}
+            driverDetails={driverDetails}   // optional use inside MetaSection
+            driverRating={driverRating}     // optional use inside MetaSection
+          />
+        </View>
 
-          {/* Meta */}
-          <View style={{ marginTop: 12, gap: 8 }}>
-            <Row icon="person-outline" text={order.customer_name || '—'} />
-            <Row icon="bicycle-outline" text={`Fulfillment: ${fulfillment || '—'}`} />
-            <Row icon="swap-horizontal-outline" text={`Delivery by: ${deliveryOptionDisplay || '—'}`} />
-            <Row icon="card-outline" text={`Payment: ${order.payment_method || '—'}`} />
+        <DeliveryMethodChooser
+          status={status}
+          isBothOption={isBothOption}
+          isTerminalNegative={isTerminalNegative}
+          isTerminalSuccess={isTerminalSuccess}
+          isSelfSelected={isSelfSelected}
+          isGrabSelected={isGrabSelected}
+          sendingGrab={sendingGrab}
+          rideMessage={rideMessage}
+          driverSummaryText={driverSummaryText}  // string with name/phone/rating
+          driverAccepted={driverAccepted}        // boolean from socket event
+          setDeliveryChoice={setDeliveryChoice}
+          stopGrabLoop={stopGrabLoop}
+          startGrabLoop={startGrabLoop}
+        />
 
-            {/* Hide delivery location when fulfillment is Pickup */}
-            {fulfillmentLower !== 'pickup' && (
-              <Row icon="navigate-outline" text={order.delivery_address || '—'} />
-            )}
 
-            {/* Delivery: ETA text + prep time (editable only while PENDING) */}
-            {fulfillmentLower === 'delivery' && (
-              <>
-                <Row icon="map-outline" text={etaText} />
-
-                {status === 'PENDING' ? (
-                  // While pending: allow typing prep time
-                  <View style={styles.timeRow}>
-                    <Ionicons name="time-outline" size={16} color="#64748b" />
-                    <TextInput
-                      placeholder="Time to prepare (minutes)"
-                      keyboardType="numeric"
-                      value={manualPrepMin}
-                      onChangeText={setManualPrepMin}
-                      style={styles.timeInput}
-                    />
-                  </View>
-                ) : (
-                  // After accepted: show the typed time instead of an input
-                  <View style={styles.timeRow}>
-                    <Ionicons name="time-outline" size={16} color="#64748b" />
-                    <Text style={styles.timeHint}>
-                      Time to prepare
-                      {Number(manualPrepMin) > 0
-                        ? ` ~${Math.round(Number(manualPrepMin))} min`
-                        : ' not set'}
-                    </Text>
-                  </View>
-                )}
-              </>
-            )}
-
-            {/* Pickup/Self: prep time (input only while PENDING) + estimated ready time */}
-            {fulfillmentLower === 'pickup' && (
-              <View style={styles.timeBlock}>
-                {status === 'PENDING' ? (
-                  // While pending: allow typing prep time
-                  <View style={styles.timeRow}>
-                    <Ionicons name="time-outline" size={16} color="#64748b" />
-                    <TextInput
-                      placeholder="Time to prepare (minutes)"
-                      keyboardType="numeric"
-                      value={manualPrepMin}
-                      onChangeText={setManualPrepMin}
-                      style={styles.timeInput}
-                    />
-                  </View>
-                ) : (
-                  // After accepted: show the typed time instead of an input
-                  <View style={styles.timeRow}>
-                    <Ionicons name="time-outline" size={16} color="#64748b" />
-                    <Text style={styles.timeHint}>
-                      Time to prepare
-                      {Number(manualPrepMin) > 0
-                        ? ` ~${Math.round(Number(manualPrepMin))} min`
-                        : ' not set'}
-                    </Text>
-                  </View>
-                )}
-
-                {Number(manualPrepMin) > 0 && (
-                  <Text style={styles.timeHint}>
-                    Estimated time to get ready ~{Math.round(Number(manualPrepMin))} min
-                  </Text>
-                )}
-              </View>
-            )}
-          </View>
-
-          {/* Restaurant note */}
-          {!!restaurantNote && (
-            <View style={styles.noteBox}>
-              <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0f766e" />
-              <Text style={styles.noteText} numberOfLines={6}>{restaurantNote}</Text>
+        {status === 'READY' &&
+          !isBothOption &&
+          isPlatformDelivery &&
+          (!!rideMessage || !!driverSummaryText) && (
+            <View style={[styles.block, { marginTop: 12 }]}>
+              {rideMessage ? (
+                <Text style={[styles.segmentHint, { marginTop: 8 }]}>
+                  {rideMessage}
+                </Text>
+              ) : null}
+              {driverSummaryText ? (
+                <Text
+                  style={[
+                    styles.segmentHint,
+                    { marginTop: 4, fontWeight: '600' },
+                  ]}
+                >
+                  {driverSummaryText}
+                </Text>
+              ) : null}
             </View>
           )}
-        </View>
 
-        {/* ====== ONLY AT READY & BOTH: choose Self vs Grab ====== */}
-        {status === 'READY' && isBothOption && !isTerminalNegative && !isTerminalSuccess && (
-          <View style={[styles.block, { marginTop: 12 }]}>
-            <RowTitle title="Choose delivery method" />
-            <View style={styles.segmentWrap}>
-              <Pressable
-                onPress={() => setDeliveryChoice('self')}
-                style={[styles.segmentBtn, isSelfSelected && styles.segmentBtnActive]}
-              >
-                <Ionicons name="person-outline" size={16} color={isSelfSelected ? '#fff' : '#0f172a'} />
-                <Text style={[styles.segmentText, { color: isSelfSelected ? '#fff' : '#0f172a' }]}>Self</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setDeliveryChoice('grab')}
-                style={[styles.segmentBtn, isGrabSelected && styles.segmentBtnActive]}
-              >
-                <Ionicons name="bicycle-outline" size={16} color={isGrabSelected ? '#fff' : '#0f172a'} />
-                <Text style={[styles.segmentText, { color: isGrabSelected ? '#fff' : '#0f172a' }]}>Grab</Text>
-              </Pressable>
-            </View>
-            <Text style={styles.segmentHint}>
-              {isSelfSelected
-                ? 'Proceed directly to Ready.'
-                : isGrabSelected
-                  ? 'Assign a driver below to continue.'
-                  : 'Pick one to continue.'}
-            </Text>
-          </View>
-        )}
+        <UpdateStatusActions
+          status={status}
+          isCancelledByCustomer={isCancelledByCustomer}
+          isTerminalNegative={isTerminalNegative}
+          isTerminalSuccess={isTerminalSuccess}
+          isBothOption={isBothOption}
+          isGrabSelected={isGrabSelected}
+          isPlatformDelivery={isPlatformDelivery}
+          updating={updating}
+          next={next}
+          primaryLabel={primaryLabel}
+          onPrimaryAction={onPrimaryAction}
+          doUpdate={doUpdate}
+          onDecline={onDecline}
+          driverAccepted={driverAccepted}
+        />
 
-        {/* Update status actions */}
-        <Text style={styles.sectionTitle}>Update status</Text>
-        {isTerminalNegative || isTerminalSuccess ? (
-          <Text style={styles.terminalNote}>No further actions.</Text>
-        ) : (
-          <View style={styles.actionsRow}>
-            {status === 'PENDING' ? (
-              <>
-                <Pressable
-                  onPress={() => doUpdate('CONFIRMED')}
-                  disabled={updating}
-                  style={({ pressed }) => [styles.primaryBtn, { opacity: updating || pressed ? 0.85 : 1 }]}
-                >
-                  <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
-                  <Text style={styles.primaryBtnText}>Accept</Text>
-                </Pressable>
-
-                <Pressable
-                  onPress={() => setDeclineOpen(true)}
-                  disabled={updating}
-                  style={({ pressed }) => [styles.secondaryBtn, { borderColor: '#ef4444', opacity: updating || pressed ? 0.85 : 1 }]}
-                >
-                  <Ionicons name="close-circle-outline" size={18} color="#b91c1c" />
-                  <Text style={[styles.secondaryBtnText, { color: '#991b1b' }]}>Decline</Text>
-                </Pressable>
-              </>
-            ) : (
-              <>
-                {primaryLabel ? (
-                  <Pressable
-                    onPress={() => { if (next) onPrimaryAction(); }}
-                    disabled={
-                      updating ||
-                      (status === 'READY' && (
-                        (isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB')
-                      ))
-                    }
-                    style={({ pressed }) => [styles.primaryBtn, {
-                      opacity: (updating ||
-                        (status === 'READY' && ((isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB'))) ||
-                        pressed) ? 0.85 : 1
-                    }]}
-                  >
-                    <Ionicons name="arrow-forward-circle" size={18} color="#fff" />
-                    <Text style={styles.primaryBtnText}>{primaryLabel}</Text>
-                  </Pressable>
-                ) : null}
-
-                {status === 'READY' && ((isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB')) ? (
-                  <Text style={{ color: '#64748b', fontWeight: '600' }}>
-                    Assign a driver below to continue…
-                  </Text>
-                ) : null}
-              </>
-            )}
-          </View>
-        )}
-
-        {/* Nearby Driver assignment panel — only when READY & Grab active */}
-        {status === 'READY' && ((isBothOption && isGrabSelected) || (!isBothOption && deliveryOptionInitial === 'GRAB')) && (
-          <View style={styles.block}>
-            <RowTitle title="Nearby drivers" />
-            <View style={{ marginTop: 8 }} />
-
-            {loadingDrivers ? (
-              <View style={{ paddingVertical: 12, alignItems: 'center', gap: 8 }}>
-                <ActivityIndicator />
-                <Text style={{ color: '#64748b', fontWeight: '600' }}>Loading drivers…</Text>
-              </View>
-            ) : driversError ? (
-              <View style={{ paddingVertical: 12 }}>
-                <Text style={{ color: '#b91c1c', fontWeight: '700' }}>{driversError}</Text>
-                <View style={{ height: 8 }} />
-                <Pressable
-                  onPress={fetchNearbyDrivers}
-                  style={({ pressed }) => [styles.secondaryBtn, { borderColor: '#CBD5E1', opacity: pressed ? 0.85 : 1, alignSelf: 'flex-start' }]}
-                >
-                  <Ionicons name="refresh" size={18} color="#334155" />
-                  <Text style={[styles.secondaryBtnText, { color: '#334155' }]}>Retry</Text>
-                </Pressable>
-              </View>
-            ) : drivers.length === 0 ? (
-              <View style={{ paddingVertical: 12 }}>
-                <Text style={{ color: '#64748b', fontWeight: '600' }}>No drivers nearby yet.</Text>
-                <View style={{ height: 8 }} />
-                <Pressable
-                  onPress={fetchNearbyDrivers}
-                  style={({ pressed }) => [styles.secondaryBtn, { borderColor: '#CBD5E1', opacity: pressed ? 0.85 : 1, alignSelf: 'flex-start' }]}
-                >
-                  <Ionicons name="refresh" size={18} color="#334155" />
-                  <Text style={[styles.secondaryBtnText, { color: '#334155' }]}>Refresh</Text>
-                </Pressable>
-              </View>
-            ) : (
-              <View style={{ gap: 10 }}>
-                {drivers.map((d) => (
-                  <View key={String(d.id)} style={styles.driverRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.driverName} numberOfLines={1}>{toText(d.name)}</Text>
-                      <Text style={styles.driverMeta} numberOfLines={1}>
-                        {d.rating != null ? `★ ${Number(d.rating).toFixed(1)} • ` : '★ — • '}
-                        {toText(d.vehicle_type || '—')}
-                        {d.distance_km != null ? ` • ${Number(d.distance_km).toFixed(1)} km` : ''}
-                      </Text>
-                    </View>
-
-                    {waitingDriverAccept && offerPendingDriver === d.id ? (
-                      <View style={styles.waitingTag}>
-                        <ActivityIndicator size="small" />
-                        <Text style={styles.waitingText}>Waiting…</Text>
-                      </View>
-                    ) : (
-                      <Pressable
-                        onPress={() => offerToDriver(d.id)}
-                        style={({ pressed }) => [styles.offerBtn, { opacity: pressed ? 0.9 : 1 }]}
-                      >
-                        <Ionicons name="send-outline" size={16} color="#fff" />
-                        <Text style={styles.offerBtnText}>Offer delivery</Text>
-                      </Pressable>
-                    )}
-                  </View>
-                ))}
-
-                {waitingDriverAccept ? (
-                  <View style={styles.infoHint}>
-                    <Ionicons name="alert-circle-outline" size={16} color="#2563eb" />
-                    <Text style={styles.infoHintText}>
-                      Waiting for driver to accept. We’ll move to “Out for delivery” automatically on acceptance.
-                    </Text>
-                  </View>
-                ) : (
-                  <Pressable
-                    onPress={fetchNearbyDrivers}
-                    style={({ pressed }) => [styles.secondaryBtn, { borderColor: '#CBD5E1', opacity: pressed ? 0.85 : 1, alignSelf: 'flex-start' }]}
-                  >
-                    <Ionicons name="refresh" size={18} color="#334155" />
-                    <Text style={[styles.secondaryBtnText, { color: '#334155' }]}>Refresh list</Text>
-                  </Pressable>
-                )}
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* Items */}
-        <View style={styles.block}>
-          <RowTitle title="Items" />
-          {(order?.raw_items || []).map((it, idx) => (
-            <View key={`${it.item_id || idx}`} style={styles.itemRow}>
-              <Text style={styles.itemName} numberOfLines={1}>{toText(it.item_name || 'Item')}</Text>
-              <Text style={styles.itemQty}>×{Number(it.quantity ?? 1)}</Text>
-            </View>
-          ))}
-        </View>
-
-        {/* Totals */}
-        <View style={styles.block}>
-          <View style={styles.totRow}>
-            <Text style={styles.totLabel}>Items</Text>
-            <Text style={styles.totValue}>{(order?.raw_items?.length || 0)}</Text>
-          </View>
-          <View style={styles.totRow}>
-            <Text style={styles.totLabelStrong}>Total</Text>
-            <Text style={styles.totValueStrong}>{money(order?.total ?? order?.total_amount ?? 0)}</Text>
-          </View>
-        </View>
+        <ItemsBlock items={items} />
+        <TotalsBlock itemsCount={items.length || 0} totalLabel={totalLabel} />
       </ScrollView>
 
-      {/* Decline modal */}
-      <Modal visible={declineOpen} transparent animationType="fade" onRequestClose={() => setDeclineOpen(false)}>
-        <View style={styles.modalBackdrop}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Decline order</Text>
-            <Text style={styles.modalSub}>A reason is required:</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Reason (min 3 characters)"
-              value={declineReason}
-              onChangeText={setDeclineReason}
-              multiline
-            />
-            <Text style={{ fontSize: 11, color: canDecline ? '#16a34a' : '#ef4444', marginTop: 6 }}>
-              {canDecline ? 'Looks good.' : 'Please enter at least 3 characters.'}
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
-              <Pressable style={[styles.dialogBtn, { backgroundColor: '#f1f5f9' }]} onPress={() => { setDeclineOpen(false); }}>
-                <Text style={[styles.dialogBtnText, { color: '#0f172a' }]}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={({ pressed }) => [styles.dialogBtn, { backgroundColor: canDecline ? '#ef4444' : '#fecaca', opacity: pressed ? 0.85 : 1 }]}
-                onPress={confirmDecline}
-                disabled={!canDecline}
-              >
-                <Text style={[styles.dialogBtnText, { color: canDecline ? '#fff' : '#7f1d1d' }]}>Decline</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <DeclineModal
+        visible={declineOpen}
+        declineReason={declineReason}
+        setDeclineReason={setDeclineReason}
+        canDecline={canDecline}
+        onCancel={() => setDeclineOpen(false)}
+        onConfirm={confirmDecline}
+      />
     </SafeAreaView>
   );
 }
-
-/* ---------------- styles ---------------- */
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
-
-  headerBar: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomColor: '#e5e7eb',
-    borderBottomWidth: 1,
-    backgroundColor: '#fff',
-  },
-  backBtn: { height: 40, width: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '700', color: '#0f172a' },
-
-  card: {
-    backgroundColor: '#fff', borderRadius: 16, padding: 14,
-    borderWidth: 1, borderColor: '#e2e8f0',
-  },
-  idRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  orderId: { fontWeight: '800', color: '#0f172a', fontSize: 16 },
-
-  pill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, borderWidth: 1,
-    maxWidth: '60%',
-  },
-  pillText: { fontWeight: '800' },
-
-  progressTrack: {
-    height: 4, backgroundColor: '#e2e8f0', borderRadius: 999,
-    overflow: 'hidden', marginTop: 10,
-  },
-  progressFill: { height: 4, backgroundColor: '#16a34a' },
-
-  stepsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 8,
-    paddingHorizontal: 2,
-  },
-  stepWrap: { width: 52, alignItems: 'center' },
-  stepDot: {
-    width: 24, height: 24, borderRadius: 12, borderWidth: 2,
-    alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff',
-  },
-  stepLabel: { marginTop: 4, fontSize: 10.5, fontWeight: '700', textAlign: 'center', color: '#334155' },
-  stepTime: { marginTop: 1, fontSize: 10, color: '#64748b' },
-
-  // Meta & note
-  noteBox: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 10,
-    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 12,
-    backgroundColor: '#ecfeff', borderWidth: 1, borderColor: '#99f6e4',
-  },
-  noteText: { flex: 1, color: '#115e59', fontWeight: '600' },
-
-  sectionTitle: { marginTop: 14, marginBottom: 8, fontWeight: '700', color: '#0f172a' },
-  terminalNote: { color: '#64748b', marginBottom: 10 },
-
-  // BOTH selector (only at READY)
-  segmentWrap: { flexDirection: 'row', gap: 10, marginTop: 10 },
-  segmentBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10,
-    backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0',
-  },
-  segmentBtnActive: { backgroundColor: '#16a34a', borderColor: '#16a34a' },
-  segmentText: { fontWeight: '800' },
-  segmentHint: { marginTop: 8, color: '#64748b', fontWeight: '600' },
-
-  // Actions
-  actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 8 },
-  primaryBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#16a34a', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10,
-  },
-  primaryBtnText: { color: '#fff', fontWeight: '800' },
-  secondaryBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 10,
-    borderRadius: 10, borderWidth: 1,
-  },
-  secondaryBtnText: { fontWeight: '800' },
-
-  block: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    marginTop: 12,
-  },
-  blockTitle: { fontWeight: '800', color: '#0f172a' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rowText: { color: '#475569', fontWeight: '600', flex: 1 },
-
-  // Items & totals
-  itemRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
-  itemName: { color: '#0f172a', fontWeight: '600', flexShrink: 1, paddingRight: 8 },
-  itemQty: { color: '#64748b', fontWeight: '700' },
-  totRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 },
-  totLabel: { color: '#64748b', fontWeight: '700' },
-  totValue: { color: '#0f172a', fontWeight: '700' },
-  totLabelStrong: { color: '#0f172a', fontWeight: '800' },
-  totValueStrong: { color: '#0f172a', fontWeight: '900' },
-
-  // Manual time input
-  timeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  timeInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 13,
-    color: '#0f172a',
-  },
-  timeBlock: {
-    marginTop: 4,
-  },
-  timeHint: {
-    marginTop: 4,
-    color: '#0f172a',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-
-  // Modal
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  modalCard: { backgroundColor: '#fff', padding: 16, borderRadius: 16, width: '100%' },
-  modalTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
-  modalSub: { fontSize: 12, color: '#64748b', marginTop: 4 },
-  input: {
-    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 10,
-    paddingHorizontal: 10, paddingVertical: 8, minHeight: 44, marginTop: 10,
-    color: '#0f172a',
-  },
-  dialogBtn: { flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
-  dialogBtnText: { fontWeight: '800' },
-
-  // Driver UI
-  driverRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    paddingVertical: 10, borderWidth: 1, borderColor: '#e2e8f0',
-    borderRadius: 12, paddingHorizontal: 10,
-  },
-  driverName: { color: '#0f172a', fontWeight: '800' },
-  driverMeta: { color: '#475569', fontWeight: '600', marginTop: 2 },
-  offerBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#2563eb', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10,
-  },
-  offerBtnText: { color: '#fff', fontWeight: '800' },
-  waitingTag: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#eff6ff', borderWidth: 1, borderColor: '#bfdbfe',
-    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10,
-  },
-  waitingText: { color: '#1d4ed8', fontWeight: '800' },
-  infoHint: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-    backgroundColor: '#eef2ff',
-    borderColor: '#c7d2fe',
-    borderWidth: 1,
-    padding: 10,
-    borderRadius: 10,
-  },
-  infoHintText: { color: '#3730a3', fontWeight: '700', flex: 1 },
-});

@@ -23,7 +23,13 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
-import { FEEDBACK_ENDPOINT, FEEDBACK_REPLY_ENDPOINT } from '@env';
+import {
+  FEEDBACK_ENDPOINT,
+  FEEDBACK_REPLY_ENDPOINT,
+  FEEDBACK_REPLY_DELETE_ENDPOINT,
+  PROFILE_IMAGE as PROFILE_IMAGE_ENDPOINT,
+  MEDIA_BASE_URL,
+} from '@env';
 
 /* ---------- helpers (no URL() so braces won't be encoded) ---------- */
 function normalizeHostLoose(url) {
@@ -35,19 +41,6 @@ function normalizeHostLoose(url) {
       .replace('://127.0.0.1', '://10.0.2.2');
   }
   return out;
-}
-
-function absoluteUrl(pathOrUrl, base) {
-  if (!pathOrUrl) return '';
-  if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
-  try {
-    const m = /^https?:\/\/[^/]+/i.exec(base || '');
-    const origin = m ? m[0] : '';
-    const p = String(pathOrUrl).startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
-    return `${origin}${p}`;
-  } catch {
-    return pathOrUrl;
-  }
 }
 
 async function fetchJSON(url, options = {}, timeoutMs = 15000) {
@@ -75,34 +68,72 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
   }
 }
 
-/* ---- get access token from SecureStore (matches LoginScreen) ---- */
+/* ---- token helpers: fetch from login info ---- */
 const KEY_AUTH_TOKEN = 'auth_token';
 const KEY_MERCHANT_LOGIN = 'merchant_login';
 
 async function getAccessTokenFromStore() {
   try {
-    // 1) direct access token string
-    const direct = await SecureStore.getItemAsync(KEY_AUTH_TOKEN);
-    if (direct && String(direct).trim()) {
-      return String(direct).trim();
+    const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+
+      if (parsed?.token?.access_token) {
+        return String(parsed.token.access_token).trim();
+      }
+
+      if (typeof parsed?.token === 'string') {
+        return String(parsed.token).trim();
+      }
     }
 
-    // 2) token inside merchant_login JSON
-    const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
-    if (!raw) return '';
-    const parsed = JSON.parse(raw);
-
-    const t = parsed?.token;
-    if (!t) return '';
-
-    if (typeof t === 'string') return String(t).trim();
-    if (t && typeof t.access_token === 'string') return String(t.access_token).trim();
+    const direct = await SecureStore.getItemAsync(KEY_AUTH_TOKEN);
+    if (direct) return String(direct).trim();
 
     return '';
   } catch (e) {
-    console.log('[Feedback] getAccessToken error', e);
+    console.log('TOKEN ERROR', e);
     return '';
   }
+}
+
+/* ---------- profile image endpoint helpers ---------- */
+
+const DEFAULT_AVATAR =
+  'https://images.unsplash.com/photo-1612198182421-3f5dff0c9b40?q=80&w=400&auto=format&fit=crop';
+
+const PROFILE_BASE = normalizeHostLoose(
+  String(PROFILE_IMAGE_ENDPOINT || MEDIA_BASE_URL || '').replace(/\/+$/, '')
+);
+
+const FEEDBACK_ORIGIN = (() => {
+  try {
+    const m = /^https?:\/\/[^/]+/i.exec(FEEDBACK_ENDPOINT || '');
+    return m ? normalizeHostLoose(m[0]) : '';
+  } catch {
+    return '';
+  }
+})();
+
+function buildProfileImageUrl(rawProfilePath) {
+  if (!rawProfilePath) return DEFAULT_AVATAR;
+
+  const raw = String(rawProfilePath).trim();
+  if (/^https?:\/\//i.test(raw)) {
+    return normalizeHostLoose(raw);
+  }
+
+  const path = raw.startsWith('/') ? raw : `/${raw}`;
+
+  if (PROFILE_BASE) {
+    return `${PROFILE_BASE}${path}`;
+  }
+
+  if (FEEDBACK_ORIGIN) {
+    return `${FEEDBACK_ORIGIN}${path}`;
+  }
+
+  return DEFAULT_AVATAR;
 }
 
 /* ---------- component ---------- */
@@ -111,7 +142,7 @@ export default function RestaurantFeedbackScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
 
-  const authContext = route?.params?.authContext || null; // 👈 from AccountSettings / Home
+  const authContext = route?.params?.authContext || null;
 
   const businessName = route?.params?.business_name || '';
   const businessIdRaw = route?.params?.business_id;
@@ -132,7 +163,6 @@ export default function RestaurantFeedbackScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
-  const [debugUrl, setDebugUrl] = useState('');
   const alerted = useRef(false);
 
   // reply state
@@ -140,6 +170,9 @@ export default function RestaurantFeedbackScreen() {
   const [replyText, setReplyText] = useState('');
   const [replyingItem, setReplyingItem] = useState(null);
   const [postingReply, setPostingReply] = useState(false);
+
+  // which rating IDs have their replies expanded (like “View X replies”)
+  const [expandedReplies, setExpandedReplies] = useState({}); // { [ratingId]: true }
 
   const buildUrl = useCallback(() => {
     if (!Number.isInteger(businessIdNum) || businessIdNum <= 0) return '';
@@ -168,7 +201,6 @@ export default function RestaurantFeedbackScreen() {
     try {
       setLoading(true);
       const url = buildUrl();
-      setDebugUrl(url);
 
       const payload = await fetchJSON(url);
 
@@ -185,6 +217,10 @@ export default function RestaurantFeedbackScreen() {
         profile_image: it.user?.profile_image || '',
         owner_type: it.owner_type || null,
         business_id: it.business_id || null,
+        likes_count: it.likes_count ?? 0,
+        reply_count:
+          it.reply_count ?? (Array.isArray(it.replies) ? it.replies.length : 0),
+        replies: Array.isArray(it.replies) ? it.replies : [],
       }));
 
       setMeta(Array.isArray(payload) ? null : payload?.meta || null);
@@ -241,32 +277,59 @@ export default function RestaurantFeedbackScreen() {
     try {
       setPostingReply(true);
 
+      // rating id = notification_id in this endpoint
       const notificationId = replyingItem.id;
-      if (!notificationId) throw new Error('Missing notification_id');
+      if (!notificationId) throw new Error('Missing notification_id (rating id)');
 
-      // build URL from FEEDBACK_REPLY_ENDPOINT env
+      // detect owner_type to switch /ratings/food/ -> /ratings/mart/ etc.
+      const ownerType = String(replyingItem.owner_type || 'food').toLowerCase();
+
+      // FEEDBACK_REPLY_ENDPOINT example:
+      // http://grab.newedge.bt/merchant/api/merchant/ratings/food/{notification_id}/replies
       let url = FEEDBACK_REPLY_ENDPOINT || '';
-      url = url.replace(
-        /\{notification_id\}/gi,
-        encodeURIComponent(String(notificationId))
-      );
+
+      // 1) if template has {owner_type}, fill it
+      if (/\{owner_type\}/i.test(url) || /%7Bowner_type%7D/i.test(url)) {
+        url = url
+          .replace(/\{owner_type\}/gi, ownerType)
+          .replace(/%7Bowner_type%7D/gi, ownerType);
+      } else {
+        // 2) otherwise, replace hard-coded segment /ratings/food/ with ownerType
+        url = url.replace(
+          /\/ratings\/(food|mart|ride|parcel)\//i,
+          `/ratings/${ownerType}/`
+        );
+      }
+
+      // now inject rating id
+      url = url
+        .replace(
+          /\{notification_id\}/gi,
+          encodeURIComponent(String(notificationId))
+        )
+        .replace(
+          /%7Bnotification_id%7D/gi,
+          encodeURIComponent(String(notificationId))
+        );
+
       url = normalizeHostLoose(url);
 
-      // 🔑 1st: try token from authContext, 2nd: SecureStore fallback
-      let token = authContext?.token;
-      if (!token) {
-        token = await getAccessTokenFromStore();
+      if (/^http:\/\//i.test(url) && /grab\.newedge\.bt/i.test(url)) {
+        url = url.replace(/^http:/i, 'https:');
       }
 
+      // token from authContext first, then from secure store
+      let token =
+        authContext?.token ||
+        (await getAccessTokenFromStore());
+
       if (!token) {
-        throw new Error('Missing access token');
+        throw new Error('Missing access token from login info.');
       }
 
-      // Normalise Bearer prefix so we never send "Bearer Bearer ..."
-      const trimmed = String(token).trim();
-      const authHeader = /^bearer\s/i.test(trimmed)
-        ? trimmed
-        : `Bearer ${trimmed}`;
+      // ensure "Bearer <token>"
+      const bare = String(token).replace(/^Bearer\s+/i, '').trim();
+      const authHeader = `Bearer ${bare}`;
 
       await fetchJSON(url, {
         method: 'POST',
@@ -281,7 +344,7 @@ export default function RestaurantFeedbackScreen() {
       setReplyModalVisible(false);
       setReplyText('');
       setReplyingItem(null);
-      load(); // refresh list
+      load();
     } catch (e) {
       console.error('[Feedback] reply error', e);
       Alert.alert('Reply failed', e?.message || 'Failed to send reply.');
@@ -290,12 +353,81 @@ export default function RestaurantFeedbackScreen() {
     }
   }, [replyText, replyingItem, load, authContext?.token]);
 
+  /* ---------- delete reply helper ---------- */
+
+  const handleDeleteReply = useCallback(
+    async (reply) => {
+      if (!reply?.id) return;
+
+      Alert.alert(
+        'Delete reply',
+        'Are you sure you want to delete this reply?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const replyId = reply.id;
+
+                let url = FEEDBACK_REPLY_DELETE_ENDPOINT || '';
+                url = url
+                  .replace(
+                    /\{reply_id\}/gi,
+                    encodeURIComponent(String(replyId))
+                  )
+                  .replace(
+                    /%7Breply_id%7D/gi,
+                    encodeURIComponent(String(replyId))
+                  );
+
+                url = normalizeHostLoose(url);
+
+                if (/^http:\/\//i.test(url) && /grab\.newedge\.bt/i.test(url)) {
+                  url = url.replace(/^http:/i, 'https:');
+                }
+
+                let token =
+                  authContext?.token ||
+                  (await getAccessTokenFromStore());
+
+                if (!token) {
+                  throw new Error('Missing access token from login info.');
+                }
+
+                const bare = String(token).replace(/^Bearer\s+/i, '').trim();
+                const authHeader = `Bearer ${bare}`;
+
+                await fetchJSON(url, {
+                  method: 'DELETE',
+                  headers: {
+                    Authorization: authHeader,
+                  },
+                });
+
+                load();
+              } catch (e) {
+                console.error('[Feedback] delete reply error', e);
+                Alert.alert(
+                  'Delete failed',
+                  e?.message || 'Failed to delete reply.'
+                );
+              }
+            },
+          },
+        ]
+      );
+    },
+    [authContext?.token, load]
+  );
+
   const renderHeader = () => {
     if (!meta?.totals) return null;
     const t = meta.totals;
     return (
       <View>
-        <View style={styles.summary}>
+        <View className={styles.summary}>
           <View style={styles.summaryLeft}>
             <Ionicons name="star" size={18} color="#f59e0b" />
             <Text style={styles.summaryScore}>
@@ -312,7 +444,22 @@ export default function RestaurantFeedbackScreen() {
 
   const renderItem = ({ item }) => {
     const created = item.created_at ? new Date(item.created_at) : null;
-    const avatar = absoluteUrl(item.profile_image, debugUrl || endpointTpl);
+    const avatar = buildProfileImageUrl(item.profile_image);
+    const likesCount = Number(item.likes_count ?? 0);
+    const repliesCount =
+      item.reply_count ?? (Array.isArray(item.replies) ? item.replies.length : 0);
+
+    const hasReplies =
+      Array.isArray(item.replies) && item.replies.length > 0;
+    const expanded = !!expandedReplies[item.id];
+
+    const toggleExpand = () => {
+      setExpandedReplies((prev) => ({
+        ...prev,
+        [item.id]: !prev[item.id],
+      }));
+    };
+
     return (
       <View style={styles.card}>
         <View style={styles.cardHead}>
@@ -322,9 +469,16 @@ export default function RestaurantFeedbackScreen() {
               style={styles.avatar}
               resizeMode="cover"
             />
-            <Text style={styles.userName} numberOfLines={1}>
-              {item.user_name}
-            </Text>
+            <View>
+              <Text style={styles.userName} numberOfLines={1}>
+                {item.user_name}
+              </Text>
+              {created ? (
+                <Text style={styles.cardTimeSmall}>
+                  {created.toLocaleDateString()}
+                </Text>
+              ) : null}
+            </View>
           </View>
           <View style={styles.ratingPill}>
             <Ionicons name="star" size={14} color="#f59e0b" />
@@ -339,31 +493,110 @@ export default function RestaurantFeedbackScreen() {
         ) : null}
 
         <View style={styles.cardFoot}>
-          {created ? (
-            <Text style={styles.cardTime}>{created.toLocaleString()}</Text>
-          ) : (
-            <View />
-          )}
-          <View style={styles.cardFootRight}>
-            {item.owner_type ? (
-              <Text style={styles.cardMeta}>
-                {String(item.owner_type).toUpperCase()}
-              </Text>
-            ) : null}
-            <TouchableOpacity
-              style={styles.replyBtn}
-              activeOpacity={0.7}
-              onPress={() => openReplyModal(item)}
-            >
+          <View style={styles.cardFootLeft}>
+            <View style={styles.iconStat}>
+              <Ionicons name="heart-outline" size={14} color="#ef4444" />
+              <Text style={styles.iconStatText}>{likesCount}</Text>
+            </View>
+            <View style={styles.iconStat}>
               <Ionicons
-                name="chatbox-ellipses-outline"
-                size={16}
-                color="#0284c7"
+                name="chatbubble-ellipses-outline"
+                size={14}
+                color="#0ea5e9"
               />
-              <Text style={styles.replyBtnText}>Reply</Text>
-            </TouchableOpacity>
+              <Text style={styles.iconStatText}>{repliesCount}</Text>
+            </View>
           </View>
+          <TouchableOpacity
+            style={styles.replyBtn}
+            activeOpacity={0.7}
+            onPress={() => openReplyModal(item)}
+          >
+            <Ionicons
+              name="arrow-undo-outline"
+              size={16}
+              color="#0284c7"
+            />
+            <Text style={styles.replyBtnText}>Reply</Text>
+          </TouchableOpacity>
         </View>
+
+        {/* "View X replies" / "Hide replies" like other apps */}
+        {hasReplies && !expanded && (
+          <TouchableOpacity
+            style={styles.viewRepliesRow}
+            activeOpacity={0.7}
+            onPress={toggleExpand}
+          >
+            <View style={styles.viewRepliesLine} />
+            <Text style={styles.viewRepliesText}>
+              View {item.replies.length}{' '}
+              {item.replies.length === 1 ? 'reply' : 'replies'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {hasReplies && expanded && (
+          <View style={styles.replyThreadContainer}>
+            <View style={styles.threadBar} />
+            <View style={styles.replyList}>
+              {item.replies.map((rep) => {
+                const rAvatar = buildProfileImageUrl(rep.user?.profile_image);
+                const rName = rep.user?.user_name || 'You';
+                const ago =
+                  rep.hours_ago === 0
+                    ? 'Just now'
+                    : rep.hours_ago != null
+                    ? `${rep.hours_ago}h ago`
+                    : '';
+                return (
+                  <View key={rep.id} style={styles.replyRow}>
+                    <Image
+                      source={{ uri: rAvatar }}
+                      style={styles.replyAvatar}
+                      resizeMode="cover"
+                    />
+                    <View style={styles.replyBubble}>
+                      <View style={styles.replyHeaderRow}>
+                        <Text style={styles.replyName}>{rName}</Text>
+                        <View style={styles.replyMetaRight}>
+                          {!!ago && (
+                            <Text style={styles.replyTime}>{ago}</Text>
+                          )}
+                          <Ionicons
+                            name="checkmark-done-outline"
+                            size={14}
+                            color="#22c55e"
+                            style={{ marginLeft: 4 }}
+                          />
+                          {/* delete icon */}
+                          <TouchableOpacity
+                            style={{ marginLeft: 8 }}
+                            onPress={() => handleDeleteReply(rep)}
+                          >
+                            <Ionicons
+                              name="trash-outline"
+                              size={14}
+                              color="#ef4444"
+                            />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                      <Text style={styles.replyText}>{rep.text}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+
+              <TouchableOpacity
+                style={styles.hideRepliesRow}
+                onPress={toggleExpand}
+              >
+                <Text style={styles.hideRepliesText}>Hide replies</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
     );
   };
@@ -535,6 +768,11 @@ const styles = StyleSheet.create({
   },
   avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#e5e7eb' },
   userName: { color: '#0f172a', fontWeight: '700', flexShrink: 1 },
+  cardTimeSmall: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
   ratingPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -547,25 +785,39 @@ const styles = StyleSheet.create({
     borderColor: '#fed7aa',
   },
   ratingText: { color: '#92400e', fontWeight: '800' },
-  cardBody: { color: '#0f172a', fontSize: 15, marginTop: 2, marginBottom: 8 },
+  cardBody: { color: '#0f172a', fontSize: 15, marginTop: 6, marginBottom: 8 },
   cardFoot: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginTop: 4,
   },
-  cardTime: { color: '#64748b', fontSize: 12 },
-  cardMeta: { color: '#64748b', fontSize: 12, fontWeight: '600' },
-  cardFootRight: {
+  cardFootLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+  },
+  cardTime: { color: '#64748b', fontSize: 12 },
+  iconStat: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: '#f9fafb',
+  },
+  iconStatText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#0f172a',
   },
   replyBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: '#bae6fd',
@@ -582,6 +834,92 @@ const styles = StyleSheet.create({
     paddingVertical: 36,
   },
   emptyText: { color: '#64748b', marginTop: 10, fontWeight: '600' },
+
+  // "view replies" row (collapsed state)
+  viewRepliesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    marginLeft: 40,
+    gap: 6,
+  },
+  viewRepliesLine: {
+    width: 18,
+    height: 1,
+    backgroundColor: '#cbd5f5',
+  },
+  viewRepliesText: {
+    fontSize: 12,
+    color: '#2563eb',
+    fontWeight: '500',
+  },
+
+  // replies thread (expanded)
+  replyThreadContainer: {
+    flexDirection: 'row',
+    marginTop: 6,
+    marginLeft: 24,
+  },
+  threadBar: {
+    width: 2,
+    borderRadius: 999,
+    backgroundColor: '#e5e7eb',
+    marginRight: 8,
+  },
+  replyList: {
+    flex: 1,
+  },
+  replyRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 4,
+  },
+  replyAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#e5e7eb',
+    marginRight: 6,
+  },
+  replyBubble: {
+    flex: 1,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#f3f4f6',
+  },
+  replyHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  replyName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  replyMetaRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  replyTime: {
+    fontSize: 11,
+    color: '#9ca3af',
+  },
+  replyText: {
+    fontSize: 13,
+    color: '#111827',
+    marginTop: 2,
+  },
+  hideRepliesRow: {
+    marginTop: 6,
+  },
+  hideRepliesText: {
+    fontSize: 11,
+    color: '#6b7280',
+    fontWeight: '500',
+  },
 
   // modal
   modalBackdrop: {

@@ -445,7 +445,8 @@ const LoginScreen = () => {
         business_id,
         owner_type: ownerType,
         ownerType,
-        delivery_option, // NEW
+        delivery_option, 
+        auth_token: tokenStr,  
       });
     } catch (err) {
       const msg = err?.message?.toString() ?? 'Login failed';
