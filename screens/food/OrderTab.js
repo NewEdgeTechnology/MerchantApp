@@ -389,7 +389,7 @@ export default function MartOrdersTab({
   appendOwnerType = true,
   ownerType = 'mart',
   detailsRoute = 'OrderDetails',
-  delivery_option: deliveryOptionProp,             // NEW (accept from parent)
+  delivery_option: deliveryOptionProp,
 }) {
   const navigation = useNavigation();
   const route = useRoute();
@@ -400,12 +400,12 @@ export default function MartOrdersTab({
   );
 
   // NEW: delivery option state (SELF | GRAB | BOTH…)
-  const [deliveryOption, setDeliveryOption] = useState(                    // NEW
-    (route?.params?.delivery_option || route?.params?.deliveryOption ||   // NEW
-     deliveryOptionProp || null)                                          // NEW
+  const [deliveryOption, setDeliveryOption] = useState(
+    (route?.params?.delivery_option || route?.params?.deliveryOption ||
+     deliveryOptionProp || null)
       ? String(route?.params?.delivery_option || route?.params?.deliveryOption || deliveryOptionProp).toUpperCase()
       : null
-  );                                                                       // NEW
+  );
 
   const [loading, setLoading] = useState(false);
   const [orders, setOrders] = useState(ordersProp || []);
@@ -420,12 +420,6 @@ export default function MartOrdersTab({
     const isMart = String(ownerType || '').toLowerCase() === 'mart';
     return isMart ? BASE_STATUS_LABELS.filter(s => s.key !== 'PREPARING') : BASE_STATUS_LABELS;
   }, [ownerType]);
-
-  useEffect(() => {
-    if (selectedStatus && !STATUS_LABELS.some(s => s.key === selectedStatus)) {
-      setSelectedStatus(null);
-    }
-  }, [STATUS_LABELS, selectedStatus]);
 
   // Keyboard padding
   useEffect(() => {
@@ -444,7 +438,7 @@ export default function MartOrdersTab({
   }, []);
 
   // Hydrate bizId and delivery_option from secure storage on focus if missing
-  useFocusEffect(                                                    // NEW (expanded)
+  useFocusEffect(
     useCallback(() => {
       let alive = true;
       (async () => {
@@ -623,15 +617,15 @@ export default function MartOrdersTab({
         businessId: bizId,
         order: o,
         ownerType,
-        delivery_option: deliveryOption,    // NEW: pass along
+        delivery_option: deliveryOption,
       });
     },
-    [navigation, bizId, detailsRoute, ownerType, deliveryOption] // NEW dep
+    [navigation, bizId, detailsRoute, ownerType, deliveryOption]
   );
 
   const statusCounts = useMemo(() => {
     return orders.reduce((acc, o) => {
-      const k = String(o.status || '').toUpperCase();
+      const k = String(o.status || '').trim().toUpperCase();
       acc[k] = (acc[k] || 0) + 1;
       return acc;
     }, {});
@@ -640,7 +634,10 @@ export default function MartOrdersTab({
   const filtered = useMemo(() => {
     let base = orders;
     if (selectedStatus) {
-      base = base.filter((o) => String(o.status || '').toUpperCase() === selectedStatus);
+      base = base.filter(
+        (o) =>
+          String(o.status || '').trim().toUpperCase() === selectedStatus
+      );
     }
     const q = query.trim().toLowerCase();
     if (!q) return base;
@@ -733,41 +730,77 @@ export default function MartOrdersTab({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ alignItems: 'center', paddingVertical: 8, gap: 8 }}
           >
+            {/* All chip */}
             <TouchableOpacity
               onPress={() => setSelectedStatus(null)}
-              style={[styles.statusChip, selectedStatus === null && styles.statusChipActive]}
+              style={[
+                styles.statusChip,
+                selectedStatus === null && styles.statusChipActive,
+              ]}
               activeOpacity={0.7}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text style={[styles.statusChipText, selectedStatus === null && styles.statusChipTextActive]}>
+              <Text
+                style={[
+                  styles.statusChipText,
+                  selectedStatus === null && styles.statusChipTextActive,
+                ]}
+              >
                 All
               </Text>
-              <View style={[styles.badge, selectedStatus === null && styles.badgeActive]}>
-                <Text style={[styles.badgeText, selectedStatus === null && styles.badgeTextActive]}>
+              <View
+                style={[
+                  styles.badge,
+                  selectedStatus === null && styles.badgeActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.badgeText,
+                    selectedStatus === null && styles.badgeTextActive,
+                  ]}
+                >
                   {totalCount}
                 </Text>
               </View>
             </TouchableOpacity>
 
-            {BASE_STATUS_LABELS
-              .filter(s => STATUS_LABELS.some(t => t.key === s.key))
-              .map((s) => {
+            {/* Status chips */}
+            {STATUS_LABELS.map((s) => {
               const active = selectedStatus === s.key;
               const count = statusCounts[s.key] || 0;
               return (
                 <TouchableOpacity
                   key={s.key}
                   onPress={() => setSelectedStatus(active ? null : s.key)}
-                  style={[styles.statusChip, active && styles.statusChipActive]}
+                  style={[
+                    styles.statusChip,
+                    active && styles.statusChipActive,
+                  ]}
                   activeOpacity={0.7}
                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                 >
-                  <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
+                  <Text
+                    style={[
+                      styles.statusChipText,
+                      active && styles.statusChipTextActive,
+                    ]}
+                  >
                     {s.label}
                   </Text>
                   {count > 0 ? (
-                    <View style={[styles.badge, active && styles.badgeActive]}>
-                      <Text style={[styles.badgeText, active && styles.badgeTextActive]}>
+                    <View
+                      style={[
+                        styles.badge,
+                        active && styles.badgeActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.badgeText,
+                          active && styles.badgeTextActive,
+                        ]}
+                      >
                         {count}
                       </Text>
                     </View>
@@ -828,12 +861,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
+  // when selected: green outline, same background
   statusChipActive: {
-    backgroundColor: '#16a34a1A',
     borderColor: '#16a34a',
   },
-  statusChipText: { color: '#0f172a', fontWeight: '700', fontSize: 14 },
-  statusChipTextActive: { color: '#065f46' },
+  statusChipText: {
+    color: '#0f172a',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  statusChipTextActive: {
+    color: '#16a34a',
+  },
 
   badge: {
     minWidth: 16,
@@ -845,9 +884,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#e2e8f0',
     marginLeft: 6,
   },
-  badgeActive: { backgroundColor: '#16a34a' },
-  badgeText: { color: '#0f172a', fontSize: 12, fontWeight: '700' },
-  badgeTextActive: { color: 'white' },
+  badgeActive: {
+    backgroundColor: '#16a34a',
+  },
+  badgeText: {
+    color: '#0f172a',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  badgeTextActive: {
+    color: 'white',
+  },
 
   // search
   searchWrap: {
@@ -889,9 +936,14 @@ const styles = StyleSheet.create({
   // row 2
   row2: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
   pill: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
-    borderWidth: 1, maxWidth: '70%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    maxWidth: '70%',
   },
   pillText: { fontWeight: '800', fontSize: 12 },
 
@@ -907,9 +959,16 @@ const styles = StyleSheet.create({
 
   // note bubble
   noteRow: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 8,
-    paddingHorizontal: 10, paddingVertical: 8, borderRadius: 12,
-    backgroundColor: '#ecfeff', borderWidth: 1, borderColor: '#99f6e4',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: '#ecfeff',
+    borderWidth: 1,
+    borderColor: '#99f6e4',
   },
   noteText: { flex: 1, color: '#115e59', fontWeight: '600' },
   noteMeta: { marginTop: 4, color: '#0f766e', fontWeight: '700' },

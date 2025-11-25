@@ -69,13 +69,42 @@ const formatDateTime = (raw) => {
   return { time, date };
 };
 
-export default function PayoutsTab({ isTablet, businessId, userId, kpis }) {
+export default function PayoutsTab({
+  route,
+  isTablet,
+  businessId: propBusinessId,
+  userId: propUserId,
+  kpis: propKpis,
+}) {
+  const routeParams = route?.params ?? {};
+
+  // ✅ support kpis both from parent prop AND from route.params.kpis (Notifications → navigate)
+  const routeKpis = routeParams.kpis ?? null;
+  const kpis = propKpis ?? routeKpis ?? null;
+
+  const resolvedBusinessId =
+    propBusinessId ??
+    routeParams.businessId ??
+    routeParams.business_id ??
+    null;
+
+  const resolvedUserId =
+    propUserId ??
+    routeParams.userId ??
+    routeParams.user_id ??
+    null;
+
+  const initialWalletId = routeParams.walletId
+    ? String(routeParams.walletId)
+    : null;
+
   const [statements, setStatements] = useState([]);
   const [todaySalesFromWallet, setTodaySalesFromWallet] = useState(0);
-  const [walletId, setWalletId] = useState(null);
+  const [walletId, setWalletId] = useState(initialWalletId);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // ✅ use effective KPIs
   const todaySales = kpis?.salesToday ?? todaySalesFromWallet ?? 0;
   const activeOrders = kpis?.activeOrders ?? 0;
   const acceptRate = kpis?.acceptanceRate ?? 0;
@@ -97,9 +126,11 @@ export default function PayoutsTab({ isTablet, businessId, userId, kpis }) {
         };
 
         let currentWalletId = walletId;
-        if (!currentWalletId && userId && ENV_WALLET) {
+
+        // If we don't already have walletId (from params/state), fetch using user_id
+        if (!currentWalletId && resolvedUserId && ENV_WALLET) {
           try {
-            const walletUrl = buildUrl(ENV_WALLET, { user_id: userId });
+            const walletUrl = buildUrl(ENV_WALLET, { user_id: resolvedUserId });
             const walletRes = await fetch(walletUrl, { headers });
             const text = await walletRes.text();
             let wJson = null;
@@ -124,6 +155,7 @@ export default function PayoutsTab({ isTablet, businessId, userId, kpis }) {
           }
         }
 
+        // Load transactions for this wallet
         if (currentWalletId && ENV_WALLET_TXN) {
           try {
             const txnUrl = buildUrl(ENV_WALLET_TXN, { wallet_id: currentWalletId });
@@ -153,6 +185,7 @@ export default function PayoutsTab({ isTablet, businessId, userId, kpis }) {
                 };
               });
 
+              // crude today sum (you may refine later if needed)
               const todayStr = new Date().toISOString().slice(0, 10);
               const todayCreditSum = mapped
                 .filter(
@@ -179,13 +212,18 @@ export default function PayoutsTab({ isTablet, businessId, userId, kpis }) {
       }
     };
 
-    if (businessId && userId) loadData();
-    else setLoading(false);
+    // We just need user + either a walletId (from params/lookup) or ENV_WALLET to resolve it
+    if (resolvedUserId && (walletId || ENV_WALLET)) {
+      loadData();
+    } else {
+      setLoading(false);
+    }
 
     return () => {
       isMounted = false;
     };
-  }, [businessId, userId, ENV_WALLET_TXN, ENV_WALLET, walletId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvedBusinessId, resolvedUserId, walletId]);
 
   /* ====================== DATA FOR FLATLIST ====================== */
 
@@ -194,9 +232,26 @@ export default function PayoutsTab({ isTablet, businessId, userId, kpis }) {
       {
         type: 'stats',
         content: [
-          { icon: 'wallet', title: 'Today', value: money(todaySales), subtitle: 'Sales', color: '#16a34a' },
-          { icon: 'cart', title: 'Active', value: `${activeOrders} Orders`, color: '#3b82f6' },
-          { icon: 'checkmark-circle', title: 'Accept', value: `${acceptRate}%`, subtitle: 'Rate', color: '#e11d48' },
+          {
+            icon: 'wallet',
+            title: 'Today',
+            value: money(todaySales),
+            subtitle: 'Sales',
+            color: '#16a34a',
+          },
+          {
+            icon: 'cart',
+            title: 'Active',
+            value: `${activeOrders} Orders`,
+            color: '#3b82f6',
+          },
+          {
+            icon: 'checkmark-circle',
+            title: 'Accept',
+            value: `${acceptRate}%`,
+            subtitle: 'Rate',
+            color: '#e11d48',
+          },
         ],
       },
       { type: 'history', content: statements },
@@ -215,7 +270,9 @@ export default function PayoutsTab({ isTablet, businessId, userId, kpis }) {
               <Ionicons name={stat.icon} size={24} color={stat.color} />
               <Text style={styles.statTitle}>{stat.title}</Text>
               <Text style={styles.statValue}>{stat.value}</Text>
-              {stat.subtitle && <Text style={styles.statSubtitle}>{stat.subtitle}</Text>}
+              {stat.subtitle && (
+                <Text style={styles.statSubtitle}>{stat.subtitle}</Text>
+              )}
             </View>
           ))}
         </View>
@@ -226,7 +283,12 @@ export default function PayoutsTab({ isTablet, businessId, userId, kpis }) {
       return (
         <>
           <View style={styles.historyHeaderRow}>
-            <Text style={[styles.title, { fontSize: isTablet ? 18 : 16, marginTop: 20 }]}>
+            <Text
+              style={[
+                styles.title,
+                { fontSize: isTablet ? 18 : 16, marginTop: 20 },
+              ]}
+            >
               Payout History
             </Text>
           </View>
@@ -278,16 +340,33 @@ export default function PayoutsTab({ isTablet, businessId, userId, kpis }) {
 
   if (loading) {
     return (
-      <View style={[styles.contentContainer, { flex: 1, justifyContent: 'center', alignItems: 'center' }]}>
+      <View
+        style={[
+          styles.contentContainer,
+          { flex: 1, justifyContent: 'center', alignItems: 'center' },
+        ]}
+      >
         <ActivityIndicator size="large" />
-        <Text style={{ marginTop: 8, color: '#6b7280' }}>Loading payouts…</Text>
+        <Text style={{ marginTop: 8, color: '#6b7280' }}>
+          Loading payouts…
+        </Text>
       </View>
     );
   }
 
   return (
     <View style={{ flex: 1, backgroundColor: '#f3f4f6' }}>
-      {error ? <Text style={{ color: '#b91c1c', paddingHorizontal: 16, paddingTop: 8 }}>{error}</Text> : null}
+      {error ? (
+        <Text
+          style={{
+            color: '#b91c1c',
+            paddingHorizontal: 16,
+            paddingTop: 8,
+          }}
+        >
+          {error}
+        </Text>
+      ) : null}
       <FlatList
         data={data}
         keyExtractor={(item, i) => i.toString()}
@@ -299,20 +378,48 @@ export default function PayoutsTab({ isTablet, businessId, userId, kpis }) {
 }
 
 const styles = StyleSheet.create({
-  contentContainer: { paddingHorizontal: 16, paddingTop: 16, backgroundColor: '#f3f4f6', paddingBottom: 80 },
+  contentContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    backgroundColor: '#f3f4f6',
+    paddingBottom: 80,
+  },
   title: { fontWeight: '700', color: '#0f172a', marginBottom: 8 },
-  stats: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16, marginBottom: 10 },
+  stats: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    marginBottom: 10,
+  },
   statItem: {
-    alignItems: 'center', backgroundColor: '#fff', padding: 12, borderRadius: 12, flex: 1, marginHorizontal: 8,
-    elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 2,
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    padding: 12,
+    borderRadius: 12,
+    flex: 1,
+    marginHorizontal: 8,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
   },
   statTitle: { fontSize: 12, color: '#4b5563', marginBottom: 4 },
   statValue: { fontSize: 16, fontWeight: '600', color: '#16a34a' },
   statSubtitle: { fontSize: 12, color: '#e11d48', marginTop: 4 },
-  historyHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
+  historyHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+  },
 
   statementItem: {
-    marginTop: 16, padding: 12, backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb',
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
     flexDirection: 'row',
   },
   fromText: { fontSize: 14, fontWeight: '600', color: '#0f172a' },

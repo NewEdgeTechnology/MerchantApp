@@ -504,7 +504,8 @@ const AccountSettings = () => {
     navigation.navigate('FeedbackScreen', {
       business_id: bidNum,
       business_name: biz?.business_name || name || '',
-      authContext, // 👈 token is now present here too
+      authContext,                  // existing context
+      auth_token: authContext?.token || null, // ✅ explicit token param for Feedback & Rating
     });
   }, [navigation, route?.params?.business_id, businessId, biz?.business_name, name, authContext]);
 

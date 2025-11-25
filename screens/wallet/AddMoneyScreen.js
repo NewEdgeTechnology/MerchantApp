@@ -142,8 +142,8 @@ export default function AddMoneyScreen() {
     setLoading(true);
     try {
       const url = String(ENV_ADD_MONEY || '').trim();
-      if (!url) throw new Error('ADD_MONEY_ENDPOINT missing in .env');
-
+      // if (!url) throw new Error('ADD_MONEY_ENDPOINT missing in .env');
+      if (!url) throw new Error('Server configuration error.');
       // Backend is still using user_id; walletId is just for display
       const payload = { user_id: Number(userId), amount: Number(amount) };
 

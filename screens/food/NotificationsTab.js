@@ -14,7 +14,7 @@ import {
   NOTIFICATION_READ_ENDPOINT as ENV_NOTIF_READ_ENDPOINT,
   NOTIFICATION_READ_ALL_ENDPOINT as ENV_NOTIF_READ_ALL_ENDPOINT,
   NOTIFICATION_DELETE_ENDPOINT as ENV_NOTIF_DELETE_ENDPOINT,
-  ORDER_ENDPOINT as ENV_ORDER_ENDPOINT, // 👈 used to build grouped orders URL + fetch one order
+  ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
 } from '@env';
 
 const STORAGE_KEY_READMAP = '@notifications_readmap_v1';
@@ -62,13 +62,12 @@ async function resolveBusinessId(routeParams) {
 
 /* ---------- endpoints (env) ---------- */
 const trimSlashes = (s = '') => String(s).replace(/\/+$/, '');
-const NOTIFS_BASE   = trimSlashes(String(ENV_NOTIFS_ENDPOINT || ''));
+const NOTIFS_BASE = trimSlashes(String(ENV_NOTIFS_ENDPOINT || ''));
 const READ_ONE_BASE = trimSlashes(String(ENV_NOTIF_READ_ENDPOINT || ''));
 const READ_ALL_BASE = trimSlashes(String(ENV_NOTIF_READ_ALL_ENDPOINT || ''));
-const DELETE_BASE   = trimSlashes(String(ENV_NOTIF_DELETE_ENDPOINT || ''));
-const ORDER_BASE    = trimSlashes(String(ENV_ORDER_ENDPOINT || ''));
+const DELETE_BASE = trimSlashes(String(ENV_NOTIF_DELETE_ENDPOINT || ''));
+const ORDER_BASE = trimSlashes(String(ENV_ORDER_ENDPOINT || ''));
 
-// For notifications we still need to insert the business id to call the API now:
 const buildNotificationsUrl = (businessId) =>
   NOTIFS_BASE ? NOTIFS_BASE.replace('{business_id}', String(businessId)) : null;
 
@@ -126,8 +125,6 @@ async function buildHeaders(hasBody) {
 }
 
 /* ---------- TIME HELPERS (no timezone change for absolute; local for “ago”) ---------- */
-
-/** Pretty-print EXACTLY what backend sent; no timezone conversion */
 const showAsGiven = (s) => {
   if (!s) return '';
   const d = String(s);
@@ -140,7 +137,6 @@ const showAsGiven = (s) => {
   return `${mon} ${dd}, ${hh}:${mm}`;
 };
 
-/** Parse the payload string as a LOCAL wall-clock time (ignores trailing Z) */
 const parseLocalFromGiven = (s) => {
   if (!s) return null;
   const str = String(s).replace(' ', 'T');
@@ -157,7 +153,6 @@ const parseLocalFromGiven = (s) => {
   );
 };
 
-/** “x ago” based on LOCAL now − LOCAL parsed time (doesn’t shift the wall clock) */
 const timeAgoLocal = (s) => {
   const dt = parseLocalFromGiven(s) || new Date(s);
   if (!dt || isNaN(+dt)) return '';
@@ -171,7 +166,6 @@ const timeAgoLocal = (s) => {
   return `${d}d`;
 };
 
-/** Is the payload timestamp “today” in LOCAL calendar terms? */
 const isTodayLocal = (s) => {
   const dt = parseLocalFromGiven(s) || new Date(s);
   if (!dt || isNaN(+dt)) return false;
@@ -190,7 +184,8 @@ const typeIcon = (type) => {
     case 'success': return 'checkmark-circle-outline';
     case 'warning': return 'alert-circle-outline';
     case 'payout':  return 'card-outline';
-    case 'promo':   return 'pricetags-outline';
+    case 'wallet':  return 'card-outline';
+    // case 'promo':   return 'pricetags-outline';
     default:        return 'notifications-outline';
   }
 };
@@ -200,7 +195,8 @@ const typeTint = (type) => {
     case 'success': return '#10b981';
     case 'warning': return '#f59e0b';
     case 'payout':  return '#14b8a6';
-    case 'promo':   return '#a855f7';
+    case 'wallet':  return '#14b8a6';
+    // case 'promo':   return '#a855f7';
     default:        return '#0ea5e9';
   }
 };
@@ -250,7 +246,16 @@ const inferStatusFromText = (title = '', body = '') => {
   return 'PENDING';
 };
 
-/* ---------- map API → UI (with today→timeAgo, else absolute as-given) ---------- */
+/* ---------- filters/tabs ---------- */
+const FILTER_TABS = [
+  { key: 'all',    label: 'All' },
+  { key: 'orders', label: 'Orders' },
+  { key: 'wallet', label: 'Wallet' },
+  // { key: 'promo',  label: 'Promo' },
+  { key: 'system', label: 'System' },
+];
+
+/* ---------- map API → UI ---------- */
 const mapApiNotif = (n, readMap) => {
   const id = String(n.notification_id ?? n.id ?? n._id ?? '');
   if (!id) return null;
@@ -260,13 +265,17 @@ const mapApiNotif = (n, readMap) => {
 
   const title = n.title ?? 'Notification';
   let body = n.body_preview ?? n.body ?? n.message ?? n.description ?? '';
-  if (String(n.type).toLowerCase() === 'order:status'
-      && String(body).toLowerCase().includes('status changed to completed')) {
+  if (
+    String(n.type).toLowerCase() === 'order:status' &&
+    String(body).toLowerCase().includes('status changed to completed')
+  ) {
     body = 'Order completed successfully.';
   }
 
   const readServer = n.is_read ?? n.read ?? n.isRead ?? null;
-  const read = readServer == null ? Boolean(readMap[id]) : (String(readServer) === '1' || readServer === true);
+  const read = readServer == null
+    ? Boolean(readMap[id])
+    : (String(readServer) === '1' || readServer === true);
 
   const { orderCode, orderIdNumeric } = resolveOrderFromRecord(n);
 
@@ -281,24 +290,34 @@ const mapApiNotif = (n, readMap) => {
   const minimalOrder = orderId ? ({
     id: String(orderId),
     created_at: createdISO,
-    time: absolute,   // keep absolute for details
+    time: absolute,
     status,
   }) : null;
 
+  const walletId =
+    n.wallet_id ?? n.walletId ?? n.wallet ?? null;
+  const userId =
+    n.user_id ?? n.userId ?? null;
+
   return {
-    id, orderCode, orderIdNumeric,
+    id,
+    orderCode,
+    orderIdNumeric,
     title: String(title),
     body: String(body),
-    displayChip: chip,          // 👈 use this in the list row
+    displayChip: chip,
     type,
     read,
     _created_at: created ?? null,
     _order_like: minimalOrder,
+    walletId: walletId ? String(walletId) : null,
+    userId:   userId   ? String(userId)   : null,
   };
 };
 
 /* ---------- fetch a single order from grouped endpoint ---------- */
-const sameId = (a, b) => String(a ?? '').replace(/^ORD[-_]?/i, '') === String(b ?? '').replace(/^ORD[-_]?/i, '');
+const sameId = (a, b) =>
+  String(a ?? '').replace(/^ORD[-_]?/i, '') === String(b ?? '').replace(/^ORD[-_]?/i, '');
 
 function coalesce(...vals) {
   for (const v of vals) if (v != null && v !== '') return v;
@@ -327,7 +346,13 @@ function normalizeOrderRecord(row = {}, user = {}) {
     payment_method: coalesce(row.payment_method, row.payment, ''),
     type: coalesce(row.type, row.fulfillment_type, row.delivery_option, row.delivery_type, ''),
     delivery_address: coalesce(row.delivery_address, row.address, ''),
-    note_for_restaurant: coalesce(row.note_for_restaurant, row.restaurant_note, row.note_for_store, row.note, ''),
+    note_for_restaurant: coalesce(
+      row.note_for_restaurant,
+      row.restaurant_note,
+      row.note_for_store,
+      row.note,
+      ''
+    ),
     total: Number(coalesce(row.total, row.total_amount, 0)),
     raw_items: normalizedItems,
     status: String(row.status || 'PENDING').toUpperCase(),
@@ -378,9 +403,15 @@ async function markOneReadServer(id) {
   if (!url) return false;
   try {
     const headers = await buildHeaders(true);
-    const res = await fetch(url, { method: 'PATCH', headers, body: JSON.stringify({ is_read: true }) });
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ is_read: true }),
+    });
     return ok(res);
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 async function markAllReadServer(businessId) {
@@ -388,9 +419,15 @@ async function markAllReadServer(businessId) {
   if (!url) return false;
   try {
     const headers = await buildHeaders(true);
-    const res = await fetch(url, { method: 'PATCH', headers, body: JSON.stringify({ is_read: true }) });
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ is_read: true }),
+    });
     return ok(res);
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 async function deleteNotificationServer(id) {
@@ -400,22 +437,29 @@ async function deleteNotificationServer(id) {
     const headers = await buildHeaders(false);
     const res = await fetch(url, { method: 'DELETE', headers });
     return ok(res);
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 /* ============================= Component ============================= */
 export default function NotificationsTab({
   isTablet = false,
   route,
-  detailsRoute = 'OrderDetails', // ⬅️ align with OrdersTab
+  detailsRoute = 'OrderDetails',
+  kpis,
 }) {
   const navigation = useNavigation();
   const [list, setList] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [bizId, setBizId] = useState(null);
+  const [activeTab, setActiveTab] = useState('all');
   const readMapRef = useRef({});
 
-  const ownerType = String(route?.params?.ownerType || 'food').toLowerCase() === 'mart' ? 'mart' : 'food';
+  const ownerType =
+    String(route?.params?.ownerType || 'food').toLowerCase() === 'mart'
+      ? 'mart'
+      : 'food';
 
   useEffect(() => {
     (async () => setBizId(await resolveBusinessId(route?.params ?? {})))();
@@ -434,7 +478,9 @@ export default function NotificationsTab({
 
   const saveReadMap = useCallback(async (next) => {
     readMapRef.current = next;
-    try { await AsyncStorage.setItem(STORAGE_KEY_READMAP, JSON.stringify(next)); } catch {}
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY_READMAP, JSON.stringify(next));
+    } catch {}
   }, []);
 
   const fetchNotifications = useCallback(async () => {
@@ -447,20 +493,30 @@ export default function NotificationsTab({
       const res = await fetch(url, { headers });
       const text = await res.text();
       let data = {};
-      try { data = JSON.parse(text); } catch {}
+      try {
+        data = JSON.parse(text);
+      } catch {}
       const arr = Array.isArray(data?.data)
         ? data.data
         : Array.isArray(data?.notifications)
           ? data.notifications
-          : Array.isArray(data) ? data : [];
+          : Array.isArray(data)
+            ? data
+            : [];
 
-      const mapped = arr.map((n) => mapApiNotif(n, readMapRef.current)).filter(Boolean);
-      mapped.sort((a, b) => (new Date(b._created_at) - new Date(a._created_at)));
+      const mapped = arr
+        .map((n) => mapApiNotif(n, readMapRef.current))
+        .filter(Boolean);
+      mapped.sort(
+        (a, b) => new Date(b._created_at) - new Date(a._created_at)
+      );
       setList(mapped);
     } catch {}
   }, [bizId]);
 
-  useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
+  useEffect(() => {
+    fetchNotifications();
+  }, [fetchNotifications]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -468,8 +524,32 @@ export default function NotificationsTab({
     setRefreshing(false);
   }, [fetchNotifications]);
 
-  /* ---------- actions ---------- */
-  const unreadCount = useMemo(() => list.filter((n) => !n.read).length, [list]);
+  const unreadCount = useMemo(
+    () => list.filter((n) => !n.read).length,
+    [list]
+  );
+
+  const filteredList = useMemo(() => {
+    switch (activeTab) {
+      case 'orders':
+        return list.filter((n) => n.type === 'order');
+      case 'wallet':
+        return list.filter((n) => n.type === 'wallet' || n.type === 'payout');
+      case 'promo':
+        return list.filter((n) => n.type === 'promo');
+      case 'system':
+        return list.filter(
+          (n) =>
+            n.type !== 'order' &&
+            n.type !== 'wallet' &&
+            n.type !== 'payout' &&
+            n.type !== 'promo'
+        );
+      case 'all':
+      default:
+        return list;
+    }
+  }, [list, activeTab]);
 
   const markAllRead = async () => {
     const nextReadMap = { ...readMapRef.current };
@@ -483,34 +563,50 @@ export default function NotificationsTab({
   };
 
   const onPressItem = async (item) => {
-    const orderId = item.orderIdNumeric ?? item.orderCode ?? item._order_like?.id ?? null;
-    if (orderId) {
-      const hydrated = await fetchOrderHydrated({
-        businessId: bizId,
-        ownerType,
-        orderId: String(orderId),
+    // Wallet / payout notifications → GO TO HOME, Payouts tab
+    if (item.type === 'wallet' || item.type === 'payout') {
+      navigation.navigate('GrabMerchantHomeScreen', {
+        activeTab: 'Payouts',
+        from: 'Notifications',
+        // you can add more flags here if Home needs them
       });
+    } else {
+      // Orders & others → existing order details flow
+      const orderId =
+        item.orderIdNumeric ?? item.orderCode ?? item._order_like?.id ?? null;
+      if (orderId) {
+        const hydrated = await fetchOrderHydrated({
+          businessId: bizId,
+          ownerType,
+          orderId: String(orderId),
+        });
 
-      const groupedUrl = buildOrdersGroupedUrl(bizId, ownerType);
+        const groupedUrl = buildOrdersGroupedUrl(bizId, ownerType);
 
-      navigation.navigate(detailsRoute, {
-        orderId: String(orderId),
-        businessId: bizId,
-        ownerType,
-        ordersGroupedUrl: groupedUrl,
-        order: hydrated ? hydrated : { id: String(orderId) },
-      });
+        navigation.navigate(detailsRoute, {
+          orderId: String(orderId),
+          businessId: bizId,
+          ownerType,
+          ordersGroupedUrl: groupedUrl,
+          order: hydrated ? hydrated : { id: String(orderId) },
+        });
+      }
     }
 
+    // mark as read (common)
     if (!item.read) {
-      setList((cur) => cur.map((n) => (n.id === item.id ? { ...n, read: true } : n)));
+      setList((cur) =>
+        cur.map((n) => (n.id === item.id ? { ...n, read: true } : n))
+      );
       const nextReadMap = { ...readMapRef.current, [item.id]: true };
       await saveReadMap(nextReadMap);
       const ok = await markOneReadServer(item.id);
       if (!ok) {
         const rollback = { ...readMapRef.current, [item.id]: false };
         await saveReadMap(rollback);
-        setList((cur) => cur.map((n) => (n.id === item.id ? { ...n, read: false } : n)));
+        setList((cur) =>
+          cur.map((n) => (n.id === item.id ? { ...n, read: false } : n))
+        );
       }
     }
   };
@@ -525,7 +621,7 @@ export default function NotificationsTab({
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            setList((cur) => cur.filter((n) => n.id !== item.id)); // optimistic
+            setList((cur) => cur.filter((n) => n.id !== item.id));
             const ok = await deleteNotificationServer(item.id);
             if (!ok) onRefresh();
           },
@@ -536,27 +632,47 @@ export default function NotificationsTab({
   };
 
   const renderRightActions = (item) => (
-    <TouchableOpacity onPress={() => confirmDelete(item)} style={styles.deleteAction}>
+    <TouchableOpacity
+      onPress={() => confirmDelete(item)}
+      style={styles.deleteAction}
+    >
       <Ionicons name="trash-outline" size={22} color="#fff" />
     </TouchableOpacity>
   );
 
   const renderItem = ({ item }) => (
     <Swipeable renderRightActions={() => renderRightActions(item)}>
-      <TouchableOpacity onPress={() => onPressItem(item)} activeOpacity={0.7} style={styles.itemWrap}>
-        <View style={[styles.iconWrap, { backgroundColor: typeTint(item.type) + '22' }]}>
-          <Ionicons name={typeIcon(item.type)} size={22} color={typeTint(item.type)} />
+      <TouchableOpacity
+        onPress={() => onPressItem(item)}
+        activeOpacity={0.7}
+        style={styles.itemWrap}
+      >
+        <View
+          style={[
+            styles.iconWrap,
+            { backgroundColor: typeTint(item.type) + '22' },
+          ]}
+        >
+          <Ionicons
+            name={typeIcon(item.type)}
+            size={22}
+            color={typeTint(item.type)}
+          />
           {!item.read && <View style={styles.unreadDot} />}
         </View>
         <View style={styles.itemTextWrap}>
           <View style={styles.itemTopRow}>
-            <Text style={[styles.itemTitle, !item.read && styles.itemTitleUnread]} numberOfLines={1}>
+            <Text
+              style={[styles.itemTitle, !item.read && styles.itemTitleUnread]}
+              numberOfLines={1}
+            >
               {item.title}
             </Text>
-            {/* 👇 if today → “x ago”, else show exact (no tz change) */}
             <Text style={styles.time}>{item.displayChip}</Text>
           </View>
-          <Text style={styles.itemBody} numberOfLines={2}>{item.body}</Text>
+          <Text style={styles.itemBody} numberOfLines={2}>
+            {item.body}
+          </Text>
         </View>
       </TouchableOpacity>
     </Swipeable>
@@ -565,15 +681,44 @@ export default function NotificationsTab({
   const ListHeader = () => (
     <View style={styles.headerTools}>
       <View style={styles.headerTitleRow}>
-        <Text style={[styles.title, { fontSize: isTablet ? 22 : 18 }]}>Notifications</Text>
+        <Text style={[styles.title, { fontSize: isTablet ? 22 : 18 }]}>
+          Notifications
+        </Text>
         {unreadCount > 0 && (
-          <View style={styles.badge}><Text style={styles.badgeText}>{unreadCount}</Text></View>
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{unreadCount}</Text>
+          </View>
         )}
       </View>
-      <TouchableOpacity onPress={markAllRead} style={[styles.actionBtn, { alignSelf: 'flex-start' }]}>
+
+      <TouchableOpacity
+        onPress={markAllRead}
+        style={[styles.actionBtn, { alignSelf: 'flex-start' }]}
+      >
         <Ionicons name="checkmark-done-outline" size={16} color="#00b14f" />
         <Text style={styles.actionText}>Mark all read</Text>
       </TouchableOpacity>
+
+      <View style={styles.tabsRow}>
+        {FILTER_TABS.map((tab) => {
+          const active = tab.key === activeTab;
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              onPress={() => setActiveTab(tab.key)}
+              style={[styles.tabPill, active && styles.tabPillActive]}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[styles.tabLabel, active && styles.tabLabelActive]}
+                numberOfLines={1}
+              >
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
     </View>
   );
 
@@ -588,13 +733,15 @@ export default function NotificationsTab({
   return (
     <View style={styles.wrap}>
       <FlatList
-        data={list}
+        data={filteredList}
         keyExtractor={(it) => it.id}
         renderItem={renderItem}
         ItemSeparatorComponent={() => <View style={styles.sep} />}
         ListHeaderComponent={ListHeader}
         ListEmptyComponent={Empty}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
         contentContainerStyle={{ paddingBottom: 24 }}
       />
     </View>
@@ -604,38 +751,110 @@ export default function NotificationsTab({
 /* ---------- styles ---------- */
 const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#f6f7f8' },
+
   headerTools: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
-  headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  headerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
   title: { fontWeight: '700', color: '#111827' },
-  badge: { backgroundColor: '#00b14f', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
+  badge: {
+    backgroundColor: '#00b14f',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
   badgeText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+
   actionBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 8,
-    borderRadius: 9, borderWidth: 1, borderColor: '#e5e7eb',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#fff',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
   actionText: { color: '#00b14f', fontWeight: '600' },
+
+  tabsRow: {
+    flexDirection: 'row',
+    marginTop: 12,
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  tabPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
+  },
+  tabPillActive: {
+    backgroundColor: '#00b14f11',
+    borderColor: '#00b14f',
+  },
+  tabLabel: {
+    fontSize: 13,
+    color: '#4b5563',
+    fontWeight: '500',
+  },
+  tabLabelActive: {
+    color: '#00b14f',
+    fontWeight: '700',
+  },
+
   sep: { height: 1, backgroundColor: '#e5e7eb', marginLeft: 16 },
 
-  itemWrap: { flexDirection: 'row', backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 12 },
+  itemWrap: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
   iconWrap: {
-    width: 40, height: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
-    marginRight: 12, position: 'relative',
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    position: 'relative',
   },
   unreadDot: {
-    position: 'absolute', top: -2, right: -2, width: 10, height: 10, borderRadius: 5,
-    backgroundColor: '#00b14f', borderWidth: 2, borderColor: '#fff',
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#00b14f',
+    borderWidth: 2,
+    borderColor: '#fff',
   },
   itemTextWrap: { flex: 1 },
-  itemTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  itemTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   itemTitle: { color: '#111827', fontWeight: '600' },
   itemTitleUnread: { fontWeight: '800' },
   itemBody: { color: '#4b5563', marginTop: 2 },
   time: { color: '#6b7280', fontSize: 12 },
 
   deleteAction: {
-    backgroundColor: '#ef4444', justifyContent: 'center', alignItems: 'center',
-    width: 70, borderRadius: 8, marginVertical: 4,
+    backgroundColor: '#ef4444',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 70,
+    borderRadius: 8,
+    marginVertical: 4,
   },
 
   emptyWrap: { alignItems: 'center', paddingVertical: 40, gap: 8 },
@@ -646,10 +865,12 @@ const styles = StyleSheet.create({
 /* ---------- local helpers used above ---------- */
 function normalizeType(raw) {
   const t = String(raw || '').toLowerCase();
+
+  if (t.includes('wallet')) return 'wallet';
   if (t.startsWith('order')) return 'order';
   if (t.includes('payout'))  return 'payout';
   if (t.includes('warn'))    return 'warning';
   if (t.includes('success')) return 'success';
-  if (t.includes('promo') || t.includes('offer')) return 'promo';
+  // if (t.includes('promo') || t.includes('offer')) return 'promo';
   return 'system';
 }
