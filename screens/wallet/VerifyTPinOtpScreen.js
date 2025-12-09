@@ -77,8 +77,9 @@ export default function VerifyTPinOtpScreen() {
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || 'Failed to verify OTP.');
+      const isJson = (res.headers.get('content-type') || '').includes('application/json');
+      const data = isJson ? await res.json() : await res.text();
+      if (!res.ok) throw new Error((isJson && (data?.message || data?.error)) || 'Failed to verify OTP.');
 
       Alert.alert('Success', 'OTP verified and TPIN reset successfully.', [
         {
@@ -137,6 +138,7 @@ export default function VerifyTPinOtpScreen() {
               value={otp}
               onChangeText={setOtp}
               placeholder="Enter OTP"
+              placeholderTextColor="#94a3b8"
               keyboardType="number-pad"
               maxLength={6}
               onFocus={scrollToEnd}
@@ -151,6 +153,7 @@ export default function VerifyTPinOtpScreen() {
               value={newTPin}
               onChangeText={setNewTPin}
               placeholder="Enter new 4-digit TPIN"
+              placeholderTextColor="#94a3b8"
               keyboardType="number-pad"
               secureTextEntry
               maxLength={4}
@@ -166,6 +169,7 @@ export default function VerifyTPinOtpScreen() {
               value={confirmTPin}
               onChangeText={setConfirmTPin}
               placeholder="Re-enter TPIN"
+              placeholderTextColor="#94a3b8"
               keyboardType="number-pad"
               secureTextEntry
               maxLength={4}
@@ -178,6 +182,7 @@ export default function VerifyTPinOtpScreen() {
             onPress={handleVerifyOtp}
             style={[styles.primaryBtnFilled, { backgroundColor: primary }]}
             activeOpacity={0.9}
+            disabled={loading}
           >
             {loading ? (
               <ActivityIndicator color="#fff" />
@@ -225,6 +230,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#f1f5f9',
+    backgroundColor: '#ffffff',
     marginBottom: 18,
   },
 
@@ -240,7 +246,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
 
-  title: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
+  title: {
+    fontSize: width > 400 ? 18 : 16,
+    fontWeight: '800',
+    color: '#0f172a',
+  },
   sub: { marginTop: 6, color: '#64748b', lineHeight: 20 },
 
   inputBox: {
@@ -252,7 +262,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#f9fafb',
   },
 
-  inputLabel: { fontSize: 13, fontWeight: '600', color: '#0f172a' },
+  inputLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
 
   otpInput: {
     marginTop: 6,
@@ -263,6 +277,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
+    color: '#0f172a',
   },
 
   primaryBtnFilled: {
@@ -274,7 +289,7 @@ const styles = StyleSheet.create({
 
   primaryBtnTextFilled: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: width > 400 ? 16 : 15,
     fontWeight: '800',
     letterSpacing: 0.6,
   },

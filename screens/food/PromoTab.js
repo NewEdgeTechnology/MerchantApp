@@ -118,6 +118,21 @@ const baseUpdate = (UPDATE_BANNER_ENDPOINT || BANNERS_ENDPOINT).replace(/\/$/, '
 const baseCreate = (CREATE_BANNER_ENDPOINT || BANNERS_ENDPOINT).replace(/\/$/, '');
 const baseReactivate = (REACTIVATING_BANNER_ENDPOINT || UPDATE_BANNER_ENDPOINT || BANNERS_ENDPOINT).replace(/\/$/, '');
 
+/** FIX: build BUSINESS_DETAILS URL even if it contains placeholders */
+const buildBusinessDetailsUrl = (businessId) => {
+  if (!BUSINESS_DETAILS) return '';
+  const baseRaw = String(BUSINESS_DETAILS).replace(/\/$/, '');
+  const idStr = encodeURIComponent(businessId);
+
+  if (baseRaw.includes('{businessId}')) return baseRaw.replace('{businessId}', idStr);
+  if (baseRaw.includes('{business_id}')) return baseRaw.replace('{business_id}', idStr);
+  if (baseRaw.match(/:businessId\b/)) return baseRaw.replace(/:businessId\b/, idStr);
+  if (baseRaw.match(/:business_id\b/)) return baseRaw.replace(/:business_id\b/, idStr);
+
+  // fallback: just append
+  return `${baseRaw}/${idStr}`;
+};
+
 function mostCommonOwnerType(arr) {
   const counts = arr.reduce((m, b) => {
     const ot = String(b?.owner_type || '').trim().toLowerCase();
@@ -284,8 +299,9 @@ export default function PromosTab({
   const loadBusinessUserId = useCallback(async () => {
     if (!businessId || !BUSINESS_DETAILS) return;
     try {
-      const base = String(BUSINESS_DETAILS).replace(/\/$/, '');
-      const url = `${base}/${encodeURIComponent(businessId)}`;
+      const url = buildBusinessDetailsUrl(businessId);
+      if (!url) return;
+
       const res = await fetchWithTimeout(url, {}, 8000);
       const text = await res.text();
       if (!res.ok) throw new Error(`HTTP ${res.status} — ${text || 'Failed to load business'}`);
@@ -455,7 +471,7 @@ export default function PromosTab({
     }
 
     const days = daysInclusive(startYMD, endYMD);
-    if (days <= 0) throw new Error('Invalid date range');
+       if (days <= 0) throw new Error('Invalid date range');
     if (Number.isFinite(basePrice) && basePrice > 0) {
       return Number((days * basePrice).toFixed(2));
     }
@@ -478,9 +494,6 @@ export default function PromosTab({
 
     try {
       const hasDates = !!(form.start_date && form.end_date);
-      // ✅ ONLY charge when:
-      // - creating with dates
-      // - editing AND dates changed
       const datesChangedOnEdit =
         isEdit &&
         hasDates &&
@@ -1172,7 +1185,7 @@ export default function PromosTab({
                 Days: {enableDays || '—'}
               </Text>
               <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>
-                Amount:{' '}
+                Amount{' '}
                 {reactivateDatesChanged && Number.isFinite(enableAmount)
                   ? currency(enableAmount)
                   : 'No extra charge'}
@@ -1333,3 +1346,4 @@ const styles = StyleSheet.create({
   },
   saveText: { color: '#fff', fontWeight: '800', fontSize: 12 },
 });
+ 

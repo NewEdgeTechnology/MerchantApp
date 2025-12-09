@@ -98,7 +98,7 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
     let json = null;
     try {
       json = text ? JSON.parse(text) : null;
-    } catch {}
+    } catch { }
     if (!res.ok) {
       const msg = (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
       throw new Error(msg);
@@ -114,7 +114,7 @@ const getBaseOrigin = () => {
     if (typeof globalThis.URL === 'function' && LOGIN_USERNAME_MERCHANT_ENDPOINT) {
       return new globalThis.URL(LOGIN_USERNAME_MERCHANT_ENDPOINT).origin;
     }
-  } catch {}
+  } catch { }
   return DEFAULT_DEV_ORIGIN;
 };
 const candidateProfileUrls = () => {
@@ -378,9 +378,27 @@ export default function GrabMerchantHomeScreen() {
     return `${base}/${encodeURIComponent(String(uid))}`;
   }, []);
   const buildBusinessUrl = useCallback((bid) => {
-    if (!bid || !BUSINESS_DETAILS) return '';
-    const base = normalizeHost((BUSINESS_DETAILS || '').trim()).replace(/\/+$/, '');
-    return `${base}/${encodeURIComponent(String(bid))}`;
+    const rawBid = bid != null ? String(bid).trim() : '';
+    const tpl = (BUSINESS_DETAILS || '').trim();
+
+    if (!rawBid || !tpl) return '';
+
+    const id = encodeURIComponent(rawBid);
+
+    // 1) Try to replace placeholders in the template itself
+    let url = tpl
+      .replace('{business_id}', id)
+      .replace('{businessId}', id)
+      .replace(':business_id', id)
+      .replace(':businessId', id);
+
+    // 2) If there was no placeholder, treat env as base and append /id
+    if (url === tpl) {
+      const base = tpl.replace(/\/+$/, '');
+      url = `${base}/${id}`;
+    }
+
+    return url;
   }, []);
 
   const headerSnapRef = useRef({ name: null, addr: null, logo: null, profile: null });
@@ -434,7 +452,7 @@ export default function GrabMerchantHomeScreen() {
       let blob = {};
       try {
         blob = JSON.parse(raw);
-      } catch {}
+      } catch { }
       const user = blob?.user ?? blob;
 
       const idCandidates = [
@@ -490,7 +508,7 @@ export default function GrabMerchantHomeScreen() {
         (await SecureStore.getItemAsync(KEY_AUTH_TOKEN)) ||
         null;
       if (tokenCandidate && !authToken) setAuthToken(String(tokenCandidate));
-    } catch {}
+    } catch { }
   }, [userId, applyHeaderIfChanged, deliveryOption, authToken]);
 
   const loadFromBackend = useCallback(
@@ -517,7 +535,7 @@ export default function GrabMerchantHomeScreen() {
           let blob = {};
           try {
             blob = raw ? JSON.parse(raw) : {};
-          } catch {}
+          } catch { }
           const providedKind =
             data?.owner_type != null && String(data.owner_type).trim() !== ''
               ? normalizeOwnerType(data.owner_type)
@@ -562,10 +580,12 @@ export default function GrabMerchantHomeScreen() {
             },
           };
           await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
-        } catch {}
+        } catch { }
       } catch (e) {
+        if (e?.name === 'AbortError' || e?.message === 'Aborted') return;
         if (__DEV__) console.log('[Home] profile fetch failed:', e?.message);
       }
+
     },
     [buildProfileUrl, ownerType, applyHeaderIfChanged, deliveryOption]
   );
@@ -607,10 +627,15 @@ export default function GrabMerchantHomeScreen() {
             },
           };
           await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
-        } catch {}
+        } catch { }
       } catch (e) {
+        if (e?.name === 'AbortError' || e?.message === 'Aborted') {
+          // Ignore Abort (timeout) — do not log
+          return;
+        }
         if (__DEV__) console.log('[Home] loadBusinessFromBackend failed:', e?.message);
       }
+
     },
     [buildBusinessUrl, applyHeaderIfChanged]
   );
@@ -693,8 +718,10 @@ export default function GrabMerchantHomeScreen() {
         ...next, // keep existing salesToday / salesCurrency
       }));
     } catch (e) {
+      if (e?.name === 'AbortError' || e?.message === 'Aborted') return;
       if (__DEV__) console.log('[KPI] status-count fetch failed:', e?.message);
     }
+
   }, []);
 
   const fetchSalesToday = useCallback(async (bid) => {
@@ -734,8 +761,10 @@ export default function GrabMerchantHomeScreen() {
         lastUpdatedAt: new Date().toISOString(),
       }));
     } catch (e) {
+      if (e?.name === 'AbortError' || e?.message === 'Aborted') return;
       if (__DEV__) console.log('[KPI] sales-today fetch failed:', e?.message);
     }
+
   }, []);
 
   useEffect(() => {
@@ -952,7 +981,7 @@ export default function GrabMerchantHomeScreen() {
       }
       try {
         await SecureStore.setItemAsync(KEY_LAST_CTX, JSON.stringify(params));
-      } catch {}
+      } catch { }
       const bid = params.businessId || params.business_id || businessId;
       const kind = normalizeOwnerType(params.owner_type ?? ownerType);
       if (bid) {
@@ -984,7 +1013,7 @@ export default function GrabMerchantHomeScreen() {
             String(payload.delivery_option || payload.deliveryOption).toUpperCase()
           );
         }
-      } catch {}
+      } catch { }
       const uid = route?.params?.user_id || userId;
       if (uid) await loadFromBackend(String(uid));
       if (businessId) {
@@ -1130,7 +1159,7 @@ export default function GrabMerchantHomeScreen() {
         if (fallback)
           try {
             navigation.navigate(fallback, params);
-          } catch {}
+          } catch { }
       }
     };
     const goToAccountSettings = () => safeNav('AccountSettings', 'ProfileBusinessDetails');
@@ -1148,7 +1177,7 @@ export default function GrabMerchantHomeScreen() {
         }}
       >
         {showWelcome && activeTab === 'Home' && (
-          <Text style={styles.hi}>Welcome back</Text>
+          <Text style={styles.hi}>Welcome</Text>
         )}
 
         <View style={styles.headerRow}>
@@ -1197,7 +1226,7 @@ export default function GrabMerchantHomeScreen() {
               <Image
                 source={{ uri: profileAvatar || DEFAULT_AVATAR }}
                 style={[styles.profileCircle, { width: avatarSize, height: avatarSize }]}
-                onError={() => {}}
+                onError={() => { }}
               />
             </TouchableOpacity>
           </View>
@@ -1225,7 +1254,8 @@ export default function GrabMerchantHomeScreen() {
     { key: 'Home', label: 'Home', icon: 'home-outline' },
     { key: 'Orders', label: 'Orders', icon: 'receipt-outline' },
     { key: 'Add Menu', label: isFood ? 'Add Menu' : 'Add Item', icon: 'add' },
-    { key: 'Notifications', label: 'Notifications', icon: 'notifications-outline' },
+    // renamed for UI only; key stays "Notifications" so existing logic still works
+    { key: 'Notifications', label: 'Activities', icon: 'time-outline' },
     { key: 'Payouts', label: 'Payouts', icon: 'card-outline' },
   ];
 

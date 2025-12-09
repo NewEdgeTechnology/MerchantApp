@@ -16,7 +16,7 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
-import MapView, { Marker } from "react-native-maps";
+import MapView, { Marker, UrlTile } from "react-native-maps";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import HeaderWithSteps from "./HeaderWithSteps";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -69,6 +69,9 @@ export default function MerchantExtrasScreen() {
   // Business License number (OPTIONAL now)
   const [regNo, setRegNo] = useState("");
 
+  // ID card number (REQUIRED, numeric, min 11 digits)
+  const [idCardNo, setIdCardNo] = useState("");
+
   const [focusedField, setFocusedField] = useState(null);
   const [pickingLicense, setPickingLicense] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -78,6 +81,8 @@ export default function MerchantExtrasScreen() {
     if (incomingMerchant) {
       if (incomingMerchant.registration_no) setRegNo(String(incomingMerchant.registration_no));
       if (incomingMerchant.address) setAddress(incomingMerchant.address);
+      if (incomingMerchant.id_card_number)
+        setIdCardNo(String(incomingMerchant.id_card_number));
 
       const lat = incomingMerchant.latitude ?? null;
       const lng = incomingMerchant.longitude ?? null;
@@ -97,9 +102,10 @@ export default function MerchantExtrasScreen() {
           mimeType: img.mimeType ?? "image/jpeg",
           size: img.size ?? 0,
         };
-        };
+      };
       if (incomingMerchant.logo) setLogo(normalizeImg(incomingMerchant.logo, "logo.jpg"));
-      if (incomingMerchant.license) setLicenseFile(normalizeImg(incomingMerchant.license, "license"));
+      if (incomingMerchant.license)
+        setLicenseFile(normalizeImg(incomingMerchant.license, "license"));
     }
 
     if (!incomingMerchant?.address && initialAddress) setAddress(initialAddress);
@@ -136,10 +142,11 @@ export default function MerchantExtrasScreen() {
     };
   }, []);
 
-  // CHANGED: regNo no longer required
+  // regNo is optional; idCardNo is required & min 11 digits
   const validate = () => {
     if (!toSafeString(address).trim()) return false;
     if (!logo?.uri) return false;
+    if (!idCardNo || idCardNo.trim().length < 11) return false;
     return true;
   };
 
@@ -181,7 +188,10 @@ export default function MerchantExtrasScreen() {
       return;
     }
     const line = await reverseGeocode(pickedCoord.latitude, pickedCoord.longitude);
-    setAddress(line || `Located at: ${pickedCoord.latitude.toFixed(5)}, ${pickedCoord.longitude.toFixed(5)}`);
+    setAddress(
+      line ||
+        `Located at: ${pickedCoord.latitude.toFixed(5)}, ${pickedCoord.longitude.toFixed(5)}`
+    );
     setMapRegion((r) => ({
       ...r,
       latitude: pickedCoord.latitude,
@@ -290,6 +300,14 @@ export default function MerchantExtrasScreen() {
         Alert.alert("Missing address", "Please add your business address.");
         return;
       }
+      if (!idCardNo || idCardNo.trim().length === 0) {
+        Alert.alert("Missing ID number", "Please enter your ID card number.");
+        return;
+      }
+      if (idCardNo.trim().length < 11) {
+        Alert.alert("Invalid ID number", "ID card number must be at least 11 digits.");
+        return;
+      }
       return;
     }
 
@@ -303,6 +321,9 @@ export default function MerchantExtrasScreen() {
       const normalizedRegNo = toSafeString(regNo).trim();
       const maybeRegNo = normalizedRegNo.length > 0 ? normalizedRegNo : undefined;
 
+      const normalizedIdCard = toSafeString(idCardNo).trim();
+      const maybeIdCard = normalizedIdCard.length > 0 ? normalizedIdCard : undefined;
+
       const mergedMerchant = {
         ...(incomingMerchant ?? {}),
 
@@ -311,12 +332,16 @@ export default function MerchantExtrasScreen() {
         phone: incomingMerchant?.phone ?? phoneNumber ?? undefined,
 
         full_name: toSafeString(incomingMerchant?.full_name ?? initialFullName).trim(),
-        business_name: toSafeString(incomingMerchant?.business_name ?? initialBusinessName).trim(),
+        business_name: toSafeString(
+          incomingMerchant?.business_name ?? initialBusinessName
+        ).trim(),
 
         category: normalizedCategoryIds,
         categories: incomingMerchant?.categories ?? route.params?.merchant?.categories ?? [],
 
         ...(maybeRegNo !== undefined ? { registration_no: maybeRegNo } : {}),
+
+        ...(maybeIdCard !== undefined ? { id_card_number: maybeIdCard } : {}),
 
         address: toSafeString(address).trim(),
         latitude: pickedCoord?.latitude ?? null,
@@ -364,7 +389,9 @@ export default function MerchantExtrasScreen() {
             keyboardShouldPersistTaps="handled"
           >
             {/* ===== Business location (map) ===== */}
-            <Text style={[styles.label, { marginTop: 6 }]}>Business location (map) — optional</Text>
+            <Text style={[styles.label, { marginTop: 6 }]}>
+              Business location (map) — optional
+            </Text>
 
             <View style={{ marginBottom: 8 }}>
               <TouchableOpacity style={styles.btnSecondary} onPress={openMapPicker}>
@@ -375,7 +402,17 @@ export default function MerchantExtrasScreen() {
             {pickedCoord ? (
               <>
                 <View style={styles.mapPreviewWrapperLarge}>
-                  <MapView style={styles.mapPreview} region={mapRegion} pointerEvents="none">
+                  <MapView
+                    style={styles.mapPreview}
+                    region={mapRegion}
+                    pointerEvents="none"
+                  >
+                    {/* OpenStreetMap tiles */}
+                    <UrlTile
+                      urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      maximumZ={19}
+                      flipY={false}
+                    />
                     <Marker coordinate={pickedCoord} />
                   </MapView>
                   <TouchableOpacity
@@ -436,8 +473,31 @@ export default function MerchantExtrasScreen() {
               isFocused={focusedField === "regNo"}
             />
 
+            {/* ===== ID Card number (REQUIRED, numeric, min 11 digits) ===== */}
+            <Field
+              label={
+                <Text>
+                  ID card number <Text style={{ color: "red" }}>*</Text>
+                </Text>
+              }
+              placeholder="Enter ID number"
+              value={idCardNo}
+              onChangeText={(text) => {
+                // Only allow digits 0-9
+                const cleaned = text.replace(/[^0-9]/g, "");
+                setIdCardNo(cleaned);
+              }}
+              keyboardType="numeric"
+              onFocus={() => setFocusedField("idCardNo")}
+              onBlur={() => setFocusedField(null)}
+              isFocused={focusedField === "idCardNo"}
+              hint="Only numbers allowed, minimum 11 digits."
+            />
+
             {/* ===== License Upload (OPTIONAL) ===== */}
-            <Text style={styles.label}>Business license / registration document (optional)</Text>
+            <Text style={styles.label}>
+              Business license / registration document (optional)
+            </Text>
             <View style={styles.row}>
               <TouchableOpacity
                 style={[styles.btnSecondary, pickingLicense && styles.btnDisabled]}
@@ -483,7 +543,11 @@ export default function MerchantExtrasScreen() {
                 {submitting ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={isFormValid ? styles.btnPrimaryText : styles.btnPrimaryTextDisabled}>
+                  <Text
+                    style={
+                      isFormValid ? styles.btnPrimaryText : styles.btnPrimaryTextDisabled
+                    }
+                  >
                     Submit
                   </Text>
                 )}
@@ -493,7 +557,7 @@ export default function MerchantExtrasScreen() {
         </View>
       </KeyboardAvoidingView>
 
-      {/* ===== Map Picker Modal ===== */}
+      {/* ===== Map Picker Modal (OpenStreetMap) ===== */}
       <Modal
         visible={locationModalVisible}
         onRequestClose={closeMapPicker}
@@ -517,6 +581,12 @@ export default function MerchantExtrasScreen() {
               onRegionChangeComplete={setMapRegion}
               onLongPress={onMapLongPress}
             >
+              {/* OpenStreetMap tiles */}
+              <UrlTile
+                urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                maximumZ={19}
+                flipY={false}
+              />
               {pickedCoord && (
                 <Marker
                   coordinate={pickedCoord}
@@ -543,7 +613,11 @@ export default function MerchantExtrasScreen() {
             </View>
           </View>
 
-          {!!modalLocError && <Text style={[styles.locError, { marginHorizontal: 16 }]}>{modalLocError}</Text>}
+          {!!modalLocError && (
+            <Text style={[styles.locError, { marginHorizontal: 16 }]}>
+              {modalLocError}
+            </Text>
+          )}
 
           <View style={styles.modalFooter}>
             <Text style={styles.modalHint}>
@@ -983,5 +1057,11 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "700",
     fontSize: 13,
+  },
+  locError: {
+    fontSize: 12,
+    color: "#ef4444",
+    marginTop: 6,
+    marginBottom: 4,
   },
 });

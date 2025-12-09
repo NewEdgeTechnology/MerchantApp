@@ -14,38 +14,40 @@ export default function DeliveryMethodChooser({
   isGrabSelected,
   sendingGrab,
   rideMessage,
-  driverSummaryText,   // e.g. "Keshar Bhujel · 17654321 · Rating: 4.8 (23)"
-  driverAccepted,      // NEW
+  driverSummaryText,
+  driverAccepted,
   setDeliveryChoice,
   stopGrabLoop,
   startGrabLoop,
 }) {
-  // if not READY / BOTH or order already finished, don't show anything
-  if (status !== 'READY' || !isBothOption || isTerminalNegative || isTerminalSuccess) {
+  // If not BOTH or already terminal/cancelled → show nothing at all
+  if (!isBothOption || isTerminalNegative || isTerminalSuccess) {
     return null;
   }
 
-  // AFTER DRIVER ACCEPTED: hide delivery method buttons,
-  // show only driver details block
+  // Once a driver is accepted, ALWAYS show only driver details (no chooser)
   if (driverAccepted) {
-    if (!driverSummaryText) return null; // nothing to show yet
-
     return (
       <View style={[styles.block, { marginTop: 12 }]}>
         <RowTitle title="Assigned driver" />
+
         <Text
           style={[
             styles.segmentHint,
             { marginTop: 4, fontWeight: '600' },
           ]}
         >
-          {driverSummaryText}
+          {driverSummaryText || 'Driver assigned'}
         </Text>
       </View>
     );
   }
 
-  // BEFORE driver acceptance: normal "Choose delivery method" UI
+  // Only when order is READY → show the delivery method chooser
+  if (status !== 'READY') {
+    return null;
+  }
+
   const hintText = (() => {
     if (isSelfSelected) return 'Self delivery selected.';
     if (isGrabSelected) return rideMessage || 'Grab delivery selected.';
@@ -55,7 +57,9 @@ export default function DeliveryMethodChooser({
   return (
     <View style={[styles.block, { marginTop: 12 }]}>
       <RowTitle title="Choose delivery method" />
+
       <View style={styles.segmentWrap}>
+        {/* SELF BUTTON */}
         <Pressable
           onPress={() => {
             setDeliveryChoice('self');
@@ -78,6 +82,7 @@ export default function DeliveryMethodChooser({
           </Text>
         </Pressable>
 
+        {/* GRAB BUTTON */}
         <Pressable
           onPress={() => {
             setDeliveryChoice('grab');

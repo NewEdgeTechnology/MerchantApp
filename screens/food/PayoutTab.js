@@ -284,11 +284,7 @@ export default function PayoutsTab({
         <>
           <View style={styles.historyHeaderRow}>
             <Text
-              style={[
-                styles.title,
-                { fontSize: isTablet ? 18 : 16, marginTop: 20 },
-              ]}
-            >
+              style={[styles.title, { fontSize: isTablet ? 18 : 16, marginTop: 20 }]}>
               Payout History
             </Text>
           </View>
@@ -298,25 +294,26 @@ export default function PayoutsTab({
             const sign = isCredit ? '+ ' : '- ';
             return (
               <View key={tx.id} style={styles.statementItem}>
-                {/* Left side */}
+                {/* Column: Reason, Date, Wallet ID ("From") */}
                 <View style={{ flex: 1 }}>
-                  {/* From */}
+                  {/* Reason */}
+                  <Text style={styles.reasonText} numberOfLines={2}>
+                    {tx.reason || (isCredit ? 'Credit' : 'Payment')}
+                  </Text>
+
+                  {/* Wallet ID ("From") */}
                   {tx.from ? (
                     <Text style={styles.fromText} numberOfLines={1}>
                       From: {tx.from}
                     </Text>
                   ) : null}
-                  {/* Reason below, smaller */}
-                  <Text style={styles.reasonText} numberOfLines={2}>
-                    {tx.reason || (isCredit ? 'Credit' : 'Payment')}
-                  </Text>
-                  {/* Time & Date */}
+                  {/* Date */}
                   <Text style={styles.datetimeText}>
                     {tx.time} - {tx.date}
                   </Text>
                 </View>
 
-                {/* Right side: amount */}
+                {/* Right side: Amount */}
                 <View style={{ justifyContent: 'center', marginLeft: 8 }}>
                   <Text
                     style={[
@@ -422,10 +419,30 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     flexDirection: 'row',
   },
-  fromText: { fontSize: 14, fontWeight: '600', color: '#0f172a' },
-  reasonText: { fontSize: 13, color: '#6b7280', marginTop: 2 },
-  datetimeText: { fontSize: 12, color: '#9ca3af', marginTop: 4 },
-  amountText: { fontSize: 16, fontWeight: '700' },
-  amountCredit: { color: '#16a34a' },
-  amountDebit: { color: '#e11d48' },
+  reasonText: {
+    fontSize: 14,
+    color: '#0f172a',
+    fontWeight: '500',
+    marginBottom: 4,  // Spacing between reason and date
+  },
+  datetimeText: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginBottom: 4,  // Spacing between date and "From"
+  },
+  fromText: {
+    fontSize: 13,
+    color: '#6b7280',
+    marginBottom: 4,
+  },
+  amountText: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  amountCredit: {
+    color: '#16a34a',
+  },
+  amountDebit: {
+    color: '#e11d48',
+  },
 });

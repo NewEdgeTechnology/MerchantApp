@@ -1,8 +1,8 @@
 // services/marts/OrdersTab.js
-// Mart Orders list tab — same API contract as Food.
-// Wrapped payload: { success, data:[ { user, orders:[...] } ] } OR legacy flat rows.
-// Reuses the same ORDER endpoint; optionally appends owner_type=mart.
-// UPDATE: Accepts businessId from route params or SecureStore as fallback.
+// Mart / Food Orders list tab — grouped orders + upcoming scheduled orders.
+// - Upcoming: no filters shown (no search, no date dropdown).
+// - Normal: status tabs + search + date dropdown (All / Today / Yesterday / calendar).
+// - Counts per status respect date filter (except Upcoming).
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -20,11 +20,17 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Modal,
+  Pressable,
 } from 'react-native';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
-import { ORDER_ENDPOINT as ENV_ORDER_ENDPOINT } from '@env';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import {
+  ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
+  SCHEDULED_ORDER_ENDPOINT as ENV_SCHEDULED_ORDER_ENDPOINT,
+} from '@env';
 
 const BASE_STATUS_LABELS = [
   { key: 'PENDING', label: 'Pending' },
@@ -35,23 +41,24 @@ const BASE_STATUS_LABELS = [
   { key: 'DECLINED', label: 'Declined' },
 ];
 
-// Color system for status pills (card-only — tabs untouched)
 const STATUS_THEME = {
-  PENDING:          { fg: '#0ea5e9',  bg: '#e0f2fe',  bd: '#bae6fd', icon: 'time-outline' },
-  CONFIRMED:        { fg: '#16a34a',  bg: '#ecfdf5',  bd: '#bbf7d0', icon: 'checkmark-circle-outline' },
-  READY:            { fg: '#2563eb',  bg: '#dbeafe',  bd: '#bfdbfe', icon: 'cube-outline' },
-  OUT_FOR_DELIVERY: { fg: '#f59e0b',  bg: '#fef3c7',  bd: '#fde68a', icon: 'bicycle-outline' },
-  COMPLETED:        { fg: '#047857',  bg: '#ecfdf5',  bd: '#bbf7d0', icon: 'checkmark-done-outline' },
-  DECLINED:         { fg: '#b91c1c',  bg: '#fee2e2',  bd: '#fecaca', icon: 'close-circle-outline' },
+  PENDING: { fg: '#0ea5e9', bg: '#e0f2fe', bd: '#bae6fd', icon: 'time-outline' },
+  CONFIRMED: { fg: '#16a34a', bg: '#ecfdf5', bd: '#bbf7d0', icon: 'checkmark-circle-outline' },
+  READY: { fg: '#2563eb', bg: '#dbeafe', bd: '#bfdbfe', icon: 'cube-outline' },
+  OUT_FOR_DELIVERY: { fg: '#f59e0b', bg: '#fef3c7', bd: '#fde68a', icon: 'bicycle-outline' },
+  COMPLETED: { fg: '#047857', bg: '#ecfdf5', bd: '#bbf7d0', icon: 'checkmark-done-outline' },
+  DECLINED: { fg: '#b91c1c', bg: '#fee2e2', bd: '#fecaca', icon: 'close-circle-outline' },
+  SCHEDULED: { fg: '#0ea5e9', bg: '#eff6ff', bd: '#dbeafe', icon: 'calendar-outline' },
 };
 
-// Color system for fulfillment type pills
 const FULFILL_THEME = {
   DELIVERY: { fg: '#0ea5e9', bg: '#e0f2fe', bd: '#bae6fd', icon: 'bicycle-outline', label: 'Delivery' },
-  PICKUP:   { fg: '#7c3aed', bg: '#f5f3ff', bd: '#ddd6fe', icon: 'bag-outline',      label: 'Pickup' },
+  PICKUP: { fg: '#7c3aed', bg: '#f5f3ff', bd: '#ddd6fe', icon: 'bag-outline', label: 'Pickup' },
 };
 
-/* ---------------- small UI atoms (card only) ---------------- */
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/* ---------------- small UI atoms ---------------- */
 const StatusPill = ({ status }) => {
   const key = String(status || '').toUpperCase();
   const t = STATUS_THEME[key] || STATUS_THEME.PENDING;
@@ -59,7 +66,10 @@ const StatusPill = ({ status }) => {
     <View style={[styles.pill, { backgroundColor: t.bg, borderColor: t.bd }]}>
       <Ionicons name={t.icon} size={12} color={t.fg} />
       <Text style={[styles.pillText, { color: t.fg }]} numberOfLines={1}>
-        {key.replaceAll('_', ' ').toLowerCase().replace(/(^|\s)\S/g, (s) => s.toUpperCase())}
+        {key
+          .replaceAll('_', ' ')
+          .toLowerCase()
+          .replace(/(^|\s)\S/g, (s) => s.toUpperCase())}
       </Text>
     </View>
   );
@@ -86,7 +96,9 @@ const ItemPreview = ({ items, raw }) => {
     const more = raw.length > 2 ? ` +${raw.length - 2} more` : '';
     return (
       <Text style={styles.orderItems} numberOfLines={2}>
-        {t1}{t2 ? `, ${t2}` : ''}{more}
+        {t1}
+        {t2 ? `, ${t2}` : ''}
+        {more}
       </Text>
     );
   }
@@ -94,26 +106,40 @@ const ItemPreview = ({ items, raw }) => {
   return null;
 };
 
-/* ---------------- helpers (dates, numbers) ---------------- */
-
-// Show exactly what backend sent (no timezone conversion)
+/* ---------------- helpers ---------------- */
 const showAsGiven = (s) => {
   if (!s) return '';
   const d = String(s);
   const isoish = d.includes('T') ? d : d.replace(' ', 'T');
   const y = isoish.slice(0, 4), m = isoish.slice(5, 7), dd = isoish.slice(8, 10);
   const hh = isoish.slice(11, 13), mm = isoish.slice(14, 16);
-  const monNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const mon = monNames[(+m || 1) - 1] || m;
+  const mon = MONTH_NAMES[(+m || 1) - 1] || m;
   if (!y || !m || !dd || !hh || !mm) return d;
   return `${mon} ${dd}, ${hh}:${mm}`;
 };
 
 const parseForSort = (v) => {
   if (!v) return 0;
-  const s = String(v);
-  const n = Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
-  return Number.isFinite(n) ? n : 0;
+  const s = String(v).trim();
+  let n = Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
+  if (Number.isFinite(n)) return n;
+
+  const m = s.match(
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4}),\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/
+  );
+  if (m) {
+    const [, dd, mm, yyyy, hh, min, ss] = m;
+    const date = new Date(
+      Number(yyyy),
+      Number(mm) - 1,
+      Number(dd),
+      Number(hh),
+      Number(min),
+      ss ? Number(ss) : 0
+    );
+    if (!Number.isNaN(date.getTime())) return date.getTime();
+  }
+  return 0;
 };
 
 const safeNum = (v) => {
@@ -121,7 +147,27 @@ const safeNum = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-// pull a note string from common item-level fields (kept if you need later)
+const pad2 = (n) => (n < 10 ? `0${n}` : String(n));
+
+const dateKeyFromDateObj = (d) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+const dateKeyFromTs = (v) => {
+  const t = parseForSort(v);
+  if (!t) return null;
+  const d = new Date(t);
+  return dateKeyFromDateObj(d);
+};
+
+const labelForDateKey = (key, todayKey, yesterdayKey) => {
+  if (key === todayKey) return 'Today';
+  if (key === yesterdayKey) return 'Yesterday';
+  const [y, m, d] = key.split('-').map(Number);
+  if (!y || !m || !d) return key;
+  const date = new Date(y, m - 1, d);
+  return `${MONTH_NAMES[date.getMonth()]} ${d}`;
+};
+
 const getItemNote = (it = {}) =>
   it.note_for_restaurant ||
   it.note ||
@@ -131,20 +177,18 @@ const getItemNote = (it = {}) =>
   it.item_note ||
   '';
 
-/* ---------------- CARD: OrderItem ---------------- */
 const OrderItem = ({ item, isTablet, money, onPress }) => {
   const isDelivery = item.type === 'Delivery';
+  const isScheduled = String(item.status || '').trim().toUpperCase() === 'SCHEDULED';
   const moneyFmt = money || ((n, c = 'Nu') => `${c} ${Number(n || 0).toFixed(2)}`);
+
   return (
     <TouchableOpacity
       activeOpacity={0.75}
       onPress={() => onPress?.(item)}
       style={styles.card}
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      accessibilityRole="button"
-      accessibilityLabel={`Open order ${item.id}`}
     >
-      {/* Row 1: ID/time + total */}
       <View style={styles.row1}>
         <View style={styles.row1Left}>
           <Ionicons
@@ -152,41 +196,60 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
             size={18}
             color="#0f172a"
           />
-          <Text style={[styles.orderId, { fontSize: isTablet ? 15 : 14 }]}>{item.id}</Text>
-          <Text style={[styles.orderTime, { fontSize: isTablet ? 13 : 12 }]}> • {item.time}</Text>
+          <View>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={[styles.orderId, { fontSize: isTablet ? 15 : 14 }]}>
+                {item.id}
+              </Text>
+              {!isScheduled && !!item.time && (
+                <Text style={[styles.orderTime, { fontSize: isTablet ? 13 : 12 }]}>
+                  {' '}• {item.time}
+                </Text>
+              )}
+            </View>
+            {isScheduled && !!item.time && (
+              <Text
+                style={[styles.scheduledTime, { fontSize: isTablet ? 14 : 13 }]}
+                numberOfLines={2}
+              >
+                {item.time}
+              </Text>
+            )}
+          </View>
         </View>
         <Text style={[styles.orderTotal, { fontSize: isTablet ? 18 : 17 }]}>
           {moneyFmt(item.total, 'Nu')}
         </Text>
       </View>
 
-      {/* Row 2: fulfillment + status + payment */}
       <View style={styles.row2}>
         <FulfillmentPill type={item.type} />
         <StatusPill status={item.status} />
         {!!item.payment_method && (
           <View style={styles.payWrap}>
             <Ionicons name="card-outline" size={14} color="#64748b" />
-            <Text style={styles.payText} numberOfLines={1}>{item.payment_method}</Text>
+            <Text style={styles.payText} numberOfLines={1}>
+              {item.payment_method}
+            </Text>
           </View>
         )}
       </View>
 
-      {/* Row 3: items preview */}
       <ItemPreview items={item.items} raw={item.raw_items} />
 
-      {/* Row 4: customer */}
       {(item.customer_name || item.customer_phone || item.customer_email) ? (
         <View style={styles.metaRow}>
           <Ionicons name="person-outline" size={16} color="#64748b" />
           <Text style={styles.customerText} numberOfLines={1}>
             {item.customer_name || 'Customer'}
-            {!item.customer_phone && item.customer_email ? ` • ${item.customer_email}` : ''}
+            {item.customer_phone ? ` • ${item.customer_phone}` : ''}
+            {!item.customer_phone && item.customer_email
+              ? ` • ${item.customer_email}`
+              : ''}
           </Text>
         </View>
       ) : null}
 
-      {/* Row 5: note bubble */}
       {!!item.note_for_restaurant?.trim?.() && (
         <View style={styles.noteRow}>
           <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0f766e" />
@@ -234,9 +297,14 @@ const groupOrders = (rows = []) => {
     g.raw_items.push({ item_name: nm, quantity: qty });
 
     const rowCreated =
-      r.created_at || r.createdAt || r.placed_at || r.order_time || r.createdOn || null;
+      r.created_at ||
+      r.createdAt ||
+      r.placed_at ||
+      r.order_time ||
+      r.createdOn ||
+      null;
     const prev = g.created_at ? parseForSort(g.created_at) : 0;
-    const cur  = rowCreated ? parseForSort(rowCreated) : 0;
+    const cur = rowCreated ? parseForSort(rowCreated) : 0;
     if (!prev || (cur && cur < prev)) g.created_at = rowCreated || g.created_at;
 
     if (r.fulfillment_type === 'Delivery') g.type = 'Delivery';
@@ -251,7 +319,7 @@ const groupOrders = (rows = []) => {
     }
 
     const itemLevelNote = getItemNote(r) || '';
-    if (!g.note_target && (itemLevelNote && String(itemLevelNote).trim())) {
+    if (!g.note_target && itemLevelNote && String(itemLevelNote).trim()) {
       g.note_target = r.item_name || 'Item';
       if (!g.note_for_restaurant) g.note_for_restaurant = itemLevelNote;
     }
@@ -260,7 +328,10 @@ const groupOrders = (rows = []) => {
   }
 
   const list = Array.from(byId.values()).map((g) => {
-    const total = g.totals.length > 0 ? g.totals.reduce((a, b) => a + b, 0) / g.totals.length : 0;
+    const total =
+      g.totals.length > 0
+        ? g.totals.reduce((a, b) => a + b, 0) / g.totals.length
+        : 0;
     const createdISO = g.created_at || null;
 
     return {
@@ -289,7 +360,11 @@ const groupOrders = (rows = []) => {
   return list.sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
 };
 
-const buildOrdersUrl = (base, businessId, { appendOwnerType = false, ownerType = 'mart' } = {}) => {
+const buildOrdersUrl = (
+  base,
+  businessId,
+  { appendOwnerType = false, ownerType = 'mart' } = {}
+) => {
   if (!base || !businessId) return null;
   const b = String(base).trim().replace(/\/+$/, '');
   const id = encodeURIComponent(String(businessId));
@@ -312,9 +387,36 @@ const buildOrdersUrl = (base, businessId, { appendOwnerType = false, ownerType =
   return replaced;
 };
 
+const buildScheduledUrl = (base, businessId) => {
+  if (!base || !businessId) return null;
+  const b = String(base).trim().replace(/\/+$/, '');
+  const id = encodeURIComponent(String(businessId));
+
+  let replaced = b
+    .replace(/\{\s*businessId\s*\}/gi, id)
+    .replace(/\{\s*business_id\s*\}/gi, id)
+    .replace(/\{\s*business_Id\s*\}/g, id)
+    .replace(/:businessId/gi, id)
+    .replace(/:business_id/gi, id)
+    .replace(/:business_Id/g, id);
+
+  if (replaced === b) {
+    if (/\/business$/i.test(b)) replaced = `${b}/${id}`;
+    else if (!b.endsWith(`/${id}`)) {
+      const sep = b.includes('?') ? '&' : '?';
+      replaced = `${b}${sep}business_id=${id}`;
+    }
+  }
+  return replaced;
+};
+
 const parseJSON = async (res) => {
   const text = await res.text();
-  try { return text ? JSON.parse(text) : null; } catch { return null; }
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return null;
+  }
 };
 
 const normalizeOrdersFromApi = (payload) => {
@@ -326,23 +428,29 @@ const normalizeOrdersFromApi = (payload) => {
       const u = block?.user || {};
       const orders = Array.isArray(block?.orders) ? block.orders : [];
       for (const o of orders) {
-        const createdISO = o.created_at || o.createdAt || o.placed_at || o.order_time || null;
+        const createdISO =
+          o.created_at || o.createdAt || o.placed_at || o.order_time || null;
 
         let noteTarget = '';
         if (Array.isArray(o.items)) {
           const withNote = o.items.find((it) =>
-            (it?.note_for_restaurant ||
+            (
+              it?.note_for_restaurant ||
               it?.note ||
               it?.special_request ||
               it?.instructions ||
               it?.customization ||
-              it?.item_note)?.trim?.()
+              it?.item_note
+            )?.trim?.()
           );
           if (withNote) noteTarget = withNote.item_name || withNote.name || '';
         }
 
         const itemsStr = (o.items || [])
-          .map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`)
+          .map(
+            (it) =>
+              `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`
+          )
           .join(', ');
 
         const businessName =
@@ -379,6 +487,98 @@ const normalizeOrdersFromApi = (payload) => {
   }
 };
 
+const normalizeScheduledForBiz = (payload, bizId) => {
+  try {
+    const rows = Array.isArray(payload?.data) ? payload.data : [];
+    const list = [];
+
+    for (const job of rows) {
+      const payloadOrder = job.order_payload || {};
+      const allItems = Array.isArray(payloadOrder.items)
+        ? payloadOrder.items
+        : [];
+
+      const itemsForBiz = bizId
+        ? allItems.filter(
+            (it) => String(it.business_id) === String(bizId)
+          )
+        : allItems;
+
+      if (!itemsForBiz.length) continue;
+
+      const itemsStr = itemsForBiz
+        .map(
+          (it) =>
+            `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`
+        )
+        .join(', ');
+
+      const businessName = itemsForBiz[0]?.business_name || '';
+
+      let noteTarget = '';
+      const withNote = itemsForBiz.find((it) =>
+        (
+          it?.note_for_restaurant ||
+          it?.note ||
+          it?.special_request ||
+          it?.instructions ||
+          it?.customization ||
+          it?.item_note
+        )?.trim?.()
+      );
+      if (withNote) noteTarget = withNote.item_name || withNote.name || '';
+
+      const scheduledAt = job.scheduled_at;
+      const timeLabel = payloadOrder.scheduled_label || scheduledAt;
+
+      const jobUser = job.user || {};
+      const customer_name =
+        jobUser.name ||
+        payloadOrder.customer_name ||
+        payloadOrder.name ||
+        '';
+      const customer_phone =
+        jobUser.phone ||
+        payloadOrder.customer_phone ||
+        payloadOrder.phone ||
+        '';
+
+      list.push({
+        id: String(job.job_id || job.id),
+        type:
+          payloadOrder.fulfillment_type === 'Delivery'
+            ? 'Delivery'
+            : 'Pickup',
+        created_at: scheduledAt,
+        time: timeLabel,
+        items: itemsStr,
+        total: Number(payloadOrder.total_amount ?? 0),
+        status: 'SCHEDULED',
+        payment_method: payloadOrder.payment_method,
+        business_name: businessName,
+        delivery_address:
+          payloadOrder.delivery_address?.address || '',
+        note_for_restaurant:
+          payloadOrder.note_for_restaurant || '',
+        note_target: noteTarget,
+        priority: payloadOrder.priority ? 1 : 0,
+        discount_amount: Number(payloadOrder.discount_amount ?? 0),
+        raw_items: itemsForBiz,
+        customer_id: job.user_id ?? payloadOrder.user_id ?? null,
+        customer_name,
+        customer_email: '',
+        customer_phone,
+      });
+    }
+
+    return list.sort(
+      (a, b) => parseForSort(a.created_at) - parseForSort(b.created_at)
+    );
+  } catch {
+    return [];
+  }
+};
+
 /* ======================= Component ======================= */
 export default function MartOrdersTab({
   isTablet,
@@ -387,41 +587,86 @@ export default function MartOrdersTab({
   businessId,
   orderEndpoint,
   appendOwnerType = true,
-  ownerType = 'mart',
+  ownerType: ownerTypeProp = 'mart',
   detailsRoute = 'OrderDetails',
   delivery_option: deliveryOptionProp,
 }) {
   const navigation = useNavigation();
   const route = useRoute();
 
-  // Resolve business id from prop -> params -> SecureStore
   const [bizId, setBizId] = useState(
     businessId || route?.params?.businessId || null
   );
 
-  // NEW: delivery option state (SELF | GRAB | BOTH…)
+  const initialOwnerType =
+    route?.params?.owner_type ||
+    route?.params?.ownerType ||
+    ownerTypeProp ||
+    'mart';
+
+  const [ownerType, setOwnerType] = useState(String(initialOwnerType));
   const [deliveryOption, setDeliveryOption] = useState(
-    (route?.params?.delivery_option || route?.params?.deliveryOption ||
-     deliveryOptionProp || null)
-      ? String(route?.params?.delivery_option || route?.params?.deliveryOption || deliveryOptionProp).toUpperCase()
+    (route?.params?.delivery_option ||
+      route?.params?.deliveryOption ||
+      deliveryOptionProp ||
+      null)
+      ? String(
+          route?.params?.delivery_option ||
+          route?.params?.deliveryOption ||
+          deliveryOptionProp
+        ).toUpperCase()
       : null
   );
 
   const [loading, setLoading] = useState(false);
   const [orders, setOrders] = useState(ordersProp || []);
   const [error, setError] = useState(null);
+
+  const [scheduledOrders, setScheduledOrders] = useState([]);
+  const [scheduledLoading, setScheduledLoading] = useState(false);
+  const [scheduledError, setScheduledError] = useState(null);
+
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState('');
   const [kbHeight, setKbHeight] = useState(0);
-  const [selectedStatus, setSelectedStatus] = useState(null); // null = All
+
+  const [activeDateKey, setActiveDateKey] = useState(''); // default: All dates
+  const [showDateDropdown, setShowDateDropdown] = useState(false);
+
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [tempCalendarDate, setTempCalendarDate] = useState(new Date());
+
+  const [activeChip, setActiveChip] = useState('ALL');
+
   const abortRef = useRef(null);
+
+  const today = useMemo(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }, []);
+  const yesterday = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }, []);
+  const todayKey = useMemo(() => dateKeyFromDateObj(today), [today]);
+  const yesterdayKey = useMemo(() => dateKeyFromDateObj(yesterday), [yesterday]);
 
   const STATUS_LABELS = useMemo(() => {
     const isMart = String(ownerType || '').toLowerCase() === 'mart';
-    return isMart ? BASE_STATUS_LABELS.filter(s => s.key !== 'PREPARING') : BASE_STATUS_LABELS;
+    return isMart
+      ? BASE_STATUS_LABELS.filter((s) => s.key !== 'PREPARING')
+      : BASE_STATUS_LABELS;
   }, [ownerType]);
 
-  // Keyboard padding
+  useEffect(() => {
+    const fromRoute =
+      route?.params?.owner_type || route?.params?.ownerType || null;
+    if (fromRoute && String(fromRoute) !== String(ownerType)) {
+      setOwnerType(String(fromRoute));
+    }
+  }, [route, ownerType]);
+
   useEffect(() => {
     const showSub = Keyboard.addListener(
       Platform.OS === 'android' ? 'keyboardDidShow' : 'keyboardWillShow',
@@ -437,12 +682,10 @@ export default function MartOrdersTab({
     };
   }, []);
 
-  // Hydrate bizId and delivery_option from secure storage on focus if missing
   useFocusEffect(
     useCallback(() => {
       let alive = true;
       (async () => {
-        // business id fallback
         if (!bizId) {
           try {
             const blob = await SecureStore.getItemAsync('business_details');
@@ -451,9 +694,15 @@ export default function MartOrdersTab({
               try {
                 const parsed = JSON.parse(blob);
                 id = parsed?.business_id ?? parsed?.id ?? null;
-                // also try delivery_option if not set
+
                 if (!deliveryOption && parsed?.delivery_option) {
-                  setDeliveryOption(String(parsed.delivery_option).toUpperCase());
+                  setDeliveryOption(
+                    String(parsed.delivery_option).toUpperCase()
+                  );
+                }
+
+                if (!ownerType && parsed?.owner_type) {
+                  setOwnerType(String(parsed.owner_type));
                 }
               } catch {}
             }
@@ -464,30 +713,48 @@ export default function MartOrdersTab({
             if (alive && id) setBizId(id);
           } catch {}
         }
-        // also probe merchant_login for delivery_option if still missing
-        if (!deliveryOption) {
-          try {
-            const raw = await SecureStore.getItemAsync('merchant_login');
-            if (raw) {
-              const parsed = JSON.parse(raw);
-              const opt =
-                parsed?.delivery_option ||
-                parsed?.user?.delivery_option ||
-                parsed?.user?.deliveryOption ||
-                null;
-              if (opt && alive) setDeliveryOption(String(opt).toUpperCase());
+        try {
+          const raw = await SecureStore.getItemAsync('merchant_login');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            const opt =
+              parsed?.delivery_option ||
+              parsed?.user?.delivery_option ||
+              parsed?.user?.deliveryOption ||
+              null;
+            const oType =
+              parsed?.owner_type ||
+              parsed?.user?.owner_type ||
+              parsed?.user?.ownerType ||
+              null;
+
+            if (opt && alive && !deliveryOption) {
+              setDeliveryOption(String(opt).toUpperCase());
             }
-          } catch {}
-        }
+            if (oType && alive && !ownerType) {
+              setOwnerType(String(oType));
+            }
+          }
+        } catch {}
       })();
-      return () => { alive = false; };
-    }, [bizId, deliveryOption])
+      return () => {
+        alive = false;
+      };
+    }, [bizId, deliveryOption, ownerType])
   );
 
   const buildUrl = useCallback(() => {
     const base = (orderEndpoint ?? ENV_ORDER_ENDPOINT) || '';
-    return buildOrdersUrl(base, bizId, { appendOwnerType, ownerType });
+    return buildOrdersUrl(base, bizId, {
+      appendOwnerType,
+      ownerType,
+    });
   }, [bizId, orderEndpoint, appendOwnerType, ownerType]);
+
+  const buildScheduledApiUrl = useCallback(() => {
+    const base = ENV_SCHEDULED_ORDER_ENDPOINT || '';
+    return buildScheduledUrl(base, bizId);
+  }, [bizId]);
 
   const fetchOrders = useCallback(
     async (opts = { silent: false }) => {
@@ -512,7 +779,8 @@ export default function MartOrdersTab({
         });
         if (!res.ok) {
           const json = await parseJSON(res);
-          const msg = (json && (json.message || json.error)) || `HTTP ${res.status}`;
+          const msg =
+            (json && (json.message || json.error)) || `HTTP ${res.status}`;
           throw new Error(msg);
         }
         const json = await parseJSON(res);
@@ -527,16 +795,77 @@ export default function MartOrdersTab({
     [bizId, buildUrl]
   );
 
+  const fetchScheduledOrders = useCallback(
+    async (opts = { silent: false }) => {
+      if (!bizId) {
+        setScheduledError('Missing businessId for scheduled orders');
+        return;
+      }
+      const url = buildScheduledApiUrl();
+      if (!url) {
+        setScheduledError('Invalid SCHEDULED_ORDER_ENDPOINT or businessId');
+        return;
+      }
+      if (!opts.silent) setScheduledLoading(true);
+      setScheduledError(null);
+      try {
+        const res = await fetch(url, {
+          headers: { Accept: 'application/json' },
+        });
+        if (!res.ok) {
+          const json = await parseJSON(res);
+          const msg =
+            (json && (json.message || json.error)) || `HTTP ${res.status}`;
+          throw new Error(msg);
+        }
+        const json = await parseJSON(res);
+        const list = normalizeScheduledForBiz(json, bizId);
+        setScheduledOrders(list);
+      } catch (e) {
+        setScheduledError(
+          String(e?.message || e) || 'Failed to load scheduled orders'
+        );
+      } finally {
+        if (!opts.silent) setScheduledLoading(false);
+      }
+    },
+    [bizId, buildScheduledApiUrl]
+  );
+
+  // Initial fetch
   useEffect(() => {
     if (ordersProp && ordersProp.length) setOrders(ordersProp);
     else fetchOrders();
   }, [ordersProp, fetchOrders]);
 
+  // Prefetch upcoming so count shows quickly
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('order-updated', ({ id, patch }) => {
-      setOrders((prev) => prev.map((o) => (String(o.id) === String(id) ? { ...o, ...patch } : o)));
-    });
-    return () => sub?.remove?.();
+    if (bizId) {
+      fetchScheduledOrders({ silent: true });
+    }
+  }, [bizId, fetchScheduledOrders]);
+
+  // Extra: if user switches to Upcoming and nothing yet, refetch
+  useEffect(() => {
+    if (activeChip === 'UPCOMING' && scheduledOrders.length === 0 && bizId) {
+      fetchScheduledOrders();
+    }
+  }, [activeChip, scheduledOrders.length, bizId, fetchScheduledOrders]);
+
+  // NOTE: removed the effect that was auto-selecting "today" so default stays "All dates"
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(
+      'order-updated',
+      ({ id, patch }) => {
+        setOrders((prev) =>
+          prev.map((o) =>
+            String(o.id) === String(id) ? { ...o, ...patch } : o
+          )
+        );
+      }
+    );
+    return () => sub.remove();
   }, []);
 
   useEffect(() => {
@@ -544,17 +873,24 @@ export default function MartOrdersTab({
       try {
         const o = payload?.order;
         if (!o) return;
-        const createdISO = o.created_at || o.createdAt || o.placed_at || o.order_time || new Date().toISOString();
+        const createdISO =
+          o.created_at ||
+          o.createdAt ||
+          o.placed_at ||
+          o.order_time ||
+          new Date().toISOString();
 
         let liveNoteTarget = '';
         if (Array.isArray(o.items)) {
           const withNote = o.items.find((it) =>
-            (it?.note_for_restaurant ||
+            (
+              it?.note_for_restaurant ||
               it?.note ||
               it?.special_request ||
               it?.instructions ||
               it?.customization ||
-              it?.item_note)?.trim?.()
+              it?.item_note
+            )?.trim?.()
           );
           if (withNote) liveNoteTarget = withNote.item_name || withNote.name || '';
         }
@@ -564,11 +900,21 @@ export default function MartOrdersTab({
           type: o.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
           created_at: createdISO,
           time: showAsGiven(createdISO),
-          items: (o.items || []).map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`).join(', '),
+          items: (o.items || [])
+            .map(
+              (it) =>
+                `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`
+            )
+            .join(', '),
           total: safeNum(o.total_amount ?? o.total),
           status: o.status || 'PENDING',
           payment_method: o.payment_method || 'COD',
-          business_name: (o.items && o.items[0] && o.items[0].business_name) || o.business_name || 'Mart',
+          business_name:
+            (o.items &&
+              o.items[0] &&
+              o.items[0].business_name) ||
+            o.business_name ||
+            'Mart',
           customer_id: o.user?.user_id ?? null,
           customer_name: o.user?.name || '',
           customer_email: o.user?.email || '',
@@ -581,8 +927,12 @@ export default function MartOrdersTab({
           discount_amount: Number(o.discount_amount ?? 0),
         };
         setOrders((prev) => {
-          const without = prev.filter((x) => String(x.id) !== String(normalized.id));
-          return [normalized, ...without].sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
+          const without = prev.filter(
+            (x) => String(x.id) !== String(normalized.id)
+          );
+          return [normalized, ...without].sort(
+            (a, b) => parseForSort(b.created_at) - parseForSort(a.created_at)
+          );
         });
       } catch {}
     });
@@ -592,11 +942,15 @@ export default function MartOrdersTab({
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await fetchOrders({ silent: true });
+      if (activeChip === 'UPCOMING') {
+        await fetchScheduledOrders({ silent: true });
+      } else {
+        await fetchOrders({ silent: true });
+      }
     } finally {
       setRefreshing(false);
     }
-  }, [fetchOrders]);
+  }, [fetchOrders, fetchScheduledOrders, activeChip]);
 
   const openOrder = useCallback(
     (o) => {
@@ -607,7 +961,7 @@ export default function MartOrdersTab({
         if (!routeExists) {
           Alert.alert(
             'Order screen not found',
-            `No screen named "${detailsRoute}". Please register it in your navigator.`,
+            `No screen named "${detailsRoute}". Please register it in your navigator.`
           );
           return;
         }
@@ -618,47 +972,73 @@ export default function MartOrdersTab({
         order: o,
         ownerType,
         delivery_option: deliveryOption,
+        isScheduled: o.status === 'SCHEDULED',
       });
     },
     [navigation, bizId, detailsRoute, ownerType, deliveryOption]
   );
 
+  /* -------- date filter (All / Today / Yesterday / calendar) -------- */
+  const dateFilteredOrders = useMemo(() => {
+    if (activeChip === 'UPCOMING') return orders; // ignore for upcoming
+    if (!activeDateKey) return orders;           // "All dates" (no filtering)
+    return orders.filter((o) => {
+      const key = dateKeyFromTs(o.created_at || o.time || '');
+      return key === activeDateKey;
+    });
+  }, [orders, activeDateKey, activeChip]);
+
   const statusCounts = useMemo(() => {
-    return orders.reduce((acc, o) => {
+    if (activeChip === 'UPCOMING') return {};
+    return dateFilteredOrders.reduce((acc, o) => {
       const k = String(o.status || '').trim().toUpperCase();
       acc[k] = (acc[k] || 0) + 1;
       return acc;
     }, {});
-  }, [orders]);
+  }, [dateFilteredOrders, activeChip]);
+
+  const upcomingCount = scheduledOrders.length;
+  const totalCount =
+    activeChip === 'UPCOMING' ? scheduledOrders.length : dateFilteredOrders.length;
 
   const filtered = useMemo(() => {
-    let base = orders;
-    if (selectedStatus) {
+    const source = activeChip === 'UPCOMING' ? scheduledOrders : dateFilteredOrders;
+    let base = source;
+
+    if (activeChip !== 'ALL' && activeChip !== 'UPCOMING') {
+      const statusKey = activeChip;
       base = base.filter(
         (o) =>
-          String(o.status || '').trim().toUpperCase() === selectedStatus
+          String(o.status || '').trim().toUpperCase() === statusKey
       );
     }
-    const q = query.trim().toLowerCase();
-    if (!q) return base;
-    return base.filter((o) => {
-      const hay = [
-        o.id,
-        o.items,
-        o.status,
-        o.type,
-        o.payment_method,
-        o.business_name,
-        o.time,
-        o.customer_name,
-        o.customer_phone,
-        o.customer_email,
-        o.note_for_restaurant,
-        o.note_target,
-      ].filter(Boolean).join(' ').toLowerCase();
-      return hay.includes(q);
-    });
-  }, [orders, query, selectedStatus]);
+
+    const q = activeChip === 'UPCOMING' ? '' : query.trim().toLowerCase();
+    if (q) {
+      base = base.filter((o) => {
+        const hay = [
+          o.id,
+          o.items,
+          o.status,
+          o.type,
+          o.payment_method,
+          o.business_name,
+          o.time,
+          o.customer_name,
+          o.customer_phone,
+          o.customer_email,
+          o.note_for_restaurant,
+          o.note_target,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(q);
+      });
+    }
+
+    return base;
+  }, [dateFilteredOrders, scheduledOrders, query, activeChip]);
 
   const renderItem = useCallback(
     ({ item }) => (
@@ -672,32 +1052,71 @@ export default function MartOrdersTab({
     [isTablet, money, openOrder]
   );
 
-  const totalCount = orders.length;
-
   const content = useMemo(() => {
-    if (loading && orders.length === 0) {
+    const isUpcoming = activeChip === 'UPCOMING';
+    const effectiveOrders = isUpcoming ? scheduledOrders : dateFilteredOrders;
+    const isLoading = isUpcoming ? scheduledLoading : loading;
+    const err = isUpcoming ? scheduledError : error;
+
+    if (isLoading && effectiveOrders.length === 0) {
       return (
         <View style={{ paddingVertical: 24, alignItems: 'center' }}>
           <ActivityIndicator />
-          <Text style={{ marginTop: 8, color: '#6b7280' }}>Loading orders…</Text>
+          <Text style={{ marginTop: 8, color: '#6b7280' }}>
+            Loading orders…
+          </Text>
         </View>
       );
     }
-    if (error && orders.length === 0) {
+    if (err && effectiveOrders.length === 0) {
       return (
         <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-          <Ionicons name="alert-circle-outline" size={24} color="#b91c1c" />
-          <Text style={{ color: '#b91c1c', fontWeight: '700', marginTop: 6 }}>Failed to load</Text>
-          <Text style={{ color: '#6b7280', marginTop: 4, textAlign: 'center' }}>{error}</Text>
+          <Ionicons
+            name="alert-circle-outline"
+            size={24}
+            color="#b91c1c"
+          />
+          <Text
+            style={{
+              color: '#b91c1c',
+              fontWeight: '700',
+              marginTop: 6,
+            }}
+          >
+            Failed to load
+          </Text>
+          <Text
+            style={{
+              color: '#6b7280',
+              marginTop: 4,
+              textAlign: 'center',
+            }}
+          >
+            {err}
+          </Text>
         </View>
       );
     }
-    if (!loading && filtered.length === 0) {
+    if (!isLoading && filtered.length === 0) {
       return (
         <View style={{ paddingVertical: 36, alignItems: 'center' }}>
-          <Ionicons name="file-tray-outline" size={36} color="#94a3b8" />
-          <Text style={{ color: '#334155', fontWeight: '800', marginTop: 8 }}>No orders</Text>
-          <Text style={{ color: '#64748b', marginTop: 4 }}>Pull down to refresh or change filters.</Text>
+          <Ionicons
+            name="file-tray-outline"
+            size={36}
+            color="#94a3b8"
+          />
+          <Text
+            style={{
+              color: '#334155',
+              fontWeight: '800',
+              marginTop: 8,
+            }}
+          >
+            No orders
+          </Text>
+          <Text style={{ color: '#64748b', marginTop: 4 }}>
+            Pull down to refresh or change filters.
+          </Text>
         </View>
       );
     }
@@ -707,14 +1126,46 @@ export default function MartOrdersTab({
         data={filtered}
         keyExtractor={(item) => String(item.id)}
         renderItem={renderItem}
-        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        ItemSeparatorComponent={() => (
+          <View style={{ height: 12 }} />
+        )}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+          />
+        }
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="always"
         removeClippedSubviews={false}
       />
     );
-  }, [loading, error, orders, filtered, kbHeight, refreshing, onRefresh, renderItem]);
+  }, [
+    activeChip,
+    dateFilteredOrders,
+    scheduledOrders,
+    filtered,
+    kbHeight,
+    refreshing,
+    onRefresh,
+    renderItem,
+    loading,
+    error,
+    scheduledLoading,
+    scheduledError,
+  ]);
+
+  const currentDateLabel = useMemo(() => {
+    if (!activeDateKey) return 'All dates';
+    return labelForDateKey(activeDateKey, todayKey, yesterdayKey);
+  }, [activeDateKey, todayKey, yesterdayKey]);
+
+  const applyCalendarDate = useCallback(() => {
+    const key = dateKeyFromDateObj(tempCalendarDate);
+    setActiveDateKey(key);
+    setShowCalendar(false);
+    setShowDateDropdown(false);
+  }, [tempCalendarDate]);
 
   return (
     <KeyboardAvoidingView
@@ -723,19 +1174,23 @@ export default function MartOrdersTab({
       pointerEvents="box-none"
     >
       <View style={{ flex: 1, paddingHorizontal: 16 }} pointerEvents="box-none">
-        {/* Title + Status Tabs */}
+        {/* Status Tabs */}
         <View style={{ marginTop: 12, marginBottom: 8 }} pointerEvents="box-none">
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ alignItems: 'center', paddingVertical: 8, gap: 8 }}
+            contentContainerStyle={{
+              alignItems: 'center',
+              paddingVertical: 8,
+              gap: 8,
+            }}
           >
             {/* All chip */}
             <TouchableOpacity
-              onPress={() => setSelectedStatus(null)}
+              onPress={() => setActiveChip('ALL')}
               style={[
                 styles.statusChip,
-                selectedStatus === null && styles.statusChipActive,
+                activeChip === 'ALL' && styles.statusChipActive,
               ]}
               activeOpacity={0.7}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -743,7 +1198,7 @@ export default function MartOrdersTab({
               <Text
                 style={[
                   styles.statusChipText,
-                  selectedStatus === null && styles.statusChipTextActive,
+                  activeChip === 'ALL' && styles.statusChipTextActive,
                 ]}
               >
                 All
@@ -751,13 +1206,13 @@ export default function MartOrdersTab({
               <View
                 style={[
                   styles.badge,
-                  selectedStatus === null && styles.badgeActive,
+                  activeChip === 'ALL' && styles.badgeActive,
                 ]}
               >
                 <Text
                   style={[
                     styles.badgeText,
-                    selectedStatus === null && styles.badgeTextActive,
+                    activeChip === 'ALL' && styles.badgeTextActive,
                   ]}
                 >
                   {totalCount}
@@ -765,14 +1220,49 @@ export default function MartOrdersTab({
               </View>
             </TouchableOpacity>
 
-            {/* Status chips */}
+            {/* Upcoming chip (no filters when active) */}
+            <TouchableOpacity
+              onPress={() => setActiveChip('UPCOMING')}
+              style={[
+                styles.statusChip,
+                activeChip === 'UPCOMING' && styles.statusChipActive,
+              ]}
+              activeOpacity={0.7}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Text
+                style={[
+                  styles.statusChipText,
+                  activeChip === 'UPCOMING' && styles.statusChipTextActive,
+                ]}
+              >
+                Upcoming
+              </Text>
+              <View
+                style={[
+                  styles.badge,
+                  activeChip === 'UPCOMING' && styles.badgeActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.badgeText,
+                    activeChip === 'UPCOMING' && styles.badgeTextActive,
+                  ]}
+                >
+                  {upcomingCount}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Status chips (respect date filter) */}
             {STATUS_LABELS.map((s) => {
-              const active = selectedStatus === s.key;
+              const active = activeChip === s.key;
               const count = statusCounts[s.key] || 0;
               return (
                 <TouchableOpacity
                   key={s.key}
-                  onPress={() => setSelectedStatus(active ? null : s.key)}
+                  onPress={() => setActiveChip(s.key)}
                   style={[
                     styles.statusChip,
                     active && styles.statusChipActive,
@@ -811,32 +1301,237 @@ export default function MartOrdersTab({
           </ScrollView>
         </View>
 
-        {/* Search bar */}
-        <View style={styles.searchWrap} pointerEvents="auto">
-          <Ionicons name="search-outline" size={18} color="#64748b" />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search orders (id, item, status, customer, note…)"
-            placeholderTextColor="#94a3b8"
-            value={query}
-            onChangeText={setQuery}
-            autoCorrect={false}
-            autoCapitalize="none"
-            returnKeyType="search"
-          />
-          {query ? (
-            <TouchableOpacity
-              onPress={() => setQuery('')}
-              style={styles.clearBtn}
-              activeOpacity={0.7}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            >
-              <Ionicons name="close-circle" size={18} color="#94a3b8" />
-            </TouchableOpacity>
-          ) : null}
-        </View>
+        {/* Search + Date dropdown (hidden for Upcoming) */}
+        {activeChip !== 'UPCOMING' && (
+          <>
+            <View style={styles.searchRow} pointerEvents="auto">
+              <View style={[styles.searchWrap, { flex: 1 }]}>
+                <Ionicons name="search-outline" size={18} color="#64748b" />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search orders (id, item, status, customer, note…)"
+                  placeholderTextColor="#94a3b8"
+                  value={query}
+                  onChangeText={setQuery}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  returnKeyType="search"
+                />
+                {query ? (
+                  <TouchableOpacity
+                    onPress={() => setQuery('')}
+                    style={styles.clearBtn}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                  >
+                    <Ionicons name="close-circle" size={18} color="#94a3b8" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
+
+            {/* Date dropdown */}
+            <View style={styles.dateRow}>
+              <Text style={styles.dateRowLabel}>Filter by date</Text>
+              <TouchableOpacity
+                style={styles.dateDropdown}
+                onPress={() => {
+                  setShowDateDropdown(true);
+                  setShowCalendar(false);
+                  setTempCalendarDate(new Date());
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.dateDropdownText} numberOfLines={1}>
+                  {currentDateLabel}
+                </Text>
+                <Ionicons name="chevron-down" size={16} color="#0f172a" />
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
 
         {content}
+
+        {/* Date dropdown modal: All / Today / Yesterday / Pick from calendar */}
+        <Modal
+          visible={showDateDropdown}
+          transparent
+          animationType="fade"
+          onRequestClose={() => {
+            setShowCalendar(false);
+            setShowDateDropdown(false);
+          }}
+        >
+          <View style={styles.modalOverlay}>
+            {/* tap outside to close */}
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => {
+                setShowCalendar(false);
+                setShowDateDropdown(false);
+              }}
+            />
+
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Select date</Text>
+
+              <ScrollView style={{ maxHeight: 260 }}>
+                {/* All dates */}
+                <TouchableOpacity
+                  style={[
+                    styles.modalOption,
+                    activeDateKey === '' && styles.modalOptionActive,
+                  ]}
+                  onPress={() => {
+                    setActiveDateKey('');
+                    setShowCalendar(false);
+                    setShowDateDropdown(false);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.modalOptionText,
+                      activeDateKey === '' && styles.modalOptionTextActive,
+                    ]}
+                  >
+                    All dates
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Today */}
+                <TouchableOpacity
+                  style={[
+                    styles.modalOption,
+                    activeDateKey === todayKey && styles.modalOptionActive,
+                  ]}
+                  onPress={() => {
+                    setActiveDateKey(todayKey);
+                    setShowCalendar(false);
+                    setShowDateDropdown(false);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.modalOptionText,
+                      activeDateKey === todayKey && styles.modalOptionTextActive,
+                    ]}
+                  >
+                    Today
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Yesterday */}
+                <TouchableOpacity
+                  style={[
+                    styles.modalOption,
+                    activeDateKey === yesterdayKey && styles.modalOptionActive,
+                  ]}
+                  onPress={() => {
+                    setActiveDateKey(yesterdayKey);
+                    setShowCalendar(false);
+                    setShowDateDropdown(false);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.modalOptionText,
+                      activeDateKey === yesterdayKey && styles.modalOptionTextActive,
+                    ]}
+                  >
+                    Yesterday
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Calendar trigger */}
+                <View style={{ marginTop: 8 }}>
+                  <TouchableOpacity
+                    style={styles.calendarBtn}
+                    onPress={() => setShowCalendar(true)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="calendar-outline" size={16} color="#0f172a" />
+                    <Text style={styles.calendarBtnText}>Pick from calendar</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Calendar picker */}
+                {showCalendar && (
+                  <View style={{ marginTop: 8 }}>
+                    <DateTimePicker
+                      value={tempCalendarDate}
+                      mode="date"
+                      display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                      onChange={(event, selectedDate) => {
+                        if (Platform.OS === 'android') {
+                          if (event.type === 'set' && selectedDate) {
+                            const key = dateKeyFromDateObj(selectedDate);
+                            setActiveDateKey(key);
+                          }
+                          setShowCalendar(false);
+                          setShowDateDropdown(false);
+                        } else {
+                          if (selectedDate) {
+                            setTempCalendarDate(selectedDate);
+                          }
+                        }
+                      }}
+                    />
+
+                    {Platform.OS === 'ios' && (
+                      <View style={styles.iosCalendarActions}>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setShowCalendar(false);
+                          }}
+                          style={[styles.iosCalendarBtn, { backgroundColor: '#e5e7eb' }]}
+                        >
+                          <Text style={[styles.iosCalendarBtnText, { color: '#111827' }]}>
+                            Cancel
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={applyCalendarDate}
+                          style={[styles.iosCalendarBtn, { backgroundColor: '#16a34a' }]}
+                        >
+                          <Text style={[styles.iosCalendarBtnText, { color: '#fff' }]}>
+                            Apply
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                )}
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
+
+        {/* FAB */}
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() =>
+            navigation.navigate('NearbyOrdersScreen', {
+              businessId: bizId,
+              ownerType,
+              orderEndpoint: orderEndpoint ?? ENV_ORDER_ENDPOINT,
+              detailsRoute,
+              thresholdKm: 5,
+              orders:
+                activeChip === 'UPCOMING'
+                  ? scheduledOrders.filter((o) => o.type === 'Delivery')
+                  : dateFilteredOrders.filter((o) => o.type === 'Delivery'),
+            })
+          }
+          activeOpacity={0.9}
+        >
+          <Ionicons
+            name="albums-outline"
+            size={isTablet ? 24 : 22}
+            color="#fff"
+          />
+          <Text style={styles.fabLabel}>Grouped Orders</Text>
+        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
@@ -861,7 +1556,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
-  // when selected: green outline, same background
   statusChipActive: {
     borderColor: '#16a34a',
   },
@@ -896,9 +1590,12 @@ const styles = StyleSheet.create({
     color: 'white',
   },
 
-  // search
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
   searchWrap: {
-    marginBottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -912,7 +1609,35 @@ const styles = StyleSheet.create({
   searchInput: { flex: 1, color: '#0f172a', paddingVertical: 0 },
   clearBtn: { padding: 4, borderRadius: 999 },
 
-  /* card + internals */
+  dateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    justifyContent: 'space-between',
+  },
+  dateRowLabel: {
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  dateDropdown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    backgroundColor: '#f8fafc',
+    maxWidth: '60%',
+  },
+  dateDropdownText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginRight: 4,
+  },
+
   card: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -925,16 +1650,27 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 1,
   },
-
-  // row 1
-  row1: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  scheduledTime: {
+    marginTop: 2,
+    color: '#0f172a',
+    fontWeight: '700',
+  },
+  row1: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   row1Left: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   orderId: { fontWeight: '900', color: '#0f172a' },
   orderTime: { color: '#64748b', fontWeight: '600' },
   orderTotal: { fontWeight: '900', color: '#0f172a' },
 
-  // row 2
-  row2: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
+  row2: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 10,
+  },
   pill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -947,17 +1683,28 @@ const styles = StyleSheet.create({
   },
   pillText: { fontWeight: '800', fontSize: 12 },
 
-  payWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, marginLeft: 'auto' },
+  payWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginLeft: 'auto',
+  },
   payText: { color: '#64748b', fontWeight: '700' },
 
-  // items
   orderItems: { marginTop: 8, color: '#334155', fontWeight: '600' },
 
-  // customer
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
-  customerText: { color: '#64748b', fontWeight: '600', flexShrink: 1 },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 10,
+  },
+  customerText: {
+    color: '#64748b',
+    fontWeight: '600',
+    flexShrink: 1,
+  },
 
-  // note bubble
   noteRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -972,4 +1719,97 @@ const styles = StyleSheet.create({
   },
   noteText: { flex: 1, color: '#115e59', fontWeight: '600' },
   noteMeta: { marginTop: 4, color: '#0f766e', fontWeight: '700' },
+
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 999,
+    backgroundColor: '#16a34a',
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 4,
+  },
+  fabLabel: {
+    color: '#fff',
+    fontWeight: '700',
+    marginLeft: 8,
+    fontSize: 14,
+  },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: '80%',
+    maxWidth: 360,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  modalTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#0f172a',
+    marginBottom: 10,
+  },
+  modalOption: {
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+  },
+  modalOptionActive: {
+    backgroundColor: '#ecfdf5',
+  },
+  modalOptionText: {
+    fontSize: 13,
+    color: '#0f172a',
+    fontWeight: '600',
+  },
+  modalOptionTextActive: {
+    color: '#16a34a',
+  },
+
+  calendarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f9fafb',
+  },
+  calendarBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+
+  iosCalendarActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 8,
+    gap: 10,
+  },
+  iosCalendarBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  iosCalendarBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
 });
