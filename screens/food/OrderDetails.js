@@ -21,7 +21,7 @@ import {
   SEND_REQUEST_DRIVER_ENDPOINT as ENV_SEND_REQUEST_DRIVER,
   RIDE_SOCKET_ENDPOINT as ENV_RIDE_SOCKET,
   DRIVER_DETAILS_ENDPOINT as ENV_DRIVER_DETAILS,
-  DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING, // <--- NEW
+  DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING,
 } from '@env';
 
 import {
@@ -63,6 +63,20 @@ export default function OrderDetails() {
   const ordersGroupedUrl = params.ordersGroupedUrl ?? null;
   const paramBusinessId = params.businessId ?? null;
 
+  // NEW: detect scheduled orders (from Upcoming tab / SCHEDULED jobs)
+  const isScheduledOrder =
+    params.isScheduled === true ||
+    params.is_scheduled === true ||
+    String(orderProp?.status || '').toUpperCase() === 'SCHEDULED' ||
+    (routeOrderId && String(routeOrderId).startsWith('SCH-'));
+
+  // NEW: ownerType coming from NearbyClusterOrdersScreen / NearbyOrdersScreen
+  const ownerType = params.ownerType ?? params.owner_type ?? null;
+
+  // NEW: delivery_option coming via navigation params
+  const deliveryOptionFromParamsRaw =
+    params.delivery_option ?? params.deliveryOption ?? null;
+
   const [order, setOrder] = useState(orderProp || {});
   const [updating, setUpdating] = useState(false);
   const [declineOpen, setDeclineOpen] = useState(false);
@@ -70,8 +84,8 @@ export default function OrderDetails() {
   const [rideMessage, setRideMessage] = useState('');
   const [driverAccepted, setDriverAccepted] = useState(false); // driver accepted flag
 
-  const [driverDetails, setDriverDetails] = useState(null); // NEW
-  const [driverRating, setDriverRating] = useState(null);   // NEW { average, count }
+  const [driverDetails, setDriverDetails] = useState(null);
+  const [driverRating, setDriverRating] = useState(null);   // { average, count }
 
   const socketRef = useRef(null);
 
@@ -166,12 +180,23 @@ export default function OrderDetails() {
   );
 
   const deliveryOptionInitial = useMemo(() => {
+    // 1) highest priority – what navigation passed in
+    if (deliveryOptionFromParamsRaw) {
+      return String(deliveryOptionFromParamsRaw).toUpperCase();
+    }
+    // 2) merchant's configured delivery option
     const m = merchantDeliveryOpt;
     if (m !== 'UNKNOWN') return m;
+    // 3) whatever we can infer from order itself
     return orderDeliveryHint || '';
-  }, [merchantDeliveryOpt, orderDeliveryHint]);
+  }, [deliveryOptionFromParamsRaw, merchantDeliveryOpt, orderDeliveryHint]);
 
-  const [deliveryChoice, setDeliveryChoice] = useState('self');
+  // Initial delivery choice: if param explicitly says GRAB, start with grab
+  const [deliveryChoice, setDeliveryChoice] = useState(() => {
+    const p = String(deliveryOptionFromParamsRaw || '').toUpperCase();
+    if (p === 'GRAB') return 'grab';
+    return 'self';
+  });
 
   const isBothOption = deliveryOptionInitial === 'BOTH';
   const isSelfSelected = deliveryChoice === 'self';
@@ -204,9 +229,11 @@ export default function OrderDetails() {
 
   /* ---------- Sequence ---------- */
   const STATUS_SEQUENCE = useMemo(
-    () => (isPickupFulfillment
-      ? ['PENDING', 'CONFIRMED', 'READY']
-      : ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']),
+    () => (
+      isPickupFulfillment
+        ? ['PENDING', 'CONFIRMED', 'READY']
+        : ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED']
+    ),
     [isPickupFulfillment]
   );
 
@@ -312,14 +339,15 @@ export default function OrderDetails() {
     const n = Number(raw);
     if (Number.isFinite(n) && n > 0) return `~${Math.round(n)} min`;
     const s = String(raw).trim();
-     if (!s) return '';
+    if (!s) return '';
     return s;
   }, [order?.estimated_arrivial_time]);
 
-  /* ---------- Hydrate from grouped endpoint ---------- */
+  /* ---------- Hydrate from grouped endpoint (live orders ONLY) ---------- */
   const hydrateFromGrouped = useCallback(async () => {
     try {
       if (!routeOrderId) return;
+      if (isScheduledOrder) return; // <-- scheduled jobs use payload already passed in
 
       const hasCore =
         (order?.raw_items && order.raw_items.length) ||
@@ -352,57 +380,133 @@ export default function OrderDetails() {
 
       let groupedUrlFinal = baseRaw;
       if (bizId) {
-        groupedUrlFinal = groupedUrlFinal.replace(/\{businessId\}/gi, encodeURIComponent(String(bizId)));
+        groupedUrlFinal = groupedUrlFinal.replace(
+          /\{businessId\}/gi,
+          encodeURIComponent(String(bizId)),
+        );
       }
 
       const token = await SecureStore.getItemAsync('auth_token');
       const res = await fetch(groupedUrlFinal, {
         method: 'GET',
-        headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: {
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
       });
       const text = await res.text();
       let json = null;
       try { json = text ? JSON.parse(text) : null; } catch { }
-      if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
-
-      const groups = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
-      let allOrders = [];
-      for (const g of groups) {
-        if (Array.isArray(g?.orders)) allOrders = allOrders.concat(g.orders);
-        else if (g?.id || g?.order_id || g?.order_code) allOrders.push(g);
+      if (!res.ok) {
+        throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
       }
+
+      const groups = Array.isArray(json?.data) ? json.data
+        : Array.isArray(json) ? json
+          : [];
+
+      let allOrders = [];
+
+      for (const g of groups) {
+        if (Array.isArray(g?.orders)) {
+          // attach wrapper user fields to each order
+          const user = g.user || g.customer || g.user_details || {};
+          const userName =
+            g.customer_name ??
+            g.name ??
+            user.name ??
+            user.user_name ??
+            user.full_name ??
+            '';
+          const userPhone =
+            g.phone ??
+            user.phone ??
+            user.phone_number ??
+            user.mobile ??
+            '';
+
+          for (const o of g.orders) {
+            const oWithUser = {
+              ...o,
+              user: o.user || user,
+              customer_name: o.customer_name ?? userName,
+              customer_phone: o.customer_phone ?? userPhone,
+              user_name: o.user_name ?? userName,
+            };
+            allOrders.push(oWithUser);
+          }
+        } else if (g && (g.id || g.order_id || g.order_code)) {
+          allOrders.push(g);
+        }
+      }
+
       const match = allOrders.find((o) =>
-        sameOrder(o?.id ?? o?.order_id ?? o?.order_code, routeOrderId)
+        sameOrder(o?.id ?? o?.order_id ?? o?.order_code, routeOrderId),
       );
       if (!match) return;
 
       const normalized = {
         ...match,
         id: String(match?.id ?? match?.order_id ?? match?.order_code ?? routeOrderId),
-        order_code: normalizeOrderCode(match?.order_code ?? match?.id ?? routeOrderId),
-        customer_name: match?.customer_name ?? match?.user_name ?? match?.user?.user_name ?? '',
+        order_code: normalizeOrderCode(
+          match?.order_code ?? match?.id ?? routeOrderId,
+        ),
+        customer_name:
+          match?.customer_name ??
+          match?.user_name ??
+          match?.user?.user_name ??
+          match?.user?.name ??
+          '',
+        customer_phone:
+          match?.customer_phone ??
+          match?.phone ??
+          match?.user?.phone ??
+          '',
         payment_method: match?.payment_method ?? match?.payment ?? '',
         delivery_address: match?.delivery_address ?? match?.address ?? '',
         delivery_lat: match?.delivery_address?.lat ?? match?.delivery_lat ?? null,
         delivery_lng: match?.delivery_address?.lng ?? match?.delivery_lng ?? null,
-        raw_items: Array.isArray(match?.raw_items) ? match.raw_items
-          : Array.isArray(match?.items) ? match.items
+        raw_items: Array.isArray(match?.raw_items)
+          ? match.raw_items
+          : Array.isArray(match?.items)
+            ? match.items
             : [],
         total: match?.total ?? match?.total_amount ?? 0,
         status: (match?.status ?? order?.status ?? 'PENDING').toUpperCase(),
-        type: match?.type ?? match?.fulfillment_type ?? match?.delivery_type ?? order?.type ?? '',
-        delivery_option: match?.delivery_option ?? match?.delivery_by ?? order?.delivery_option ?? '',
-        status_timestamps: match?.status_timestamps ?? order?.status_timestamps ?? {},
+        type:
+          match?.type ??
+          match?.fulfillment_type ??
+          match?.delivery_type ??
+          order?.type ??
+          '',
+        delivery_option:
+          match?.delivery_option ??
+          match?.delivery_by ??
+          order?.delivery_option ??
+          '',
+        status_timestamps:
+          match?.status_timestamps ?? order?.status_timestamps ?? {},
         if_unavailable: match?.if_unavailable ?? order?.if_unavailable ?? '',
-        estimated_arrivial_time: match?.estimated_arrivial_time ?? order?.estimated_arrivial_time ?? null,
+        estimated_arrivial_time:
+          match?.estimated_arrivial_time ??
+          match?.eta_minutes ??
+          order?.estimated_arrivial_time ??
+          null,
       };
+
       setOrder((prev) => ({ ...prev, ...normalized }));
     } catch (e) {
       console.warn('[OrderDetails] hydrate error:', e?.message);
     }
-  }, [ordersGroupedUrl, routeOrderId, order, businessId, paramBusinessId]);
+  }, [ordersGroupedUrl, routeOrderId, order, businessId, paramBusinessId, isScheduledOrder]);
 
-  useEffect(() => { hydrateFromGrouped(); }, [hydrateFromGrouped]);
+
+  // Re-hydrate on every focus so status is always fresh (for live orders)
+  useFocusEffect(
+    useCallback(() => {
+      hydrateFromGrouped();
+    }, [hydrateFromGrouped])
+  );
 
   /* ---------- Distance & ETA (device) ---------- */
   const [routeInfo, setRouteInfo] = useState(null); // { distanceKm, etaMin }
@@ -787,7 +891,6 @@ export default function OrderDetails() {
         }
 
         setDriverRating({ average: avg, count });
-        console.log('[OrderDetails] Driver rating fetched:', { avg, count });
       } catch (err) {
         console.log('[OrderDetails] Failed to fetch driver rating:', err?.message || err);
       }
@@ -830,8 +933,6 @@ export default function OrderDetails() {
           throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
         }
 
-        // Your payload example:
-        // { ok: true, details: { user_id, user_name, phone, ... } }
         const drv =
           json?.details ||
           json?.data ||
@@ -839,7 +940,6 @@ export default function OrderDetails() {
           json;
 
         setDriverDetails(drv);
-        console.log('[OrderDetails] Driver details fetched:', drv);
 
         // Fetch rating as well
         await fetchDriverRating(driverId);
@@ -900,9 +1000,7 @@ export default function OrderDetails() {
       })();
 
       const baseFare = Number(
-        order?.delivery_fee ??
-        order?.delivery_charges ??
-        40
+        order?.delivery_fee ?? order?.merchant_delivery_fee ?? 0
       );
 
       const fare = Number(order?.total ?? order?.total_amount ?? 70);
@@ -912,6 +1010,13 @@ export default function OrderDetails() {
       const paymentType = pmRaw.includes('WALLET') || pmRaw.includes('ONLINE')
         ? 'WALLET'
         : 'CASH_ON_DELIVERY';
+
+      // Ensure payment is successful before continuing
+      const paymentSuccess = await handlePaymentDeduction(order?.merchant_id, fare);
+      if (!paymentSuccess) {
+        Alert.alert('Payment failed', 'Unable to process payment for delivery.');
+        return;
+      }
 
       const payload = {
         passenger_id: order?.user_id ?? order?.customer_id ?? 59,
@@ -932,6 +1037,7 @@ export default function OrderDetails() {
         payment_method: { type: paymentType },
         offer_code: null,
         waypoints: [],
+        owner_type: ownerType || undefined,
       };
 
       const res = await fetch(ENV_SEND_REQUEST_DRIVER, {
@@ -947,6 +1053,10 @@ export default function OrderDetails() {
         const text = await res.text();
         throw new Error(text || `HTTP ${res.status}`);
       }
+
+      // If successful, update merchant's wallet to deduct fare
+      await deductFromMerchantWallet(businessId, fare);
+
     } catch (e) {
       if (grabLoopActiveRef.current && !driverAcceptedRef.current) {
         setRideMessage('Retrying to find nearby drivers…');
@@ -956,7 +1066,67 @@ export default function OrderDetails() {
     } finally {
       setSendingGrab(false);
     }
-  }, [businessCoords, refCoords, routeInfo, order, businessId]);
+  }, [businessCoords, refCoords, routeInfo, order, businessId, ownerType]);
+
+  /**
+   * Handle the payment deduction for the delivery.
+   */
+  const handlePaymentDeduction = async (merchantId, fare) => {
+    try {
+      const token = await SecureStore.getItemAsync('auth_token');
+      const res = await fetch(ENV_MERCHANT_WALLET_DEDUCTION_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          merchant_id: merchantId,
+          amount: fare,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json?.message || 'Failed to deduct from merchant wallet');
+      }
+      return true;
+    } catch (e) {
+      console.log('Payment Deduction Failed:', e?.message || e);
+      return false;
+    }
+  };
+
+  /**
+   * Deduct the fare amount from the merchant's wallet.
+   */
+  const deductFromMerchantWallet = async (merchantId, fare) => {
+    try {
+      const token = await SecureStore.getItemAsync('auth_token');
+      const res = await fetch(ENV_MERCHANT_WALLET_DEDUCTION_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          merchant_id: merchantId,
+          amount: fare,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json?.message || 'Failed to deduct from merchant wallet');
+      }
+
+      console.log('Merchant wallet successfully updated.');
+    } catch (e) {
+      console.log('Wallet Deduction Failed:', e?.message || e);
+    }
+  };
 
   const scheduleNextGrabRequest = useCallback(() => {
     if (!grabLoopActiveRef.current || driverAcceptedRef.current) return;
@@ -1055,8 +1225,6 @@ export default function OrderDetails() {
       socketRef.current = socket;
 
       handler = (payload) => {
-        console.log('[OrderDetails] deliveryAccepted event received:', payload);
-
         try {
           const thisOrderCode = normalizeOrderCode(
             order?.order_code || order?.id || routeOrderId
@@ -1087,7 +1255,6 @@ export default function OrderDetails() {
           null;
 
         if (driverId != null) {
-          console.log('[OrderDetails] Fetching driver details for driverId:', driverId);
           fetchDriverDetails(driverId);
         } else {
           console.log('[OrderDetails] No driverId found in deliveryAccepted payload');
@@ -1172,67 +1339,71 @@ export default function OrderDetails() {
             manualPrepMin={manualPrepMin}
             setManualPrepMin={setManualPrepMin}
             restaurantNote={restaurantNote}
-            driverDetails={driverDetails}   // optional use inside MetaSection
-            driverRating={driverRating}     // optional use inside MetaSection
+            driverDetails={driverDetails}
+            driverRating={driverRating}
           />
         </View>
 
-        <DeliveryMethodChooser
-          status={status}
-          isBothOption={isBothOption}
-          isTerminalNegative={isTerminalNegative}
-          isTerminalSuccess={isTerminalSuccess}
-          isSelfSelected={isSelfSelected}
-          isGrabSelected={isGrabSelected}
-          sendingGrab={sendingGrab}
-          rideMessage={rideMessage}
-          driverSummaryText={driverSummaryText}  // string with name/phone/rating
-          driverAccepted={driverAccepted}        // boolean from socket event
-          setDeliveryChoice={setDeliveryChoice}
-          stopGrabLoop={stopGrabLoop}
-          startGrabLoop={startGrabLoop}
-        />
+        {/* For scheduled jobs we just show details (no self/grab chooser, no status actions) */}
+        {!isScheduledOrder && (
+          <>
+            <DeliveryMethodChooser
+              status={status}
+              isBothOption={isBothOption}
+              isTerminalNegative={isTerminalNegative}
+              isTerminalSuccess={isTerminalSuccess}
+              isSelfSelected={isSelfSelected}
+              isGrabSelected={isGrabSelected}
+              sendingGrab={sendingGrab}
+              rideMessage={rideMessage}
+              driverSummaryText={driverSummaryText}
+              driverAccepted={driverAccepted}
+              setDeliveryChoice={setDeliveryChoice}
+              stopGrabLoop={stopGrabLoop}
+              startGrabLoop={startGrabLoop}
+            />
 
+            {status === 'READY' &&
+              !isBothOption &&
+              isPlatformDelivery &&
+              (!!rideMessage || !!driverSummaryText) && (
+                <View style={[styles.block, { marginTop: 12 }]}>
+                  {rideMessage ? (
+                    <Text style={[styles.segmentHint, { marginTop: 8 }]}>
+                      {rideMessage}
+                    </Text>
+                  ) : null}
+                  {driverSummaryText ? (
+                    <Text
+                      style={[
+                        styles.segmentHint,
+                        { marginTop: 4, fontWeight: '600' },
+                      ]}
+                    >
+                      {driverSummaryText}
+                    </Text>
+                  ) : null}
+                </View>
+              )}
 
-        {status === 'READY' &&
-          !isBothOption &&
-          isPlatformDelivery &&
-          (!!rideMessage || !!driverSummaryText) && (
-            <View style={[styles.block, { marginTop: 12 }]}>
-              {rideMessage ? (
-                <Text style={[styles.segmentHint, { marginTop: 8 }]}>
-                  {rideMessage}
-                </Text>
-              ) : null}
-              {driverSummaryText ? (
-                <Text
-                  style={[
-                    styles.segmentHint,
-                    { marginTop: 4, fontWeight: '600' },
-                  ]}
-                >
-                  {driverSummaryText}
-                </Text>
-              ) : null}
-            </View>
-          )}
-
-        <UpdateStatusActions
-          status={status}
-          isCancelledByCustomer={isCancelledByCustomer}
-          isTerminalNegative={isTerminalNegative}
-          isTerminalSuccess={isTerminalSuccess}
-          isBothOption={isBothOption}
-          isGrabSelected={isGrabSelected}
-          isPlatformDelivery={isPlatformDelivery}
-          updating={updating}
-          next={next}
-          primaryLabel={primaryLabel}
-          onPrimaryAction={onPrimaryAction}
-          doUpdate={doUpdate}
-          onDecline={onDecline}
-          driverAccepted={driverAccepted}
-        />
+            <UpdateStatusActions
+              status={status}
+              isCancelledByCustomer={isCancelledByCustomer}
+              isTerminalNegative={isTerminalNegative}
+              isTerminalSuccess={isTerminalSuccess}
+              isBothOption={isBothOption}
+              isGrabSelected={isGrabSelected}
+              isPlatformDelivery={isPlatformDelivery}
+              updating={updating}
+              next={next}
+              primaryLabel={primaryLabel}
+              onPrimaryAction={onPrimaryAction}
+              doUpdate={doUpdate}
+              onDecline={onDecline}
+              driverAccepted={driverAccepted}
+            />
+          </>
+        )}
 
         <ItemsBlock items={items} />
         <TotalsBlock itemsCount={items.length || 0} totalLabel={totalLabel} />

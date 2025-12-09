@@ -1,8 +1,14 @@
 // screens/NotificationsTab.js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, RefreshControl,
-  TouchableOpacity, Alert,
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  RefreshControl,
+  TouchableOpacity,
+  Alert,
+  Modal,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
@@ -15,16 +21,18 @@ import {
   NOTIFICATION_READ_ALL_ENDPOINT as ENV_NOTIF_READ_ALL_ENDPOINT,
   NOTIFICATION_DELETE_ENDPOINT as ENV_NOTIF_DELETE_ENDPOINT,
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
+  SYSTEM_NOTIFICATIONS_ENDPOINT as ENV_SYSTEM_NOTIFS_ENDPOINT,
 } from '@env';
 
 const STORAGE_KEY_READMAP = '@notifications_readmap_v1';
 
-/* ---------- helpers: business id ---------- */
+/* ---------- helpers: int ---------- */
 const toInt = (v) => {
   const n = Number.parseInt(String(v ?? '').trim(), 10);
   return Number.isFinite(n) ? n : null;
 };
 
+/* ---------- helpers: business id ---------- */
 async function resolveBusinessId(routeParams) {
   const fromParams = toInt(routeParams?.business_id ?? routeParams?.businessId);
   if (fromParams != null) return fromParams;
@@ -35,9 +43,9 @@ async function resolveBusinessId(routeParams) {
       const parsed = JSON.parse(rawAS);
       const id = toInt(
         parsed?.merchant?.business_id ??
-        parsed?.merchant?.businessId ??
-        parsed?.business_id ??
-        parsed?.businessId
+          parsed?.merchant?.businessId ??
+          parsed?.business_id ??
+          parsed?.businessId
       );
       if (id != null) return id;
     }
@@ -49,9 +57,44 @@ async function resolveBusinessId(routeParams) {
       const parsed = JSON.parse(rawSS);
       const id = toInt(
         parsed?.merchant?.business_id ??
-        parsed?.merchant?.businessId ??
-        parsed?.business_id ??
-        parsed?.businessId
+          parsed?.merchant?.businessId ??
+          parsed?.business_id ??
+          parsed?.businessId
+      );
+      if (id != null) return id;
+    }
+  } catch {}
+
+  return null;
+}
+
+/* ---------- helpers: user id (for system notifications) ---------- */
+async function resolveUserId() {
+  try {
+    const rawAS = await AsyncStorage.getItem('merchant_login');
+    if (rawAS) {
+      const parsed = JSON.parse(rawAS);
+      const id = toInt(
+        parsed?.merchant?.user_id ??
+          parsed?.merchant?.id ??
+          parsed?.user?.id ??
+          parsed?.user_id ??
+          parsed?.id
+      );
+      if (id != null) return id;
+    }
+  } catch {}
+
+  try {
+    const rawSS = await SecureStore.getItemAsync('merchant_login');
+    if (rawSS) {
+      const parsed = JSON.parse(rawSS);
+      const id = toInt(
+        parsed?.merchant?.user_id ??
+          parsed?.merchant?.id ??
+          parsed?.user?.id ??
+          parsed?.user_id ??
+          parsed?.id
       );
       if (id != null) return id;
     }
@@ -67,6 +110,7 @@ const READ_ONE_BASE = trimSlashes(String(ENV_NOTIF_READ_ENDPOINT || ''));
 const READ_ALL_BASE = trimSlashes(String(ENV_NOTIF_READ_ALL_ENDPOINT || ''));
 const DELETE_BASE = trimSlashes(String(ENV_NOTIF_DELETE_ENDPOINT || ''));
 const ORDER_BASE = trimSlashes(String(ENV_ORDER_ENDPOINT || ''));
+const SYSTEM_NOTIFS_BASE = trimSlashes(String(ENV_SYSTEM_NOTIFS_ENDPOINT || ''));
 
 const buildNotificationsUrl = (businessId) =>
   NOTIFS_BASE ? NOTIFS_BASE.replace('{business_id}', String(businessId)) : null;
@@ -76,18 +120,25 @@ const buildReadOneUrl = (notificationId) =>
 
 const buildReadAllUrl = (businessId) =>
   READ_ALL_BASE
-    ? READ_ALL_BASE.replace('{businessId}', String(businessId)).replace('{business_id}', String(businessId))
+    ? READ_ALL_BASE.replace('{businessId}', String(businessId)).replace(
+        '{business_id}',
+        String(businessId)
+      )
     : null;
 
 const buildDeleteUrl = (notificationId) =>
   DELETE_BASE ? DELETE_BASE.replace('{notificationId}', String(notificationId)) : null;
 
+const buildSystemNotificationsUrl = (userId) =>
+  SYSTEM_NOTIFS_BASE ? SYSTEM_NOTIFS_BASE.replace('{user_id}', String(userId)) : null;
+
 // Grouped orders URL (same one OrdersTab uses)
 const buildOrdersGroupedUrl = (businessId, ownerType) => {
   if (!ORDER_BASE || !businessId) return null;
-  let url = ORDER_BASE
-    .replace('{businessId}', String(businessId))
-    .replace('{business_id}', String(businessId));
+  let url = ORDER_BASE.replace('{businessId}', String(businessId)).replace(
+    '{business_id}',
+    String(businessId)
+  );
   try {
     const u = new URL(url);
     if (ownerType === 'mart' && !u.searchParams.get('owner_type')) {
@@ -129,9 +180,12 @@ const showAsGiven = (s) => {
   if (!s) return '';
   const d = String(s);
   const isoish = d.includes('T') ? d : d.replace(' ', 'T');
-  const y = isoish.slice(0, 4), m = isoish.slice(5, 7), dd = isoish.slice(8, 10);
-  const hh = isoish.slice(11, 13), mm = isoish.slice(14, 16);
-  const monNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const y = isoish.slice(0, 4),
+    m = isoish.slice(5, 7),
+    dd = isoish.slice(8, 10);
+  const hh = isoish.slice(11, 13),
+    mm = isoish.slice(14, 16);
+  const monNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const mon = monNames[(+m || 1) - 1] || m;
   if (!y || !m || !dd || !hh || !mm) return d;
   return `${mon} ${dd}, ${hh}:${mm}`;
@@ -143,14 +197,7 @@ const parseLocalFromGiven = (s) => {
   const m = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
   if (!m) return null;
   const [, y, mo, d, hh, mm, ss] = m;
-  return new Date(
-    Number(y),
-    Number(mo) - 1,
-    Number(d),
-    Number(hh),
-    Number(mm),
-    Number(ss || '0')
-  );
+  return new Date(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mm), Number(ss || '0'));
 };
 
 const timeAgoLocal = (s) => {
@@ -180,24 +227,34 @@ const isTodayLocal = (s) => {
 /* ---------- type & order helpers ---------- */
 const typeIcon = (type) => {
   switch (type) {
-    case 'order':   return 'receipt-outline';
-    case 'success': return 'checkmark-circle-outline';
-    case 'warning': return 'alert-circle-outline';
-    case 'payout':  return 'card-outline';
-    case 'wallet':  return 'card-outline';
-    // case 'promo':   return 'pricetags-outline';
-    default:        return 'notifications-outline';
+    case 'order':
+      return 'receipt-outline';
+    case 'success':
+      return 'checkmark-circle-outline';
+    case 'warning':
+      return 'alert-circle-outline';
+    case 'payout':
+      return 'card-outline';
+    case 'wallet':
+      return 'card-outline';
+    default:
+      return 'time-outline'; // generic activity icon
   }
 };
 const typeTint = (type) => {
   switch (type) {
-    case 'order':   return '#2563eb';
-    case 'success': return '#10b981';
-    case 'warning': return '#f59e0b';
-    case 'payout':  return '#14b8a6';
-    case 'wallet':  return '#14b8a6';
-    // case 'promo':   return '#a855f7';
-    default:        return '#0ea5e9';
+    case 'order':
+      return '#2563eb';
+    case 'success':
+      return '#10b981';
+    case 'warning':
+      return '#f59e0b';
+    case 'payout':
+      return '#14b8a6';
+    case 'wallet':
+      return '#14b8a6';
+    default:
+      return '#0ea5e9';
   }
 };
 
@@ -224,12 +281,15 @@ const parseOrderFromText = (text = '') => {
 
 const resolveOrderFromRecord = (n) => {
   const first =
-    n.order_code ?? n.orderCode ??
-    n.order_no   ?? n.orderNo   ??
-    n.order_id   ?? n.orderId   ??
+    n.order_code ??
+    n.orderCode ??
+    n.order_no ??
+    n.orderNo ??
+    n.order_id ??
+    n.orderId ??
     n.payload?.order_code ??
-    n.payload?.order_no   ??
-    n.payload?.order_id   ??
+    n.payload?.order_no ??
+    n.payload?.order_id ??
     null;
 
   if (first) return toOrderParts(first);
@@ -248,10 +308,9 @@ const inferStatusFromText = (title = '', body = '') => {
 
 /* ---------- filters/tabs ---------- */
 const FILTER_TABS = [
-  { key: 'all',    label: 'All' },
+  { key: 'all', label: 'All' },
   { key: 'orders', label: 'Orders' },
   { key: 'wallet', label: 'Wallet' },
-  // { key: 'promo',  label: 'Promo' },
   { key: 'system', label: 'System' },
 ];
 
@@ -263,7 +322,7 @@ const mapApiNotif = (n, readMap) => {
   const type = normalizeType(n.type);
   const created = n.created_at ?? n.createdAt ?? n.timestamp ?? null;
 
-  const title = n.title ?? 'Notification';
+  const title = n.title ?? 'Activity';
   let body = n.body_preview ?? n.body ?? n.message ?? n.description ?? '';
   if (
     String(n.type).toLowerCase() === 'order:status' &&
@@ -273,9 +332,8 @@ const mapApiNotif = (n, readMap) => {
   }
 
   const readServer = n.is_read ?? n.read ?? n.isRead ?? null;
-  const read = readServer == null
-    ? Boolean(readMap[id])
-    : (String(readServer) === '1' || readServer === true);
+  const read =
+    readServer == null ? Boolean(readMap[id]) : String(readServer) === '1' || readServer === true;
 
   const { orderCode, orderIdNumeric } = resolveOrderFromRecord(n);
 
@@ -287,17 +345,27 @@ const mapApiNotif = (n, readMap) => {
   const relative = createdISO ? timeAgoLocal(createdISO) : '';
   const chip = createdISO && isTodayLocal(createdISO) ? relative : absolute;
 
-  const minimalOrder = orderId ? ({
-    id: String(orderId),
-    created_at: createdISO,
-    time: absolute,
-    status,
-  }) : null;
+  const customerName =
+    n.customer_name ??
+    n.customerName ??
+    n.user_name ??
+    n.userName ??
+    n.user?.name ??
+    n.user?.user_name ??
+    '';
 
-  const walletId =
-    n.wallet_id ?? n.walletId ?? n.wallet ?? null;
-  const userId =
-    n.user_id ?? n.userId ?? null;
+  const minimalOrder = orderId
+    ? {
+        id: String(orderId),
+        created_at: createdISO,
+        time: absolute,
+        status,
+        customer_name: customerName || '',
+      }
+    : null;
+
+  const walletId = n.wallet_id ?? n.walletId ?? n.wallet ?? null;
+  const userId = n.user_id ?? n.userId ?? null;
 
   return {
     id,
@@ -311,7 +379,7 @@ const mapApiNotif = (n, readMap) => {
     _created_at: created ?? null,
     _order_like: minimalOrder,
     walletId: walletId ? String(walletId) : null,
-    userId:   userId   ? String(userId)   : null,
+    userId: userId ? String(userId) : null,
   };
 };
 
@@ -325,11 +393,7 @@ function coalesce(...vals) {
 }
 
 function normalizeOrderRecord(row = {}, user = {}) {
-  const items =
-    row.order_items ??
-    row.items ??
-    row.raw_items ??
-    [];
+  const items = row.order_items ?? row.items ?? row.raw_items ?? [];
 
   const normalizedItems = Array.isArray(items)
     ? items.map((it, idx) => ({
@@ -368,7 +432,9 @@ async function fetchOrderHydrated({ businessId, ownerType, orderId }) {
     const res = await fetch(base, { headers });
     const text = await res.text();
     let json = {};
-    try { json = text ? JSON.parse(text) : {}; } catch {}
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {}
 
     let groups = [];
     if (Array.isArray(json?.data)) groups = json.data;
@@ -453,17 +519,25 @@ export default function NotificationsTab({
   const [list, setList] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [bizId, setBizId] = useState(null);
+  const [userId, setUserId] = useState(null); // for SYSTEM activities
   const [activeTab, setActiveTab] = useState('all');
+  const [selectedSystemActivity, setSelectedSystemActivity] = useState(null); // overlay
+
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+
   const readMapRef = useRef({});
 
   const ownerType =
-    String(route?.params?.ownerType || 'food').toLowerCase() === 'mart'
-      ? 'mart'
-      : 'food';
+    String(route?.params?.ownerType || 'food').toLowerCase() === 'mart' ? 'mart' : 'food';
 
   useEffect(() => {
     (async () => setBizId(await resolveBusinessId(route?.params ?? {})))();
   }, [route?.params]);
+
+  useEffect(() => {
+    (async () => setUserId(await resolveUserId()))();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -484,35 +558,84 @@ export default function NotificationsTab({
   }, []);
 
   const fetchNotifications = useCallback(async () => {
-    if (!bizId) return;
-    const url = buildNotificationsUrl(bizId);
-    if (!url) return;
+    if (!bizId && !userId) return;
+
+    let mappedAll = [];
 
     try {
       const headers = await buildHeaders(false);
-      const res = await fetch(url, { headers });
-      const text = await res.text();
-      let data = {};
-      try {
-        data = JSON.parse(text);
-      } catch {}
-      const arr = Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data?.notifications)
-          ? data.notifications
-          : Array.isArray(data)
-            ? data
-            : [];
 
-      const mapped = arr
-        .map((n) => mapApiNotif(n, readMapRef.current))
-        .filter(Boolean);
-      mapped.sort(
-        (a, b) => new Date(b._created_at) - new Date(a._created_at)
-      );
-      setList(mapped);
+      // ----- business activities (order / wallet / etc.) -----
+      if (bizId) {
+        const url = buildNotificationsUrl(bizId);
+        if (url) {
+          try {
+            const res = await fetch(url, { headers });
+            const text = await res.text();
+            let data = {};
+            try {
+              data = JSON.parse(text);
+            } catch {}
+
+            const arr = Array.isArray(data?.data)
+              ? data.data
+              : Array.isArray(data?.notifications)
+              ? data.notifications
+              : Array.isArray(data)
+              ? data
+              : [];
+
+            const mappedBiz = arr
+              .map((n) => mapApiNotif(n, readMapRef.current))
+              .filter(Boolean)
+              .map((n) => ({ ...n, source: 'business' }));
+
+            mappedAll = mappedAll.concat(mappedBiz);
+          } catch {}
+        }
+      }
+
+      // ----- system activities (admin → user_id) -----
+      if (userId) {
+        const sysUrl = buildSystemNotificationsUrl(userId);
+        if (sysUrl) {
+          try {
+            const resSys = await fetch(sysUrl, { headers });
+            const textSys = await resSys.text();
+            let dataSys = {};
+            try {
+              dataSys = JSON.parse(textSys);
+            } catch {}
+
+            const arrSys = Array.isArray(dataSys?.notifications)
+              ? dataSys.notifications
+              : Array.isArray(dataSys?.data)
+              ? dataSys.data
+              : Array.isArray(dataSys)
+              ? dataSys
+              : [];
+
+            const mappedSys = arrSys
+              .map((n) => mapApiNotif(n, readMapRef.current))
+              .filter(Boolean)
+              .map((n) => ({
+                ...n,
+                type: 'system', // force type=system for filters/icons
+                source: 'system', // mark origin
+              }));
+
+            mappedAll = mappedAll.concat(mappedSys);
+          } catch {}
+        }
+      }
+
+      mappedAll.sort((a, b) => new Date(b._created_at) - new Date(a._created_at));
+      setList(mappedAll);
+      // clear selection if list changed
+      setSelectionMode(false);
+      setSelectedIds(() => new Set());
     } catch {}
-  }, [bizId]);
+  }, [bizId, userId]);
 
   useEffect(() => {
     fetchNotifications();
@@ -524,10 +647,7 @@ export default function NotificationsTab({
     setRefreshing(false);
   }, [fetchNotifications]);
 
-  const unreadCount = useMemo(
-    () => list.filter((n) => !n.read).length,
-    [list]
-  );
+  const unreadCount = useMemo(() => list.filter((n) => !n.read).length, [list]);
 
   const filteredList = useMemo(() => {
     switch (activeTab) {
@@ -538,40 +658,157 @@ export default function NotificationsTab({
       case 'promo':
         return list.filter((n) => n.type === 'promo');
       case 'system':
-        return list.filter(
-          (n) =>
-            n.type !== 'order' &&
-            n.type !== 'wallet' &&
-            n.type !== 'payout' &&
-            n.type !== 'promo'
-        );
+        return list.filter((n) => n.type === 'system');
       case 'all':
       default:
         return list;
     }
   }, [list, activeTab]);
 
-  const markAllRead = async () => {
+  const anySelectedUnread = useMemo(
+    () => list.some((n) => selectedIds.has(n.id) && !n.read),
+    [list, selectedIds]
+  );
+
+  const toggleSelect = useCallback((id) => {
+    if (!id) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      if (next.size === 0) {
+        setSelectionMode(false);
+      }
+      return next;
+    });
+  }, []);
+
+  const cancelSelection = () => {
+    setSelectionMode(false);
+    setSelectedIds(() => new Set());
+  };
+
+  const deleteSelected = async () => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+
+    Alert.alert(
+      'Delete Activities',
+      `Delete ${ids.length} selected ${ids.length === 1 ? 'activity' : 'activities'}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            // remove locally
+            setList((cur) => cur.filter((n) => !ids.includes(n.id)));
+            setSelectionMode(false);
+            setSelectedIds(() => new Set());
+
+            // best-effort delete on server for each
+            for (const id of ids) {
+              // eslint-disable-next-line no-await-in-loop
+              await deleteNotificationServer(id);
+            }
+
+            // soft refresh (optional)
+            onRefresh();
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
+  const markSelectedRead = async () => {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+
+    const snapshot = list;
+
+    // local: mark read
+    setList((cur) =>
+      cur.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n))
+    );
+
     const nextReadMap = { ...readMapRef.current };
-    for (const n of list) nextReadMap[n.id] = true;
+    ids.forEach((id) => {
+      nextReadMap[id] = true;
+    });
     await saveReadMap(nextReadMap);
-    setList((cur) => cur.map((n) => ({ ...n, read: true })));
-    if (bizId) {
-      const ok = await markAllReadServer(bizId);
-      if (!ok) onRefresh();
+
+    // server: only for non-system
+    for (const id of ids) {
+      const item = snapshot.find((n) => n.id === id);
+      if (item && item.source !== 'system') {
+        // eslint-disable-next-line no-await-in-loop
+        await markOneReadServer(id);
+      }
     }
+
+    // behave like delete: exit selection + clear selected
+    setSelectionMode(false);
+    setSelectedIds(() => new Set());
+
+    // optional soft refresh (keeps in sync with server)
+    onRefresh();
+  };
+
+  const markAllRead = async () => {
+    const anyUnread = list.some((n) => !n.read);
+    if (!anyUnread) return;
+
+    Alert.alert(
+      'Mark all as read',
+      'This will mark all activities as read.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Mark all',
+          style: 'default',
+          onPress: async () => {
+            const nextReadMap = { ...readMapRef.current };
+            for (const n of list) nextReadMap[n.id] = true;
+            await saveReadMap(nextReadMap);
+            setList((cur) => cur.map((n) => ({ ...n, read: true })));
+            if (bizId) {
+              const ok = await markAllReadServer(bizId);
+              if (!ok) onRefresh();
+            }
+            // system activities: local-only read; no server endpoint
+          },
+        },
+      ],
+      { cancelable: true }
+    );
   };
 
   const onPressItem = async (item) => {
-    // Wallet / payout notifications → GO TO HOME, Payouts tab
+    const isSystem = item.source === 'system';
+
+    // in selection mode: toggle selection (non-system only)
+    if (selectionMode) {
+      if (item.source !== 'system') toggleSelect(item.id);
+      return;
+    }
+
+    if (isSystem) {
+      // show overlay with full details for system activities
+      setSelectedSystemActivity(item);
+    }
+
+    // Wallet / payout activities → GO TO HOME, Payouts tab
     if (item.type === 'wallet' || item.type === 'payout') {
       navigation.navigate('GrabMerchantHomeScreen', {
         activeTab: 'Payouts',
         from: 'Notifications',
-        // you can add more flags here if Home needs them
       });
-    } else {
-      // Orders & others → existing order details flow
+    } else if (!isSystem) {
+      // Orders & others from business activities → existing order details flow
       const orderId =
         item.orderIdNumeric ?? item.orderCode ?? item._order_like?.id ?? null;
       if (orderId) {
@@ -583,12 +820,17 @@ export default function NotificationsTab({
 
         const groupedUrl = buildOrdersGroupedUrl(bizId, ownerType);
 
+        const fallbackOrder = {
+          id: String(orderId),
+          customer_name: item._order_like?.customer_name || '',
+        };
+
         navigation.navigate(detailsRoute, {
           orderId: String(orderId),
           businessId: bizId,
           ownerType,
           ordersGroupedUrl: groupedUrl,
-          order: hydrated ? hydrated : { id: String(orderId) },
+          order: hydrated ? hydrated : fallbackOrder,
         });
       }
     }
@@ -600,21 +842,30 @@ export default function NotificationsTab({
       );
       const nextReadMap = { ...readMapRef.current, [item.id]: true };
       await saveReadMap(nextReadMap);
-      const ok = await markOneReadServer(item.id);
-      if (!ok) {
-        const rollback = { ...readMapRef.current, [item.id]: false };
-        await saveReadMap(rollback);
-        setList((cur) =>
-          cur.map((n) => (n.id === item.id ? { ...n, read: false } : n))
-        );
+
+      if (item.source !== 'system') {
+        const ok = await markOneReadServer(item.id);
+        if (!ok) {
+          const rollback = { ...readMapRef.current, [item.id]: false };
+          await saveReadMap(rollback);
+          setList((cur) =>
+            cur.map((n) => (n.id === item.id ? { ...n, read: false } : n))
+          );
+        }
       }
+      // system activities have no read API → local only
     }
   };
 
   const confirmDelete = (item) => {
+    if (item.source === 'system') {
+      // no delete for system activities (admin notices)
+      return;
+    }
+
     Alert.alert(
-      'Delete Notification',
-      'Are you sure you want to delete this notification?',
+      'Delete Activity',
+      'Are you sure you want to delete this activity?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -640,110 +891,251 @@ export default function NotificationsTab({
     </TouchableOpacity>
   );
 
-  const renderItem = ({ item }) => (
-    <Swipeable renderRightActions={() => renderRightActions(item)}>
-      <TouchableOpacity
-        onPress={() => onPressItem(item)}
-        activeOpacity={0.7}
-        style={styles.itemWrap}
-      >
-        <View
+  const renderItem = useCallback(
+    ({ item }) => {
+      const isSelected = selectedIds.has(item.id);
+
+      const content = (
+        <TouchableOpacity
+          onPress={() => onPressItem(item)}
+          onLongPress={() => {
+            // allow selecting system activities too
+            setSelectionMode(true);
+            setSelectedIds(() => new Set([item.id]));
+          }}
+          activeOpacity={0.7}
           style={[
-            styles.iconWrap,
-            { backgroundColor: typeTint(item.type) + '22' },
+            styles.itemWrap,
+            isSelected && styles.itemWrapSelected,
           ]}
         >
-          <Ionicons
-            name={typeIcon(item.type)}
-            size={22}
-            color={typeTint(item.type)}
-          />
-          {!item.read && <View style={styles.unreadDot} />}
-        </View>
-        <View style={styles.itemTextWrap}>
-          <View style={styles.itemTopRow}>
-            <Text
-              style={[styles.itemTitle, !item.read && styles.itemTitleUnread]}
-              numberOfLines={1}
-            >
-              {item.title}
-            </Text>
-            <Text style={styles.time}>{item.displayChip}</Text>
+          <View
+            style={[
+              styles.iconWrap,
+              { backgroundColor: typeTint(item.type) + '22' },
+            ]}
+          >
+            <Ionicons
+              name={typeIcon(item.type)}
+              size={22}
+              color={typeTint(item.type)}
+            />
+            {!item.read && <View style={styles.unreadDot} />}
+            {selectionMode && (
+              <View style={styles.checkboxOverlay}>
+                <Ionicons
+                  name={isSelected ? 'checkbox-outline' : 'square-outline'}
+                  size={18}
+                  color={isSelected ? '#00b14f' : '#9ca3af'}
+                />
+              </View>
+            )}
           </View>
-          <Text style={styles.itemBody} numberOfLines={2}>
-            {item.body}
-          </Text>
-        </View>
-      </TouchableOpacity>
-    </Swipeable>
-  );
-
-  const ListHeader = () => (
-    <View style={styles.headerTools}>
-      <View style={styles.headerTitleRow}>
-        <Text style={[styles.title, { fontSize: isTablet ? 22 : 18 }]}>
-          Notifications
-        </Text>
-        {unreadCount > 0 && (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>{unreadCount}</Text>
-          </View>
-        )}
-      </View>
-
-      <TouchableOpacity
-        onPress={markAllRead}
-        style={[styles.actionBtn, { alignSelf: 'flex-start' }]}
-      >
-        <Ionicons name="checkmark-done-outline" size={16} color="#00b14f" />
-        <Text style={styles.actionText}>Mark all read</Text>
-      </TouchableOpacity>
-
-      <View style={styles.tabsRow}>
-        {FILTER_TABS.map((tab) => {
-          const active = tab.key === activeTab;
-          return (
-            <TouchableOpacity
-              key={tab.key}
-              onPress={() => setActiveTab(tab.key)}
-              style={[styles.tabPill, active && styles.tabPillActive]}
-              activeOpacity={0.8}
-            >
+          <View style={styles.itemTextWrap}>
+            <View style={styles.itemTopRow}>
               <Text
-                style={[styles.tabLabel, active && styles.tabLabelActive]}
+                style={[styles.itemTitle, !item.read && styles.itemTitleUnread]}
                 numberOfLines={1}
               >
-                {tab.label}
+                {item.title}
               </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-    </View>
+              <Text style={styles.time}>{item.displayChip}</Text>
+            </View>
+            <Text style={styles.itemBody} numberOfLines={2}>
+              {item.body}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      );
+
+      // disable swipe/delete when in selection mode (single-item delete only) or system
+      if (selectionMode || item.source === 'system') {
+        return content;
+      }
+
+      return (
+        <Swipeable renderRightActions={() => renderRightActions(item)}>
+          {content}
+        </Swipeable>
+      );
+    },
+    [selectionMode, selectedIds, onPressItem]
   );
+
+  // FlatList helpers (memoized, not hooks inside JSX)
+  const keyExtractor = useCallback((it) => it.id, []);
+  const renderSeparator = useCallback(() => <View style={styles.sep} />, []);
+
+  const ListHeader = () => {
+    const canMarkAll = unreadCount > 0;
+    const selectedCount = selectedIds.size;
+
+    if (selectionMode) {
+      return (
+        <View style={styles.headerTools}>
+          <View className="headerTitleRow" style={styles.headerTitleRow}>
+            <TouchableOpacity
+              onPress={cancelSelection}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="close-outline" size={22} color="#111827" />
+            </TouchableOpacity>
+            <Text style={[styles.title, { fontSize: isTablet ? 20 : 16 }]}>
+              {selectedCount} selected
+            </Text>
+            <View style={{ flex: 1 }} />
+            {selectedCount > 0 && (
+              <>
+                <TouchableOpacity
+                  onPress={anySelectedUnread ? markSelectedRead : undefined}
+                  style={[
+                    styles.bulkReadBtn,
+                    { opacity: anySelectedUnread ? 1 : 0.4, marginRight: 8 },
+                  ]}
+                  activeOpacity={anySelectedUnread ? 0.8 : 1}
+                >
+                  <Ionicons
+                    name="checkmark-done-outline"
+                    size={16}
+                    color="#fff"
+                  />
+                  <Text style={styles.bulkReadText}>Mark read</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={deleteSelected}
+                  style={styles.bulkDeleteBtn}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="trash-outline" size={16} color="#fff" />
+                  <Text style={styles.bulkDeleteText}>Delete</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.headerTools}>
+        <View style={styles.headerTitleRow}>
+          <Text style={[styles.title, { fontSize: isTablet ? 22 : 18 }]}>
+            Activities
+          </Text>
+          {unreadCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{unreadCount}</Text>
+            </View>
+          )}
+        </View>
+
+        <TouchableOpacity
+          onPress={canMarkAll ? markAllRead : undefined}
+          style={[
+            styles.actionBtn,
+            { alignSelf: 'flex-start', opacity: canMarkAll ? 1 : 0.5 },
+          ]}
+          activeOpacity={canMarkAll ? 0.8 : 1}
+        >
+          <Ionicons name="checkmark-done-outline" size={16} color="#00b14f" />
+          <Text style={styles.actionText}>
+            {canMarkAll ? 'Mark all read' : 'All read'}
+          </Text>
+        </TouchableOpacity>
+
+        <View style={styles.tabsRow}>
+          {FILTER_TABS.map((tab) => {
+            const active = tab.key === activeTab;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                onPress={() => setActiveTab(tab.key)}
+                style={[styles.tabPill, active && styles.tabPillActive]}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[styles.tabLabel, active && styles.tabLabelActive]}
+                  numberOfLines={1}
+                >
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+    );
+  };
 
   const Empty = () => (
     <View style={styles.emptyWrap}>
-      <Ionicons name="notifications-off-outline" size={32} color="#9ca3af" />
+      <Ionicons name="time-outline" size={32} color="#9ca3af" />
       <Text style={styles.emptyTitle}>You’re all caught up</Text>
-      <Text style={styles.emptyBody}>New notifications will appear here.</Text>
+      <Text style={styles.emptyBody}>New activities will appear here.</Text>
     </View>
   );
 
+  const closeSystemModal = () => setSelectedSystemActivity(null);
+
   return (
     <View style={styles.wrap}>
+      {/* fixed header ONLY in selection mode (doesn't scroll) */}
+      {selectionMode && <ListHeader />}
+
       <FlatList
         data={filteredList}
-        keyExtractor={(it) => it.id}
+        keyExtractor={keyExtractor}
         renderItem={renderItem}
-        ItemSeparatorComponent={() => <View style={styles.sep} />}
-        ListHeaderComponent={ListHeader}
+        ItemSeparatorComponent={renderSeparator}
+        // header scrolls normally in non-selection mode
+        ListHeaderComponent={!selectionMode ? ListHeader : null}
         ListEmptyComponent={Empty}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
         contentContainerStyle={{ paddingBottom: 24 }}
+        initialNumToRender={15}
+        maxToRenderPerBatch={20}
+        windowSize={7}
+        removeClippedSubviews
       />
+
+      {/* System activity details overlay */}
+      <Modal
+        visible={!!selectedSystemActivity}
+        transparent
+        animationType="fade"
+        onRequestClose={closeSystemModal}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Ionicons
+                name="time-outline"
+                size={22}
+                color="#00b14f"
+                style={{ marginRight: 6 }}
+              />
+              <Text style={styles.modalTitle} numberOfLines={2}>
+                {selectedSystemActivity?.title}
+              </Text>
+            </View>
+            {!!selectedSystemActivity?._created_at && (
+              <Text style={styles.modalTime}>
+                {showAsGiven(selectedSystemActivity._created_at)}
+              </Text>
+            )}
+            <Text style={styles.modalBody}>{selectedSystemActivity?.body}</Text>
+            <TouchableOpacity
+              style={styles.modalCloseBtn}
+              onPress={closeSystemModal}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modalCloseText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -817,6 +1209,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
+  itemWrapSelected: {
+    backgroundColor: '#dcfce7',
+  },
   iconWrap: {
     width: 40,
     height: 40,
@@ -836,6 +1231,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#00b14f',
     borderWidth: 2,
     borderColor: '#fff',
+  },
+  checkboxOverlay: {
+    position: 'absolute',
+    bottom: -6,
+    right: -6,
   },
   itemTextWrap: { flex: 1 },
   itemTopRow: {
@@ -857,9 +1257,88 @@ const styles = StyleSheet.create({
     marginVertical: 4,
   },
 
+  bulkDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    gap: 4,
+  },
+  bulkDeleteText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  bulkReadBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#00b14f',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    gap: 4,
+  },
+  bulkReadText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+
   emptyWrap: { alignItems: 'center', paddingVertical: 40, gap: 8 },
   emptyTitle: { color: '#111827', fontWeight: '700' },
   emptyBody: { color: '#6b7280' },
+
+  // modal styles
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+    flex: 1,
+  },
+  modalTime: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginBottom: 8,
+  },
+  modalBody: {
+    fontSize: 14,
+    color: '#374151',
+    marginBottom: 16,
+  },
+  modalCloseBtn: {
+    alignSelf: 'flex-end',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: '#00b14f',
+  },
+  modalCloseText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 13,
+  },
 });
 
 /* ---------- local helpers used above ---------- */
@@ -868,9 +1347,8 @@ function normalizeType(raw) {
 
   if (t.includes('wallet')) return 'wallet';
   if (t.startsWith('order')) return 'order';
-  if (t.includes('payout'))  return 'payout';
-  if (t.includes('warn'))    return 'warning';
+  if (t.includes('payout')) return 'payout';
+  if (t.includes('warn')) return 'warning';
   if (t.includes('success')) return 'success';
-  // if (t.includes('promo') || t.includes('offer')) return 'promo';
   return 'system';
 }

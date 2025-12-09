@@ -7,14 +7,28 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  Dimensions,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { CREATE_TPIN_ENDPOINT as ENV_CREATE_TPIN } from '@env';
-import { Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
 
 const { width } = Dimensions.get('window'); // Get the screen width
+
+// Grab-like palette (same as other wallet screens)
+const G = {
+  grab: '#00B14F',
+  grab2: '#00C853',
+  text: '#0F172A',
+  sub: '#6B7280',
+  bg: '#F6F7F9',
+  line: '#E5E7EB',
+  white: '#ffffff',
+  slate: '#0F172A',
+};
 
 export default function CreateTPinScreen() {
   const navigation = useNavigation();
@@ -22,16 +36,16 @@ export default function CreateTPinScreen() {
   const insets = useSafeAreaInsets();
 
   const [tpin, setTpin] = useState('');
-  const [confirmTpin, setConfirmTpin] = useState(''); // State for confirming TPIN
+  const [confirmTpin, setConfirmTpin] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const [showTpin, setShowTpin] = useState(false);  // State to toggle visibility of TPIN
-  const [showConfirmTpin, setShowConfirmTpin] = useState(false);  // State to toggle visibility of Confirm TPIN
+  const [showTpin, setShowTpin] = useState(false);
+  const [showConfirmTpin, setShowConfirmTpin] = useState(false);
 
-  const walletId = route?.params?.walletId ?? '';  // Ensure it's passed correctly
+  const walletId = route?.params?.walletId ?? '';
   const headerTopPad = Math.max(insets.top, 8) + 18;
+  const primary = G.grab;
 
-  // Handle the creation of the TPIN
   const handleCreateTPin = async () => {
     if (!tpin || tpin.length !== 4 || tpin !== confirmTpin) {
       Alert.alert('Create TPIN', 'TPINs do not match or are invalid.');
@@ -47,7 +61,7 @@ export default function CreateTPinScreen() {
     setLoading(true);
     try {
       const url = ENV_CREATE_TPIN.replace('{wallet_id}', walletId);
-      console.log('Create TPIN URL:', url);  // Verify URL construction
+      console.log('Create TPIN URL:', url);
 
       if (!url) throw new Error('CREATE_TPIN_ENDPOINT missing in .env');
 
@@ -65,7 +79,9 @@ export default function CreateTPinScreen() {
       const data = isJson ? await res.json() : await res.text();
 
       if (!res.ok) {
-        const errMsg = (typeof data === 'string' ? data : (data?.message || data?.error)) || 'Failed to create TPIN.';
+        const errMsg =
+          (typeof data === 'string' ? data : data?.message || data?.error) ||
+          'Failed to create TPIN.';
         throw new Error(errMsg);
       }
 
@@ -85,7 +101,6 @@ export default function CreateTPinScreen() {
       return;
     }
 
-    // Show confirmation modal
     Alert.alert(
       'Confirm TPIN',
       'Are you sure you want to create this TPIN?',
@@ -108,8 +123,12 @@ export default function CreateTPinScreen() {
     <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
       {/* Header */}
       <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="arrow-back" size={22} color={G.slate} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Create TPIN</Text>
         <View style={{ width: 40 }} />
@@ -138,8 +157,15 @@ export default function CreateTPinScreen() {
               maxLength={4}
               secureTextEntry={!showTpin}
             />
-            <TouchableOpacity onPress={() => setShowTpin(prev => !prev)} style={styles.eyeIcon}>
-              <Ionicons name={showTpin ? "eye-off" : "eye"} size={24} color="#94a3b8" />
+            <TouchableOpacity
+              onPress={() => setShowTpin((prev) => !prev)}
+              style={styles.eyeIcon}
+            >
+              <Ionicons
+                name={showTpin ? 'eye-off' : 'eye'}
+                size={22}
+                color={G.sub}
+              />
             </TouchableOpacity>
           </View>
 
@@ -155,8 +181,15 @@ export default function CreateTPinScreen() {
               maxLength={4}
               secureTextEntry={!showConfirmTpin}
             />
-            <TouchableOpacity onPress={() => setShowConfirmTpin(prev => !prev)} style={styles.eyeIcon}>
-              <Ionicons name={showConfirmTpin ? "eye-off" : "eye"} size={24} color="#94a3b8" />
+            <TouchableOpacity
+              onPress={() => setShowConfirmTpin((prev) => !prev)}
+              style={styles.eyeIcon}
+            >
+              <Ionicons
+                name={showConfirmTpin ? 'eye-off' : 'eye'}
+                size={22}
+                color={G.sub}
+              />
             </TouchableOpacity>
           </View>
 
@@ -165,8 +198,16 @@ export default function CreateTPinScreen() {
             disabled={loading}
             onPress={openConfirmationDialog}
             activeOpacity={0.9}
-            style={[styles.primaryBtnFilled, { backgroundColor: loading ? '#fb923c' : '#f97316', opacity: loading ? 0.8 : 1 }]}>
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnTextFilled}>CREATE TPIN</Text>}
+            style={[
+              styles.primaryBtnFilled,
+              { backgroundColor: loading ? G.grab2 : primary, opacity: loading ? 0.8 : 1 },
+            ]}
+          >
+            {loading ? (
+              <ActivityIndicator color={G.white} />
+            ) : (
+              <Text style={styles.primaryBtnTextFilled}>CREATE TPIN</Text>
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -175,7 +216,7 @@ export default function CreateTPinScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
+  safe: { flex: 1, backgroundColor: G.bg },
 
   // Header
   headerBar: {
@@ -184,28 +225,45 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: G.line,
     borderBottomWidth: 1,
-    backgroundColor: '#fff',
+    backgroundColor: G.white,
   },
-  backBtn: { height: 40, width: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '700', color: '#0f172a' },
+  backBtn: {
+    height: 40,
+    width: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 17,
+    fontWeight: '700',
+    color: G.slate,
+  },
 
   content: {
     padding: 18,
     paddingBottom: 24,
   },
 
-  title: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
-  sub: { marginTop: 6, color: '#64748b', lineHeight: 20 },
+  title: {
+    fontSize: width > 400 ? 18 : 16,
+    fontWeight: '800',
+    color: G.slate,
+  },
+  sub: { marginTop: 6, color: G.sub, lineHeight: 20 },
 
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 20,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: G.line,
     borderRadius: 12,
+    backgroundColor: G.white,
   },
 
   input: {
@@ -213,7 +271,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#0f172a',
+    color: G.slate,
   },
 
   eyeIcon: {
@@ -228,5 +286,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
   },
-  primaryBtnTextFilled: { fontSize: 16, fontWeight: '800', color: '#fff' },
+  primaryBtnTextFilled: {
+    fontSize: width > 400 ? 16 : 15,
+    fontWeight: '800',
+    color: G.white,
+    letterSpacing: 0.6,
+  },
 });

@@ -37,12 +37,48 @@ export const addressToLine = (val) => {
 
 /* ---------------- Status config ---------------- */
 export const STATUS_META = {
-  PENDING: { label: 'Pending', color: '#0ea5e9', bg: '#e0f2fe', border: '#bae6fd', icon: 'time-outline' },
-  CONFIRMED: { label: 'Accepted', color: '#16a34a', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-circle-outline' },
-  READY: { label: 'Ready', color: '#2563eb', bg: '#dbeafe', border: '#bfdbfe', icon: 'cube-outline' },
-  OUT_FOR_DELIVERY: { label: 'Out for delivery', color: '#f59e0b', bg: '#fef3c7', border: '#fde68a', icon: 'bicycle-outline' },
-  COMPLETED: { label: 'Delivered', color: '#047857', bg: '#ecfdf5', border: '#bbf7d0', icon: 'checkmark-done-outline' },
-  DECLINED: { label: 'Declined', color: '#b91c1c', bg: '#fee2e2', border: '#fecaca', icon: 'close-circle-outline' },
+  PENDING: {
+    label: 'Pending',
+    color: '#0ea5e9',
+    bg: '#e0f2fe',
+    border: '#bae6fd',
+    icon: 'time-outline',
+  },
+  CONFIRMED: {
+    label: 'Accepted',
+    color: '#16a34a',
+    bg: '#ecfdf5',
+    border: '#bbf7d0',
+    icon: 'checkmark-circle-outline',
+  },
+  READY: {
+    label: 'Ready',
+    color: '#2563eb',
+    bg: '#dbeafe',
+    border: '#bfdbfe',
+    icon: 'cube-outline',
+  },
+  OUT_FOR_DELIVERY: {
+    label: 'Out for delivery',
+    color: '#f59e0b',
+    bg: '#fef3c7',
+    border: '#fde68a',
+    icon: 'bicycle-outline',
+  },
+  COMPLETED: {
+    label: 'Delivered',
+    color: '#047857',
+    bg: '#ecfdf5',
+    border: '#bbf7d0',
+    icon: 'checkmark-done-outline',
+  },
+  DECLINED: {
+    label: 'Declined',
+    color: '#b91c1c',
+    bg: '#fee2e2',
+    border: '#fecaca',
+    icon: 'close-circle-outline',
+  },
 };
 
 export const TERMINAL_NEGATIVE = new Set(['DECLINED']);
@@ -92,8 +128,29 @@ export const buildUpdateUrl = (base, orderCode) => {
 export const normDelivery = (v) => {
   const s = String(v || '').trim().toUpperCase();
   if (!s) return 'UNKNOWN';
-  if (['SELF', 'SELF_ONLY', 'PICKUP', 'PICK_UP', 'SELF_PICKUP', 'SELF-DELIVERY', 'SELF_DELIVERY'].includes(s)) return 'SELF';
-  if (['GRAB', 'GRAB_ONLY', 'DELIVERY', 'PLATFORM', 'PLATFORM_DELIVERY', 'PLATFORM-DELIVERY'].includes(s)) return 'GRAB';
+  if (
+    [
+      'SELF',
+      'SELF_ONLY',
+      'PICKUP',
+      'PICK_UP',
+      'SELF_PICKUP',
+      'SELF-DELIVERY',
+      'SELF_DELIVERY',
+    ].includes(s)
+  )
+    return 'SELF';
+  if (
+    [
+      'GRAB',
+      'GRAB_ONLY',
+      'DELIVERY',
+      'PLATFORM',
+      'PLATFORM_DELIVERY',
+      'PLATFORM-DELIVERY',
+    ].includes(s)
+  )
+    return 'GRAB';
   if (s === 'BOTH' || s === 'ALL') return 'BOTH';
   if (s === '1' || s === 'TRUE') return 'GRAB';
   if (s === '0' || s === 'FALSE') return 'SELF';
@@ -105,12 +162,23 @@ export const normDelivery = (v) => {
 
 export function resolveDeliveryOptionFromOrder(from) {
   const cands = [
-    from?.delivery_option, from?.deliveryOption, from?.delivery_by, from?.deliveryBy,
-    from?.courier, from?.courier_type, from?.courierType,
-    from?.fulfillment_option, from?.fulfillmentOption,
-    from?.owner_delivery_option, from?.ownerDeliveryOption,
-    from?.type, from?.delivery_type, from?.fulfillment_type,
-    from?.params?.delivery_option, from?.params?.deliveryOption, from?.params?.delivery_by,
+    from?.delivery_option,
+    from?.deliveryOption,
+    from?.delivery_by,
+    from?.deliveryBy,
+    from?.courier,
+    from?.courier_type,
+    from?.courierType,
+    from?.fulfillment_option,
+    from?.fulfillmentOption,
+    from?.owner_delivery_option,
+    from?.ownerDeliveryOption,
+    from?.type,
+    from?.delivery_type,
+    from?.fulfillment_type,
+    from?.params?.delivery_option,
+    from?.params?.deliveryOption,
+    from?.params?.delivery_by,
   ].map((v) => (v == null ? '' : String(v).trim()));
 
   for (const val of cands) {
@@ -123,48 +191,105 @@ export function resolveDeliveryOptionFromOrder(from) {
 /** Returns 'Delivery' | 'Pickup' | '' */
 export function resolveFulfillmentType(from) {
   const cands = [
-    from?.fulfillment_type, from?.fulfillmentType, from?.order_type, from?.orderType,
-    from?.type, from?.delivery_type, from?.service_type,
+    from?.fulfillment_type,
+    from?.fulfillmentType,
+    from?.order_type,
+    from?.orderType,
+    from?.type,
+    from?.delivery_type,
+    from?.service_type,
   ].map((v) => (v == null ? '' : String(v).trim()));
 
   for (const val of cands) {
     const s = norm(val);
     if (!s) continue;
-    if (['delivery', 'deliver', 'platform_delivery', 'self-delivery'].includes(s)) return 'Delivery';
-    if (['pickup', 'self-pickup', 'pick_up', 'takeaway', 'take-away'].includes(s)) return 'Pickup';
+    if (
+      ['delivery', 'deliver', 'platform_delivery', 'self-delivery'].includes(
+        s
+      )
+    )
+      return 'Delivery';
+    if (
+      ['pickup', 'self-pickup', 'pick_up', 'takeaway', 'take-away'].includes(s)
+    )
+      return 'Pickup';
     return '';
   }
   return '';
 }
 
+/* ---------------- BUSINESS_DETAILS URL helper ---------------- */
+
+const buildBusinessDetailsUrl = (business_id) => {
+  const tpl = (ENV_BUSINESS_DETAILS || '').trim();
+  if (!tpl) return null;
+
+  const urls = [];
+
+  if (business_id != null && business_id !== '') {
+    const rawId = String(business_id).trim();
+    const encId = encodeURIComponent(rawId);
+
+    // Try replacing common placeholders
+    let replaced = tpl
+      .replace('{business_id}', encId)
+      .replace('{businessId}', encId)
+      .replace(':business_id', encId)
+      .replace(':businessId', encId);
+
+    if (replaced !== tpl) {
+      urls.push(replaced);
+    } else {
+      // Fallback: /:id
+      urls.push(`${tpl.replace(/\/+$/, '')}/${encId}`);
+
+      // Fallback: ?business_id=
+      const sep = tpl.includes('?') ? '&' : '?';
+      urls.push(`${tpl}${sep}business_id=${encId}`);
+    }
+  }
+
+  // Also try bare endpoint (could be /me or similar)
+  urls.push(tpl);
+
+  return urls;
+};
+
 /* ---------------- BUSINESS_DETAILS fetcher ---------------- */
 export async function fetchBusinessDetails({ token, business_id }) {
-  const base = (ENV_BUSINESS_DETAILS || '').trim().replace(/\/+$/, '');
-  if (!base) return null;
+  const urlCandidates = buildBusinessDetailsUrl(business_id);
+  if (!urlCandidates || urlCandidates.length === 0) return null;
 
   const headers = token
     ? { Accept: 'application/json', Authorization: `Bearer ${token}` }
     : { Accept: 'application/json' };
 
-  const candidates = [
-    `${base}`,
-    business_id ? `${base}/${business_id}` : null,
-    business_id ? `${base}?business_id=${encodeURIComponent(String(business_id))}` : null,
-  ].filter(Boolean);
-
-  for (const url of candidates) {
+  for (const url of urlCandidates) {
     try {
       const r = await fetch(url, { headers });
       const text = await r.text();
       let data = null;
-      try { data = text ? JSON.parse(text) : null; } catch { }
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch {
+        data = null;
+      }
       if (!r.ok) continue;
-      const maybe = data?.data && typeof data.data === 'object' ? data.data : data;
-      if (maybe && (maybe.business_id || maybe.business_name || maybe.delivery_option)) {
+
+      const maybe =
+        data?.data && typeof data.data === 'object' ? data.data : data;
+
+      if (
+        maybe &&
+        (maybe.business_id ||
+          maybe.business_name ||
+          maybe.delivery_option ||
+          maybe.owner_type)
+      ) {
         return maybe;
       }
     } catch {
-      // continue
+      // try next candidate
     }
   }
   return null;
@@ -185,8 +310,13 @@ export async function updateStatusApi({ endpoint, orderCode, payload, token }) {
   });
   const text = await res.text();
   let json = null;
-  try { json = text ? JSON.parse(text) : null; } catch { }
-  if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!res.ok)
+    throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
   return json;
 }
 
@@ -199,8 +329,10 @@ export const computeHaversineKm = (from, to) => {
   const { lat: lat2, lng: lon2 } = to;
 
   if (
-    !Number.isFinite(lat1) || !Number.isFinite(lon1) ||
-    !Number.isFinite(lat2) || !Number.isFinite(lon2)
+    !Number.isFinite(lat1) ||
+    !Number.isFinite(lon1) ||
+    !Number.isFinite(lat2) ||
+    !Number.isFinite(lon2)
   ) {
     return null;
   }
@@ -210,8 +342,10 @@ export const computeHaversineKm = (from, to) => {
   const dLon = toRad(lon2 - lon1);
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 };

@@ -21,6 +21,21 @@ import { WALLET_TPIN_CHANGE_ENDPOINT as ENV_TPIN_CHANGE } from '@env';
 
 const { width } = Dimensions.get('window');
 
+// Grab-like palette (same as Wallet / AddMoney / Withdraw / TPin)
+const G = {
+  grab: '#00B14F',
+  grab2: '#00C853',
+  text: '#0F172A',
+  sub: '#6B7280',
+  bg: '#F6F7F9',
+  line: '#E5E7EB',
+  danger: '#EF4444',
+  ok: '#10B981',
+  warn: '#F59E0B',
+  white: '#ffffff',
+  slate: '#0F172A',
+};
+
 export default function ChangeTPinScreen() {
   const navigation = useNavigation();
   const route = useRoute();
@@ -44,7 +59,7 @@ export default function ChangeTPinScreen() {
   const [showNew, setShowNew] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
-  const primary = '#f97316';
+  const primary = G.grab;
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
   // If needed later, we can resolve walletId from storage here
@@ -136,7 +151,7 @@ export default function ChangeTPinScreen() {
           style={styles.backBtn}
           activeOpacity={0.7}
         >
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+          <Ionicons name="arrow-back" size={22} color={G.slate} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Change Wallet TPIN</Text>
         <View style={{ width: 40 }} />
@@ -161,7 +176,7 @@ export default function ChangeTPinScreen() {
         >
           <View style={styles.infoCard}>
             <View style={styles.iconWrap}>
-              <Ionicons name="refresh-outline" size={28} color="#0ea5e9" />
+              <Ionicons name="refresh-outline" size={28} color={G.grab} />
             </View>
             <Text style={styles.title}>Change Wallet TPIN</Text>
             <Text style={styles.sub}>
@@ -192,7 +207,7 @@ export default function ChangeTPinScreen() {
                 <Ionicons
                   name={showCurrent ? 'eye-off' : 'eye'}
                   size={21}
-                  color="#64748b"
+                  color={G.sub}
                 />
               </TouchableOpacity>
             </View>
@@ -221,7 +236,7 @@ export default function ChangeTPinScreen() {
                 <Ionicons
                   name={showNew ? 'eye-off' : 'eye'}
                   size={21}
-                  color="#64748b"
+                  color={G.sub}
                 />
               </TouchableOpacity>
             </View>
@@ -250,7 +265,7 @@ export default function ChangeTPinScreen() {
                 <Ionicons
                   name={showConfirm ? 'eye-off' : 'eye'}
                   size={21}
-                  color="#64748b"
+                  color={G.sub}
                 />
               </TouchableOpacity>
             </View>
@@ -265,17 +280,17 @@ export default function ChangeTPinScreen() {
             activeOpacity={0.9}
             style={[
               styles.primaryBtnFilled,
-              { backgroundColor: loading ? '#fb923c' : primary, opacity: loading ? 0.9 : 1 },
+              { backgroundColor: loading ? G.grab2 : primary, opacity: loading ? 0.9 : 1 },
             ]}
           >
             {loading ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={G.white} />
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons
                   name="refresh-outline"
                   size={18}
-                  color="#fff"
+                  color={G.white}
                   style={{ marginRight: 8 }}
                 />
                 <Text style={styles.primaryBtnTextFilled}>CHANGE TPIN</Text>
@@ -289,7 +304,7 @@ export default function ChangeTPinScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
+  safe: { flex: 1, backgroundColor: G.bg },
 
   headerBar: {
     minHeight: 52,
@@ -297,9 +312,9 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: G.line,
     borderBottomWidth: 1,
-    backgroundColor: '#fff',
+    backgroundColor: G.white,
   },
   backBtn: {
     height: 40,
@@ -313,15 +328,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 17,
     fontWeight: '700',
-    color: '#0f172a',
+    color: G.slate,
   },
 
   infoCard: {
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#f1f5f9',
-    backgroundColor: '#ffffff',
+    borderColor: G.line,
+    backgroundColor: G.white,
     marginBottom: 14,
   },
   iconWrap: {
@@ -330,37 +345,38 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#E8FFF1',
     borderWidth: 1,
-    borderColor: '#dbeafe',
+    borderColor: '#D1FAE5',
     marginBottom: 8,
   },
-  title: { fontSize: width > 400 ? 18 : 16, fontWeight: '800', color: '#0f172a' },
-  sub: { marginTop: 6, color: '#64748b', lineHeight: 20 },
+  title: { fontSize: width > 400 ? 18 : 16, fontWeight: '800', color: G.slate },
+  sub: { marginTop: 6, color: G.sub, lineHeight: 20 },
 
   field: { marginTop: 16 },
-  label: { fontSize: 13, fontWeight: '700', color: '#0f172a', marginBottom: 8 },
+  label: { fontSize: 13, fontWeight: '700', color: G.slate, marginBottom: 8 },
 
   inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: G.line,
     borderRadius: 12,
     paddingHorizontal: 12,
+    backgroundColor: G.white,
   },
   inputFlex: {
     flex: 1,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#0f172a',
+    color: G.slate,
   },
   eyeBtn: {
     padding: 4,
     marginLeft: 6,
   },
 
-  hint: { fontSize: 12, color: '#64748b', marginTop: 6 },
+  hint: { fontSize: 12, color: G.sub, marginTop: 6 },
 
   primaryBtnFilled: {
     marginTop: 18,
@@ -373,6 +389,6 @@ const styles = StyleSheet.create({
     fontSize: width > 400 ? 16 : 15,
     fontWeight: '800',
     letterSpacing: 0.6,
-    color: '#fff',
+    color: G.white,
   },
 });

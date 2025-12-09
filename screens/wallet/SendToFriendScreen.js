@@ -22,6 +22,21 @@ import { HAS_TPIN_ENDPOINT as ENV_HAS_TPIN } from '@env';
 const { width } = Dimensions.get('window');
 const money = (n, c = 'Nu') => `${c}. ${Number(n ?? 0).toFixed(2)}`;
 
+// Grab-like palette (same as Wallet/AddMoney/Withdraw)
+const G = {
+  grab: '#00B14F',
+  grab2: '#00C853',
+  text: '#0F172A',
+  sub: '#6B7280',
+  bg: '#F6F7F9',
+  line: '#E5E7EB',
+  danger: '#EF4444',
+  ok: '#10B981',
+  warn: '#F59E0B',
+  white: '#ffffff',
+  slate: '#0F172A',
+};
+
 // ─────────── Auth grace (keeps biometrics skipped during short window) ───────────
 const AUTH_GRACE_SEC = 180; // 3 minutes
 const KEY_WALLET_AUTH_GRACE = 'wallet_auth_grace_until';
@@ -89,7 +104,7 @@ export default function SendToFriendScreen() {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
-  const primary = '#f97316';
+  const primary = G.grab;
 
   // ── Respect grace from WalletScreen (skipBiometric + authGraceUntil)
   useEffect(() => {
@@ -281,7 +296,7 @@ export default function SendToFriendScreen() {
           style={styles.backBtn}
           activeOpacity={0.7}
         >
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+          <Ionicons name="arrow-back" size={22} color={G.slate} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Send to Friend</Text>
         <View style={{ width: 40 }} />
@@ -302,7 +317,7 @@ export default function SendToFriendScreen() {
         >
           <View style={styles.infoCard}>
             <View style={styles.iconWrap}>
-              <Ionicons name="paper-plane-outline" size={28} color="#0ea5e9" />
+              <Ionicons name="paper-plane-outline" size={28} color={G.grab} />
             </View>
             <Text style={styles.title}>Send money instantly</Text>
             <Text style={styles.sub}>
@@ -375,19 +390,19 @@ export default function SendToFriendScreen() {
             style={[
               styles.primaryBtnFilled,
               {
-                backgroundColor: loading ? '#fb923c' : primary,
+                backgroundColor: loading ? G.grab2 : primary,
                 opacity: loading ? 0.9 : 1,
               },
             ]}
           >
             {loading ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={G.white} />
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons
                   name="paper-plane-outline"
                   size={18}
-                  color="#fff"
+                  color={G.white}
                   style={{ marginRight: 8 }}
                 />
                 <Text style={styles.primaryBtnTextFilled}>SEND MONEY</Text>
@@ -401,7 +416,7 @@ export default function SendToFriendScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
+  safe: { flex: 1, backgroundColor: G.bg },
 
   // Header
   headerBar: {
@@ -410,9 +425,9 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: G.line,
     borderBottomWidth: 1,
-    backgroundColor: '#fff',
+    backgroundColor: G.white,
   },
   backBtn: {
     height: 40,
@@ -426,15 +441,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 17,
     fontWeight: '700',
-    color: '#0f172a',
+    color: G.slate,
   },
 
   infoCard: {
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#f1f5f9',
-    backgroundColor: '#ffffff',
+    borderColor: G.line,
+    backgroundColor: G.white,
     marginBottom: 14,
   },
   iconWrap: {
@@ -443,45 +458,46 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#E8FFF1',
     borderWidth: 1,
-    borderColor: '#dbeafe',
+    borderColor: '#D1FAE5',
     marginBottom: 8,
   },
   title: {
     fontSize: width > 400 ? 18 : 16,
     fontWeight: '800',
-    color: '#0f172a',
+    color: G.slate,
   },
-  sub: { marginTop: 6, color: '#64748b', lineHeight: 20 },
+  sub: { marginTop: 6, color: G.sub, lineHeight: 20 },
 
   field: { marginTop: 16 },
   label: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#0f172a',
+    color: G.slate,
     marginBottom: 8,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: G.line,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#0f172a',
+    color: G.slate,
+    backgroundColor: G.white,
   },
   readonlyBox: {
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: G.line,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 12,
     fontSize: 15,
-    color: '#6b7280',
-    backgroundColor: '#f9fafb',
+    color: G.sub,
+    backgroundColor: '#F9FAFB',
   },
-  hint: { fontSize: 12, color: '#64748b', marginTop: 6 },
+  hint: { fontSize: 12, color: G.sub, marginTop: 6 },
 
   presetRow: {
     flexDirection: 'row',
@@ -494,10 +510,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#f1f5f9',
-    backgroundColor: '#fff',
+    borderColor: '#F3F4F6',
+    backgroundColor: G.white,
   },
-  presetText: { fontWeight: '700', color: '#0f172a' },
+  presetText: { fontWeight: '700', color: G.slate },
 
   primaryBtnFilled: {
     marginTop: 18,
@@ -510,6 +526,6 @@ const styles = StyleSheet.create({
     fontSize: width > 400 ? 16 : 15,
     fontWeight: '800',
     letterSpacing: 0.6,
-    color: '#fff',
+    color: G.white,
   },
 });

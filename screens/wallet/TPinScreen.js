@@ -20,11 +20,27 @@ import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 import {
   SEND_TO_FRIEND_ENDPOINT as ENV_SEND,
+  WALLET_USERNAME_ENDPOINT as ENV_WALLET_USERNAME,
 } from '@env';
 import WalletScreen from './WalletScreen';
 
 const { width } = Dimensions.get('window');
 const money = (n, c = 'Nu') => `${c}. ${Number(n ?? 0).toFixed(2)}`;
+
+// Grab-like palette (same as Wallet/AddMoney/Withdraw)
+const G = {
+  grab: '#00B14F',
+  grab2: '#00C853',
+  text: '#0F172A',
+  sub: '#6B7280',
+  bg: '#F6F7F9',
+  line: '#E5E7EB',
+  danger: '#EF4444',
+  ok: '#10B981',
+  warn: '#F59E0B',
+  white: '#ffffff',
+  slate: '#0F172A',
+};
 
 // ─────────── Auth grace (same helper as SendToFriendScreen) ───────────
 const AUTH_GRACE_SEC = 180; // 3 minutes
@@ -60,9 +76,9 @@ export default function TPinScreen() {
 
   // From previous screen:
   const payloadFromRoute = route?.params?.payload || {};
-  const recipient = route?.params?.recipient || '';
+  const recipientParam = route?.params?.recipient || '';
   const amount = Number(route?.params?.amount || payloadFromRoute?.amount || 0);
-  const primary = '#f97316';
+  const primary = G.grab;
 
   // Sender's wallet ID (from WalletScreen → SendToFriendScreen → TPinScreen)
   const senderWalletId =
@@ -72,9 +88,18 @@ export default function TPinScreen() {
     payloadFromRoute?.wallet_id ||
     null;
 
+  // Effective recipient wallet id (used for both UI + API + name lookup)
+  const recipientWalletId =
+    recipientParam ||
+    payloadFromRoute?.recipient_wallet_id ||
+    payloadFromRoute?.to_wallet_id ||
+    payloadFromRoute?.toWalletId ||
+    '';
+
   const [userId, setUserId] = useState(route?.params?.userId ?? '');
   const [loading, setLoading] = useState(false);
   const [tpin, setTpin] = useState('');
+  const [recipientName, setRecipientName] = useState('');
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
@@ -114,6 +139,37 @@ export default function TPinScreen() {
     })();
   }, [userId]);
 
+  // Fetch recipient user_name from wallet ID (for summary display)
+  useEffect(() => {
+    (async () => {
+      try {
+        const walletId = String(recipientWalletId || '').trim();
+        if (!walletId) return;
+
+        const tmpl = String(ENV_WALLET_USERNAME || '').trim();
+        if (!tmpl) return; // silently ignore if not configured
+
+        const url = tmpl.replace('{wallet_id}', encodeURIComponent(walletId));
+        const res = await fetch(url);
+        const isJson = (res.headers.get('content-type') || '').includes('application/json');
+        const data = isJson ? await res.json() : null;
+
+        if (!res.ok) return;
+
+        const name =
+          data?.data?.user_name ||
+          data?.user_name ||
+          data?.data?.name ||
+          data?.name ||
+          '';
+
+        if (name) setRecipientName(String(name));
+      } catch {
+        // ignore lookup errors – name row just won't show
+      }
+    })();
+  }, [recipientWalletId]);
+
   // ─────────── helpers ───────────
   function buildPayloadWithTPin() {
     const base = payloadFromRoute || {};
@@ -125,11 +181,8 @@ export default function TPinScreen() {
       base.wallet_id ||
       null;
 
-    const recipientId =
-      base.recipient_wallet_id ||
-      base.to_wallet_id ||
-      base.toWalletId ||
-      recipient;
+    // Use the same wallet id we display
+    const recipientId = recipientWalletId || null;
 
     const amt = amount || base.amount;
 
@@ -186,11 +239,11 @@ export default function TPinScreen() {
         throw new Error(msg || 'Transfer failed.');
       }
 
-      Alert.alert('Success', `Sent ${money(amount)} to ${recipient}.`, [
+      Alert.alert('Success', `Sent ${money(amount)} to ${recipientWalletId}.`, [
         {
           text: 'OK',
           onPress: () => {
-            navigation.navigate(WalletScreen); // close TPIN screen
+            navigation.navigate(WalletScreen); // close TPIN screen (logic kept)
           },
         },
       ]);
@@ -199,7 +252,7 @@ export default function TPinScreen() {
     } finally {
       setLoading(false);
     }
-  }, [tpin, amount, recipient, navigation, senderWalletId, payloadFromRoute, userId]);
+  }, [tpin, amount, recipientWalletId, navigation, senderWalletId, payloadFromRoute, userId]);
 
   const goToChangeTPin = () => {
     navigation.navigate('ChangeTPinScreen', {
@@ -239,7 +292,7 @@ export default function TPinScreen() {
           style={styles.backBtn}
           activeOpacity={0.7}
         >
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+          <Ionicons name="arrow-back" size={22} color={G.slate} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Wallet TPIN</Text>
         <View style={{ width: 40 }} />
@@ -254,18 +307,27 @@ export default function TPinScreen() {
           {/* Summary card */}
           <View style={styles.infoCard}>
             <View style={styles.iconWrap}>
-              <Ionicons name="lock-closed-outline" size={28} color="#0ea5e9" />
+              <Ionicons name="lock-closed-outline" size={28} color={G.grab} />
             </View>
             <Text style={styles.title}>{titleByMode}</Text>
             <Text style={styles.sub}>{subByMode}</Text>
 
             {/* Transfer summary (if we came from SendToFriend flow) */}
-            {recipient ? (
+            {recipientWalletId ? (
               <View style={styles.summaryBox}>
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Recipient Wallet ID</Text>
-                  <Text style={styles.summaryValue}>{recipient}</Text>
+                  <Text style={styles.summaryValue}>{recipientWalletId}</Text>
                 </View>
+
+                {/* NEW: Recipient Name row (between Wallet ID and Amount) */}
+                {recipientName ? (
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Recipient Name</Text>
+                    <Text style={styles.summaryValue}>{recipientName}</Text>
+                  </View>
+                ) : null}
+
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Amount</Text>
                   <Text style={styles.summaryAmount}>{money(amount)}</Text>
@@ -299,17 +361,17 @@ export default function TPinScreen() {
             activeOpacity={0.9}
             style={[
               styles.primaryBtnFilled,
-              { backgroundColor: loading ? '#fb923c' : primary, opacity: loading ? 0.9 : 1 },
+              { backgroundColor: loading ? G.grab2 : primary, opacity: loading ? 0.9 : 1 },
             ]}
           >
             {loading ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={G.white} />
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <Ionicons
                   name="checkmark-circle-outline"
                   size={18}
-                  color="#fff"
+                  color={G.white}
                   style={{ marginRight: 8 }}
                 />
                 <Text style={styles.primaryBtnTextFilled}>CONFIRM & SEND</Text>
@@ -332,7 +394,7 @@ export default function TPinScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
+  safe: { flex: 1, backgroundColor: G.bg },
 
   // Header
   headerBar: {
@@ -341,9 +403,9 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: G.line,
     borderBottomWidth: 1,
-    backgroundColor: '#fff',
+    backgroundColor: G.white,
   },
   backBtn: {
     height: 40,
@@ -357,15 +419,15 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 17,
     fontWeight: '700',
-    color: '#0f172a',
+    color: G.slate,
   },
 
   infoCard: {
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#f1f5f9',
-    backgroundColor: '#ffffff',
+    borderColor: G.line,
+    backgroundColor: G.white,
     marginBottom: 14,
   },
   iconWrap: {
@@ -374,43 +436,44 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#E8FFF1',
     borderWidth: 1,
-    borderColor: '#dbeafe',
+    borderColor: '#D1FAE5',
     marginBottom: 8,
   },
-  title: { fontSize: width > 400 ? 18 : 16, fontWeight: '800', color: '#0f172a' },
-  sub: { marginTop: 6, color: '#64748b', lineHeight: 20 },
+  title: { fontSize: width > 400 ? 18 : 16, fontWeight: '800', color: G.slate },
+  sub: { marginTop: 6, color: G.sub, lineHeight: 20 },
 
   summaryBox: {
     marginTop: 14,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: G.line,
     padding: 12,
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#F9FAFB',
   },
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 6,
   },
-  summaryLabel: { fontSize: 12, color: '#64748b' },
-  summaryValue: { fontSize: 13, fontWeight: '600', color: '#0f172a' },
-  summaryAmount: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
+  summaryLabel: { fontSize: 12, color: G.sub },
+  summaryValue: { fontSize: 13, fontWeight: '600', color: G.slate },
+  summaryAmount: { fontSize: 15, fontWeight: '800', color: G.slate },
 
   field: { marginTop: 16 },
-  label: { fontSize: 13, fontWeight: '700', color: '#0f172a', marginBottom: 8 },
+  label: { fontSize: 13, fontWeight: '700', color: G.slate, marginBottom: 8 },
   input: {
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: G.line,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 12,
     fontSize: 16,
-    color: '#0f172a',
+    color: G.slate,
+    backgroundColor: G.white,
   },
-  hint: { fontSize: 12, color: '#64748b', marginTop: 6 },
+  hint: { fontSize: 12, color: G.sub, marginTop: 6 },
 
   primaryBtnFilled: {
     marginTop: 18,
@@ -423,7 +486,7 @@ const styles = StyleSheet.create({
     fontSize: width > 400 ? 16 : 15,
     fontWeight: '800',
     letterSpacing: 0.6,
-    color: '#fff',
+    color: G.white,
   },
 
   linksRow: {
@@ -437,6 +500,6 @@ const styles = StyleSheet.create({
   linkText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#0ea5e9',
+    color: G.grab,
   },
 });

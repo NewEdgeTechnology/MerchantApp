@@ -79,6 +79,9 @@ import CreateTPinScreen from './screens/wallet/CreateTPinScreen.js';
 import ForgotTPinScreen from './screens/wallet/ForgotTPinScreen.js';
 import ChangeTPinScreen from './screens/wallet/ChangeTPinScreen.js';
 import VerifyTPinOtpScreen from './screens/wallet/VerifyTPinOtpScreen.js';
+import NearbyOrdersScreen from './screens/food/GroupOrder/NearbyOrdersScreen.js';
+import NearbyClusterOrdersScreen from './screens/food/GroupOrder/NearbyClusterOrdersScreen.js';
+import ClusterDeliveryOptionsScreen from './screens/food/GroupOrder/ClusterDeliveryOptionsScreen.js';
 
 const Stack = createStackNavigator();
 
@@ -179,6 +182,9 @@ export default function App() {
             <Stack.Screen name="ForgotTPinScreen" component={ForgotTPinScreen} />
             <Stack.Screen name="ChangeTPinScreen" component={ChangeTPinScreen} />
             <Stack.Screen name="VerifyTPinOtpScreen" component={VerifyTPinOtpScreen} />
+            <Stack.Screen name="NearbyOrdersScreen" component={NearbyOrdersScreen} />
+            <Stack.Screen name="NearbyClusterOrdersScreen" component={NearbyClusterOrdersScreen} />
+            <Stack.Screen name="ClusterDeliveryOptionsScreen" component={ClusterDeliveryOptionsScreen} />
           </Stack.Navigator>
         </AppLockGate>
       </NavigationContainer>
