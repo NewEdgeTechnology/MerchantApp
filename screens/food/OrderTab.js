@@ -177,6 +177,32 @@ const getItemNote = (it = {}) =>
   it.item_note ||
   '';
 
+/* ✅ NEW: address extractor that supports deliver_to */
+const pickAddress = (o = {}) => {
+  const cand = [
+    o?.delivery_address,
+    o?.deliver_to?.address,
+    o?.deliver_to?.label,
+    o?.deliver_to?.formatted,
+    o?.dropoff_address,
+    o?.shipping_address,
+    o?.address,
+    o?.customer_address,
+    o?.deliver_to, // sometimes a string
+  ];
+
+  for (const v of cand) {
+    if (!v) continue;
+    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (typeof v === 'object') {
+      if (typeof v.address === 'string' && v.address.trim()) return v.address.trim();
+      if (typeof v.label === 'string' && v.label.trim()) return v.label.trim();
+      if (typeof v.formatted === 'string' && v.formatted.trim()) return v.formatted.trim();
+    }
+  }
+  return '';
+};
+
 const OrderItem = ({ item, isTablet, money, onPress }) => {
   const isDelivery = item.type === 'Delivery';
   const isScheduled = String(item.status || '').trim().toUpperCase() === 'SCHEDULED';
@@ -250,6 +276,15 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
         </View>
       ) : null}
 
+      {!!item.delivery_address?.trim?.() && (
+        <View style={styles.metaRow}>
+          <Ionicons name="location-outline" size={16} color="#64748b" />
+          <Text style={styles.customerText} numberOfLines={2}>
+            {item.delivery_address.trim()}
+          </Text>
+        </View>
+      )}
+
       {!!item.note_for_restaurant?.trim?.() && (
         <View style={styles.noteRow}>
           <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0f766e" />
@@ -288,6 +323,7 @@ const groupOrders = (rows = []) => {
         note_for_restaurant: null,
         note_target: null,
         raw_items: [],
+        delivery_address: '', // ✅ NEW (filled once)
       };
 
     g.totals.push(safeNum(r.total_amount));
@@ -308,6 +344,10 @@ const groupOrders = (rows = []) => {
     if (!prev || (cur && cur < prev)) g.created_at = rowCreated || g.created_at;
 
     if (r.fulfillment_type === 'Delivery') g.type = 'Delivery';
+
+    if (!g.delivery_address) {
+      g.delivery_address = pickAddress(r) || '';
+    }
 
     if (!g.note_for_restaurant) {
       g.note_for_restaurant =
@@ -349,7 +389,7 @@ const groupOrders = (rows = []) => {
       customer_email: '',
       customer_phone: '',
       raw_items: g.raw_items,
-      delivery_address: '',
+      delivery_address: g.delivery_address || '', // ✅ FIXED
       note_for_restaurant: g.note_for_restaurant || '',
       note_target: g.note_target || '',
       priority: 0,
@@ -422,11 +462,14 @@ const parseJSON = async (res) => {
 const normalizeOrdersFromApi = (payload) => {
   try {
     if (Array.isArray(payload)) return groupOrders(payload);
+
     const blocks = Array.isArray(payload?.data) ? payload.data : [];
     const list = [];
+
     for (const block of blocks) {
       const u = block?.user || {};
       const orders = Array.isArray(block?.orders) ? block.orders : [];
+
       for (const o of orders) {
         const createdISO =
           o.created_at || o.createdAt || o.placed_at || o.order_time || null;
@@ -447,16 +490,29 @@ const normalizeOrdersFromApi = (payload) => {
         }
 
         const itemsStr = (o.items || [])
-          .map(
-            (it) =>
-              `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`
-          )
+          .map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`)
           .join(', ');
 
         const businessName =
           (o.items && o.items[0] && o.items[0].business_name) ||
           o.business_name ||
+          o.business?.business_name ||
           '';
+
+        // ✅ FIX: your API uses deliver_to.address
+        const deliveryAddr = pickAddress(o);
+
+        // ✅ totals in your sample API are inside totals.{...}
+        const totalAmount =
+          o?.totals?.total_amount ??
+          o.total_amount ??
+          o.total ??
+          0;
+
+        const discountAmount =
+          o?.totals?.discount_amount ??
+          o.discount_amount ??
+          0;
 
         list.push({
           id: String(o.order_id ?? o.id),
@@ -464,15 +520,15 @@ const normalizeOrdersFromApi = (payload) => {
           time: showAsGiven(createdISO),
           created_at: createdISO,
           items: itemsStr,
-          total: Number(o.total_amount ?? 0),
+          total: Number(totalAmount ?? 0),
           status: o.status,
           payment_method: o.payment_method,
           business_name: businessName,
-          delivery_address: o.delivery_address || '',
+          delivery_address: deliveryAddr || '',
           note_for_restaurant: o.note_for_restaurant || '',
           note_target: noteTarget,
           priority: Number(o.priority ?? 0),
-          discount_amount: Number(o.discount_amount ?? 0),
+          discount_amount: Number(discountAmount ?? 0),
           raw_items: Array.isArray(o.items) ? o.items : [],
           customer_id: u.user_id ?? null,
           customer_name: u.name || '',
@@ -481,6 +537,7 @@ const normalizeOrdersFromApi = (payload) => {
         });
       }
     }
+
     return list.sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
   } catch {
     return [];
@@ -494,23 +551,16 @@ const normalizeScheduledForBiz = (payload, bizId) => {
 
     for (const job of rows) {
       const payloadOrder = job.order_payload || {};
-      const allItems = Array.isArray(payloadOrder.items)
-        ? payloadOrder.items
-        : [];
+      const allItems = Array.isArray(payloadOrder.items) ? payloadOrder.items : [];
 
       const itemsForBiz = bizId
-        ? allItems.filter(
-            (it) => String(it.business_id) === String(bizId)
-          )
+        ? allItems.filter((it) => String(it.business_id) === String(bizId))
         : allItems;
 
       if (!itemsForBiz.length) continue;
 
       const itemsStr = itemsForBiz
-        .map(
-          (it) =>
-            `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`
-        )
+        .map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`)
         .join(', ');
 
       const businessName = itemsForBiz[0]?.business_name || '';
@@ -543,12 +593,16 @@ const normalizeScheduledForBiz = (payload, bizId) => {
         payloadOrder.phone ||
         '';
 
+      // ✅ FIX: scheduled payload might also have deliver_to
+      const scheduledAddr =
+        payloadOrder?.delivery_address?.address ||
+        payloadOrder?.deliver_to?.address ||
+        payloadOrder?.delivery_address ||
+        '';
+
       list.push({
         id: String(job.job_id || job.id),
-        type:
-          payloadOrder.fulfillment_type === 'Delivery'
-            ? 'Delivery'
-            : 'Pickup',
+        type: payloadOrder.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
         created_at: scheduledAt,
         time: timeLabel,
         items: itemsStr,
@@ -556,10 +610,8 @@ const normalizeScheduledForBiz = (payload, bizId) => {
         status: 'SCHEDULED',
         payment_method: payloadOrder.payment_method,
         business_name: businessName,
-        delivery_address:
-          payloadOrder.delivery_address?.address || '',
-        note_for_restaurant:
-          payloadOrder.note_for_restaurant || '',
+        delivery_address: String(scheduledAddr || ''),
+        note_for_restaurant: payloadOrder.note_for_restaurant || '',
         note_target: noteTarget,
         priority: payloadOrder.priority ? 1 : 0,
         discount_amount: Number(payloadOrder.discount_amount ?? 0),
@@ -571,9 +623,7 @@ const normalizeScheduledForBiz = (payload, bizId) => {
       });
     }
 
-    return list.sort(
-      (a, b) => parseForSort(a.created_at) - parseForSort(b.created_at)
-    );
+    return list.sort((a, b) => parseForSort(a.created_at) - parseForSort(b.created_at));
   } catch {
     return [];
   }
@@ -773,8 +823,13 @@ export default function MartOrdersTab({
         abortRef.current?.abort?.();
         const controller = new AbortController();
         abortRef.current = controller;
+
+        const token = await SecureStore.getItemAsync('auth_token');
+        const headers = { Accept: 'application/json' };
+        if (token) headers.Authorization = `Bearer ${token}`;
+
         const res = await fetch(url, {
-          headers: { Accept: 'application/json' },
+          headers,
           signal: controller.signal,
         });
         if (!res.ok) {
@@ -809,9 +864,11 @@ export default function MartOrdersTab({
       if (!opts.silent) setScheduledLoading(true);
       setScheduledError(null);
       try {
-        const res = await fetch(url, {
-          headers: { Accept: 'application/json' },
-        });
+        const token = await SecureStore.getItemAsync('auth_token');
+        const headers = { Accept: 'application/json' };
+        if (token) headers.Authorization = `Bearer ${token}`;
+
+        const res = await fetch(url, { headers });
         if (!res.ok) {
           const json = await parseJSON(res);
           const msg =
@@ -851,8 +908,6 @@ export default function MartOrdersTab({
       fetchScheduledOrders();
     }
   }, [activeChip, scheduledOrders.length, bizId, fetchScheduledOrders]);
-
-  // NOTE: removed the effect that was auto-selecting "today" so default stays "All dates"
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener(
@@ -901,35 +956,30 @@ export default function MartOrdersTab({
           created_at: createdISO,
           time: showAsGiven(createdISO),
           items: (o.items || [])
-            .map(
-              (it) =>
-                `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`
-            )
+            .map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`)
             .join(', '),
-          total: safeNum(o.total_amount ?? o.total),
+          total: safeNum(o?.totals?.total_amount ?? o.total_amount ?? o.total),
           status: o.status || 'PENDING',
           payment_method: o.payment_method || 'COD',
           business_name:
-            (o.items &&
-              o.items[0] &&
-              o.items[0].business_name) ||
+            (o.items && o.items[0] && o.items[0].business_name) ||
             o.business_name ||
+            o.business?.business_name ||
             'Mart',
           customer_id: o.user?.user_id ?? null,
           customer_name: o.user?.name || '',
           customer_email: o.user?.email || '',
           customer_phone: o.user?.phone || '',
           raw_items: Array.isArray(o.items) ? o.items : [],
-          delivery_address: o.delivery_address || '',
+          delivery_address: pickAddress(o) || '', // ✅ FIXED
           note_for_restaurant: o.note_for_restaurant || '',
           note_target: liveNoteTarget,
           priority: Number(o.priority ?? 0),
-          discount_amount: Number(o.discount_amount ?? 0),
+          discount_amount: Number(o?.totals?.discount_amount ?? o.discount_amount ?? 0),
         };
+
         setOrders((prev) => {
-          const without = prev.filter(
-            (x) => String(x.id) !== String(normalized.id)
-          );
+          const without = prev.filter((x) => String(x.id) !== String(normalized.id));
           return [normalized, ...without].sort(
             (a, b) => parseForSort(b.created_at) - parseForSort(a.created_at)
           );
@@ -979,27 +1029,27 @@ export default function MartOrdersTab({
   );
 
   /* -------- date filter (All / Today / Yesterday / calendar) -------- */
+  // ✅ Always filter ONLY normal orders by date (independent of activeChip)
   const dateFilteredOrders = useMemo(() => {
-    if (activeChip === 'UPCOMING') return orders; // ignore for upcoming
-    if (!activeDateKey) return orders;           // "All dates" (no filtering)
+    if (!activeDateKey) return orders; // "All dates"
     return orders.filter((o) => {
       const key = dateKeyFromTs(o.created_at || o.time || '');
       return key === activeDateKey;
     });
-  }, [orders, activeDateKey, activeChip]);
+  }, [orders, activeDateKey]);
 
+  // ✅ Status counts always based on date-filtered normal orders
   const statusCounts = useMemo(() => {
-    if (activeChip === 'UPCOMING') return {};
     return dateFilteredOrders.reduce((acc, o) => {
       const k = String(o.status || '').trim().toUpperCase();
       acc[k] = (acc[k] || 0) + 1;
       return acc;
     }, {});
-  }, [dateFilteredOrders, activeChip]);
+  }, [dateFilteredOrders]);
 
   const upcomingCount = scheduledOrders.length;
-  const totalCount =
-    activeChip === 'UPCOMING' ? scheduledOrders.length : dateFilteredOrders.length;
+  // ✅ All tab count should always reflect normal (date-filtered) orders
+  const totalCount = dateFilteredOrders.length;
 
   const filtered = useMemo(() => {
     const source = activeChip === 'UPCOMING' ? scheduledOrders : dateFilteredOrders;
@@ -1007,10 +1057,7 @@ export default function MartOrdersTab({
 
     if (activeChip !== 'ALL' && activeChip !== 'UPCOMING') {
       const statusKey = activeChip;
-      base = base.filter(
-        (o) =>
-          String(o.status || '').trim().toUpperCase() === statusKey
-      );
+      base = base.filter((o) => String(o.status || '').trim().toUpperCase() === statusKey);
     }
 
     const q = activeChip === 'UPCOMING' ? '' : query.trim().toLowerCase();
@@ -1029,6 +1076,7 @@ export default function MartOrdersTab({
           o.customer_email,
           o.note_for_restaurant,
           o.note_target,
+          o.delivery_address, // ✅ searchable now
         ]
           .filter(Boolean)
           .join(' ')
@@ -1042,12 +1090,7 @@ export default function MartOrdersTab({
 
   const renderItem = useCallback(
     ({ item }) => (
-      <OrderItem
-        isTablet={isTablet}
-        money={money}
-        item={item}
-        onPress={openOrder}
-      />
+      <OrderItem isTablet={isTablet} money={money} item={item} onPress={openOrder} />
     ),
     [isTablet, money, openOrder]
   );
@@ -1071,27 +1114,11 @@ export default function MartOrdersTab({
     if (err && effectiveOrders.length === 0) {
       return (
         <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-          <Ionicons
-            name="alert-circle-outline"
-            size={24}
-            color="#b91c1c"
-          />
-          <Text
-            style={{
-              color: '#b91c1c',
-              fontWeight: '700',
-              marginTop: 6,
-            }}
-          >
+          <Ionicons name="alert-circle-outline" size={24} color="#b91c1c" />
+          <Text style={{ color: '#b91c1c', fontWeight: '700', marginTop: 6 }}>
             Failed to load
           </Text>
-          <Text
-            style={{
-              color: '#6b7280',
-              marginTop: 4,
-              textAlign: 'center',
-            }}
-          >
+          <Text style={{ color: '#6b7280', marginTop: 4, textAlign: 'center' }}>
             {err}
           </Text>
         </View>
@@ -1100,18 +1127,8 @@ export default function MartOrdersTab({
     if (!isLoading && filtered.length === 0) {
       return (
         <View style={{ paddingVertical: 36, alignItems: 'center' }}>
-          <Ionicons
-            name="file-tray-outline"
-            size={36}
-            color="#94a3b8"
-          />
-          <Text
-            style={{
-              color: '#334155',
-              fontWeight: '800',
-              marginTop: 8,
-            }}
-          >
+          <Ionicons name="file-tray-outline" size={36} color="#94a3b8" />
+          <Text style={{ color: '#334155', fontWeight: '800', marginTop: 8 }}>
             No orders
           </Text>
           <Text style={{ color: '#64748b', marginTop: 4 }}>
@@ -1126,15 +1143,8 @@ export default function MartOrdersTab({
         data={filtered}
         keyExtractor={(item) => String(item.id)}
         renderItem={renderItem}
-        ItemSeparatorComponent={() => (
-          <View style={{ height: 12 }} />
-        )}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-          />
-        }
+        ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="always"
         removeClippedSubviews={false}
@@ -1179,83 +1189,43 @@ export default function MartOrdersTab({
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{
-              alignItems: 'center',
-              paddingVertical: 8,
-              gap: 8,
-            }}
+            contentContainerStyle={{ alignItems: 'center', paddingVertical: 8, gap: 8 }}
           >
             {/* All chip */}
             <TouchableOpacity
               onPress={() => setActiveChip('ALL')}
-              style={[
-                styles.statusChip,
-                activeChip === 'ALL' && styles.statusChipActive,
-              ]}
+              style={[styles.statusChip, activeChip === 'ALL' && styles.statusChipActive]}
               activeOpacity={0.7}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text
-                style={[
-                  styles.statusChipText,
-                  activeChip === 'ALL' && styles.statusChipTextActive,
-                ]}
-              >
+              <Text style={[styles.statusChipText, activeChip === 'ALL' && styles.statusChipTextActive]}>
                 All
               </Text>
-              <View
-                style={[
-                  styles.badge,
-                  activeChip === 'ALL' && styles.badgeActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.badgeText,
-                    activeChip === 'ALL' && styles.badgeTextActive,
-                  ]}
-                >
+              <View style={[styles.badge, activeChip === 'ALL' && styles.badgeActive]}>
+                <Text style={[styles.badgeText, activeChip === 'ALL' && styles.badgeTextActive]}>
                   {totalCount}
                 </Text>
               </View>
             </TouchableOpacity>
 
-            {/* Upcoming chip (no filters when active) */}
+            {/* Upcoming chip */}
             <TouchableOpacity
               onPress={() => setActiveChip('UPCOMING')}
-              style={[
-                styles.statusChip,
-                activeChip === 'UPCOMING' && styles.statusChipActive,
-              ]}
+              style={[styles.statusChip, activeChip === 'UPCOMING' && styles.statusChipActive]}
               activeOpacity={0.7}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text
-                style={[
-                  styles.statusChipText,
-                  activeChip === 'UPCOMING' && styles.statusChipTextActive,
-                ]}
-              >
+              <Text style={[styles.statusChipText, activeChip === 'UPCOMING' && styles.statusChipTextActive]}>
                 Upcoming
               </Text>
-              <View
-                style={[
-                  styles.badge,
-                  activeChip === 'UPCOMING' && styles.badgeActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.badgeText,
-                    activeChip === 'UPCOMING' && styles.badgeTextActive,
-                  ]}
-                >
+              <View style={[styles.badge, activeChip === 'UPCOMING' && styles.badgeActive]}>
+                <Text style={[styles.badgeText, activeChip === 'UPCOMING' && styles.badgeTextActive]}>
                   {upcomingCount}
                 </Text>
               </View>
             </TouchableOpacity>
 
-            {/* Status chips (respect date filter) */}
+            {/* Status chips */}
             {STATUS_LABELS.map((s) => {
               const active = activeChip === s.key;
               const count = statusCounts[s.key] || 0;
@@ -1263,34 +1233,16 @@ export default function MartOrdersTab({
                 <TouchableOpacity
                   key={s.key}
                   onPress={() => setActiveChip(s.key)}
-                  style={[
-                    styles.statusChip,
-                    active && styles.statusChipActive,
-                  ]}
+                  style={[styles.statusChip, active && styles.statusChipActive]}
                   activeOpacity={0.7}
                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                 >
-                  <Text
-                    style={[
-                      styles.statusChipText,
-                      active && styles.statusChipTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
                     {s.label}
                   </Text>
                   {count > 0 ? (
-                    <View
-                      style={[
-                        styles.badge,
-                        active && styles.badgeActive,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.badgeText,
-                          active && styles.badgeTextActive,
-                        ]}
-                      >
+                    <View style={[styles.badge, active && styles.badgeActive]}>
+                      <Text style={[styles.badgeText, active && styles.badgeTextActive]}>
                         {count}
                       </Text>
                     </View>
@@ -1353,7 +1305,7 @@ export default function MartOrdersTab({
 
         {content}
 
-        {/* Date dropdown modal: All / Today / Yesterday / Pick from calendar */}
+        {/* Date dropdown modal */}
         <Modal
           visible={showDateDropdown}
           transparent
@@ -1364,7 +1316,6 @@ export default function MartOrdersTab({
           }}
         >
           <View style={styles.modalOverlay}>
-            {/* tap outside to close */}
             <Pressable
               style={StyleSheet.absoluteFill}
               onPress={() => {
@@ -1377,73 +1328,45 @@ export default function MartOrdersTab({
               <Text style={styles.modalTitle}>Select date</Text>
 
               <ScrollView style={{ maxHeight: 260 }}>
-                {/* All dates */}
                 <TouchableOpacity
-                  style={[
-                    styles.modalOption,
-                    activeDateKey === '' && styles.modalOptionActive,
-                  ]}
+                  style={[styles.modalOption, activeDateKey === '' && styles.modalOptionActive]}
                   onPress={() => {
                     setActiveDateKey('');
                     setShowCalendar(false);
                     setShowDateDropdown(false);
                   }}
                 >
-                  <Text
-                    style={[
-                      styles.modalOptionText,
-                      activeDateKey === '' && styles.modalOptionTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.modalOptionText, activeDateKey === '' && styles.modalOptionTextActive]}>
                     All dates
                   </Text>
                 </TouchableOpacity>
 
-                {/* Today */}
                 <TouchableOpacity
-                  style={[
-                    styles.modalOption,
-                    activeDateKey === todayKey && styles.modalOptionActive,
-                  ]}
+                  style={[styles.modalOption, activeDateKey === todayKey && styles.modalOptionActive]}
                   onPress={() => {
                     setActiveDateKey(todayKey);
                     setShowCalendar(false);
                     setShowDateDropdown(false);
                   }}
                 >
-                  <Text
-                    style={[
-                      styles.modalOptionText,
-                      activeDateKey === todayKey && styles.modalOptionTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.modalOptionText, activeDateKey === todayKey && styles.modalOptionTextActive]}>
                     Today
                   </Text>
                 </TouchableOpacity>
 
-                {/* Yesterday */}
                 <TouchableOpacity
-                  style={[
-                    styles.modalOption,
-                    activeDateKey === yesterdayKey && styles.modalOptionActive,
-                  ]}
+                  style={[styles.modalOption, activeDateKey === yesterdayKey && styles.modalOptionActive]}
                   onPress={() => {
                     setActiveDateKey(yesterdayKey);
                     setShowCalendar(false);
                     setShowDateDropdown(false);
                   }}
                 >
-                  <Text
-                    style={[
-                      styles.modalOptionText,
-                      activeDateKey === yesterdayKey && styles.modalOptionTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.modalOptionText, activeDateKey === yesterdayKey && styles.modalOptionTextActive]}>
                     Yesterday
                   </Text>
                 </TouchableOpacity>
 
-                {/* Calendar trigger */}
                 <View style={{ marginTop: 8 }}>
                   <TouchableOpacity
                     style={styles.calendarBtn}
@@ -1455,7 +1378,6 @@ export default function MartOrdersTab({
                   </TouchableOpacity>
                 </View>
 
-                {/* Calendar picker */}
                 {showCalendar && (
                   <View style={{ marginTop: 8 }}>
                     <DateTimePicker
@@ -1471,9 +1393,7 @@ export default function MartOrdersTab({
                           setShowCalendar(false);
                           setShowDateDropdown(false);
                         } else {
-                          if (selectedDate) {
-                            setTempCalendarDate(selectedDate);
-                          }
+                          if (selectedDate) setTempCalendarDate(selectedDate);
                         }
                       }}
                     />
@@ -1481,9 +1401,7 @@ export default function MartOrdersTab({
                     {Platform.OS === 'ios' && (
                       <View style={styles.iosCalendarActions}>
                         <TouchableOpacity
-                          onPress={() => {
-                            setShowCalendar(false);
-                          }}
+                          onPress={() => setShowCalendar(false)}
                           style={[styles.iosCalendarBtn, { backgroundColor: '#e5e7eb' }]}
                         >
                           <Text style={[styles.iosCalendarBtnText, { color: '#111827' }]}>
@@ -1525,11 +1443,7 @@ export default function MartOrdersTab({
           }
           activeOpacity={0.9}
         >
-          <Ionicons
-            name="albums-outline"
-            size={isTablet ? 24 : 22}
-            color="#fff"
-          />
+          <Ionicons name="albums-outline" size={isTablet ? 24 : 22} color="#fff" />
           <Text style={styles.fabLabel}>Grouped Orders</Text>
         </TouchableOpacity>
       </View>

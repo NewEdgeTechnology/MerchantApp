@@ -19,11 +19,24 @@ export default function MetaSection({
   setManualPrepMin,
   restaurantNote,
 }) {
+  // ✅ FIX: backend sends address inside deliver_to.address
+  const deliveryAddressText =
+    order?.deliver_to?.address ||
+    order?.deliver_to?.location ||
+    order?.deliver_to?.place ||
+    order?.delivery_address?.address || // fallback if backend returns object
+    order?.delivery_address ||          // fallback if backend returns string
+    order?.address ||                   // extra fallback
+    '—';
+
   return (
     <View style={{ marginTop: 12, gap: 8 }}>
       <Row icon="person-outline" text={order.customer_name || '—'} />
       <Row icon="bicycle-outline" text={`Fulfillment: ${fulfillment || '—'}`} />
-      <Row icon="swap-horizontal-outline" text={`Delivery by: ${deliveryOptionDisplay || '—'}`} />
+      <Row
+        icon="swap-horizontal-outline"
+        text={`Delivery by: ${deliveryOptionDisplay || '—'}`}
+      />
       {!!ifUnavailableDisplay && (
         <Row icon="help-buoy-outline" text={`If unavailable: ${ifUnavailableDisplay}`} />
       )}
@@ -33,7 +46,7 @@ export default function MetaSection({
       <Row icon="card-outline" text={`Payment: ${order.payment_method || '—'}`} />
 
       {fulfillmentLower !== 'pickup' && (
-        <Row icon="navigate-outline" text={order.delivery_address || '—'} />
+        <Row icon="navigate-outline" text={deliveryAddressText} />
       )}
 
       {fulfillmentLower === 'delivery' && (
@@ -97,7 +110,9 @@ export default function MetaSection({
       {!!restaurantNote && (
         <View style={styles.noteBox}>
           <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0f766e" />
-          <Text style={styles.noteText} numberOfLines={6}>{restaurantNote}</Text>
+          <Text style={styles.noteText} numberOfLines={6}>
+            {restaurantNote}
+          </Text>
         </View>
       )}
     </View>
