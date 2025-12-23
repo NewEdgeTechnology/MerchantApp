@@ -82,6 +82,9 @@ import VerifyTPinOtpScreen from './screens/wallet/VerifyTPinOtpScreen.js';
 import NearbyOrdersScreen from './screens/food/GroupOrder/NearbyOrdersScreen.js';
 import NearbyClusterOrdersScreen from './screens/food/GroupOrder/NearbyClusterOrdersScreen.js';
 import ClusterDeliveryOptionsScreen from './screens/food/GroupOrder/ClusterDeliveryOptionsScreen.js';
+import SimilarItemCatalog from './screens/food/OrderDetails/SimilarItemCatalog.js';
+import TrackBatchOrdersScreen from './screens/food/GroupOrder/TrackBatchOrdersScreen.js';
+import TrackDeliveryDriver from './screens/food/GroupOrder/TrackDeliveryDriver.js';
 
 const Stack = createStackNavigator();
 
@@ -185,6 +188,9 @@ export default function App() {
             <Stack.Screen name="NearbyOrdersScreen" component={NearbyOrdersScreen} />
             <Stack.Screen name="NearbyClusterOrdersScreen" component={NearbyClusterOrdersScreen} />
             <Stack.Screen name="ClusterDeliveryOptionsScreen" component={ClusterDeliveryOptionsScreen} />
+            <Stack.Screen name="SimilarItemCatalog" component={SimilarItemCatalog} />
+            <Stack.Screen name="TrackBatchOrdersScreen" component={TrackBatchOrdersScreen} />
+            <Stack.Screen name="TrackDeliveryDriver" component={TrackDeliveryDriver} />
           </Stack.Navigator>
         </AppLockGate>
       </NavigationContainer>
