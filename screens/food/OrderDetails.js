@@ -1,18 +1,18 @@
 // screens/food/OrderDetails.js
-// PENDING → CONFIRMED → READY → OUT_FOR_DELIVERY → COMPLETED
-// If delivery_option=BOTH, show Self/Grab chooser ONLY at READY.
-// - Self at READY: merchant can continue as usual.
-// - Grab at READY: send broadcast-delivery request; when socket event "deliveryAccepted"
-//   comes, merchant manually taps Out for delivery.
+// ✅ FIX: If backend returns "ON ROAD" / "ON_ROAD" it will be normalized to "OUT_FOR_DELIVERY"
+// ✅ FIX: OrderDetails will not show old status (eg PENDING) when list already shows Out For Delivery
+// ✅ FIX: hydrateFromGrouped will normalize status and won't downgrade an already-updated local status
+// ✅ FIX: after pressing Out for delivery, UI updates immediately + emits order-updated with normalized status
 //
-// ✅ Removed auto re-send every 30s.
-// ✅ After sending once, waits 1 minute, then asks: "Send again?" (Yes/Not now)
-// ✅ Listen for socket event "delivery:driver_arrived" and show alert/message
+// ✅ FIX (your issue): Deliver in group was opening MART NearbyClusterOrdersScreen because of route-name collision.
+// - Use a UNIQUE FOOD route name: "FoodNearbyClusterOrdersScreen"
+// - resolveClusterContext defaults to FoodNearbyClusterOrdersScreen
+// - candidates prefer FoodNearbyClusterOrdersScreen first
 //
-// ✅ Deliver in group is ONLY inside DeliveryMethodChooser (same row as Self + Grab)
-// ✅ Button ALWAYS navigates (clusterCtx if exists, else focusOrderId fallback)
-// ✅ FIX: Never “redirect back” to OrderDetails — always navigate to REAL NearbyClusterOrdersScreen
-//       by finding the route in this navigator OR its parents, and navigating at the right level.
+// ✅ NEW (your request): When redirected from OrderDetails, NearbyClusterOrdersScreen UI should look the SAME
+// as when coming from NearbyOrdersScreen (list of orders, tabs, counts, etc.).
+// - If OrderDetails does NOT have clusterCtx.orders, it will FETCH grouped orders and build nearby clusters
+//   based on lat/lng, then navigate with { orders, label, addrPreview, centerCoords } so UI shows properly.
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import {
@@ -48,7 +48,6 @@ import {
   money,
   clamp,
   findStepIndex,
-  fmtStamp,
   STATUS_META,
   TERMINAL_NEGATIVE,
   TERMINAL_SUCCESS,
@@ -70,6 +69,38 @@ import UpdateStatusActions from "./OrderDetails/UpdateStatusActions";
 import ItemsBlock from "./OrderDetails/ItemsBlock";
 import TotalsBlock from "./OrderDetails/TotalsBlock";
 import DeclineModal from "./OrderDetails/DeclineModal";
+
+/* ===========================
+   ✅ status normalizer
+   =========================== */
+const normalizeStatus = (v) => {
+  const s = String(v || "").trim().toUpperCase();
+  if (!s) return "PENDING";
+
+  if (s === "ACCEPTED") return "CONFIRMED";
+  if (s === "CONFIRM") return "CONFIRMED";
+  if (s === "PREPARING") return "CONFIRMED";
+
+  // ✅ your case
+  if (s === "ON ROAD" || s === "ON_ROAD" || s === "ONROAD") return "OUT_FOR_DELIVERY";
+  if (s === "OUT FOR DELIVERY") return "OUT_FOR_DELIVERY";
+
+  return s;
+};
+
+const STATUS_RANK = {
+  PENDING: 0,
+  CONFIRMED: 1,
+  READY: 2,
+  OUT_FOR_DELIVERY: 3,
+  COMPLETED: 4,
+};
+
+const isHigherOrEqualStatus = (a, b) => {
+  const ra = STATUS_RANK[normalizeStatus(a)] ?? -1;
+  const rb = STATUS_RANK[normalizeStatus(b)] ?? -1;
+  return ra >= rb;
+};
 
 /* ===========================
    normalize delivery_address
@@ -108,7 +139,7 @@ const resolveClusterContext = (params = {}, order = {}, routeOrderId) => {
       screenName:
         direct.screenName ||
         params.clusterScreenName ||
-        "NearbyClusterOrdersScreen",
+        "FoodNearbyClusterOrdersScreen",
       ...direct,
 
       orderId: direct.orderId ?? orderIdKey,
@@ -167,7 +198,7 @@ const resolveClusterContext = (params = {}, order = {}, routeOrderId) => {
 
   if (maybeOrders || maybeClusterId) {
     return {
-      screenName: params.clusterScreenName || "NearbyClusterOrdersScreen",
+      screenName: params.clusterScreenName || "FoodNearbyClusterOrdersScreen",
       businessId:
         params.businessId ??
         params.business_id ??
@@ -240,6 +271,98 @@ const findNavigatorOwningRoute = (nav, routeName) => {
   return null;
 };
 
+/* ===========================
+   ✅ NEW: build clusters from orders using lat/lng
+   - this is what makes the UI show list + counts even when coming from OrderDetails
+   =========================== */
+const buildClustersFromOrders = (orders = [], thresholdKm = 5) => {
+  const pickCoords = (o = {}) => {
+    const da = o.delivery_address || o.address || o.deliver_to || null;
+    const cand = [
+      { lat: o.delivery_lat, lng: o.delivery_lng },
+      { lat: o.delivery_latitude, lng: o.delivery_longitude },
+      { lat: o.deliveryLatitude, lng: o.deliveryLongitude },
+      { lat: o.lat, lng: o.lng },
+      { lat: o.latitude, lng: o.longitude },
+      { lat: o.deliver_to?.lat, lng: o.deliver_to?.lng },
+      { lat: o.delivery_address?.lat, lng: o.delivery_address?.lng },
+      { lat: da?.lat, lng: da?.lng },
+      { lat: da?.latitude, lng: da?.longitude },
+    ];
+    for (const c of cand) {
+      const lat = Number(c.lat);
+      const lng = Number(c.lng);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+    }
+    return null;
+  };
+
+  const getAddr = (o = {}) => {
+    const rawAddr = o.delivery_address ?? o.raw?.delivery_address;
+    if (typeof rawAddr === "string" && rawAddr.trim()) return rawAddr.trim();
+    if (rawAddr && typeof rawAddr === "object") {
+      if (typeof rawAddr.address === "string" && rawAddr.address.trim()) return rawAddr.address.trim();
+      if (typeof rawAddr.formatted === "string" && rawAddr.formatted.trim()) return rawAddr.formatted.trim();
+      if (typeof rawAddr.label === "string" && rawAddr.label.trim()) return rawAddr.label.trim();
+    }
+    if (typeof o.address === "string" && o.address.trim()) return o.address.trim();
+    if (typeof o.general_place === "string" && o.general_place.trim()) return o.general_place.trim();
+    if (typeof o.deliver_to?.address === "string" && o.deliver_to.address.trim()) return o.deliver_to.address.trim();
+    return "";
+  };
+
+  const clusters = [];
+  const normalized = (orders || []).map((o) => ({
+    raw: o,
+    coords: pickCoords(o),
+    addr: getAddr(o),
+  }));
+
+  for (const it of normalized) {
+    if (!it.coords) continue;
+
+    let placed = false;
+    for (const c of clusters) {
+      const d = computeHaversineKm(c.centerCoords, it.coords);
+      if (d != null && d <= thresholdKm) {
+        c.orders.push(it.raw);
+        const n = c.orders.length;
+        c.centerCoords = {
+          lat: (c.centerCoords.lat * (n - 1) + it.coords.lat) / n,
+          lng: (c.centerCoords.lng * (n - 1) + it.coords.lng) / n,
+        };
+        if (!c.addrPreview && it.addr) c.addrPreview = it.addr;
+        placed = true;
+        break;
+      }
+    }
+
+    if (!placed) {
+      clusters.push({
+        label: it.addr ? it.addr.split(",")[0].trim() : "Nearby cluster",
+        addrPreview: it.addr || "",
+        centerCoords: { ...it.coords },
+        orders: [it.raw],
+        thresholdKm,
+      });
+    }
+  }
+
+  // fallback: if coords missing everywhere, still create a single cluster
+  if (!clusters.length && (orders || []).length) {
+    clusters.push({
+      label: "Nearby cluster",
+      addrPreview: getAddr(orders[0]) || "",
+      centerCoords: null,
+      orders: orders,
+      thresholdKm,
+    });
+  }
+
+  clusters.sort((a, b) => (b.orders?.length || 0) - (a.orders?.length || 0));
+  return clusters;
+};
+
 export default function OrderDetails() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -254,7 +377,7 @@ export default function OrderDetails() {
   const isScheduledOrder =
     params.isScheduled === true ||
     params.is_scheduled === true ||
-    String(orderProp?.status || "").toUpperCase() === "SCHEDULED" ||
+    normalizeStatus(orderProp?.status) === "SCHEDULED" ||
     (routeOrderId && String(routeOrderId).startsWith("SCH-"));
 
   const ownerType = params.ownerType ?? params.owner_type ?? null;
@@ -266,8 +389,9 @@ export default function OrderDetails() {
     const o = orderProp || {};
     return {
       ...o,
+      status: normalizeStatus(o?.status),
       delivery_address: normalizeDeliveryAddress(
-        o?.delivery_address ?? o?.address
+        o?.delivery_address ?? o?.address ?? o?.deliver_to
       ),
     };
   });
@@ -294,13 +418,17 @@ export default function OrderDetails() {
     [params, order, routeOrderId]
   );
 
-  // ✅ candidates (supports alias names if you used different route name)
+  // ✅ Prefer FOOD unique route name first
   const CLUSTER_ROUTE_CANDIDATES = useMemo(
-    () => ["NearbyClusterOrdersScreen", "NearbyClusterOrders", "NearbyOrdersCluster"],
+    () => [
+      "FoodNearbyClusterOrdersScreen",
+      "NearbyClusterOrdersScreen",
+      "NearbyClusterOrders",
+      "NearbyOrdersCluster",
+    ],
     []
   );
 
-  // ✅ resolved cluster route name that actually exists in nav chain
   const resolvedClusterRouteName = useMemo(() => {
     const preferred = clusterCtx?.screenName || params.clusterScreenName;
     return (
@@ -309,7 +437,6 @@ export default function OrderDetails() {
     );
   }, [navigation, clusterCtx?.screenName, params.clusterScreenName, CLUSTER_ROUTE_CANDIDATES]);
 
-  // Reset maps when new order
   useEffect(() => {
     setItemUnavailableMap({});
     setItemReplacementMap({});
@@ -453,7 +580,8 @@ export default function OrderDetails() {
   const isSelfSelected = deliveryChoice === "self";
   const isGrabSelected = deliveryChoice === "grab";
 
-  const status = (order?.status || "PENDING").toUpperCase();
+  // ✅ always use normalized status
+  const status = normalizeStatus(order?.status || "PENDING");
 
   const isPlatformDelivery = useMemo(() => {
     if (isBothOption) return isGrabSelected;
@@ -486,7 +614,7 @@ export default function OrderDetails() {
     TERMINAL_SUCCESS.has(status) || (isPickupFulfillment && status === "READY");
 
   const isCancelledByCustomer = useMemo(() => {
-    const rawStatus = String(order?.status || "").toUpperCase();
+    const rawStatus = normalizeStatus(order?.status);
     const reasonRaw =
       order?.status_reason ??
       order?.cancel_reason ??
@@ -534,7 +662,7 @@ export default function OrderDetails() {
 
   const nextFor = useCallback(
     (curr) => {
-      const s = (curr || "").toUpperCase();
+      const s = normalizeStatus(curr);
       if (TERMINAL_NEGATIVE.has(s) || TERMINAL_SUCCESS.has(s)) return null;
       if (isPickupFulfillment && s === "READY") return null;
       if (s === "READY" && shouldBlockAtReady) return null;
@@ -684,14 +812,18 @@ export default function OrderDetails() {
       );
       if (!match) return;
 
+      const matchStatus = normalizeStatus(match?.status ?? "PENDING");
+      const localStatus = normalizeStatus(order?.status ?? "PENDING");
+
+      // ✅ do NOT downgrade local status if it is already ahead
+      const finalStatus = isHigherOrEqualStatus(localStatus, matchStatus)
+        ? localStatus
+        : matchStatus;
+
       const normalizedFromMatch = {
         ...match,
-        id: String(
-          match?.id ?? match?.order_id ?? match?.order_code ?? routeOrderId
-        ),
-        order_code: normalizeOrderCode(
-          match?.order_code ?? match?.id ?? routeOrderId
-        ),
+        id: String(match?.id ?? match?.order_id ?? match?.order_code ?? routeOrderId),
+        order_code: normalizeOrderCode(match?.order_code ?? match?.id ?? routeOrderId),
         customer_name:
           match?.customer_name ??
           match?.user_name ??
@@ -702,7 +834,7 @@ export default function OrderDetails() {
           match?.customer_phone ?? match?.phone ?? match?.user?.phone ?? "",
         payment_method: match?.payment_method ?? match?.payment ?? "",
         delivery_address: normalizeDeliveryAddress(
-          match?.delivery_address ?? match?.address
+          match?.delivery_address ?? match?.address ?? match?.deliver_to
         ),
         raw_items: Array.isArray(match?.raw_items)
           ? match.raw_items
@@ -710,7 +842,7 @@ export default function OrderDetails() {
           ? match.items
           : [],
         total: match?.total ?? match?.total_amount ?? 0,
-        status: (match?.status ?? order?.status ?? "PENDING").toUpperCase(),
+        status: finalStatus,
         type:
           match?.type ??
           match?.fulfillment_type ??
@@ -746,6 +878,7 @@ export default function OrderDetails() {
       setOrder((prev) => ({
         ...prev,
         ...normalizedFromMatch,
+        status: normalizeStatus(normalizedFromMatch.status),
         delivery_address: normalizeDeliveryAddress(
           normalizedFromMatch?.delivery_address ?? prev?.delivery_address ?? prev?.address
         ),
@@ -875,9 +1008,11 @@ export default function OrderDetails() {
   };
 
   const doUpdate = useCallback(
-    async (newStatus, opts = {}, skipUnavailableCheck = false) => {
+    async (newStatusRaw, opts = {}, skipUnavailableCheck = false) => {
       try {
-        const currentStatus = (order?.status || "PENDING").toUpperCase();
+        const currentStatus = normalizeStatus(order?.status || "PENDING");
+        const newStatus = normalizeStatus(newStatusRaw);
+
         const fLower = (fulfillment || "").toLowerCase();
         const needsPrep = fLower === "delivery" || fLower === "pickup";
 
@@ -940,10 +1075,10 @@ export default function OrderDetails() {
             cancellation_reason: statusReason,
           };
 
-          setOrder((prev) => ({ ...prev, ...patch }));
+          setOrder((prev) => ({ ...prev, ...patch, status: normalizeStatus(patch.status) }));
           DeviceEventEmitter.emit("order-updated", {
-            id: routeOrderId || order?.id,
-            patch,
+            id: String(order?.id || routeOrderId),
+            patch: { ...patch, status: normalizeStatus(patch.status) },
           });
           return;
         }
@@ -1010,6 +1145,18 @@ export default function OrderDetails() {
             payload.final_discount_amount = discount;
         }
 
+        // ✅ optimistic UI update immediately
+        const optimisticPatch = { status: newStatus };
+        if (payload.status_reason) optimisticPatch.status_reason = payload.status_reason;
+        if (payload.delivery_option) optimisticPatch.delivery_option = payload.delivery_option;
+        if (computedEta != null) optimisticPatch.estimated_arrivial_time = computedEta;
+
+        setOrder((prev) => ({ ...prev, ...optimisticPatch, status: normalizeStatus(newStatus) }));
+        DeviceEventEmitter.emit("order-updated", {
+          id: String(order?.id || routeOrderId),
+          patch: { ...optimisticPatch, status: normalizeStatus(newStatus) },
+        });
+
         setUpdating(true);
         const token = await SecureStore.getItemAsync("auth_token");
         const raw = order?.order_code || order?.id || routeOrderId;
@@ -1021,19 +1168,9 @@ export default function OrderDetails() {
           payload,
           token,
         });
-
-        const patch = { status: newStatus };
-        if (payload.status_reason) patch.status_reason = payload.status_reason;
-        if (payload.delivery_option) patch.delivery_option = payload.delivery_option;
-        if (computedEta != null) patch.estimated_arrivial_time = computedEta;
-
-        setOrder((prev) => ({ ...prev, ...patch }));
-        DeviceEventEmitter.emit("order-updated", {
-          id: routeOrderId || order?.id,
-          patch,
-        });
       } catch (e) {
         Alert.alert("Update failed", String(e?.message || e));
+        hydrateFromGrouped();
       } finally {
         setUpdating(false);
       }
@@ -1055,6 +1192,7 @@ export default function OrderDetails() {
       manualPrepMin,
       routeInfo,
       fulfillment,
+      hydrateFromGrouped,
     ]
   );
 
@@ -1193,7 +1331,7 @@ export default function OrderDetails() {
     }
   }, []);
 
-  /* ---------- Driver details fetch using ENV_DRIVER_DETAILS ---------- */
+  /* ---------- Driver details fetch ---------- */
   const fetchDriverDetails = useCallback(
     async (driverId) => {
       try {
@@ -1308,7 +1446,8 @@ export default function OrderDetails() {
   }, []);
 
   const getOrderForFare = useCallback(async () => {
-    const hasFeeNow = order?.delivery_fee != null || order?.merchant_delivery_fee != null;
+    const hasFeeNow =
+      order?.delivery_fee != null || order?.merchant_delivery_fee != null;
     if (hasFeeNow) return order;
 
     try {
@@ -1387,7 +1526,7 @@ export default function OrderDetails() {
         totals_for_business: match?.totals_for_business ?? order?.totals_for_business ?? null,
         total_amount: match?.total_amount ?? match?.total ?? order?.total_amount ?? order?.total ?? 0,
         delivery_address: normalizeDeliveryAddress(
-          match?.delivery_address ?? match?.address ?? order?.delivery_address
+          match?.delivery_address ?? match?.address ?? match?.deliver_to ?? order?.delivery_address
         ),
       };
 
@@ -1431,9 +1570,12 @@ export default function OrderDetails() {
           ? Math.round(routeInfo.etaMin * 60)
           : 480;
 
-      const deliveryFeeRaw = ordForFare?.delivery_fee != null ? Number(ordForFare.delivery_fee) : null;
+      const deliveryFeeRaw =
+        ordForFare?.delivery_fee != null ? Number(ordForFare.delivery_fee) : null;
       const merchantDeliveryFeeRaw =
-        ordForFare?.merchant_delivery_fee != null ? Number(ordForFare.merchant_delivery_fee) : null;
+        ordForFare?.merchant_delivery_fee != null
+          ? Number(ordForFare.merchant_delivery_fee)
+          : null;
 
       let baseFare = 0;
       if (deliveryFeeRaw != null && Number.isFinite(deliveryFeeRaw) && deliveryFeeRaw > 0) {
@@ -1637,10 +1779,13 @@ export default function OrderDetails() {
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener("order-updated", ({ id, patch }) => {
-      if (String(id) === String(routeOrderId)) setOrder((prev) => ({ ...prev, ...patch }));
+      if (String(id) !== String(order?.id || routeOrderId)) return;
+      const nextPatch = patch || {};
+      if (nextPatch.status) nextPatch.status = normalizeStatus(nextPatch.status);
+      setOrder((prev) => ({ ...prev, ...nextPatch }));
     });
     return () => sub?.remove?.();
-  }, [routeOrderId]);
+  }, [routeOrderId, order?.id]);
 
   /* ---------------- Items ---------------- */
   const items = useMemo(() => {
@@ -1705,7 +1850,7 @@ export default function OrderDetails() {
 
   const handleToggleUnavailable = useCallback(
     (key) => {
-      if ((status || "").toUpperCase() !== "PENDING") return;
+      if (normalizeStatus(status) !== "PENDING") return;
       setItemUnavailableMap((prev) => ({ ...prev, [key]: !prev[key] }));
     },
     [status]
@@ -1735,11 +1880,9 @@ export default function OrderDetails() {
   );
 
   /* ===========================
-     ✅ FIXED: Deliver in group navigation
-     - Finds the real route name that exists
-     - Navigates at the navigator level that owns that route
-     =========================== */
-  const goToCluster = useCallback(() => {
+     ✅ Deliver in group navigation (FULL UI from OrderDetails)
+   =========================== */
+  const goToCluster = useCallback(async () => {
     const focusOrderId = normalizeOrderCode(order?.order_code || order?.id || routeOrderId);
 
     const fallbackParams = {
@@ -1750,39 +1893,190 @@ export default function OrderDetails() {
       focusOrderId,
     };
 
-    const payload = clusterCtx
-      ? {
-          ...clusterCtx,
-          businessId: clusterCtx.businessId ?? fallbackParams.businessId,
-          ownerType: clusterCtx.ownerType ?? fallbackParams.ownerType,
-          ordersGroupedUrl: clusterCtx.ordersGroupedUrl ?? fallbackParams.ordersGroupedUrl,
-          delivery_option: clusterCtx.delivery_option ?? fallbackParams.delivery_option,
-          focusOrderId,
-          // prevent any old screenName from hijacking navigation
-          screenName: undefined,
-        }
-      : fallbackParams;
-
     const targetRoute = resolvedClusterRouteName;
 
     if (!targetRoute) {
       Alert.alert(
         "Route not registered",
-        "NearbyClusterOrdersScreen is not in this navigator chain. Add it to your Stack.Screen route names."
+        "FoodNearbyClusterOrdersScreen is not in this navigator chain. Add it to your Stack.Screen route names."
       );
       return;
     }
 
-    const ownerNav = findNavigatorOwningRoute(navigation, targetRoute);
+    // 1) If we already have cluster orders, forward (fast path)
+    if (clusterCtx?.orders && Array.isArray(clusterCtx.orders) && clusterCtx.orders.length) {
+      const payload = {
+        ...clusterCtx,
+        businessId: clusterCtx.businessId ?? fallbackParams.businessId,
+        ownerType: clusterCtx.ownerType ?? fallbackParams.ownerType,
+        ordersGroupedUrl: clusterCtx.ordersGroupedUrl ?? fallbackParams.ordersGroupedUrl,
+        delivery_option: clusterCtx.delivery_option ?? fallbackParams.delivery_option,
+        focusOrderId,
 
-    if (ownerNav && ownerNav !== navigation) {
-      // navigate at the correct parent navigator level
-      ownerNav.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+        // ✅ ensure UI can show like NearbyOrdersScreen
+        label: clusterCtx.label || clusterCtx.addrPreview || "Nearby cluster",
+        addrPreview: clusterCtx.addrPreview || clusterCtx.label || "",
+        centerCoords: clusterCtx.centerCoords || null,
+        thresholdKm: clusterCtx.thresholdKm || 5,
+
+        screenName: undefined,
+      };
+
+      const ownerNav = findNavigatorOwningRoute(navigation, targetRoute);
+      if (ownerNav && ownerNav !== navigation) {
+        ownerNav.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+        return;
+      }
+      navigation.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
       return;
     }
 
-    // fallback normal navigate
-    navigation.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+    // 2) Otherwise: fetch grouped orders, build clusters by lat/lng, open the cluster that contains this order
+    try {
+      const baseRaw = (ordersGroupedUrl || ENV_ORDER_ENDPOINT || "").trim();
+      if (!baseRaw) throw new Error("Grouped orders endpoint missing");
+
+      let bizId = businessId || paramBusinessId;
+
+      if (!bizId && baseRaw.includes("{businessId}")) {
+        const saved = await SecureStore.getItemAsync("merchant_login");
+        if (saved) {
+          try {
+            const j = JSON.parse(saved);
+            bizId =
+              j?.business_id ||
+              j?.user?.business_id ||
+              j?.user?.businessId ||
+              j?.id ||
+              j?.user?.id ||
+              null;
+            if (bizId && !businessId) setBusinessId(bizId);
+          } catch {}
+        }
+      }
+
+      let groupedUrlFinal = baseRaw;
+      if (bizId) {
+        groupedUrlFinal = groupedUrlFinal.replace(/\{businessId\}/gi, encodeURIComponent(String(bizId)));
+      }
+
+      const token = await SecureStore.getItemAsync("auth_token");
+      const res = await fetch(groupedUrlFinal, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+
+      const text = await res.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {}
+
+      if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+
+      const groups = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
+
+      // flatten (same style you use in hydrateFromGrouped)
+      let allOrders = [];
+      for (const g of groups) {
+        if (Array.isArray(g?.orders)) {
+          const user = g.user || g.customer || g.user_details || {};
+          const userName =
+            g.customer_name ?? g.name ?? user.name ?? user.user_name ?? user.full_name ?? "";
+          const userPhone = g.phone ?? user.phone ?? user.phone_number ?? user.mobile ?? "";
+
+          for (const o of g.orders) {
+            allOrders.push({
+              ...o,
+              user: o.user || user,
+              customer_name: o.customer_name ?? userName,
+              customer_phone: o.customer_phone ?? userPhone,
+              user_name: o.user_name ?? userName,
+              status: normalizeStatus(o?.status),
+            });
+          }
+        } else if (g && (g.id || g.order_id || g.order_code)) {
+          allOrders.push({ ...g, status: normalizeStatus(g?.status) });
+        }
+      }
+
+      const thresholdKm = 5;
+      const clusters = buildClustersFromOrders(allOrders, thresholdKm);
+
+      // pick cluster containing this order
+      let chosen = clusters[0] || null;
+      for (const c of clusters) {
+        const found = (c.orders || []).some((o) => {
+          const oid = o?.id ?? o?.order_id ?? o?.order_code;
+          return sameOrder(oid, focusOrderId);
+        });
+        if (found) {
+          chosen = c;
+          break;
+        }
+      }
+
+      const payload = {
+        label: chosen?.label || "Nearby cluster",
+        addrPreview: chosen?.addrPreview || "",
+        orders: chosen?.orders || allOrders,
+        thresholdKm: chosen?.thresholdKm || thresholdKm,
+        centerCoords: chosen?.centerCoords || null,
+
+        businessId: bizId ?? fallbackParams.businessId,
+        ownerType: ownerType ?? fallbackParams.ownerType,
+        delivery_option: fallbackParams.delivery_option,
+        ordersGroupedUrl: groupedUrlFinal || fallbackParams.ordersGroupedUrl,
+
+        focusOrderId,
+        detailsRoute: "OrderDetails",
+        nextTrackScreen: "TrackBatchOrdersScreen",
+
+        // keep context when opening details from cluster
+        clusterParams: {
+          screenName: targetRoute,
+          label: chosen?.label || "Nearby cluster",
+          addrPreview: chosen?.addrPreview || "",
+          orders: chosen?.orders || allOrders,
+          thresholdKm: chosen?.thresholdKm || thresholdKm,
+          centerCoords: chosen?.centerCoords || null,
+          businessId: bizId ?? fallbackParams.businessId,
+          ownerType: ownerType ?? fallbackParams.ownerType,
+          delivery_option: fallbackParams.delivery_option,
+          ordersGroupedUrl: groupedUrlFinal || fallbackParams.ordersGroupedUrl,
+          detailsRoute: "OrderDetails",
+          nextTrackScreen: "TrackBatchOrdersScreen",
+        },
+      };
+
+      const ownerNav = findNavigatorOwningRoute(navigation, targetRoute);
+      if (ownerNav && ownerNav !== navigation) {
+        ownerNav.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+        return;
+      }
+      navigation.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+    } catch (e) {
+      // final fallback: still open screen (it may show 0 if Nearby screen cannot fetch itself)
+      const payload = {
+        ...fallbackParams,
+        label: "Nearby cluster",
+        addrPreview: "",
+        orders: [],
+        thresholdKm: 5,
+        centerCoords: null,
+        nextTrackScreen: "TrackBatchOrdersScreen",
+      };
+
+      const ownerNav = findNavigatorOwningRoute(navigation, targetRoute);
+      if (ownerNav && ownerNav !== navigation) {
+        ownerNav.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+        return;
+      }
+      navigation.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+    }
   }, [
     navigation,
     resolvedClusterRouteName,

@@ -14,7 +14,7 @@ import { useNavigation, useRoute } from "@react-navigation/native";
 // Keep Ionicons consistent with the rest of the app
 import { Ionicons } from "@expo/vector-icons";
 import HeaderWithSteps from "./HeaderWithSteps";
-import { SEND_OTP_ENDPOINT } from "@env";
+import { SEND_OTP_ENDPOINT, SEND_OTP_REGISTER_SMS_ENDPOINT } from "@env";
 
 /* ───────────────────────── Routes ───────────────────────── */
 const EDIT_SIGNUP_ROUTE = "SignupScreen";
@@ -80,9 +80,13 @@ const normalizeDeliveryOption = (val) => {
 };
 
 const deliveryDisplay = (norm) =>
-  norm === "self" ? "Self Delivery" :
-  norm === "grab" ? "Grab Delivery" :
-  norm === "both" ? "Both" : "—";
+  norm === "self"
+    ? "Self Delivery"
+    : norm === "grab"
+    ? "Grab Delivery"
+    : norm === "both"
+    ? "Both"
+    : "—";
 
 /* ─────────────── File presence helpers (uri-ish) ─────────────── */
 const firstNonEmpty = (...vals) =>
@@ -216,6 +220,41 @@ export default function ReviewSubmitScreen() {
     [bank?.account_number]
   );
 
+  // Build review payload (reused by both OTP flows)
+  const buildReview = () => ({
+    serviceType,
+    owner_type: effectiveOwnerType,
+    deliveryOption,
+    agreeTerms: true,
+    displayCategory,
+    normalizedCategoryIds: business.category,
+    business,
+    bank,
+    files: {
+      business_logo: extractUriLike(businessLogoRaw) || null,
+      business_license: extractUriLike(businessLicenseRaw) || null,
+      bank_qr: extractUriLike(bank?.bank_qr) || null,
+    },
+    merchantNormalized: {
+      ...(merchant ?? {}),
+      category: business.category,
+      owner_type: effectiveOwnerType,
+      registration_no: business.regNo,
+      address: business.address,
+      latitude: business.latitude,
+      longitude: business.longitude,
+      full_name: business.fullName,
+      business_name: business.businessName,
+      email: business.email,
+      phone: business.phone,
+      password: business.password,
+      delivery_option: deliveryOption,
+      bank,
+      business_logo: businessLogoRaw ?? null,
+      business_license: businessLicenseRaw ?? null,
+    },
+  });
+
   const handleSubmit = async () => {
     if (!agreeTerms) {
       Alert.alert(
@@ -224,85 +263,134 @@ export default function ReviewSubmitScreen() {
       );
       return;
     }
-    if (!business.email) {
-      Alert.alert("Missing email", "Please add your email in Signup first.");
+
+    const email = String(business.email || "").trim();
+    const phone = String(business.phone || "").trim();
+
+    if (!phone) {
+      Alert.alert("Missing phone", "Please add your phone number first.");
       return;
     }
 
-    try {
-      setSubmitting(true);
+    const review = buildReview();
 
-      const res = await fetch(String(SEND_OTP_ENDPOINT || "").trim(), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: business.email }),
-      });
+    const sendSmsOtp = async () => {
+      try {
+        setSubmitting(true);
 
-      if (!res.ok) {
-        let msg = `HTTP ${res.status}`;
-        try {
-          const data = await res.json();
-          msg = data?.message || data?.error || msg;
-        } catch (_) {}
-        throw new Error(msg);
+        const url = String(SEND_OTP_REGISTER_SMS_ENDPOINT || "").trim();
+        if (!url) throw new Error("SEND_OTP_REGISTER_SMS_ENDPOINT is missing.");
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          // ✅ change key if backend expects phone_number/mobile/etc.
+          body: JSON.stringify({ phone }),
+        });
+
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`;
+          try {
+            const data = await res.json();
+            msg = data?.message || data?.error || msg;
+          } catch (_) {}
+          throw new Error(msg);
+        }
+
+        navigation.navigate(NEXT_ROUTE, {
+          ...(route.params ?? {}),
+          otpChannel: "sms",
+          phone,
+          email: email || null, // optional
+          otpType: "register_sms",
+          skipAutoSend: true,
+          serviceType,
+          owner_type: effectiveOwnerType,
+          deliveryOption,
+          initialCategory: business.category,
+          merchant: {
+            ...(merchant ?? {}),
+            category: business.category,
+            owner_type: effectiveOwnerType,
+            delivery_option: deliveryOption,
+            phone,
+            email,
+          },
+          review,
+        });
+      } catch (e) {
+        Alert.alert("OTP failed", e?.message || "Please try again.");
+      } finally {
+        setSubmitting(false);
+      }
+    };
+
+    const sendEmailOtp = async () => {
+      if (!email) {
+        Alert.alert("Missing email", "Please add your email in Signup first.");
+        return;
       }
 
-      const review = {
-        serviceType,
-        owner_type: effectiveOwnerType,
-        deliveryOption,
-        agreeTerms: true,
-        displayCategory,
-        normalizedCategoryIds: business.category,
-        business,
-        bank,
-        files: {
-          business_logo: extractUriLike(businessLogoRaw) || null,
-          business_license: extractUriLike(businessLicenseRaw) || null,
-          bank_qr: extractUriLike(bank?.bank_qr) || null,
-        },
-        merchantNormalized: {
-          ...(merchant ?? {}),
-          category: business.category,
-          owner_type: effectiveOwnerType,
-          registration_no: business.regNo,
-          address: business.address,
-          latitude: business.latitude,
-          longitude: business.longitude,
-          full_name: business.fullName,
-          business_name: business.businessName,
-          email: business.email,
-          phone: business.phone,
-          password: business.password,
-          delivery_option: deliveryOption,
-          bank,
-          business_logo: businessLogoRaw ?? null,
-          business_license: businessLicenseRaw ?? null,
-        },
-      };
+      try {
+        setSubmitting(true);
 
-      navigation.navigate(NEXT_ROUTE, {
-        ...(route.params ?? {}),
-        email: business.email,
-        otpType: "email_verification",
-        skipAutoSend: true, // prevent resend on mount
-        serviceType,
-        owner_type: effectiveOwnerType,
-        deliveryOption,
-        initialCategory: business.category,
-        merchant: {
-          ...(merchant ?? {}),
-          category: business.category,
+        const url = String(SEND_OTP_ENDPOINT || "").trim();
+        if (!url) throw new Error("SEND_OTP_ENDPOINT is missing.");
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+
+        if (!res.ok) {
+          let msg = `HTTP ${res.status}`;
+          try {
+            const data = await res.json();
+            msg = data?.message || data?.error || msg;
+          } catch (_) {}
+          throw new Error(msg);
+        }
+
+        navigation.navigate(NEXT_ROUTE, {
+          ...(route.params ?? {}),
+          otpChannel: "email",
+          email,
+          phone: phone || null, // optional
+          otpType: "email_verification",
+          skipAutoSend: true,
+          serviceType,
           owner_type: effectiveOwnerType,
-          delivery_option: deliveryOption,
-        },
-        review,
-      });
-    } catch (e) {
-      Alert.alert("Submit failed", e?.message || "Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
+          deliveryOption,
+          initialCategory: business.category,
+          merchant: {
+            ...(merchant ?? {}),
+            category: business.category,
+            owner_type: effectiveOwnerType,
+            delivery_option: deliveryOption,
+            phone,
+            email,
+          },
+          review,
+        });
+      } catch (e) {
+        Alert.alert("OTP failed", e?.message || "Please try again.");
+      } finally {
+        setSubmitting(false);
+      }
+    };
+
+    // ✅ Popup: SMS default, Email optional
+    Alert.alert(
+      "Verify your account",
+      "Choose how you want to receive the OTP.",
+      [
+        { text: "Send SMS (Recommended)", onPress: sendSmsOtp },
+        { text: "Send Email (Optional)", onPress: sendEmailOtp },
+        { text: "Cancel", style: "cancel" },
+      ],
+      { cancelable: true }
+    );
   };
 
   const jumpTo = (routeName) => {
@@ -469,7 +557,9 @@ export default function ReviewSubmitScreen() {
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
                     <Ionicons
-                      name={showAccountNumber ? "eye-off-outline" : "eye-outline"}
+                      name={
+                        showAccountNumber ? "eye-off-outline" : "eye-outline"
+                      }
                       size={18}
                       color="#6B7280"
                     />
@@ -670,7 +760,12 @@ const styles = StyleSheet.create({
   btnPrimaryTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
   subNote: { textAlign: "center", fontSize: 12, color: "#6B7280" },
 
-  agreeWrap: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
+  agreeWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+  },
   checkbox: {
     width: 22,
     height: 22,

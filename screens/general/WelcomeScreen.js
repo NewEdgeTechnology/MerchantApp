@@ -1,3 +1,4 @@
+// screens/general/WelcomeScreen.js
 import 'react-native-gesture-handler';
 import React, { useState, useRef } from 'react';
 import {

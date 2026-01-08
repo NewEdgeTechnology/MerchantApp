@@ -37,7 +37,7 @@ import ForgotUsername from './screens/general/ForgotUsername';
 import EmailSentScreen from './screens/general/EmailSentScreen';
 import ForgotPassword from './screens/general/ForgotPassword';
 import ResetPasswordNumber from './screens/general/ResetPasswordNumber';
-import MerchantRegistrationScreen from './screens/registrationsteps/BusinessDetails';
+import MerchantRegistrationScreen from './screens/registrationsteps/MerchantRegistrationScreen';
 import MerchantExtrasScreen from './screens/registrationsteps/MerchantExtrasScreen';
 import BankPaymentInfoScreen from './screens/registrationsteps/BankPaymentInfoScreen';
 import DeliveryOptionsScreen from './screens/registrationsteps/DeliveryOptionsScreen';
@@ -59,7 +59,7 @@ import OrderDetails from './screens/food/OrderDetails';
 import FeedbackScreen from './screens/profile/FeedbackScreen';
 import AppLockGate from './AppLockGate';
 import TwoFactorPromptScreen from './screens/food/TwoFactorPromptScreen';
-import TermsOfService from './screens/food/TermsOfService';
+import TermsOfService from './screens/general/TermsOfService';
 import PrivacyPolicy from './screens/general/PrivacyPolicy';
 import HelpScreen from './screens/general/HelpScreen';
 import SetNewPasswordScreen from './screens/general/SetNewPasswordScreen';
@@ -72,7 +72,7 @@ import WithdrawScreen from './screens/wallet/WithdrawScreen';
 import SendToFriendScreen from './screens/wallet/SendToFriendScreen';
 import MartOrdersTab from './screens/food/OrderTab';
 import MessageScreen from './screens/message/MessageScreen';
-import ChatDetailScreen from './screens/message/ChatDetailScreen'
+import ChatDetailScreen from './screens/message/ChatDetailScreen';
 import PayoutsTab from './screens/food/PayoutTab';
 import TPinScreen from './screens/wallet/TPinScreen';
 import CreateTPinScreen from './screens/wallet/CreateTPinScreen.js';
@@ -85,6 +85,7 @@ import ClusterDeliveryOptionsScreen from './screens/food/GroupOrder/ClusterDeliv
 import SimilarItemCatalog from './screens/food/OrderDetails/SimilarItemCatalog.js';
 import TrackBatchOrdersScreen from './screens/food/GroupOrder/TrackBatchOrdersScreen.js';
 import TrackDeliveryDriver from './screens/food/GroupOrder/TrackDeliveryDriver.js';
+import DriverBatchDetailsOverlayScreen from "./screens/food/GroupOrder/DriverBatchDetailsOverlayScreen";
 
 const Stack = createStackNavigator();
 
@@ -185,12 +186,34 @@ export default function App() {
             <Stack.Screen name="ForgotTPinScreen" component={ForgotTPinScreen} />
             <Stack.Screen name="ChangeTPinScreen" component={ChangeTPinScreen} />
             <Stack.Screen name="VerifyTPinOtpScreen" component={VerifyTPinOtpScreen} />
+
+            {/* ---------------- FOOD GROUP ORDER ROUTES ---------------- */}
             <Stack.Screen name="NearbyOrdersScreen" component={NearbyOrdersScreen} />
-            <Stack.Screen name="NearbyClusterOrdersScreen" component={NearbyClusterOrdersScreen} />
+
+            {/* ✅ ADD UNIQUE ROUTE NAME (fix MART vs FOOD collision) */}
+            <Stack.Screen
+              name="FoodNearbyClusterOrdersScreen"
+              component={NearbyClusterOrdersScreen}
+            />
+
+            {/* (Optional) keep old name for backward compatibility:
+               If you have older navigation calls using NearbyClusterOrdersScreen name,
+               keep it but redirect internally from OrderDetails by preferring FoodNearbyClusterOrdersScreen.
+            */}
+            <Stack.Screen
+              name="NearbyClusterOrdersScreen"
+              component={NearbyClusterOrdersScreen}
+            />
+
             <Stack.Screen name="ClusterDeliveryOptionsScreen" component={ClusterDeliveryOptionsScreen} />
             <Stack.Screen name="SimilarItemCatalog" component={SimilarItemCatalog} />
             <Stack.Screen name="TrackBatchOrdersScreen" component={TrackBatchOrdersScreen} />
             <Stack.Screen name="TrackDeliveryDriver" component={TrackDeliveryDriver} />
+            <Stack.Screen
+              name="DriverBatchDetailsOverlayScreen"
+              component={DriverBatchDetailsOverlayScreen}
+              options={{ headerShown: false, presentation: "modal" }}
+            />
           </Stack.Navigator>
         </AppLockGate>
       </NavigationContainer>

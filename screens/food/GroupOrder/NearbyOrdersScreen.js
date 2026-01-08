@@ -1,4 +1,8 @@
 // screens/food/NearbyOrdersScreen.js
+// ✅ FIX: FOOD version (no Mart tab fallback)
+// ✅ FIX: uses UNIQUE FOOD cluster route name: "FoodNearbyClusterOrdersScreen"
+// ✅ FIX: adds auth token header when fetching orders (common reason for "not showing")
+// ✅ FIX: normalizes backend statuses like "ON ROAD" so clustering/filtering works
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -17,10 +21,22 @@ import * as SecureStore from "expo-secure-store";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { ORDER_ENDPOINT as ENV_ORDER_ENDPOINT, BUSINESS_DETAILS } from "@env";
 
+/* ---------------- status normalizer (for cluster filtering) ---------------- */
+const normalizeStatusForCluster = (v) => {
+  const s = String(v || "").trim().toUpperCase();
+  if (!s) return "PENDING";
+
+  if (s === "ON ROAD" || s === "ON_ROAD" || s === "ONROAD") return "OUT_FOR_DELIVERY";
+  if (s === "OUT FOR DELIVERY") return "OUT_FOR_DELIVERY";
+  if (s === "DELIVERED") return "COMPLETED";
+
+  return s;
+};
+
 /* ---------------- status helper ---------------- */
 /** ✅ Cluster should show ALL statuses EXCEPT pending + delivered/completed */
-const shouldIncludeInCluster = (status) => {
-  const s = String(status || "").toUpperCase().trim();
+const shouldIncludeInCluster = (statusRaw) => {
+  const s = normalizeStatusForCluster(statusRaw);
   if (!s) return false;
 
   if (s === "PENDING") return false;
@@ -32,13 +48,14 @@ const shouldIncludeInCluster = (status) => {
 };
 
 /* ---------------- coords helpers ---------------- */
-
 const extractCoords = (order = {}) => {
+  const addrObj =
+    order?.delivery_address && typeof order.delivery_address === "object"
+      ? order.delivery_address
+      : null;
+
   const cand = [
-    order.delivery_address && {
-      lat: order.delivery_address.lat,
-      lng: order.delivery_address.lng,
-    },
+    addrObj && { lat: addrObj.lat ?? addrObj.latitude, lng: addrObj.lng ?? addrObj.longitude ?? addrObj.lon },
     { lat: order.delivery_lat, lng: order.delivery_lng },
     { lat: order.delivery_latitude, lng: order.delivery_longitude },
     { lat: order.deliveryLatitude, lng: order.deliveryLongitude },
@@ -69,7 +86,6 @@ const distanceKm = (a, b) => {
 };
 
 /* ---------------- helpers: normalize address & place ---------------- */
-
 const normalizeAddressField = (v) => {
   if (!v) return null;
   if (typeof v === "string") return v.trim() || null;
@@ -159,7 +175,6 @@ const getGeneralPlaceName = (order, fallback) => {
 };
 
 /* ---------------- decoration helper ---------------- */
-
 const decorateOrdersFromSource = (source) => {
   const list = [];
   if (!Array.isArray(source)) return list;
@@ -181,10 +196,10 @@ const decorateOrdersFromSource = (source) => {
     const placeKey = toPlaceKey(general_place);
 
     const rawStatus = o.status || o.order_status || "";
-    const statusNorm = String(rawStatus || "").toUpperCase().trim();
+    const statusNorm = normalizeStatusForCluster(rawStatus);
 
     list.push({
-      id: String(o.order_id ?? o.id),
+      id: String(o.order_id ?? o.id ?? o.order_code ?? ""),
       raw: o,
       general_place,
       placeKey,
@@ -208,7 +223,6 @@ const decorateOrdersFromSource = (source) => {
 };
 
 /* ---------------- place-name helpers for cluster naming ---------------- */
-
 const BAN_GLOBAL = new Set(["bhutan"]);
 
 const extractPlaceCandidates = (order = {}, extraBanSet = new Set()) => {
@@ -263,7 +277,11 @@ const bumpNameCounts = (nameCounts, order, extraBanSet) => {
   }
 };
 
-const chooseClusterTitle = (nameCounts, fallbackLabel, { isNoCoords = false, banSet = new Set() } = {}) => {
+const chooseClusterTitle = (
+  nameCounts,
+  fallbackLabel,
+  { isNoCoords = false, banSet = new Set() } = {}
+) => {
   let entries = Array.from(nameCounts.entries());
 
   entries = entries.filter(([name]) => {
@@ -293,7 +311,6 @@ const chooseClusterTitle = (nameCounts, fallbackLabel, { isNoCoords = false, ban
 };
 
 /* ---------------- ENV URL helpers ---------------- */
-
 const buildBusinessDetailsUrl = (bizId) => {
   const rawId = bizId != null ? String(bizId).trim() : "";
   const tpl = (BUSINESS_DETAILS || "").trim();
@@ -338,12 +355,7 @@ const buildOrdersUrl = (bizId, ownerType, overrideBase) => {
   return url;
 };
 
-/* ---------------- NEW: proper clustering (DBSCAN-ish) ---------------- */
-/**
- * Fixes “not grouping properly” when using 1-pass centroid assignment.
- * This uses single-linkage connectivity: if A within 3km of B and B within 3km of C,
- * all 3 become one cluster even if A to C slightly > 3km.
- */
+/* ---------------- clustering (single-linkage connectivity) ---------------- */
 const clusterOrdersByRadius = (ordersList, radiusKm) => {
   const coordsIdx = [];
   const noCoords = [];
@@ -361,7 +373,6 @@ const clusterOrdersByRadius = (ordersList, radiusKm) => {
     else coordsIdx.push({ o, c });
   }
 
-  // BFS over graph edges (i-j if distance <= radius)
   const visited = new Array(coordsIdx.length).fill(false);
   const clusters = [];
 
@@ -387,13 +398,13 @@ const clusterOrdersByRadius = (ordersList, radiusKm) => {
       }
     }
 
-    // compute centroid for display / navigation
     let latSum = 0;
     let lngSum = 0;
     for (const m of members) {
       latSum += m.c.lat;
       lngSum += m.c.lng;
     }
+
     const centerCoords =
       members.length > 0 ? { lat: latSum / members.length, lng: lngSum / members.length } : null;
 
@@ -407,7 +418,6 @@ const clusterOrdersByRadius = (ordersList, radiusKm) => {
     });
   }
 
-  // no-coords bucket
   if (noCoords.length) {
     clusters.push({
       id: "no-coords",
@@ -423,7 +433,6 @@ const clusterOrdersByRadius = (ordersList, radiusKm) => {
 };
 
 /* ---------------- screen ---------------- */
-
 function NearbyOrdersScreen() {
   const navigation = useNavigation();
   const route = useRoute();
@@ -431,14 +440,17 @@ function NearbyOrdersScreen() {
 
   const paramOrders = route?.params?.orders;
   const businessIdFromParams = route?.params?.businessId;
-  const ownerType = route?.params?.ownerType || route?.params?.owner_type || "mart";
+
+  // ✅ FOOD default (not mart)
+  const ownerType = route?.params?.ownerType || route?.params?.owner_type || "food";
+
   const orderEndpointFromParams = route?.params?.orderEndpoint;
   const detailsRoute = route?.params?.detailsRoute || "OrderDetails";
 
-  // ✅ default is now 3km (your requirement)
+  // ✅ default 3km
   const thresholdKm = Number(route?.params?.thresholdKm ?? 3);
 
-  // ✅ delivery_option now comes from BUSINESS_DETAILS (SecureStore + API), not from route params
+  // ✅ delivery_option from BUSINESS_DETAILS (SecureStore + API)
   const [deliveryOption, setDeliveryOption] = useState(null);
 
   const [bizId, setBizId] = useState(businessIdFromParams || null);
@@ -453,8 +465,9 @@ function NearbyOrdersScreen() {
     if (navigation.canGoBack()) navigation.goBack();
     else {
       const parent = navigation.getParent?.();
-      if (parent) parent.navigate("MartOrdersTab");
-      else navigation.navigate("MartOrdersTab");
+      const fallback = "OrdersTab";
+      if (parent) parent.navigate(fallback);
+      else navigation.navigate(fallback);
     }
     return true;
   }, [navigation]);
@@ -472,12 +485,10 @@ function NearbyOrdersScreen() {
 
       if (!bizId && biz.business_id) setBizId(biz.business_id);
 
-      // ✅ delivery_option: BOTH | SELF | GRAB
       const optRaw = biz.delivery_option ?? biz.deliveryOption ?? null;
       const opt = optRaw ? String(optRaw).toUpperCase().trim() : null;
       if (opt) setDeliveryOption(opt);
 
-      // ✅ location key from address
       const addr = biz.address || biz.business_address || biz.location || "";
       if (addr && !merchantLocationKey) {
         const locKey = deriveLocationKeyFromAddress(addr);
@@ -515,7 +526,7 @@ function NearbyOrdersScreen() {
 
       await SecureStore.setItemAsync("business_details", JSON.stringify(biz));
     } catch (e) {
-      console.log("[NearbyOrders] BUSINESS_DETAILS fetch error:", e?.message || e);
+      console.log("[NearbyOrders][FOOD] BUSINESS_DETAILS fetch error:", e?.message || e);
     }
   }, [bizId, applyBizDetails]);
 
@@ -540,7 +551,7 @@ function NearbyOrdersScreen() {
     else if (Array.isArray(paramOrders.data)) source = paramOrders.data;
 
     const decorated = decorateOrdersFromSource(source);
-    if (decorated.length > 0) setOrders(decorated);
+    setOrders(decorated);
   }, [paramOrders]);
 
   const buildUrl = useCallback(() => {
@@ -564,14 +575,26 @@ function NearbyOrdersScreen() {
         return;
       }
 
-      const res = await fetch(url, { signal: controller.signal });
-      const json = await res.json();
+      // ✅ IMPORTANT: include token; otherwise many backends return 401/empty
+      const headers = { Accept: "application/json" };
+      const token = await SecureStore.getItemAsync("auth_token");
+      if (token) headers.Authorization = `Bearer ${token}`;
 
-      const blocks = Array.isArray(json?.data) ? json.data : [];
+      const res = await fetch(url, { signal: controller.signal, headers });
+
+      const text = await res.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = null;
+      }
+
+      const blocks = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
       const decorated = decorateOrdersFromSource(blocks);
       setOrders(decorated);
     } catch (e) {
-      console.warn("NearbyOrders fetch error", e?.message);
+      console.warn("[NearbyOrders][FOOD] fetch error", e?.message || e);
     } finally {
       setLoading(false);
     }
@@ -602,7 +625,6 @@ function NearbyOrdersScreen() {
     }, [paramOrders, fetchBusinessDetailsFromApi, fetchOrders])
   );
 
-  /** ✅ include all except pending + delivered/completed */
   const clusterEligibleOrders = useMemo(
     () => (orders || []).filter((o) => shouldIncludeInCluster(o.statusNorm || o.status)),
     [orders]
@@ -614,10 +636,8 @@ function NearbyOrdersScreen() {
     const banSet = new Set(BAN_GLOBAL);
     if (merchantLocationKey) banSet.add(merchantLocationKey);
 
-    // ✅ use fixed connectivity clustering instead of centroid single-pass
     const res = clusterOrdersByRadius(clusterEligibleOrders || [], threshold);
 
-    // build titles
     for (const c of res) {
       for (const o of c.orders || []) bumpNameCounts(c.nameCounts, o, banSet);
     }
@@ -661,7 +681,7 @@ function NearbyOrdersScreen() {
       ) : clusters.length === 0 ? (
         <View style={styles.centerBox}>
           <Text style={{ color: "#6b7280" }}>
-            No nearby orders found (excluding Pending / Delivered).
+            No nearby orders found (excluding Pending / Completed).
           </Text>
         </View>
       ) : (
@@ -679,7 +699,8 @@ function NearbyOrdersScreen() {
               <TouchableOpacity
                 style={styles.clusterCard}
                 onPress={() => {
-                  navigation.navigate("NearbyClusterOrdersScreen", {
+                  // ✅ IMPORTANT: FOOD unique route name (prevents MART collision)
+                  navigation.navigate("FoodNearbyClusterOrdersScreen", {
                     label,
 
                     merchant_id: bizId,
