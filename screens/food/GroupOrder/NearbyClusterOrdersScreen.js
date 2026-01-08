@@ -1,17 +1,9 @@
-// services/marts/NearbyClusterOrdersScreen.js
-// ✅ STATUS TAB ROW (side-by-side) to filter orders inside a cluster
-// ✅ Tabs focus is GREEN
-// ✅ Track button ENABLES if ANY cluster order is in trackable range (ASSIGNED/ON ROAD/DELIVERED),
-//    even if "lastBatch" is not created in this session.
-// ✅ If lastBatch exists, Track prefers batch orders; otherwise it tracks the cluster trackable orders.
-// ✅ Track screen gets centerCoords so it can show ONE "Open map" button for the cluster.
-//
-// ✅ FIX (Deliver in group redirect):
-// - Accepts focusOrderId from OrderDetails.
-// - If orders were not passed, it will immediately open OrderDetails using focusOrderId
-//   (OrderDetails will hydrate from ordersGroupedUrl / ORDER_ENDPOINT).
-// - When opening OrderDetails from THIS screen, it passes clusterParams so OrderDetails can
-//   reliably navigate back to this screen and keep the cluster context.
+// screens/food/GroupOrder/NearbyClusterOrdersScreen.js
+// ✅ UPDATE (your request): show ALL orders in this cluster (not only READY/ASSIGNED/OUT_FOR_DELIVERY...)
+// - Tabs include ALL statuses found (PENDING, CONFIRMED, READY, OUT_FOR_DELIVERY, COMPLETED, DECLINED, etc.)
+// - "Nearby orders" count = all orders in this cluster
+// - Still supports focusOrderId hydration when orders list is empty
+// - Distance label shows if coords exist, otherwise "—"
 
 import React, { useCallback, useMemo, useEffect, useState } from 'react';
 import {
@@ -33,6 +25,93 @@ import {
   GROUP_NEARBY_ORDER_ENDPOINT as ENV_GROUP_NEARBY_ORDER_ENDPOINT,
 } from '@env';
 
+/* ---------------- helpers: ids ---------------- */
+
+const safeStr = (v) => (v == null ? '' : String(v)).trim();
+
+const sameOrder = (a, b) => {
+  const A = safeStr(a);
+  const B = safeStr(b);
+  if (!A || !B) return false;
+  if (A === B) return true;
+
+  const na = Number(A);
+  const nb = Number(B);
+  if (Number.isFinite(na) && Number.isFinite(nb) && na === nb) return true;
+
+  const strip = (s) => s.replace(/^ORD[-_]?/i, '').replace(/^FOOD[-_]?/i, '');
+  return strip(A) === strip(B);
+};
+
+const getOrderId = (order = {}) => {
+  const base = order.raw || order;
+  const cand = [
+    base.order_id,
+    base.id,
+    base.orderId,
+    base.order_no,
+    base.orderNo,
+    base.order_code,
+  ];
+  for (const v of cand) {
+    const s = safeStr(v);
+    if (s) return s;
+  }
+  return null;
+};
+
+const getNumericOrderId = (order = {}) => {
+  const base = order.raw || order;
+  const candidates = [
+    base.order_db_id,
+    base.db_id,
+    base.order_table_id,
+    base.numeric_order_id,
+    base.order_numeric_id,
+    base.orderIdNumeric,
+    base.order_id_numeric,
+    base.id,
+  ];
+  for (const c of candidates) {
+    const n = Number(c);
+    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  }
+  return null;
+};
+
+const getAllOrderKeys = (order = {}) => {
+  const base = order.raw || order;
+  const keys = [];
+
+  const code = getOrderId(base);
+  if (code) keys.push(String(code));
+
+  const numeric = getNumericOrderId(base);
+  if (numeric) keys.push(String(numeric));
+
+  const extra = [
+    base.order_id,
+    base.id,
+    base.order_code,
+    base.order_no,
+    base.orderNo,
+    base.order_db_id,
+    base.db_id,
+    base.order_table_id,
+    base.numeric_order_id,
+    base.order_numeric_id,
+    base.orderIdNumeric,
+    base.order_id_numeric,
+  ];
+
+  for (const v of extra) {
+    const s = safeStr(v);
+    if (s) keys.push(s);
+  }
+
+  return [...new Set(keys)];
+};
+
 /* ---------------- helpers: coords ---------------- */
 
 const extractCoords = (order = {}) => {
@@ -45,18 +124,25 @@ const extractCoords = (order = {}) => {
   }
 
   const base = order.raw || order;
+  const da = base.delivery_address || base.raw?.delivery_address || null;
 
   const candidates = [
     { lat: base.delivery_lat, lng: base.delivery_lng },
     { lat: base.delivery_latitude, lng: base.delivery_longitude },
-    { lat: base.delivery_latitude, lng: base.delivery_lon },
     { lat: base.deliveryLatitude, lng: base.deliveryLongitude },
     { lat: base.lat, lng: base.lng },
     { lat: base.latitude, lng: base.longitude },
     { lat: base.lat, lng: base.long },
-    // ✅ also support deliver_to shape (common in your newer payloads)
+
     { lat: base.deliver_to?.lat, lng: base.deliver_to?.lng },
-    { lat: base.delivery_address?.lat, lng: base.delivery_address?.lng },
+    { lat: base.deliver_to?.latitude, lng: base.deliver_to?.longitude },
+    { lat: base.destination?.lat, lng: base.destination?.lng },
+    { lat: base.geo?.lat, lng: base.geo?.lng },
+
+    { lat: da?.lat, lng: da?.lng },
+    { lat: da?.latitude, lng: da?.longitude },
+    { lat: da?.Latitude, lng: da?.Longitude },
+    { lat: da?.coords?.lat, lng: da?.coords?.lng },
   ];
 
   for (const c of candidates) {
@@ -110,41 +196,18 @@ const getOrderAddressText = (order = {}) => {
   return '';
 };
 
-/* ---------------- helpers: ids + endpoint ---------------- */
+/* ---------------- endpoint builder ---------------- */
 
-const getOrderId = (order = {}) => {
-  const base = order.raw || order;
-  const cand = [base.order_id, base.id, base.orderId, base.order_no, base.orderNo, base.order_code];
-  for (const v of cand) {
-    if (v != null && String(v).trim().length > 0) return String(v).trim();
+const buildGroupedOrdersUrl = (businessId, ordersGroupedUrlFromParams) => {
+  const fromParams = safeStr(ordersGroupedUrlFromParams);
+  if (fromParams) {
+    if (businessId && fromParams.includes('{businessId}'))
+      return fromParams.replace('{businessId}', encodeURIComponent(String(businessId)));
+    return fromParams;
   }
-  return null;
-};
 
-const getNumericOrderId = (order = {}) => {
-  const base = order.raw || order;
-
-  const candidates = [
-    base.order_db_id,
-    base.db_id,
-    base.order_table_id,
-    base.numeric_order_id,
-    base.order_numeric_id,
-    base.orderIdNumeric,
-    base.order_id_numeric,
-    base.id,
-  ];
-
-  for (const c of candidates) {
-    const n = Number(c);
-    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
-  }
-  return null;
-};
-
-const buildGroupedOrdersUrl = (businessId) => {
   if (!businessId) return null;
-  const tmpl = String(ENV_ORDER_ENDPOINT || '').trim();
+  const tmpl = safeStr(ENV_ORDER_ENDPOINT);
   if (!tmpl) return null;
 
   if (tmpl.includes('{businessId}')) return tmpl.replace('{businessId}', encodeURIComponent(businessId));
@@ -157,42 +220,48 @@ const buildGroupedOrdersUrl = (businessId) => {
 /* ---------------- status helpers ---------------- */
 
 const normalizeStatus = (raw) => {
-  if (!raw) return null;
+  if (!raw) return 'UNKNOWN';
   const s = String(raw).toUpperCase().trim();
 
-  if (s === 'OUT_FOR_DEL' || s === 'DELIVERING' || s === 'ON ROAD' || s === 'ON_ROAD')
+  if (
+    s === 'ON ROAD' ||
+    s === 'ON_ROAD' ||
+    s === 'ONROAD' ||
+    s === 'OUT FOR DELIVERY' ||
+    s === 'OUT_FOR_DELIVERY' ||
+    s === 'OUT_FOR_DEL' ||
+    s === 'DELIVERING'
+  ) {
     return 'OUT_FOR_DELIVERY';
-  if (s === 'ACCEPT') return 'ACCEPTED';
+  }
 
+  if (s === 'ACCEPT') return 'ACCEPTED';
   return s;
 };
 
 const statusKeyToLabel = (statusKey) => {
-  if (!statusKey) return '';
-  if (statusKey === 'OUT_FOR_DELIVERY') return 'On Road';
-  return String(statusKey)
+  const s = String(statusKey || '').toUpperCase().trim();
+  if (!s) return '';
+  if (s === 'OUT_FOR_DELIVERY') return 'Out for delivery';
+  return s
     .replaceAll('_', ' ')
     .toLowerCase()
     .replace(/^\w/, (c) => c.toUpperCase());
 };
 
 const getLatestStatusNorm = (order, statusMap) => {
-  const id = getOrderId(order);
-  const fromMap = id ? statusMap[id] : null;
-  const raw = fromMap || order.status || order.raw?.status || null;
+  const keys = getAllOrderKeys(order);
+
+  let raw = null;
+  for (const k of keys) {
+    if (statusMap[k]) {
+      raw = statusMap[k];
+      break;
+    }
+  }
+
+  raw = raw || order.status || order.raw?.status || null;
   return normalizeStatus(raw);
-};
-
-const isReadyToDeliveredRange = (statusNorm) => {
-  const s = String(statusNorm || '').toUpperCase().trim();
-  if (!s) return false;
-
-  if (s === 'READY') return true;
-  if (s === 'ASSIGNED' || s === 'RIDER_ASSIGNED' || s === 'DRIVER_ASSIGNED') return true;
-  if (s === 'OUT_FOR_DELIVERY') return true;
-  if (s === 'DELIVERED' || s === 'COMPLETED' || s === 'COMPLETE') return true;
-
-  return false;
 };
 
 const isTrackableStatus = (statusNorm) => {
@@ -209,6 +278,8 @@ const isTrackableStatus = (statusNorm) => {
 };
 
 const STATUS_COLORS = {
+  PENDING: '#64748b',
+  CONFIRMED: '#7c3aed',
   READY: '#16a34a',
   ASSIGNED: '#f59e0b',
   RIDER_ASSIGNED: '#f59e0b',
@@ -217,6 +288,10 @@ const STATUS_COLORS = {
   DELIVERED: '#0ea5e9',
   COMPLETED: '#0ea5e9',
   COMPLETE: '#0ea5e9',
+  DECLINED: '#ef4444',
+  CANCELLED: '#ef4444',
+  CANCELED: '#ef4444',
+  UNKNOWN: '#94a3b8',
 };
 
 /* ---------------- batch helpers ---------------- */
@@ -238,12 +313,6 @@ const pickBatchOrderIds = (json) => {
   return arr.map((x) => String(x)).filter(Boolean);
 };
 
-const safeText = (t) => (t == null ? '' : String(t));
-const logLong = (label, text) => {
-  const s = safeText(text);
-  console.log(label, s.length > 1500 ? `${s.slice(0, 1500)}... (truncated)` : s);
-};
-
 /* ---------------- screen ---------------- */
 
 export default function NearbyClusterOrdersScreen() {
@@ -263,56 +332,73 @@ export default function NearbyClusterOrdersScreen() {
     centerCoords: centerCoordsFromParams,
     nextTrackScreen = 'TrackBatchOrdersScreen',
 
-    // ✅ NEW: used when coming from OrderDetails "Deliver in group"
-    focusOrderId, // order_code/order_id to open
-    ordersGroupedUrl, // optional (OrderDetails might use it)
+    focusOrderId,
+    ordersGroupedUrl,
   } = route.params || {};
 
-  const [clusterOrders] = useState(Array.isArray(orders) ? orders : []);
+  const [clusterOrders, setClusterOrders] = useState(Array.isArray(orders) ? orders : []);
   const [statusMap, setStatusMap] = useState({});
   const [creatingBatch, setCreatingBatch] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const [selectedStatus, setSelectedStatus] = useState('ALL');
-  const [lastBatch, setLastBatch] = useState(null); // { batch_id, order_ids: [] }
+  const [lastBatch, setLastBatch] = useState(null);
 
-  // ✅ If screen opened with focusOrderId but without orders, immediately open OrderDetails
+  // ✅ hydrate focused order if list empty
+  const hydrateFocusedOrderIfMissing = useCallback(async () => {
+    try {
+      if (clusterOrders.length) return;
+      if (!focusOrderId) return;
+
+      const url = buildGroupedOrdersUrl(businessId, ordersGroupedUrl);
+      if (!url) return;
+
+      const token = await SecureStore.getItemAsync('auth_token');
+      const headers = { Accept: 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const res = await fetch(url, { headers });
+      const text = await res.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {}
+
+      if (!res.ok) throw new Error(json?.message || json?.error || text || `HTTP ${res.status}`);
+
+      const rawData = Array.isArray(json?.data) ? json.data : json;
+      const collected = [];
+
+      if (Array.isArray(rawData)) {
+        for (const block of rawData) {
+          if (block && Array.isArray(block.orders)) {
+            for (const o of block.orders) collected.push(o);
+          } else if (block && (block.id || block.order_id || block.order_code)) {
+            collected.push(block);
+          }
+        }
+      }
+
+      const match = collected.find((o) => {
+        const keys = getAllOrderKeys(o);
+        return keys.some((k) => sameOrder(k, focusOrderId));
+      });
+
+      if (match) setClusterOrders([match]);
+    } catch (e) {
+      console.log('[NearbyClusterOrdersScreen] hydrateFocusedOrderIfMissing error:', e?.message || e);
+    }
+  }, [clusterOrders.length, focusOrderId, businessId, ordersGroupedUrl]);
+
   useEffect(() => {
-    if (clusterOrders.length) return;
-    if (!focusOrderId) return;
+    hydrateFocusedOrderIfMissing();
+  }, [hydrateFocusedOrderIfMissing]);
 
-    // Go straight to details (OrderDetails will hydrate using ORDER_ENDPOINT / ordersGroupedUrl)
-    navigation.dispatch(
-      CommonActions.navigate({
-        name: detailsRoute,
-        params: {
-          orderId: String(focusOrderId),
-          order: null,
-          businessId,
-          ownerType,
-          delivery_option,
-          ordersGroupedUrl: ordersGroupedUrl || null,
-
-          // keep context so "Deliver in group" keeps coming back here
-          clusterParams: {
-            screenName: route.name,
-            label,
-            addrPreview,
-            orders: [], // none available in this path
-            thresholdKm,
-            businessId,
-            ownerType,
-            delivery_option,
-            detailsRoute,
-            centerCoords: centerCoordsFromParams || null,
-            nextTrackScreen,
-            ordersGroupedUrl: ordersGroupedUrl || null,
-          },
-        },
-      })
-    );
+  // if parent passes orders
+  useEffect(() => {
+    if (Array.isArray(orders) && orders.length) setClusterOrders(orders);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clusterOrders.length, focusOrderId]);
+  }, [Array.isArray(orders) ? orders.length : 0]);
 
   const centerCoords = useMemo(() => {
     if (
@@ -339,7 +425,7 @@ export default function NearbyClusterOrdersScreen() {
   }, [clusterOrders, centerCoordsFromParams]);
 
   const clusterAddress = useMemo(() => {
-    if (addrPreview && String(addrPreview).trim().length > 0) return String(addrPreview).trim();
+    if (addrPreview && safeStr(addrPreview)) return safeStr(addrPreview);
     for (const o of clusterOrders) {
       const addrText = getOrderAddressText(o);
       if (addrText) return addrText;
@@ -347,60 +433,10 @@ export default function NearbyClusterOrdersScreen() {
     return null;
   }, [addrPreview, clusterOrders]);
 
-  const allOrders = useMemo(() => clusterOrders, [clusterOrders]);
-
-  const baseListOrders = useMemo(() => {
-    return (clusterOrders || []).filter((o) => {
-      const s = getLatestStatusNorm(o, statusMap);
-      return isReadyToDeliveredRange(s);
-    });
-  }, [clusterOrders, statusMap]);
-
-  const statusTabs = useMemo(() => {
-    const counts = {};
-    for (const o of baseListOrders) {
-      const s = getLatestStatusNorm(o, statusMap);
-      if (!s) continue;
-      counts[s] = (counts[s] || 0) + 1;
-    }
-
-    const preferred = ['READY', 'ASSIGNED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'COMPLETED', 'COMPLETE'];
-
-    const tabs = [{ key: 'ALL', label: 'All', count: baseListOrders.length }];
-
-    for (const k of preferred) {
-      if (counts[k]) tabs.push({ key: k, label: statusKeyToLabel(k), count: counts[k] });
-    }
-
-    const extra = Object.keys(counts)
-      .filter((k) => !preferred.includes(k))
-      .sort((a, b) => a.localeCompare(b));
-
-    for (const k of extra) {
-      tabs.push({ key: k, label: statusKeyToLabel(k), count: counts[k] });
-    }
-
-    return tabs;
-  }, [baseListOrders, statusMap]);
-
-  const filteredOrders = useMemo(() => {
-    if (selectedStatus === 'ALL') return baseListOrders;
-
-    return baseListOrders.filter((o) => {
-      const s = getLatestStatusNorm(o, statusMap);
-      return String(s || '') === String(selectedStatus);
-    });
-  }, [baseListOrders, selectedStatus, statusMap]);
-
-  const readyOrders = useMemo(
-    () => allOrders.filter((o) => getLatestStatusNorm(o, statusMap) === 'READY'),
-    [allOrders, statusMap]
-  );
-
-  /* ----- fetch latest statuses using ORDER_ENDPOINT ----- */
+  /* ----- load statuses (optional, keeps list live) ----- */
 
   const loadStatuses = useCallback(async () => {
-    const url = buildGroupedOrdersUrl(businessId);
+    const url = buildGroupedOrdersUrl(businessId, ordersGroupedUrl);
     if (!url) return;
 
     try {
@@ -409,11 +445,13 @@ export default function NearbyClusterOrdersScreen() {
       if (token) headers.Authorization = `Bearer ${token}`;
 
       const res = await fetch(url, { headers });
-      if (!res.ok) {
-        console.log('NearbyClusterOrdersScreen status fetch failed', res.status);
-        return;
-      }
-      const json = await res.json();
+      if (!res.ok) return;
+
+      const text = await res.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {}
       if (!json) return;
 
       const nextMap = {};
@@ -423,16 +461,17 @@ export default function NearbyClusterOrdersScreen() {
         for (const block of rawData) {
           if (block && Array.isArray(block.orders)) {
             for (const o of block.orders) {
-              const id = getOrderId(o);
-              if (!id) continue;
               const status = o.status || o.order_status || o.current_status || o.orderStatus;
-              if (status) nextMap[id] = status;
+              if (!status) continue;
+              const keys = getAllOrderKeys(o);
+              for (const k of keys) nextMap[k] = status;
             }
-          } else {
-            const id = getOrderId(block);
-            if (!id) continue;
-            const status = block.status || block.order_status || block.current_status || block.orderStatus;
-            if (status) nextMap[id] = status;
+          } else if (block) {
+            const status =
+              block?.status || block?.order_status || block?.current_status || block?.orderStatus;
+            if (!status) continue;
+            const keys = getAllOrderKeys(block);
+            for (const k of keys) nextMap[k] = status;
           }
         }
       }
@@ -441,48 +480,83 @@ export default function NearbyClusterOrdersScreen() {
     } catch (err) {
       console.log('NearbyClusterOrdersScreen status fetch error', err);
     }
-  }, [businessId]);
+  }, [businessId, ordersGroupedUrl]);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (cancelled) return;
-      await loadStatuses();
-    })();
-    return () => {
-      cancelled = true;
-    };
+    loadStatuses();
   }, [loadStatuses]);
 
   const onRefresh = useCallback(async () => {
     if (creatingBatch) return;
     setRefreshing(true);
     try {
+      await hydrateFocusedOrderIfMissing();
       await loadStatuses();
     } finally {
       setRefreshing(false);
     }
-  }, [creatingBatch, loadStatuses]);
+  }, [creatingBatch, hydrateFocusedOrderIfMissing, loadStatuses]);
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('order-updated', ({ id, patch }) => {
       if (!id) return;
-      const key = String(id);
       const newStatus = patch?.status || patch?.order_status || patch?.current_status || null;
       if (!newStatus) return;
-      setStatusMap((prev) => ({ ...prev, [key]: newStatus }));
+
+      setStatusMap((prev) => {
+        const next = { ...prev };
+        next[String(id)] = newStatus;
+
+        const patchKeys = getAllOrderKeys({ ...(patch || {}), raw: patch });
+        for (const k of patchKeys) next[k] = newStatus;
+
+        return next;
+      });
     });
 
     return () => sub?.remove?.();
   }, []);
 
-  // ✅ cluster context passed into OrderDetails (so Deliver in group always works)
+  /* ---------------- SHOW ALL orders ---------------- */
+
+  const allOrders = useMemo(() => clusterOrders || [], [clusterOrders]);
+
+  const statusTabs = useMemo(() => {
+    const counts = {};
+    for (const o of allOrders) {
+      const s = getLatestStatusNorm(o, statusMap) || 'UNKNOWN';
+      counts[s] = (counts[s] || 0) + 1;
+    }
+
+    const tabs = [{ key: 'ALL', label: 'All', count: allOrders.length }];
+
+    Object.keys(counts)
+      .sort((a, b) => a.localeCompare(b))
+      .forEach((k) => {
+        tabs.push({ key: k, label: statusKeyToLabel(k), count: counts[k] });
+      });
+
+    return tabs;
+  }, [allOrders, statusMap]);
+
+  const filteredOrders = useMemo(() => {
+    if (selectedStatus === 'ALL') return allOrders;
+    return allOrders.filter((o) => getLatestStatusNorm(o, statusMap) === selectedStatus);
+  }, [allOrders, selectedStatus, statusMap]);
+
+  const readyOrders = useMemo(
+    () => allOrders.filter((o) => getLatestStatusNorm(o, statusMap) === 'READY'),
+    [allOrders, statusMap]
+  );
+
+  /* ---------------- open details ---------------- */
+
   const buildClusterParamsForDetails = useCallback(
     () => ({
       screenName: route.name,
       label,
       addrPreview: clusterAddress || addrPreview || null,
-      orders: clusterOrders,
+      orders: allOrders,
       thresholdKm,
       businessId,
       ownerType,
@@ -497,7 +571,7 @@ export default function NearbyClusterOrdersScreen() {
       label,
       clusterAddress,
       addrPreview,
-      clusterOrders,
+      allOrders,
       thresholdKm,
       businessId,
       ownerType,
@@ -514,7 +588,15 @@ export default function NearbyClusterOrdersScreen() {
     (order) => {
       const baseOrder = order.raw || order;
       const orderId = getOrderId(order) || getOrderId(baseOrder);
-      const statusFromMap = orderId ? statusMap[orderId] : undefined;
+
+      const keys = getAllOrderKeys(order);
+      let statusFromMap;
+      for (const k of keys) {
+        if (statusMap[k]) {
+          statusFromMap = statusMap[k];
+          break;
+        }
+      }
 
       const mergedOrder = {
         ...baseOrder,
@@ -533,8 +615,6 @@ export default function NearbyClusterOrdersScreen() {
         ownerType,
         delivery_option,
         ordersGroupedUrl: ordersGroupedUrl || null,
-
-        // ✅ crucial for Deliver in group back navigation
         clusterParams: buildClusterParamsForDetails(),
       });
     },
@@ -550,10 +630,10 @@ export default function NearbyClusterOrdersScreen() {
     ]
   );
 
-  /* ----- create batch & navigate on "Ready for delivery" ----- */
+  /* ---------------- create batch ---------------- */
 
   const createBatchForReadyOrders = useCallback(async () => {
-    const url = String(ENV_GROUP_NEARBY_ORDER_ENDPOINT || '').trim();
+    const url = safeStr(ENV_GROUP_NEARBY_ORDER_ENDPOINT);
     if (!url) {
       Alert.alert('Configuration error', 'GROUP_NEARBY_ORDER_ENDPOINT is not configured.');
       return;
@@ -566,11 +646,11 @@ export default function NearbyClusterOrdersScreen() {
 
     const orderCodes = readyOrders
       .map((o) => getOrderId(o) || o?.id)
-      .map((x) => (x == null ? '' : String(x).trim()))
+      .map((x) => safeStr(x))
       .filter(Boolean);
 
     if (!orderCodes.length) {
-      Alert.alert('No order IDs', 'Unable to find valid order IDs for the ready orders.');
+      Alert.alert('No order IDs', 'There are no READY orders to group yet.');
       return;
     }
 
@@ -603,8 +683,6 @@ export default function NearbyClusterOrdersScreen() {
       });
 
       const bodyText = await res.text();
-      logLong('[BATCH] response body:', bodyText);
-
       let bodyJson = null;
       try {
         bodyJson = bodyText ? JSON.parse(bodyText) : null;
@@ -617,7 +695,7 @@ export default function NearbyClusterOrdersScreen() {
           bodyJson?.details ||
           bodyText ||
           `Server returned status ${res.status}.`;
-        Alert.alert('Failed to create batch', safeText(msg));
+        Alert.alert('Failed to create batch', safeStr(msg));
         return;
       }
 
@@ -676,7 +754,7 @@ export default function NearbyClusterOrdersScreen() {
     );
   }, [readyOrders, createBatchForReadyOrders]);
 
-  /* ---------------- ✅ Track logic (fixed) ---------------- */
+  /* ---------------- Track ---------------- */
 
   const batchOrderIdSet = useMemo(() => {
     const ids = lastBatch?.order_ids;
@@ -693,7 +771,7 @@ export default function NearbyClusterOrdersScreen() {
   }, [allOrders, batchOrderIdSet]);
 
   const clusterTrackableOrders = useMemo(() => {
-    return (allOrders || []).filter((o) => isTrackableStatus(getLatestStatusNorm(o, statusMap)));
+    return allOrders.filter((o) => isTrackableStatus(getLatestStatusNorm(o, statusMap)));
   }, [allOrders, statusMap]);
 
   const ordersToTrack = useMemo(() => {
@@ -705,7 +783,7 @@ export default function NearbyClusterOrdersScreen() {
 
   const onTrackOrdersPress = useCallback(() => {
     if (ordersToTrack.length === 0) {
-      Alert.alert('Nothing to track', 'No orders are Assigned / On Road / Delivered yet.');
+      Alert.alert('Nothing to track', 'No orders are Assigned / Out for delivery / Delivered yet.');
       return;
     }
 
@@ -729,11 +807,10 @@ export default function NearbyClusterOrdersScreen() {
     centerCoordsFromParams,
   ]);
 
-  /* ---------------- UI render ---------------- */
+  /* ---------------- UI ---------------- */
 
   const renderStatusTab = ({ item }) => {
     const active = item.key === selectedStatus;
-
     const bg = active ? '#16a34a' : '#e2e8f0';
     const txt = active ? '#fff' : '#0f172a';
 
@@ -757,18 +834,13 @@ export default function NearbyClusterOrdersScreen() {
 
   const renderRow = ({ item }) => {
     const coords = extractCoords(item);
-    let distanceLabel = null;
-
-    if (coords && centerCoords) {
-      const d = distanceKm(centerCoords, coords);
-      distanceLabel = `${d.toFixed(2)} km`;
-    }
+    const distanceLabel =
+      coords && centerCoords ? `${distanceKm(centerCoords, coords).toFixed(2)} km` : '—';
 
     const addressText = getOrderAddressText(item);
     const orderId = getOrderId(item);
 
-    const latestStatusRaw = (orderId && statusMap[orderId]) || item.status || item.raw?.status;
-    const latestStatusNorm = normalizeStatus(latestStatusRaw);
+    const latestStatusNorm = getLatestStatusNorm(item, statusMap);
     const statusLabel = statusKeyToLabel(latestStatusNorm);
 
     return (
@@ -803,7 +875,7 @@ export default function NearbyClusterOrdersScreen() {
             </View>
           )}
 
-          {distanceLabel && <Text style={styles.orderDistanceText}>{distanceLabel}</Text>}
+          <Text style={styles.orderDistanceText}>{distanceLabel}</Text>
           <Ionicons name="chevron-forward" size={18} color="#94a3b8" style={{ marginLeft: 4 }} />
         </View>
       </TouchableOpacity>
@@ -868,6 +940,11 @@ export default function NearbyClusterOrdersScreen() {
           paddingBottom: 90,
           gap: 10,
         }}
+        ListEmptyComponent={
+          <View style={{ padding: 16 }}>
+            <Text style={{ color: '#64748b' }}>No orders found. Pull to refresh.</Text>
+          </View>
+        }
       />
 
       <View style={styles.fabWrapper}>

@@ -3,6 +3,7 @@
 // - Upcoming: no filters shown (no search, no date dropdown).
 // - Normal: status tabs + search + date dropdown (All / Today / Yesterday / calendar).
 // - Counts per status respect date filter (except Upcoming).
+// ✅ FIX: If backend sends ON ROAD / ON_ROAD / ONROAD, UI auto-maps to OUT_FOR_DELIVERY everywhere.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -58,61 +59,23 @@ const FULFILL_THEME = {
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-/* ---------------- small UI atoms ---------------- */
-const StatusPill = ({ status }) => {
-  const key = String(status || '').toUpperCase();
-  const t = STATUS_THEME[key] || STATUS_THEME.PENDING;
-  return (
-    <View style={[styles.pill, { backgroundColor: t.bg, borderColor: t.bd }]}>
-      <Ionicons name={t.icon} size={12} color={t.fg} />
-      <Text style={[styles.pillText, { color: t.fg }]} numberOfLines={1}>
-        {key
-          .replaceAll('_', ' ')
-          .toLowerCase()
-          .replace(/(^|\s)\S/g, (s) => s.toUpperCase())}
-      </Text>
-    </View>
-  );
-};
-
-const FulfillmentPill = ({ type }) => {
-  const key = String(type || '').toUpperCase() === 'DELIVERY' ? 'DELIVERY' : 'PICKUP';
-  const t = FULFILL_THEME[key];
-  return (
-    <View style={[styles.pill, { backgroundColor: t.bg, borderColor: t.bd }]}>
-      <Ionicons name={t.icon} size={12} color={t.fg} />
-      <Text style={[styles.pillText, { color: t.fg }]} numberOfLines={1}>
-        {t.label}
-      </Text>
-    </View>
-  );
-};
-
-const ItemPreview = ({ items, raw }) => {
-  if (Array.isArray(raw) && raw.length) {
-    const [a, b] = raw;
-    const t1 = a ? `${a.item_name ?? 'Item'} ×${Number(a.quantity ?? 1)}` : '';
-    const t2 = b ? `${b.item_name ?? 'Item'} ×${Number(b.quantity ?? 1)}` : '';
-    const more = raw.length > 2 ? ` +${raw.length - 2} more` : '';
-    return (
-      <Text style={styles.orderItems} numberOfLines={2}>
-        {t1}
-        {t2 ? `, ${t2}` : ''}
-        {more}
-      </Text>
-    );
-  }
-  if (items) return <Text style={styles.orderItems} numberOfLines={2}>{items}</Text>;
-  return null;
-};
-
 /* ---------------- helpers ---------------- */
+// ✅ NEW: normalize status keys from backend into UI keys
+const normalizeStatusKey = (s) => {
+  const k = String(s || '').trim().toUpperCase().replace(/\s+/g, '_');
+  if (k === 'ON_ROAD' || k === 'ONROAD') return 'OUT_FOR_DELIVERY';
+  return k;
+};
+
 const showAsGiven = (s) => {
   if (!s) return '';
   const d = String(s);
   const isoish = d.includes('T') ? d : d.replace(' ', 'T');
-  const y = isoish.slice(0, 4), m = isoish.slice(5, 7), dd = isoish.slice(8, 10);
-  const hh = isoish.slice(11, 13), mm = isoish.slice(14, 16);
+  const y = isoish.slice(0, 4),
+    m = isoish.slice(5, 7),
+    dd = isoish.slice(8, 10);
+  const hh = isoish.slice(11, 13),
+    mm = isoish.slice(14, 16);
   const mon = MONTH_NAMES[(+m || 1) - 1] || m;
   if (!y || !m || !dd || !hh || !mm) return d;
   return `${mon} ${dd}, ${hh}:${mm}`;
@@ -124,19 +87,10 @@ const parseForSort = (v) => {
   let n = Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
   if (Number.isFinite(n)) return n;
 
-  const m = s.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4}),\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/
-  );
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}),\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   if (m) {
     const [, dd, mm, yyyy, hh, min, ss] = m;
-    const date = new Date(
-      Number(yyyy),
-      Number(mm) - 1,
-      Number(dd),
-      Number(hh),
-      Number(min),
-      ss ? Number(ss) : 0
-    );
+    const date = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(min), ss ? Number(ss) : 0);
     if (!Number.isNaN(date.getTime())) return date.getTime();
   }
   return 0;
@@ -149,8 +103,7 @@ const safeNum = (v) => {
 
 const pad2 = (n) => (n < 10 ? `0${n}` : String(n));
 
-const dateKeyFromDateObj = (d) =>
-  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const dateKeyFromDateObj = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
 const dateKeyFromTs = (v) => {
   const t = parseForSort(v);
@@ -203,9 +156,57 @@ const pickAddress = (o = {}) => {
   return '';
 };
 
+/* ---------------- small UI atoms ---------------- */
+const StatusPill = ({ status }) => {
+  const key = normalizeStatusKey(status);
+  const t = STATUS_THEME[key] || STATUS_THEME.PENDING;
+  return (
+    <View style={[styles.pill, { backgroundColor: t.bg, borderColor: t.bd }]}>
+      <Ionicons name={t.icon} size={12} color={t.fg} />
+      <Text style={[styles.pillText, { color: t.fg }]} numberOfLines={1}>
+        {key
+          .replaceAll('_', ' ')
+          .toLowerCase()
+          .replace(/(^|\s)\S/g, (s) => s.toUpperCase())}
+      </Text>
+    </View>
+  );
+};
+
+const FulfillmentPill = ({ type }) => {
+  const key = String(type || '').toUpperCase() === 'DELIVERY' ? 'DELIVERY' : 'PICKUP';
+  const t = FULFILL_THEME[key];
+  return (
+    <View style={[styles.pill, { backgroundColor: t.bg, borderColor: t.bd }]}>
+      <Ionicons name={t.icon} size={12} color={t.fg} />
+      <Text style={[styles.pillText, { color: t.fg }]} numberOfLines={1}>
+        {t.label}
+      </Text>
+    </View>
+  );
+};
+
+const ItemPreview = ({ items, raw }) => {
+  if (Array.isArray(raw) && raw.length) {
+    const [a, b] = raw;
+    const t1 = a ? `${a.item_name ?? 'Item'} ×${Number(a.quantity ?? 1)}` : '';
+    const t2 = b ? `${b.item_name ?? 'Item'} ×${Number(b.quantity ?? 1)}` : '';
+    const more = raw.length > 2 ? ` +${raw.length - 2} more` : '';
+    return (
+      <Text style={styles.orderItems} numberOfLines={2}>
+        {t1}
+        {t2 ? `, ${t2}` : ''}
+        {more}
+      </Text>
+    );
+  }
+  if (items) return <Text style={styles.orderItems} numberOfLines={2}>{items}</Text>;
+  return null;
+};
+
 const OrderItem = ({ item, isTablet, money, onPress }) => {
   const isDelivery = item.type === 'Delivery';
-  const isScheduled = String(item.status || '').trim().toUpperCase() === 'SCHEDULED';
+  const isScheduled = normalizeStatusKey(item.status) === 'SCHEDULED';
   const moneyFmt = money || ((n, c = 'Nu') => `${c} ${Number(n || 0).toFixed(2)}`);
 
   return (
@@ -217,16 +218,10 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
     >
       <View style={styles.row1}>
         <View style={styles.row1Left}>
-          <Ionicons
-            name={isDelivery ? 'bicycle-outline' : 'bag-outline'}
-            size={18}
-            color="#0f172a"
-          />
+          <Ionicons name={isDelivery ? 'bicycle-outline' : 'bag-outline'} size={18} color="#0f172a" />
           <View>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={[styles.orderId, { fontSize: isTablet ? 15 : 14 }]}>
-                {item.id}
-              </Text>
+              <Text style={[styles.orderId, { fontSize: isTablet ? 15 : 14 }]}>{item.id}</Text>
               {!isScheduled && !!item.time && (
                 <Text style={[styles.orderTime, { fontSize: isTablet ? 13 : 12 }]}>
                   {' '}• {item.time}
@@ -234,18 +229,13 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
               )}
             </View>
             {isScheduled && !!item.time && (
-              <Text
-                style={[styles.scheduledTime, { fontSize: isTablet ? 14 : 13 }]}
-                numberOfLines={2}
-              >
+              <Text style={[styles.scheduledTime, { fontSize: isTablet ? 14 : 13 }]} numberOfLines={2}>
                 {item.time}
               </Text>
             )}
           </View>
         </View>
-        <Text style={[styles.orderTotal, { fontSize: isTablet ? 18 : 17 }]}>
-          {moneyFmt(item.total, 'Nu')}
-        </Text>
+        <Text style={[styles.orderTotal, { fontSize: isTablet ? 18 : 17 }]}>{moneyFmt(item.total, 'Nu')}</Text>
       </View>
 
       <View style={styles.row2}>
@@ -254,9 +244,7 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
         {!!item.payment_method && (
           <View style={styles.payWrap}>
             <Ionicons name="card-outline" size={14} color="#64748b" />
-            <Text style={styles.payText} numberOfLines={1}>
-              {item.payment_method}
-            </Text>
+            <Text style={styles.payText} numberOfLines={1}>{item.payment_method}</Text>
           </View>
         )}
       </View>
@@ -269,9 +257,7 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
           <Text style={styles.customerText} numberOfLines={1}>
             {item.customer_name || 'Customer'}
             {item.customer_phone ? ` • ${item.customer_phone}` : ''}
-            {!item.customer_phone && item.customer_email
-              ? ` • ${item.customer_email}`
-              : ''}
+            {!item.customer_phone && item.customer_email ? ` • ${item.customer_email}` : ''}
           </Text>
         </View>
       ) : null}
@@ -279,9 +265,7 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
       {!!item.delivery_address?.trim?.() && (
         <View style={styles.metaRow}>
           <Ionicons name="location-outline" size={16} color="#64748b" />
-          <Text style={styles.customerText} numberOfLines={2}>
-            {item.delivery_address.trim()}
-          </Text>
+          <Text style={styles.customerText} numberOfLines={2}>{item.delivery_address.trim()}</Text>
         </View>
       )}
 
@@ -289,13 +273,9 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
         <View style={styles.noteRow}>
           <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0f766e" />
           <View style={{ flex: 1 }}>
-            <Text style={styles.noteText} numberOfLines={3}>
-              {item.note_for_restaurant.trim()}
-            </Text>
+            <Text style={styles.noteText} numberOfLines={3}>{item.note_for_restaurant.trim()}</Text>
             {!!item.note_target?.trim?.() && (
-              <Text style={styles.noteMeta} numberOfLines={1}>
-                for {item.note_target.trim()}
-              </Text>
+              <Text style={styles.noteMeta} numberOfLines={1}>for {item.note_target.trim()}</Text>
             )}
           </View>
         </View>
@@ -319,12 +299,15 @@ const groupOrders = (rows = []) => {
         itemsArr: [],
         business_name: r.business_name,
         payment_method: r.payment_method,
-        status: r.status,
+        status: normalizeStatusKey(r.status),
         note_for_restaurant: null,
         note_target: null,
         raw_items: [],
-        delivery_address: '', // ✅ NEW (filled once)
+        delivery_address: '',
       };
+
+    // always keep latest normalized status
+    if (r.status) g.status = normalizeStatusKey(r.status);
 
     g.totals.push(safeNum(r.total_amount));
     const qty = safeNum(r.quantity) || 1;
@@ -332,30 +315,17 @@ const groupOrders = (rows = []) => {
     g.itemsArr.push(`${nm} ×${qty}`);
     g.raw_items.push({ item_name: nm, quantity: qty });
 
-    const rowCreated =
-      r.created_at ||
-      r.createdAt ||
-      r.placed_at ||
-      r.order_time ||
-      r.createdOn ||
-      null;
+    const rowCreated = r.created_at || r.createdAt || r.placed_at || r.order_time || r.createdOn || null;
     const prev = g.created_at ? parseForSort(g.created_at) : 0;
     const cur = rowCreated ? parseForSort(rowCreated) : 0;
     if (!prev || (cur && cur < prev)) g.created_at = rowCreated || g.created_at;
 
     if (r.fulfillment_type === 'Delivery') g.type = 'Delivery';
 
-    if (!g.delivery_address) {
-      g.delivery_address = pickAddress(r) || '';
-    }
+    if (!g.delivery_address) g.delivery_address = pickAddress(r) || '';
 
     if (!g.note_for_restaurant) {
-      g.note_for_restaurant =
-        r.note_for_restaurant ||
-        r.restaurant_note ||
-        r.note_for_store ||
-        r.note ||
-        null;
+      g.note_for_restaurant = r.note_for_restaurant || r.restaurant_note || r.note_for_store || r.note || null;
     }
 
     const itemLevelNote = getItemNote(r) || '';
@@ -368,10 +338,7 @@ const groupOrders = (rows = []) => {
   }
 
   const list = Array.from(byId.values()).map((g) => {
-    const total =
-      g.totals.length > 0
-        ? g.totals.reduce((a, b) => a + b, 0) / g.totals.length
-        : 0;
+    const total = g.totals.length > 0 ? g.totals.reduce((a, b) => a + b, 0) / g.totals.length : 0;
     const createdISO = g.created_at || null;
 
     return {
@@ -381,7 +348,7 @@ const groupOrders = (rows = []) => {
       created_at: createdISO,
       items: g.itemsArr.join(', '),
       total,
-      status: g.status,
+      status: normalizeStatusKey(g.status),
       payment_method: g.payment_method,
       business_name: g.business_name,
       customer_id: null,
@@ -389,7 +356,7 @@ const groupOrders = (rows = []) => {
       customer_email: '',
       customer_phone: '',
       raw_items: g.raw_items,
-      delivery_address: g.delivery_address || '', // ✅ FIXED
+      delivery_address: g.delivery_address || '',
       note_for_restaurant: g.note_for_restaurant || '',
       note_target: g.note_target || '',
       priority: 0,
@@ -400,11 +367,7 @@ const groupOrders = (rows = []) => {
   return list.sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
 };
 
-const buildOrdersUrl = (
-  base,
-  businessId,
-  { appendOwnerType = false, ownerType = 'mart' } = {}
-) => {
+const buildOrdersUrl = (base, businessId, { appendOwnerType = false, ownerType = 'mart' } = {}) => {
   if (!base || !businessId) return null;
   const b = String(base).trim().replace(/\/+$/, '');
   const id = encodeURIComponent(String(businessId));
@@ -471,8 +434,7 @@ const normalizeOrdersFromApi = (payload) => {
       const orders = Array.isArray(block?.orders) ? block.orders : [];
 
       for (const o of orders) {
-        const createdISO =
-          o.created_at || o.createdAt || o.placed_at || o.order_time || null;
+        const createdISO = o.created_at || o.createdAt || o.placed_at || o.order_time || null;
 
         let noteTarget = '';
         if (Array.isArray(o.items)) {
@@ -499,20 +461,10 @@ const normalizeOrdersFromApi = (payload) => {
           o.business?.business_name ||
           '';
 
-        // ✅ FIX: your API uses deliver_to.address
         const deliveryAddr = pickAddress(o);
 
-        // ✅ totals in your sample API are inside totals.{...}
-        const totalAmount =
-          o?.totals?.total_amount ??
-          o.total_amount ??
-          o.total ??
-          0;
-
-        const discountAmount =
-          o?.totals?.discount_amount ??
-          o.discount_amount ??
-          0;
+        const totalAmount = o?.totals?.total_amount ?? o.total_amount ?? o.total ?? 0;
+        const discountAmount = o?.totals?.discount_amount ?? o.discount_amount ?? 0;
 
         list.push({
           id: String(o.order_id ?? o.id),
@@ -521,7 +473,7 @@ const normalizeOrdersFromApi = (payload) => {
           created_at: createdISO,
           items: itemsStr,
           total: Number(totalAmount ?? 0),
-          status: o.status,
+          status: normalizeStatusKey(o.status),
           payment_method: o.payment_method,
           business_name: businessName,
           delivery_address: deliveryAddr || '',
@@ -582,18 +534,9 @@ const normalizeScheduledForBiz = (payload, bizId) => {
       const timeLabel = payloadOrder.scheduled_label || scheduledAt;
 
       const jobUser = job.user || {};
-      const customer_name =
-        jobUser.name ||
-        payloadOrder.customer_name ||
-        payloadOrder.name ||
-        '';
-      const customer_phone =
-        jobUser.phone ||
-        payloadOrder.customer_phone ||
-        payloadOrder.phone ||
-        '';
+      const customer_name = jobUser.name || payloadOrder.customer_name || payloadOrder.name || '';
+      const customer_phone = jobUser.phone || payloadOrder.customer_phone || payloadOrder.phone || '';
 
-      // ✅ FIX: scheduled payload might also have deliver_to
       const scheduledAddr =
         payloadOrder?.delivery_address?.address ||
         payloadOrder?.deliver_to?.address ||
@@ -644,27 +587,14 @@ export default function MartOrdersTab({
   const navigation = useNavigation();
   const route = useRoute();
 
-  const [bizId, setBizId] = useState(
-    businessId || route?.params?.businessId || null
-  );
+  const [bizId, setBizId] = useState(businessId || route?.params?.businessId || null);
 
-  const initialOwnerType =
-    route?.params?.owner_type ||
-    route?.params?.ownerType ||
-    ownerTypeProp ||
-    'mart';
-
+  const initialOwnerType = route?.params?.owner_type || route?.params?.ownerType || ownerTypeProp || 'mart';
   const [ownerType, setOwnerType] = useState(String(initialOwnerType));
+
   const [deliveryOption, setDeliveryOption] = useState(
-    (route?.params?.delivery_option ||
-      route?.params?.deliveryOption ||
-      deliveryOptionProp ||
-      null)
-      ? String(
-          route?.params?.delivery_option ||
-          route?.params?.deliveryOption ||
-          deliveryOptionProp
-        ).toUpperCase()
+    (route?.params?.delivery_option || route?.params?.deliveryOption || deliveryOptionProp || null)
+      ? String(route?.params?.delivery_option || route?.params?.deliveryOption || deliveryOptionProp).toUpperCase()
       : null
   );
 
@@ -680,7 +610,7 @@ export default function MartOrdersTab({
   const [query, setQuery] = useState('');
   const [kbHeight, setKbHeight] = useState(0);
 
-  const [activeDateKey, setActiveDateKey] = useState(''); // default: All dates
+  const [activeDateKey, setActiveDateKey] = useState(''); // All dates
   const [showDateDropdown, setShowDateDropdown] = useState(false);
 
   const [showCalendar, setShowCalendar] = useState(false);
@@ -704,17 +634,12 @@ export default function MartOrdersTab({
 
   const STATUS_LABELS = useMemo(() => {
     const isMart = String(ownerType || '').toLowerCase() === 'mart';
-    return isMart
-      ? BASE_STATUS_LABELS.filter((s) => s.key !== 'PREPARING')
-      : BASE_STATUS_LABELS;
+    return isMart ? BASE_STATUS_LABELS.filter((s) => s.key !== 'PREPARING') : BASE_STATUS_LABELS;
   }, [ownerType]);
 
   useEffect(() => {
-    const fromRoute =
-      route?.params?.owner_type || route?.params?.ownerType || null;
-    if (fromRoute && String(fromRoute) !== String(ownerType)) {
-      setOwnerType(String(fromRoute));
-    }
+    const fromRoute = route?.params?.owner_type || route?.params?.ownerType || null;
+    if (fromRoute && String(fromRoute) !== String(ownerType)) setOwnerType(String(fromRoute));
   }, [route, ownerType]);
 
   useEffect(() => {
@@ -746,14 +671,10 @@ export default function MartOrdersTab({
                 id = parsed?.business_id ?? parsed?.id ?? null;
 
                 if (!deliveryOption && parsed?.delivery_option) {
-                  setDeliveryOption(
-                    String(parsed.delivery_option).toUpperCase()
-                  );
+                  setDeliveryOption(String(parsed.delivery_option).toUpperCase());
                 }
 
-                if (!ownerType && parsed?.owner_type) {
-                  setOwnerType(String(parsed.owner_type));
-                }
+                if (!ownerType && parsed?.owner_type) setOwnerType(String(parsed.owner_type));
               } catch {}
             }
             if (!id) {
@@ -767,23 +688,11 @@ export default function MartOrdersTab({
           const raw = await SecureStore.getItemAsync('merchant_login');
           if (raw) {
             const parsed = JSON.parse(raw);
-            const opt =
-              parsed?.delivery_option ||
-              parsed?.user?.delivery_option ||
-              parsed?.user?.deliveryOption ||
-              null;
-            const oType =
-              parsed?.owner_type ||
-              parsed?.user?.owner_type ||
-              parsed?.user?.ownerType ||
-              null;
+            const opt = parsed?.delivery_option || parsed?.user?.delivery_option || parsed?.user?.deliveryOption || null;
+            const oType = parsed?.owner_type || parsed?.user?.owner_type || parsed?.user?.ownerType || null;
 
-            if (opt && alive && !deliveryOption) {
-              setDeliveryOption(String(opt).toUpperCase());
-            }
-            if (oType && alive && !ownerType) {
-              setOwnerType(String(oType));
-            }
+            if (opt && alive && !deliveryOption) setDeliveryOption(String(opt).toUpperCase());
+            if (oType && alive && !ownerType) setOwnerType(String(oType));
           }
         } catch {}
       })();
@@ -795,10 +704,7 @@ export default function MartOrdersTab({
 
   const buildUrl = useCallback(() => {
     const base = (orderEndpoint ?? ENV_ORDER_ENDPOINT) || '';
-    return buildOrdersUrl(base, bizId, {
-      appendOwnerType,
-      ownerType,
-    });
+    return buildOrdersUrl(base, bizId, { appendOwnerType, ownerType });
   }, [bizId, orderEndpoint, appendOwnerType, ownerType]);
 
   const buildScheduledApiUrl = useCallback(() => {
@@ -828,14 +734,10 @@ export default function MartOrdersTab({
         const headers = { Accept: 'application/json' };
         if (token) headers.Authorization = `Bearer ${token}`;
 
-        const res = await fetch(url, {
-          headers,
-          signal: controller.signal,
-        });
+        const res = await fetch(url, { headers, signal: controller.signal });
         if (!res.ok) {
           const json = await parseJSON(res);
-          const msg =
-            (json && (json.message || json.error)) || `HTTP ${res.status}`;
+          const msg = (json && (json.message || json.error)) || `HTTP ${res.status}`;
           throw new Error(msg);
         }
         const json = await parseJSON(res);
@@ -871,17 +773,14 @@ export default function MartOrdersTab({
         const res = await fetch(url, { headers });
         if (!res.ok) {
           const json = await parseJSON(res);
-          const msg =
-            (json && (json.message || json.error)) || `HTTP ${res.status}`;
+          const msg = (json && (json.message || json.error)) || `HTTP ${res.status}`;
           throw new Error(msg);
         }
         const json = await parseJSON(res);
         const list = normalizeScheduledForBiz(json, bizId);
         setScheduledOrders(list);
       } catch (e) {
-        setScheduledError(
-          String(e?.message || e) || 'Failed to load scheduled orders'
-        );
+        setScheduledError(String(e?.message || e) || 'Failed to load scheduled orders');
       } finally {
         if (!opts.silent) setScheduledLoading(false);
       }
@@ -897,29 +796,23 @@ export default function MartOrdersTab({
 
   // Prefetch upcoming so count shows quickly
   useEffect(() => {
-    if (bizId) {
-      fetchScheduledOrders({ silent: true });
-    }
+    if (bizId) fetchScheduledOrders({ silent: true });
   }, [bizId, fetchScheduledOrders]);
 
-  // Extra: if user switches to Upcoming and nothing yet, refetch
+  // If user switches to Upcoming and nothing yet, refetch
   useEffect(() => {
-    if (activeChip === 'UPCOMING' && scheduledOrders.length === 0 && bizId) {
-      fetchScheduledOrders();
-    }
+    if (activeChip === 'UPCOMING' && scheduledOrders.length === 0 && bizId) fetchScheduledOrders();
   }, [activeChip, scheduledOrders.length, bizId, fetchScheduledOrders]);
 
+  // ✅ IMPORTANT: auto-normalize status patches so ON ROAD becomes OUT_FOR_DELIVERY immediately
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener(
-      'order-updated',
-      ({ id, patch }) => {
-        setOrders((prev) =>
-          prev.map((o) =>
-            String(o.id) === String(id) ? { ...o, ...patch } : o
-          )
-        );
-      }
-    );
+    const sub = DeviceEventEmitter.addListener('order-updated', ({ id, patch }) => {
+      const fixedPatch = {
+        ...patch,
+        ...(patch?.status ? { status: normalizeStatusKey(patch.status) } : null),
+      };
+      setOrders((prev) => prev.map((o) => (String(o.id) === String(id) ? { ...o, ...fixedPatch } : o)));
+    });
     return () => sub.remove();
   }, []);
 
@@ -929,11 +822,7 @@ export default function MartOrdersTab({
         const o = payload?.order;
         if (!o) return;
         const createdISO =
-          o.created_at ||
-          o.createdAt ||
-          o.placed_at ||
-          o.order_time ||
-          new Date().toISOString();
+          o.created_at || o.createdAt || o.placed_at || o.order_time || new Date().toISOString();
 
         let liveNoteTarget = '';
         if (Array.isArray(o.items)) {
@@ -959,7 +848,7 @@ export default function MartOrdersTab({
             .map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`)
             .join(', '),
           total: safeNum(o?.totals?.total_amount ?? o.total_amount ?? o.total),
-          status: o.status || 'PENDING',
+          status: normalizeStatusKey(o.status || 'PENDING'),
           payment_method: o.payment_method || 'COD',
           business_name:
             (o.items && o.items[0] && o.items[0].business_name) ||
@@ -971,7 +860,7 @@ export default function MartOrdersTab({
           customer_email: o.user?.email || '',
           customer_phone: o.user?.phone || '',
           raw_items: Array.isArray(o.items) ? o.items : [],
-          delivery_address: pickAddress(o) || '', // ✅ FIXED
+          delivery_address: pickAddress(o) || '',
           note_for_restaurant: o.note_for_restaurant || '',
           note_target: liveNoteTarget,
           priority: Number(o.priority ?? 0),
@@ -980,9 +869,7 @@ export default function MartOrdersTab({
 
         setOrders((prev) => {
           const without = prev.filter((x) => String(x.id) !== String(normalized.id));
-          return [normalized, ...without].sort(
-            (a, b) => parseForSort(b.created_at) - parseForSort(a.created_at)
-          );
+          return [normalized, ...without].sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
         });
       } catch {}
     });
@@ -992,11 +879,8 @@ export default function MartOrdersTab({
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      if (activeChip === 'UPCOMING') {
-        await fetchScheduledOrders({ silent: true });
-      } else {
-        await fetchOrders({ silent: true });
-      }
+      if (activeChip === 'UPCOMING') await fetchScheduledOrders({ silent: true });
+      else await fetchOrders({ silent: true });
     } finally {
       setRefreshing(false);
     }
@@ -1009,10 +893,7 @@ export default function MartOrdersTab({
         const state = navigation.getState?.();
         const routeExists = !!state?.routeNames?.includes?.(detailsRoute);
         if (!routeExists) {
-          Alert.alert(
-            'Order screen not found',
-            `No screen named "${detailsRoute}". Please register it in your navigator.`
-          );
+          Alert.alert('Order screen not found', `No screen named "${detailsRoute}". Please register it in your navigator.`);
           return;
         }
       } catch {}
@@ -1022,33 +903,31 @@ export default function MartOrdersTab({
         order: o,
         ownerType,
         delivery_option: deliveryOption,
-        isScheduled: o.status === 'SCHEDULED',
+        isScheduled: normalizeStatusKey(o.status) === 'SCHEDULED',
       });
     },
     [navigation, bizId, detailsRoute, ownerType, deliveryOption]
   );
 
   /* -------- date filter (All / Today / Yesterday / calendar) -------- */
-  // ✅ Always filter ONLY normal orders by date (independent of activeChip)
   const dateFilteredOrders = useMemo(() => {
-    if (!activeDateKey) return orders; // "All dates"
+    if (!activeDateKey) return orders;
     return orders.filter((o) => {
       const key = dateKeyFromTs(o.created_at || o.time || '');
       return key === activeDateKey;
     });
   }, [orders, activeDateKey]);
 
-  // ✅ Status counts always based on date-filtered normal orders
+  // ✅ counts use normalized status so ON ROAD counts under OUT_FOR_DELIVERY
   const statusCounts = useMemo(() => {
     return dateFilteredOrders.reduce((acc, o) => {
-      const k = String(o.status || '').trim().toUpperCase();
+      const k = normalizeStatusKey(o.status);
       acc[k] = (acc[k] || 0) + 1;
       return acc;
     }, {});
   }, [dateFilteredOrders]);
 
   const upcomingCount = scheduledOrders.length;
-  // ✅ All tab count should always reflect normal (date-filtered) orders
   const totalCount = dateFilteredOrders.length;
 
   const filtered = useMemo(() => {
@@ -1057,7 +936,7 @@ export default function MartOrdersTab({
 
     if (activeChip !== 'ALL' && activeChip !== 'UPCOMING') {
       const statusKey = activeChip;
-      base = base.filter((o) => String(o.status || '').trim().toUpperCase() === statusKey);
+      base = base.filter((o) => normalizeStatusKey(o.status) === statusKey);
     }
 
     const q = activeChip === 'UPCOMING' ? '' : query.trim().toLowerCase();
@@ -1076,7 +955,7 @@ export default function MartOrdersTab({
           o.customer_email,
           o.note_for_restaurant,
           o.note_target,
-          o.delivery_address, // ✅ searchable now
+          o.delivery_address,
         ]
           .filter(Boolean)
           .join(' ')
@@ -1089,9 +968,7 @@ export default function MartOrdersTab({
   }, [dateFilteredOrders, scheduledOrders, query, activeChip]);
 
   const renderItem = useCallback(
-    ({ item }) => (
-      <OrderItem isTablet={isTablet} money={money} item={item} onPress={openOrder} />
-    ),
+    ({ item }) => <OrderItem isTablet={isTablet} money={money} item={item} onPress={openOrder} />,
     [isTablet, money, openOrder]
   );
 
@@ -1105,9 +982,7 @@ export default function MartOrdersTab({
       return (
         <View style={{ paddingVertical: 24, alignItems: 'center' }}>
           <ActivityIndicator />
-          <Text style={{ marginTop: 8, color: '#6b7280' }}>
-            Loading orders…
-          </Text>
+          <Text style={{ marginTop: 8, color: '#6b7280' }}>Loading orders…</Text>
         </View>
       );
     }
@@ -1115,12 +990,8 @@ export default function MartOrdersTab({
       return (
         <View style={{ paddingVertical: 24, alignItems: 'center' }}>
           <Ionicons name="alert-circle-outline" size={24} color="#b91c1c" />
-          <Text style={{ color: '#b91c1c', fontWeight: '700', marginTop: 6 }}>
-            Failed to load
-          </Text>
-          <Text style={{ color: '#6b7280', marginTop: 4, textAlign: 'center' }}>
-            {err}
-          </Text>
+          <Text style={{ color: '#b91c1c', fontWeight: '700', marginTop: 6 }}>Failed to load</Text>
+          <Text style={{ color: '#6b7280', marginTop: 4, textAlign: 'center' }}>{err}</Text>
         </View>
       );
     }
@@ -1128,12 +999,8 @@ export default function MartOrdersTab({
       return (
         <View style={{ paddingVertical: 36, alignItems: 'center' }}>
           <Ionicons name="file-tray-outline" size={36} color="#94a3b8" />
-          <Text style={{ color: '#334155', fontWeight: '800', marginTop: 8 }}>
-            No orders
-          </Text>
-          <Text style={{ color: '#64748b', marginTop: 4 }}>
-            Pull down to refresh or change filters.
-          </Text>
+          <Text style={{ color: '#334155', fontWeight: '800', marginTop: 8 }}>No orders</Text>
+          <Text style={{ color: '#64748b', marginTop: 4 }}>Pull down to refresh or change filters.</Text>
         </View>
       );
     }
@@ -1178,11 +1045,7 @@ export default function MartOrdersTab({
   }, [tempCalendarDate]);
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      pointerEvents="box-none"
-    >
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
       <View style={{ flex: 1, paddingHorizontal: 16 }} pointerEvents="box-none">
         {/* Status Tabs */}
         <View style={{ marginTop: 12, marginBottom: 8 }} pointerEvents="box-none">
@@ -1198,13 +1061,9 @@ export default function MartOrdersTab({
               activeOpacity={0.7}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text style={[styles.statusChipText, activeChip === 'ALL' && styles.statusChipTextActive]}>
-                All
-              </Text>
+              <Text style={[styles.statusChipText, activeChip === 'ALL' && styles.statusChipTextActive]}>All</Text>
               <View style={[styles.badge, activeChip === 'ALL' && styles.badgeActive]}>
-                <Text style={[styles.badgeText, activeChip === 'ALL' && styles.badgeTextActive]}>
-                  {totalCount}
-                </Text>
+                <Text style={[styles.badgeText, activeChip === 'ALL' && styles.badgeTextActive]}>{totalCount}</Text>
               </View>
             </TouchableOpacity>
 
@@ -1215,13 +1074,9 @@ export default function MartOrdersTab({
               activeOpacity={0.7}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text style={[styles.statusChipText, activeChip === 'UPCOMING' && styles.statusChipTextActive]}>
-                Upcoming
-              </Text>
+              <Text style={[styles.statusChipText, activeChip === 'UPCOMING' && styles.statusChipTextActive]}>Upcoming</Text>
               <View style={[styles.badge, activeChip === 'UPCOMING' && styles.badgeActive]}>
-                <Text style={[styles.badgeText, activeChip === 'UPCOMING' && styles.badgeTextActive]}>
-                  {upcomingCount}
-                </Text>
+                <Text style={[styles.badgeText, activeChip === 'UPCOMING' && styles.badgeTextActive]}>{upcomingCount}</Text>
               </View>
             </TouchableOpacity>
 
@@ -1237,14 +1092,10 @@ export default function MartOrdersTab({
                   activeOpacity={0.7}
                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                 >
-                  <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>
-                    {s.label}
-                  </Text>
+                  <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>{s.label}</Text>
                   {count > 0 ? (
                     <View style={[styles.badge, active && styles.badgeActive]}>
-                      <Text style={[styles.badgeText, active && styles.badgeTextActive]}>
-                        {count}
-                      </Text>
+                      <Text style={[styles.badgeText, active && styles.badgeTextActive]}>{count}</Text>
                     </View>
                   ) : null}
                 </TouchableOpacity>
@@ -1294,9 +1145,7 @@ export default function MartOrdersTab({
                 }}
                 activeOpacity={0.7}
               >
-                <Text style={styles.dateDropdownText} numberOfLines={1}>
-                  {currentDateLabel}
-                </Text>
+                <Text style={styles.dateDropdownText} numberOfLines={1}>{currentDateLabel}</Text>
                 <Ionicons name="chevron-down" size={16} color="#0f172a" />
               </TouchableOpacity>
             </View>
@@ -1336,9 +1185,7 @@ export default function MartOrdersTab({
                     setShowDateDropdown(false);
                   }}
                 >
-                  <Text style={[styles.modalOptionText, activeDateKey === '' && styles.modalOptionTextActive]}>
-                    All dates
-                  </Text>
+                  <Text style={[styles.modalOptionText, activeDateKey === '' && styles.modalOptionTextActive]}>All dates</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -1349,9 +1196,7 @@ export default function MartOrdersTab({
                     setShowDateDropdown(false);
                   }}
                 >
-                  <Text style={[styles.modalOptionText, activeDateKey === todayKey && styles.modalOptionTextActive]}>
-                    Today
-                  </Text>
+                  <Text style={[styles.modalOptionText, activeDateKey === todayKey && styles.modalOptionTextActive]}>Today</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -1362,17 +1207,11 @@ export default function MartOrdersTab({
                     setShowDateDropdown(false);
                   }}
                 >
-                  <Text style={[styles.modalOptionText, activeDateKey === yesterdayKey && styles.modalOptionTextActive]}>
-                    Yesterday
-                  </Text>
+                  <Text style={[styles.modalOptionText, activeDateKey === yesterdayKey && styles.modalOptionTextActive]}>Yesterday</Text>
                 </TouchableOpacity>
 
                 <View style={{ marginTop: 8 }}>
-                  <TouchableOpacity
-                    style={styles.calendarBtn}
-                    onPress={() => setShowCalendar(true)}
-                    activeOpacity={0.8}
-                  >
+                  <TouchableOpacity style={styles.calendarBtn} onPress={() => setShowCalendar(true)} activeOpacity={0.8}>
                     <Ionicons name="calendar-outline" size={16} color="#0f172a" />
                     <Text style={styles.calendarBtnText}>Pick from calendar</Text>
                   </TouchableOpacity>
@@ -1400,21 +1239,11 @@ export default function MartOrdersTab({
 
                     {Platform.OS === 'ios' && (
                       <View style={styles.iosCalendarActions}>
-                        <TouchableOpacity
-                          onPress={() => setShowCalendar(false)}
-                          style={[styles.iosCalendarBtn, { backgroundColor: '#e5e7eb' }]}
-                        >
-                          <Text style={[styles.iosCalendarBtnText, { color: '#111827' }]}>
-                            Cancel
-                          </Text>
+                        <TouchableOpacity onPress={() => setShowCalendar(false)} style={[styles.iosCalendarBtn, { backgroundColor: '#e5e7eb' }]}>
+                          <Text style={[styles.iosCalendarBtnText, { color: '#111827' }]}>Cancel</Text>
                         </TouchableOpacity>
-                        <TouchableOpacity
-                          onPress={applyCalendarDate}
-                          style={[styles.iosCalendarBtn, { backgroundColor: '#16a34a' }]}
-                        >
-                          <Text style={[styles.iosCalendarBtnText, { color: '#fff' }]}>
-                            Apply
-                          </Text>
+                        <TouchableOpacity onPress={applyCalendarDate} style={[styles.iosCalendarBtn, { backgroundColor: '#16a34a' }]}>
+                          <Text style={[styles.iosCalendarBtnText, { color: '#fff' }]}>Apply</Text>
                         </TouchableOpacity>
                       </View>
                     )}
