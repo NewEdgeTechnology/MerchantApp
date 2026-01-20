@@ -69,7 +69,7 @@ export default function MerchantExtrasScreen() {
   // Business License number (OPTIONAL now)
   const [regNo, setRegNo] = useState("");
 
-  // ID card number (REQUIRED, numeric, min 11 digits)
+  // ID card number (REQUIRED, numeric, EXACT 11 digits)
   const [idCardNo, setIdCardNo] = useState("");
 
   const [focusedField, setFocusedField] = useState(null);
@@ -79,10 +79,16 @@ export default function MerchantExtrasScreen() {
   // ---- Prefill from merchant, or fall back to initial* params when editing ----
   useEffect(() => {
     if (incomingMerchant) {
-      if (incomingMerchant.registration_no) setRegNo(String(incomingMerchant.registration_no));
+      if (incomingMerchant.registration_no)
+        setRegNo(String(incomingMerchant.registration_no));
       if (incomingMerchant.address) setAddress(incomingMerchant.address);
-      if (incomingMerchant.id_card_number)
-        setIdCardNo(String(incomingMerchant.id_card_number));
+
+      if (incomingMerchant.id_card_number) {
+        const cleaned = String(incomingMerchant.id_card_number)
+          .replace(/[^0-9]/g, "")
+          .slice(0, 11);
+        setIdCardNo(cleaned);
+      }
 
       const lat = incomingMerchant.latitude ?? null;
       const lng = incomingMerchant.longitude ?? null;
@@ -103,14 +109,22 @@ export default function MerchantExtrasScreen() {
           size: img.size ?? 0,
         };
       };
-      if (incomingMerchant.logo) setLogo(normalizeImg(incomingMerchant.logo, "logo.jpg"));
+      if (incomingMerchant.logo)
+        setLogo(normalizeImg(incomingMerchant.logo, "logo.jpg"));
       if (incomingMerchant.license)
         setLicenseFile(normalizeImg(incomingMerchant.license, "license"));
     }
 
     if (!incomingMerchant?.address && initialAddress) setAddress(initialAddress);
-    if (!incomingMerchant?.registration_no && initialRegNo) setRegNo(String(initialRegNo));
-    if (!incomingMerchant?.latitude && !incomingMerchant?.longitude && initialPickedCoord) {
+
+    if (!incomingMerchant?.registration_no && initialRegNo)
+      setRegNo(String(initialRegNo));
+
+    if (
+      !incomingMerchant?.latitude &&
+      !incomingMerchant?.longitude &&
+      initialPickedCoord
+    ) {
       setPickedCoord(initialPickedCoord);
       setMapRegion((r) => ({
         ...r,
@@ -118,8 +132,11 @@ export default function MerchantExtrasScreen() {
         longitude: initialPickedCoord.longitude,
       }));
     }
+
     if (!incomingMerchant?.logo && initialLogo) setLogo(initialLogo);
-    if (!incomingMerchant?.license && initialLicenseFile) setLicenseFile(initialLicenseFile);
+
+    if (!incomingMerchant?.license && initialLicenseFile)
+      setLicenseFile(initialLicenseFile);
   }, [
     incomingMerchant,
     initialAddress,
@@ -142,11 +159,11 @@ export default function MerchantExtrasScreen() {
     };
   }, []);
 
-  // regNo is optional; idCardNo is required & min 11 digits
+  // regNo is optional; idCardNo is required & EXACTLY 11 digits
   const validate = () => {
     if (!toSafeString(address).trim()) return false;
     if (!logo?.uri) return false;
-    if (!idCardNo || idCardNo.trim().length < 11) return false;
+    if (!idCardNo || idCardNo.trim().length !== 11) return false; // ✅ exact 11
     return true;
   };
 
@@ -190,7 +207,9 @@ export default function MerchantExtrasScreen() {
     const line = await reverseGeocode(pickedCoord.latitude, pickedCoord.longitude);
     setAddress(
       line ||
-        `Located at: ${pickedCoord.latitude.toFixed(5)}, ${pickedCoord.longitude.toFixed(5)}`
+        `Located at: ${pickedCoord.latitude.toFixed(
+          5
+        )}, ${pickedCoord.longitude.toFixed(5)}`
     );
     setMapRegion((r) => ({
       ...r,
@@ -263,7 +282,10 @@ export default function MerchantExtrasScreen() {
       setPickingLicense(true);
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission needed", "Allow photo access to upload your business license.");
+        Alert.alert(
+          "Permission needed",
+          "Allow photo access to upload your business license."
+        );
         return;
       }
       const img = await ImagePicker.launchImageLibraryAsync({
@@ -301,11 +323,14 @@ export default function MerchantExtrasScreen() {
         return;
       }
       if (!idCardNo || idCardNo.trim().length === 0) {
-        Alert.alert("Missing ID number", "Please enter your ID card number.");
+        Alert.alert(
+          "Missing ID number",
+          "Please enter your 11-digit ID card number."
+        );
         return;
       }
-      if (idCardNo.trim().length < 11) {
-        Alert.alert("Invalid ID number", "ID card number must be at least 11 digits.");
+      if (idCardNo.trim().length !== 11) {
+        Alert.alert("Invalid ID number", "ID card number must be exactly 11 digits.");
         return;
       }
       return;
@@ -337,7 +362,8 @@ export default function MerchantExtrasScreen() {
         ).trim(),
 
         category: normalizedCategoryIds,
-        categories: incomingMerchant?.categories ?? route.params?.merchant?.categories ?? [],
+        categories:
+          incomingMerchant?.categories ?? route.params?.merchant?.categories ?? [],
 
         ...(maybeRegNo !== undefined ? { registration_no: maybeRegNo } : {}),
 
@@ -353,9 +379,14 @@ export default function MerchantExtrasScreen() {
         owner_type: effectiveOwnerType,
       };
 
+      // ✅ IMPORTANT: Pass idCardNo directly to next screen as well
       navigation.navigate(NEXT_ROUTE, {
         ...(route.params ?? {}),
         merchant: mergedMerchant,
+
+        // ✅ new param
+        idCardNo: maybeIdCard ?? null,
+
         serviceType: serviceType ?? "food",
         owner_type: effectiveOwnerType,
         initialDeliveryOption: deliveryOption ?? null,
@@ -385,7 +416,10 @@ export default function MerchantExtrasScreen() {
       >
         <View style={{ flex: 1 }}>
           <ScrollView
-            contentContainerStyle={[styles.container, { paddingBottom: 120 + kbHeight }]}
+            contentContainerStyle={[
+              styles.container,
+              { paddingBottom: 120 + kbHeight },
+            ]}
             keyboardShouldPersistTaps="handled"
           >
             {/* ===== Business location (map) ===== */}
@@ -429,14 +463,21 @@ export default function MerchantExtrasScreen() {
 
                 <View style={styles.coordsBlock}>
                   <Text style={styles.coordsLabel}>Latitude</Text>
-                  <Text style={styles.coordsValue}>{pickedCoord.latitude.toFixed(6)}</Text>
-                  <Text style={[styles.coordsLabel, { marginTop: 6 }]}>Longitude</Text>
-                  <Text style={styles.coordsValue}>{pickedCoord.longitude.toFixed(6)}</Text>
+                  <Text style={styles.coordsValue}>
+                    {pickedCoord.latitude.toFixed(6)}
+                  </Text>
+                  <Text style={[styles.coordsLabel, { marginTop: 6 }]}>
+                    Longitude
+                  </Text>
+                  <Text style={styles.coordsValue}>
+                    {pickedCoord.longitude.toFixed(6)}
+                  </Text>
                 </View>
               </>
             ) : (
               <Text style={styles.fileName}>
-                No location selected yet. Tap “Select on full map” to drop a pin, then Confirm.
+                No location selected yet. Tap “Select on full map” to drop a pin, then
+                Confirm.
               </Text>
             )}
 
@@ -462,6 +503,27 @@ export default function MerchantExtrasScreen() {
             </Text>
             <LogoUploader value={logo} onChange={setLogo} />
 
+            {/* ===== ID Card number (REQUIRED, numeric, EXACT 11 digits) ===== */}
+            <Field
+              label={
+                <Text>
+                  ID card number <Text style={{ color: "red" }}>*</Text>
+                </Text>
+              }
+              placeholder="Enter 11-digit ID number"
+              value={idCardNo}
+              onChangeText={(text) => {
+                const cleaned = text.replace(/[^0-9]/g, "").slice(0, 11); // ✅ digits only + limit 11
+                setIdCardNo(cleaned);
+              }}
+              keyboardType="numeric"
+              maxLength={11} // ✅ hard cap at 11
+              onFocus={() => setFocusedField("idCardNo")}
+              onBlur={() => setFocusedField(null)}
+              isFocused={focusedField === "idCardNo"}
+              hint="Only numbers allowed, exactly 11 digits."
+            />
+
             {/* ===== Business License number (OPTIONAL) ===== */}
             <Field
               label={<Text>Business License number</Text>}
@@ -471,27 +533,6 @@ export default function MerchantExtrasScreen() {
               onFocus={() => setFocusedField("regNo")}
               onBlur={() => setFocusedField(null)}
               isFocused={focusedField === "regNo"}
-            />
-
-            {/* ===== ID Card number (REQUIRED, numeric, min 11 digits) ===== */}
-            <Field
-              label={
-                <Text>
-                  ID card number <Text style={{ color: "red" }}>*</Text>
-                </Text>
-              }
-              placeholder="Enter ID number"
-              value={idCardNo}
-              onChangeText={(text) => {
-                // Only allow digits 0-9
-                const cleaned = text.replace(/[^0-9]/g, "");
-                setIdCardNo(cleaned);
-              }}
-              keyboardType="numeric"
-              onFocus={() => setFocusedField("idCardNo")}
-              onBlur={() => setFocusedField(null)}
-              isFocused={focusedField === "idCardNo"}
-              hint="Only numbers allowed, minimum 11 digits."
             />
 
             {/* ===== License Upload (OPTIONAL) ===== */}
@@ -532,11 +573,13 @@ export default function MerchantExtrasScreen() {
             </View>
           </ScrollView>
 
-          {/* Bottom bar: Submit (on page 2) */}
+          {/* Bottom bar: Submit */}
           <View pointerEvents="box-none" style={[styles.fabWrap, { bottom: kbHeight }]}>
             <View style={styles.submitContainer}>
               <TouchableOpacity
-                style={isFormValid && !submitting ? styles.btnPrimary : styles.btnPrimaryDisabled}
+                style={
+                  isFormValid && !submitting ? styles.btnPrimary : styles.btnPrimaryDisabled
+                }
                 onPress={onSubmit}
                 disabled={!isFormValid || submitting}
               >
@@ -544,9 +587,7 @@ export default function MerchantExtrasScreen() {
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <Text
-                    style={
-                      isFormValid ? styles.btnPrimaryText : styles.btnPrimaryTextDisabled
-                    }
+                    style={isFormValid ? styles.btnPrimaryText : styles.btnPrimaryTextDisabled}
                   >
                     Submit
                   </Text>
@@ -614,9 +655,7 @@ export default function MerchantExtrasScreen() {
           </View>
 
           {!!modalLocError && (
-            <Text style={[styles.locError, { marginHorizontal: 16 }]}>
-              {modalLocError}
-            </Text>
+            <Text style={[styles.locError, { marginHorizontal: 16 }]}>{modalLocError}</Text>
           )}
 
           <View style={styles.modalFooter}>
@@ -765,6 +804,7 @@ function Field({
   onBlur,
   isFocused,
   hint,
+  maxLength,
 }) {
   return (
     <View style={{ marginBottom: 16 }}>
@@ -781,6 +821,7 @@ function Field({
           onFocus={onFocus}
           onBlur={onBlur}
           returnKeyType="next"
+          maxLength={maxLength}
         />
       </View>
       {!!hint && <Text style={styles.hint}>{hint}</Text>}
@@ -796,6 +837,7 @@ function formatSize(bytes = 0) {
   const mb = kb / 1024;
   return `${mb.toFixed(2)} MB`;
 }
+
 const toSafeString = (v) => {
   if (v == null) return "";
   if (typeof v === "string") return v;
@@ -805,6 +847,7 @@ const toSafeString = (v) => {
   if (typeof v === "object") return String(v.label ?? v.value ?? "");
   return "";
 };
+
 // Normalize category to an array of **IDs** (strings)
 const normalizeCategoryIds = (v) => {
   if (!v) return [];

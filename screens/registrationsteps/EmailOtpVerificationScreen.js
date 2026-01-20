@@ -1,4 +1,5 @@
 // screens/registrationsteps/EmailOtpVerificationScreen.js
+// ✅ Updated to send BOTH: cid + id_card_number (backend wants cid)
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -18,14 +19,12 @@ import { useSafeAreaInsets, SafeAreaView } from "react-native-safe-area-context"
 import { Ionicons } from "@expo/vector-icons";
 import HeaderWithSteps from "./HeaderWithSteps";
 
-// Endpoints from .env
 import {
-  SEND_OTP_ENDPOINT, // email (optional)
-  VERIFY_OTP_ENDPOINT, // email verify (optional)
+  SEND_OTP_ENDPOINT,
+  VERIFY_OTP_ENDPOINT,
   REGISTER_MERCHANT_ENDPOINT,
-
-  SEND_OTP_REGISTER_SMS_ENDPOINT, // ✅ sms send
-  VERIFY_OTP_REGISTER_SMS_ENDPOINT, // ✅ sms verify
+  SEND_OTP_REGISTER_SMS_ENDPOINT,
+  VERIFY_OTP_REGISTER_SMS_ENDPOINT,
 } from "@env";
 
 const VERIFY_NEXT_ROUTE = "LoginScreen";
@@ -34,12 +33,8 @@ const EDIT_SIGNUP_ROUTE = "SignupScreen";
 /* ---------------- Debug helpers (SAFE) ---------------- */
 const DEBUG_NET = true;
 const rid = () => Math.random().toString(36).slice(2, 8);
-const log = (...a) => {
-  if (DEBUG_NET) console.log("[OTP]", ...a);
-};
-const logErr = (...a) => {
-  if (DEBUG_NET) console.log("[OTP ERR]", ...a);
-};
+const log = (...a) => DEBUG_NET && console.log("[OTP]", ...a);
+const logErr = (...a) => DEBUG_NET && console.log("[OTP ERR]", ...a);
 
 /* ---------------- Normalizers ---------------- */
 const normalizeCategoryIds = (v) => {
@@ -86,7 +81,9 @@ const normalizeDeliveryUpper = (val) => {
   return null;
 };
 
-// Pass images as URL strings only in JSON mode
+// ✅ CID/ID Card (digits only, max 11)
+const normalizeCid11 = (v) => String(v || "").replace(/[^0-9]/g, "").slice(0, 11);
+
 const toHttpUrlOrNull = (val) => {
   if (!val) return null;
   if (typeof val === "string") {
@@ -113,7 +110,7 @@ const guessMime = (uri = "") => {
   return "application/octet-stream";
 };
 const buildFilePart = (uri, base = "image") => {
-  let type = guessMime(uri);
+  const type = guessMime(uri);
   const name = (uri.split("?")[0].split("/").pop() || base).replace(
     /[^a-z0-9._-]/gi,
     "_"
@@ -127,9 +124,10 @@ const postJson = async (url, payload, timeoutMs = 20000) => {
   if (!u) throw new Error("Endpoint missing");
   const id = rid();
   log(`(req:${id}) POST JSON ->`, u);
-  log(`(req:${id}) body:`, payload);
+
   const controller = new AbortController();
   const to = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const res = await fetch(u, {
       method: "POST",
@@ -142,21 +140,26 @@ const postJson = async (url, payload, timeoutMs = 20000) => {
       body: JSON.stringify(payload),
       signal: controller.signal,
     });
+
     const txt = await res.text();
     log(`(req:${id}) status:`, res.status);
-    log(`(req:${id}) headers:`, Object.fromEntries(res.headers.entries()));
     log(`(req:${id}) raw:`, txt);
+
     let data = null;
     try {
       data = txt ? JSON.parse(txt) : null;
     } catch {}
+
     if (!res.ok) {
       const msg =
-        (data && (data.message || data.error)) || `HTTP ${res.status}`;
-      throw new Error(msg);
+        (data && (data.message || data.error)) || txt || `HTTP ${res.status}`;
+      throw new Error(String(msg).slice(0, 500));
     }
-    if (data && data.success === false && data.message)
+
+    if (data && data.success === false && data.message) {
       throw new Error(String(data.message));
+    }
+
     return data ?? {};
   } catch (e) {
     logErr(`(req:${id}) ERROR:`, e?.message);
@@ -171,13 +174,14 @@ const postMultipart = async (url, formData, timeoutMs = 30000) => {
   if (!u) throw new Error("Endpoint missing");
   const id = rid();
   log(`(req:${id}) POST MULTIPART ->`, u);
+
   const controller = new AbortController();
   const to = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const res = await fetch(u, {
       method: "POST",
       headers: {
-        // DO NOT set Content-Type; RN will add multipart boundary
         Accept: "application/json",
         "x-client": "rn-app",
         "x-request-id": id,
@@ -185,18 +189,22 @@ const postMultipart = async (url, formData, timeoutMs = 30000) => {
       body: formData,
       signal: controller.signal,
     });
+
     const txt = await res.text();
     log(`(req:${id}) status:`, res.status);
     log(`(req:${id}) raw:`, txt);
+
     let data = null;
     try {
       data = txt ? JSON.parse(txt) : null;
     } catch {}
+
     if (!res.ok) {
       const msg =
-        (data && (data.message || data.error)) || `HTTP ${res.status}`;
-      throw new Error(msg);
+        (data && (data.message || data.error)) || txt || `HTTP ${res.status}`;
+      throw new Error(String(msg).slice(0, 500));
     }
+
     return data ?? {};
   } catch (e) {
     logErr(`(req:${id}) ERROR:`, e?.message);
@@ -204,6 +212,14 @@ const postMultipart = async (url, formData, timeoutMs = 30000) => {
   } finally {
     clearTimeout(to);
   }
+};
+
+/* ---------------- OTP Channel resolver ---------------- */
+const normalizeOtpChannel = (v) => {
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "sms" || s === "phone" || s === "mobile") return "sms";
+  if (s === "email" || s === "mail") return "email";
+  return "sms";
 };
 
 /* ---------------- Component ---------------- */
@@ -214,8 +230,16 @@ export default function EmailOtpVerificationScreen() {
 
   const {
     email = "",
-    phone = "", // ✅ allow direct phone param (from Review screen)
-    otpChannel = "sms", // ✅ "sms" | "email"
+    phone = "",
+
+    otpChannel: incomingOtpChannel = "sms",
+    otp_channel = null,
+    verifyBy = null,
+    method = null,
+
+    // ✅ accept cid from previous screen
+    idCardNo: incomingIdCardNo = null,
+
     merchant = {},
     serviceType = "food",
     deliveryOption: incomingDelivery = null,
@@ -225,12 +249,16 @@ export default function EmailOtpVerificationScreen() {
     owner_type: incomingOwnerType = null,
   } = route.params ?? {};
 
+  const otpChannel = useMemo(
+    () => normalizeOtpChannel(incomingOtpChannel ?? otp_channel ?? verifyBy ?? method),
+    [incomingOtpChannel, otp_channel, verifyBy, method]
+  );
+
   const effectivePhone = useMemo(
     () => String(phone || merchant?.phone || "").trim(),
     [phone, merchant?.phone]
   );
 
-  // business_type_ids (numbers)
   const businessTypeIds = useMemo(
     () => normalizeCategoryIds(merchant?.category ?? initialCategory),
     [merchant?.category, initialCategory]
@@ -249,11 +277,22 @@ export default function EmailOtpVerificationScreen() {
     [incomingDelivery, merchant?.delivery_option]
   );
 
+  // ✅ final cid used for register (backend wants `cid`)
+  const cid = useMemo(() => {
+    const raw =
+      incomingIdCardNo ??
+      merchant?.cid ??
+      merchant?.id_card_number ??
+      merchant?.idCardNo ??
+      merchant?.id_card_no ??
+      null;
+    return normalizeCid11(raw);
+  }, [incomingIdCardNo, merchant?.cid, merchant?.id_card_number, merchant?.idCardNo, merchant?.id_card_no]);
+
   const [otp, setOtp] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // UI niceties
   const [kbHeight, setKbHeight] = useState(0);
   const RESEND_COOLDOWN = 30;
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN);
@@ -262,19 +301,15 @@ export default function EmailOtpVerificationScreen() {
   const maskedEmail = useMemo(() => maskEmail(email), [email]);
   const maskedPhone = useMemo(() => maskPhone(effectivePhone), [effectivePhone]);
 
-  useEffect(() => {
-    log("SEND_OTP_ENDPOINT:", SEND_OTP_ENDPOINT);
-    log("VERIFY_OTP_ENDPOINT:", VERIFY_OTP_ENDPOINT);
-    log("SEND_OTP_REGISTER_SMS_ENDPOINT:", SEND_OTP_REGISTER_SMS_ENDPOINT);
-    log("VERIFY_OTP_REGISTER_SMS_ENDPOINT:", VERIFY_OTP_REGISTER_SMS_ENDPOINT);
-    log("REGISTER_MERCHANT_ENDPOINT:", REGISTER_MERCHANT_ENDPOINT);
-    log("otpChannel:", otpChannel);
-  }, []);
+  const sendEndpoint =
+    otpChannel === "sms" ? SEND_OTP_REGISTER_SMS_ENDPOINT : SEND_OTP_ENDPOINT;
+  const verifyEndpoint =
+    otpChannel === "sms" ? VERIFY_OTP_REGISTER_SMS_ENDPOINT : VERIFY_OTP_ENDPOINT;
 
-  // keyboard spacing
   useEffect(() => {
     const onShow = (e) => setKbHeight(e.endCoordinates?.height ?? 0);
     const onHide = () => setKbHeight(0);
+
     const showSub =
       Platform.OS === "ios"
         ? Keyboard.addListener("keyboardWillShow", onShow)
@@ -283,19 +318,21 @@ export default function EmailOtpVerificationScreen() {
       Platform.OS === "ios"
         ? Keyboard.addListener("keyboardWillHide", onHide)
         : Keyboard.addListener("keyboardDidHide", onHide);
+
     return () => {
       showSub.remove();
       hideSub.remove();
     };
   }, []);
+
   const bottomSpace = Math.max(kbHeight, insets.bottom, 16);
 
-  // auto send only if not skipped
   useEffect(() => {
     if (!skipAutoSend) {
       sendOtpSilently();
       setCooldown(RESEND_COOLDOWN);
     }
+
     const timer = setInterval(() => {
       setCooldown((s) => {
         if (s <= 1) {
@@ -305,23 +342,33 @@ export default function EmailOtpVerificationScreen() {
         return s - 1;
       });
     }, 1000);
-    return () => clearInterval(timer);
-  }, [skipAutoSend, otpChannel, email, effectivePhone]);
 
-  /* ---------------- flows ---------------- */
+    return () => clearInterval(timer);
+  }, [skipAutoSend, otpChannel]);
+
   const sendOtpSilently = async () => {
     try {
+      if (!String(sendEndpoint || "").trim()) {
+        throw new Error("Send OTP endpoint is missing in .env");
+      }
+
       if (otpChannel === "sms") {
         if (!effectivePhone) throw new Error("Phone number missing.");
-        log("sendOtpSilently(SMS) ->", effectivePhone);
-        await postJson(SEND_OTP_REGISTER_SMS_ENDPOINT, { phone: effectivePhone });
+        await postJson(sendEndpoint, {
+          phone: effectivePhone,
+          mobile: effectivePhone,
+          msisdn: effectivePhone,
+          type: "register_sms",
+        });
         return;
       }
 
-      // email flow (optional)
-      if (!email) throw new Error("Email missing.");
-      log("sendOtpSilently(EMAIL) ->", email);
-      await postJson(SEND_OTP_ENDPOINT, { email });
+      if (!String(email || "").trim()) throw new Error("Email missing.");
+      await postJson(sendEndpoint, {
+        email: String(email).trim(),
+        to: String(email).trim(),
+        type: "email_verification",
+      });
     } catch (e) {
       logErr("sendOtpSilently failed:", e?.message);
       Alert.alert("Couldn’t send code", e?.message || "Please try again.");
@@ -332,7 +379,12 @@ export default function EmailOtpVerificationScreen() {
     if (cooldown > 0) return;
 
     try {
+      if (!String(sendEndpoint || "").trim()) {
+        throw new Error("Send OTP endpoint is missing in .env");
+      }
+
       setCooldown(RESEND_COOLDOWN);
+
       const t = setInterval(() => {
         setCooldown((s) => {
           if (s <= 1) {
@@ -345,15 +397,22 @@ export default function EmailOtpVerificationScreen() {
 
       if (otpChannel === "sms") {
         if (!effectivePhone) throw new Error("Phone number missing.");
-        log("resendOtp(SMS) ->", effectivePhone);
-        await postJson(SEND_OTP_REGISTER_SMS_ENDPOINT, { phone: effectivePhone });
+        await postJson(sendEndpoint, {
+          phone: effectivePhone,
+          mobile: effectivePhone,
+          msisdn: effectivePhone,
+          type: "register_sms",
+        });
         Alert.alert("Code sent", `We sent a new code to ${maskedPhone}.`);
         return;
       }
 
-      if (!email) throw new Error("Email missing.");
-      log("resendOtp(EMAIL) ->", email);
-      await postJson(SEND_OTP_ENDPOINT, { email });
+      if (!String(email || "").trim()) throw new Error("Email missing.");
+      await postJson(sendEndpoint, {
+        email: String(email).trim(),
+        to: String(email).trim(),
+        type: "email_verification",
+      });
       Alert.alert("Code sent", `We sent a new code to ${maskedEmail}.`);
     } catch (e) {
       setCooldown(0);
@@ -362,7 +421,6 @@ export default function EmailOtpVerificationScreen() {
     }
   };
 
-  // Build JSON for non-multipart path (URLs only)
   const buildRegisterJson = () => {
     const bank = merchant?.bank ?? {};
     const json = {
@@ -371,7 +429,12 @@ export default function EmailOtpVerificationScreen() {
       phone: merchant?.phone ?? effectivePhone ?? "",
       password: merchant?.password ?? "",
       business_name: merchant?.business_name ?? merchant?.businessName ?? "",
-      business_type_ids: businessTypeIds, // REQUIRED array<number>
+      business_type_ids: businessTypeIds,
+
+      // ✅ BACKEND NEEDS cid
+      ...(cid ? { cid } : {}),
+      // ✅ keep also id_card_number (some APIs use this)
+      ...(cid ? { id_card_number: cid } : {}),
 
       ...(merchant?.registration_no
         ? { business_license_number: String(merchant.registration_no) }
@@ -392,7 +455,7 @@ export default function EmailOtpVerificationScreen() {
         ? { business_logo: toHttpUrlOrNull(merchant?.logo ?? merchant?.business_logo) }
         : {}),
 
-      delivery_option: deliveryOption ?? undefined, // "SELF" | "GRAB" | "BOTH"
+      delivery_option: deliveryOption ?? undefined,
       owner_type: ownerType,
 
       ...(bank?.bank_name ? { bank_name: bank.bank_name } : {}),
@@ -406,11 +469,11 @@ export default function EmailOtpVerificationScreen() {
           }
         : {}),
     };
+
     Object.keys(json).forEach((k) => json[k] === undefined && delete json[k]);
     return json;
   };
 
-  // Build FormData for multipart path (local files and/or URLs)
   const buildRegisterFormData = () => {
     const bank = merchant?.bank ?? {};
     const fd = new FormData();
@@ -420,6 +483,12 @@ export default function EmailOtpVerificationScreen() {
     fd.append("phone", merchant?.phone ?? effectivePhone ?? "");
     fd.append("password", merchant?.password ?? "");
     fd.append("business_name", merchant?.business_name ?? merchant?.businessName ?? "");
+
+    // ✅ BACKEND NEEDS cid
+    if (cid) fd.append("cid", cid);
+    // ✅ keep also id_card_number
+    if (cid) fd.append("id_card_number", cid);
+
     if (ownerType) fd.append("owner_type", ownerType);
     if (deliveryOption) fd.append("delivery_option", deliveryOption);
     if (merchant?.registration_no)
@@ -471,42 +540,49 @@ export default function EmailOtpVerificationScreen() {
       setError("Enter the 6-digit code.");
       return;
     }
+
+    // ✅ enforce cid here (exactly 11 digits)
+    if (!cid || cid.length !== 11) {
+      setError("CID must be exactly 11 digits.");
+      Alert.alert("Missing CID", "CID must be exactly 11 digits.");
+      return;
+    }
+
     if (!businessTypeIds.length) {
       setError("Please select at least one business type.");
-      Alert.alert(
-        "Missing business type",
-        "business_type_ids must be a non-empty array."
-      );
+      Alert.alert("Missing business type", "business_type_ids must be a non-empty array.");
       return;
     }
 
     try {
       setSubmitting(true);
 
-      // ✅ 1) OTP verify based on channel
-      if (otpChannel === "sms") {
-        if (!effectivePhone) throw new Error("Phone number missing.");
-        if (!String(VERIFY_OTP_REGISTER_SMS_ENDPOINT || "").trim()) {
-          throw new Error("VERIFY_OTP_REGISTER_SMS_ENDPOINT is missing.");
-        }
-
-        // ✅ backend likely expects { phone, otp } (change keys if needed)
-        const verifyBody = { phone: effectivePhone, otp };
-        log("verify(SMS) ->", verifyBody);
-        await postJson(VERIFY_OTP_REGISTER_SMS_ENDPOINT, verifyBody);
-      } else {
-        // email verify (optional route)
-        if (!email) throw new Error("Email missing.");
-        if (!String(VERIFY_OTP_ENDPOINT || "").trim()) {
-          throw new Error("VERIFY_OTP_ENDPOINT is missing.");
-        }
-
-        const verifyBody = { email, otp };
-        log("verify(EMAIL) ->", verifyBody);
-        await postJson(VERIFY_OTP_ENDPOINT, verifyBody);
+      if (!String(verifyEndpoint || "").trim()) {
+        throw new Error("Verify OTP endpoint is missing in .env");
       }
 
-      // ✅ 2) Register merchant (same as before)
+      if (otpChannel === "sms") {
+        if (!effectivePhone) throw new Error("Phone number missing.");
+        await postJson(verifyEndpoint, {
+          phone: effectivePhone,
+          mobile: effectivePhone,
+          msisdn: effectivePhone,
+          otp,
+          type: "register_sms",
+        });
+      } else {
+        if (!String(email || "").trim()) throw new Error("Email missing.");
+        await postJson(verifyEndpoint, {
+          email: String(email).trim(),
+          otp,
+          type: "email_verification",
+        });
+      }
+
+      if (!String(REGISTER_MERCHANT_ENDPOINT || "").trim()) {
+        throw new Error("REGISTER_MERCHANT_ENDPOINT is missing in .env");
+      }
+
       const logoUri = getUri(merchant?.logo ?? merchant?.business_logo);
       const licUri = getUri(merchant?.license_image ?? merchant?.license);
       const bankQrUri = getUri(
@@ -519,18 +595,17 @@ export default function EmailOtpVerificationScreen() {
         await postMultipart(REGISTER_MERCHANT_ENDPOINT, fd);
       } else {
         const regJson = buildRegisterJson();
-        log("register JSON ->", regJson);
         await postJson(REGISTER_MERCHANT_ENDPOINT, regJson);
       }
 
-      // ✅ 3) Navigate
-      log("Registration ok → navigating:", VERIFY_NEXT_ROUTE);
       navigation.navigate(VERIFY_NEXT_ROUTE, {
         ...(route.params ?? {}),
-        email: email || null, // optional
+        email: email || null,
         phone: effectivePhone || null,
+        idCardNo: cid,
         status: "submitted",
-        verified: otpChannel, // "sms" or "email"
+        otpChannel,
+        verified: otpChannel,
         returnTo,
       });
     } catch (e) {
@@ -542,43 +617,24 @@ export default function EmailOtpVerificationScreen() {
   };
 
   const isValid = otp.length === 6;
-
-  const verifyTitle = otpChannel === "sms" ? "Verify Phone" : "Verify Email";
-  const leadText =
-    otpChannel === "sms"
-      ? `Enter the 6-digit code we sent to `
-      : `Enter the 6-digit code we sent to `;
-
-  const leadTarget =
-    otpChannel === "sms" ? maskedPhone : maskedEmail;
+  const title = otpChannel === "sms" ? "Verify Phone" : "Verify Email";
+  const target = otpChannel === "sms" ? maskedPhone : maskedEmail;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-      <HeaderWithSteps
-        step="Step 7 of 7"
-        title={verifyTitle}
-        onBack={() => navigation.goBack()}
-      />
+      <HeaderWithSteps step="Step 7 of 7" title={title} onBack={() => navigation.goBack()} />
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <View style={{ flex: 1 }}>
           <ScrollView
-            contentContainerStyle={[
-              styles.container,
-              { paddingBottom: 120 + Math.max(kbHeight, insets.bottom, 16) },
-            ]}
+            contentContainerStyle={[styles.container, { paddingBottom: 120 + bottomSpace }]}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
           >
             <Text style={styles.lead}>
-              {leadText}
-              <Text style={styles.leadStrong}>{leadTarget}</Text>.
+              Enter the 6-digit code we sent to <Text style={styles.leadStrong}>{target}</Text>.
             </Text>
 
-            {/* OTP input */}
             <View style={styles.otpWrap}>
               <View style={styles.otpBoxesRow}>
                 {Array.from({ length: 6 }).map((_, i) => {
@@ -591,9 +647,7 @@ export default function EmailOtpVerificationScreen() {
                       activeOpacity={0.8}
                       style={[styles.otpBox, isActive && styles.otpBoxActive]}
                     >
-                      <Text style={styles.otpBoxChar}>
-                        {char ? char : isActive ? "|" : " "}
-                      </Text>
+                      <Text style={styles.otpBoxChar}>{char ? char : isActive ? "|" : " "}</Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -603,9 +657,7 @@ export default function EmailOtpVerificationScreen() {
                 ref={inputRef}
                 style={styles.otpHiddenInput}
                 value={otp}
-                onChangeText={(v) =>
-                  setOtp(v.replace(/[^0-9]/g, "").slice(0, 6))
-                }
+                onChangeText={(v) => setOtp(v.replace(/[^0-9]/g, "").slice(0, 6))}
                 keyboardType="number-pad"
                 maxLength={6}
                 autoFocus
@@ -621,27 +673,16 @@ export default function EmailOtpVerificationScreen() {
               </View>
             )}
 
-            {/* Resend */}
             <View style={styles.resendRow}>
               <Text style={styles.resendHint}>Didn’t get a code?</Text>
-              <TouchableOpacity
-                onPress={resendOtp}
-                disabled={cooldown > 0}
-                activeOpacity={cooldown > 0 ? 1 : 0.8}
-              >
-                <Text
-                  style={[
-                    styles.resendLink,
-                    cooldown > 0 && { color: "#9CA3AF" },
-                  ]}
-                >
+              <TouchableOpacity onPress={resendOtp} disabled={cooldown > 0} activeOpacity={cooldown > 0 ? 1 : 0.8}>
+                <Text style={[styles.resendLink, cooldown > 0 && { color: "#9CA3AF" }]}>
                   {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend"}
                 </Text>
               </TouchableOpacity>
             </View>
 
-            {/* Email optional shortcut (only show when sms) */}
-            {otpChannel === "sms" ? (
+            {otpChannel === "email" ? (
               <TouchableOpacity
                 style={styles.editEmail}
                 onPress={() =>
@@ -653,30 +694,10 @@ export default function EmailOtpVerificationScreen() {
                       ...(merchant ?? {}),
                       category: businessTypeIds,
                       owner_type: ownerType,
+                      cid,
+                      id_card_number: cid,
                     },
-                    owner_type: ownerType,
-                    returnTo: "ReviewSubmitScreen",
-                  })
-                }
-              >
-                <Ionicons name="mail-outline" size={16} color="#417fa2" />
-                <Text style={styles.editEmailText}>
-                  (Optional) Verify using email instead
-                </Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={styles.editEmail}
-                onPress={() =>
-                  navigation.navigate(EDIT_SIGNUP_ROUTE, {
-                    ...(route.params ?? {}),
-                    initialEmail: email,
-                    initialCategory: businessTypeIds,
-                    merchant: {
-                      ...(merchant ?? {}),
-                      category: businessTypeIds,
-                      owner_type: ownerType,
-                    },
+                    idCardNo: cid,
                     owner_type: ownerType,
                     returnTo: "ReviewSubmitScreen",
                   })
@@ -685,28 +706,21 @@ export default function EmailOtpVerificationScreen() {
                 <Ionicons name="mail-outline" size={16} color="#417fa2" />
                 <Text style={styles.editEmailText}>Use a different email</Text>
               </TouchableOpacity>
-            )}
+            ) : null}
           </ScrollView>
 
-          {/* Bottom sticky action */}
-          <View pointerEvents="box-none" style={[styles.fabWrap, { bottom: Math.max(kbHeight, insets.bottom, 16) }]}>
+          <View pointerEvents="box-none" style={[styles.fabWrap, { bottom: bottomSpace }]}>
             <View style={styles.submitContainer}>
               <TouchableOpacity
                 onPress={verifyOtpThenRegister}
                 disabled={!isValid || submitting}
-                style={
-                  !isValid || submitting
-                    ? styles.btnPrimaryDisabled
-                    : styles.btnPrimary
-                }
+                style={!isValid || submitting ? styles.btnPrimaryDisabled : styles.btnPrimary}
                 activeOpacity={0.9}
               >
                 {submitting ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text
-                    style={!isValid ? styles.btnPrimaryTextDisabled : styles.btnPrimaryText}
-                  >
+                  <Text style={!isValid ? styles.btnPrimaryTextDisabled : styles.btnPrimaryText}>
                     Verify
                   </Text>
                 )}
@@ -719,28 +733,21 @@ export default function EmailOtpVerificationScreen() {
   );
 }
 
-/* ---------------- helpers + styles ---------------- */
 function maskEmail(email = "") {
   const [user = "", domain = ""] = String(email).split("@");
   if (!user || !domain) return email || "";
   const visible = user.slice(0, 2);
   return `${visible}${"•".repeat(Math.max(user.length - 2, 0))}@${domain}`;
 }
-
 function maskPhone(phone = "") {
   const p = String(phone || "").replace(/\s+/g, "");
   if (!p) return "";
   if (p.length <= 4) return "••••";
-  const tail = p.slice(-4);
-  return `••••••${tail}`;
+  return `••••••${p.slice(-4)}`;
 }
 
 const styles = StyleSheet.create({
-  container: {
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    backgroundColor: "#fff",
-  },
+  container: { paddingHorizontal: 20, paddingVertical: 20, backgroundColor: "#fff" },
   lead: { fontSize: 14, color: "#374151", marginBottom: 14, lineHeight: 20 },
   leadStrong: { fontWeight: "700", color: "#111827" },
 
@@ -764,29 +771,16 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
   },
   otpBoxChar: { fontSize: 24, fontWeight: "700", color: "#111827" },
-
   otpHiddenInput: { position: "absolute", opacity: 0, width: "100%", height: 64 },
 
   errorWrap: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4, marginBottom: 8 },
   errorText: { color: "#DC2626", fontSize: 13, fontWeight: "600" },
 
-  resendRow: {
-    marginTop: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    justifyContent: "center",
-  },
+  resendRow: { marginTop: 14, flexDirection: "row", alignItems: "center", gap: 6, justifyContent: "center" },
   resendHint: { color: "#6B7280", fontSize: 13 },
   resendLink: { color: "#417fa2", fontWeight: "700", fontSize: 13 },
 
-  editEmail: {
-    marginTop: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    justifyContent: "center",
-  },
+  editEmail: { marginTop: 18, flexDirection: "row", alignItems: "center", gap: 6, justifyContent: "center" },
   editEmailText: { color: "#417fa2", fontWeight: "700", fontSize: 13 },
 
   fabWrap: { position: "absolute", left: 0, right: 0 },
