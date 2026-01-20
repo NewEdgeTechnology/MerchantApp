@@ -4,6 +4,7 @@
 // - Normal: status tabs + search + date dropdown (All / Today / Yesterday / calendar).
 // - Counts per status respect date filter (except Upcoming).
 // ✅ FIX: If backend sends ON ROAD / ON_ROAD / ONROAD, UI auto-maps to OUT_FOR_DELIVERY everywhere.
+// ✅ UPDATE: Scheduled orders now show schedule time using scheduled_at_local / scheduled_at_utc from API.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -60,7 +61,7 @@ const FULFILL_THEME = {
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /* ---------------- helpers ---------------- */
-// ✅ NEW: normalize status keys from backend into UI keys
+// ✅ normalize status keys from backend into UI keys
 const normalizeStatusKey = (s) => {
   const k = String(s || '').trim().toUpperCase().replace(/\s+/g, '_');
   if (k === 'ON_ROAD' || k === 'ONROAD') return 'OUT_FOR_DELIVERY';
@@ -70,12 +71,19 @@ const normalizeStatusKey = (s) => {
 const showAsGiven = (s) => {
   if (!s) return '';
   const d = String(s);
+
+  // supports:
+  // - "2026-01-17T12:30:00+06:00"
+  // - "2026-01-17T06:30:00.000Z"
+  // - "2026-01-17 12:30:00"
   const isoish = d.includes('T') ? d : d.replace(' ', 'T');
+
   const y = isoish.slice(0, 4),
     m = isoish.slice(5, 7),
     dd = isoish.slice(8, 10);
   const hh = isoish.slice(11, 13),
     mm = isoish.slice(14, 16);
+
   const mon = MONTH_NAMES[(+m || 1) - 1] || m;
   if (!y || !m || !dd || !hh || !mm) return d;
   return `${mon} ${dd}, ${hh}:${mm}`;
@@ -84,6 +92,7 @@ const showAsGiven = (s) => {
 const parseForSort = (v) => {
   if (!v) return 0;
   const s = String(v).trim();
+
   let n = Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
   if (Number.isFinite(n)) return n;
 
@@ -102,7 +111,6 @@ const safeNum = (v) => {
 };
 
 const pad2 = (n) => (n < 10 ? `0${n}` : String(n));
-
 const dateKeyFromDateObj = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
 const dateKeyFromTs = (v) => {
@@ -130,7 +138,7 @@ const getItemNote = (it = {}) =>
   it.item_note ||
   '';
 
-/* ✅ NEW: address extractor that supports deliver_to */
+/* ✅ address extractor that supports deliver_to */
 const pickAddress = (o = {}) => {
   const cand = [
     o?.delivery_address,
@@ -209,6 +217,10 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
   const isScheduled = normalizeStatusKey(item.status) === 'SCHEDULED';
   const moneyFmt = money || ((n, c = 'Nu') => `${c} ${Number(n || 0).toFixed(2)}`);
 
+  // ✅ scheduled label safety (always show scheduled time)
+  const scheduledPretty = item?.created_at ? `Scheduled • ${showAsGiven(item.created_at)}` : 'Scheduled';
+  const scheduledText = item?.time && String(item.time).trim() ? String(item.time) : scheduledPretty;
+
   return (
     <TouchableOpacity
       activeOpacity={0.75}
@@ -228,13 +240,15 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
                 </Text>
               )}
             </View>
-            {isScheduled && !!item.time && (
+
+            {isScheduled && (
               <Text style={[styles.scheduledTime, { fontSize: isTablet ? 14 : 13 }]} numberOfLines={2}>
-                {item.time}
+                {scheduledText}
               </Text>
             )}
           </View>
         </View>
+
         <Text style={[styles.orderTotal, { fontSize: isTablet ? 18 : 17 }]}>{moneyFmt(item.total, 'Nu')}</Text>
       </View>
 
@@ -306,7 +320,6 @@ const groupOrders = (rows = []) => {
         delivery_address: '',
       };
 
-    // always keep latest normalized status
     if (r.status) g.status = normalizeStatusKey(r.status);
 
     g.totals.push(safeNum(r.total_amount));
@@ -321,7 +334,6 @@ const groupOrders = (rows = []) => {
     if (!prev || (cur && cur < prev)) g.created_at = rowCreated || g.created_at;
 
     if (r.fulfillment_type === 'Delivery') g.type = 'Delivery';
-
     if (!g.delivery_address) g.delivery_address = pickAddress(r) || '';
 
     if (!g.note_for_restaurant) {
@@ -496,6 +508,7 @@ const normalizeOrdersFromApi = (payload) => {
   }
 };
 
+// ✅ UPDATED: uses scheduled_at_local / scheduled_at_utc from API and builds label "Scheduled • Jan 17, 12:30"
 const normalizeScheduledForBiz = (payload, bizId) => {
   try {
     const rows = Array.isArray(payload?.data) ? payload.data : [];
@@ -530,24 +543,55 @@ const normalizeScheduledForBiz = (payload, bizId) => {
       );
       if (withNote) noteTarget = withNote.item_name || withNote.name || '';
 
-      const scheduledAt = job.scheduled_at;
-      const timeLabel = payloadOrder.scheduled_label || scheduledAt;
+      // ✅ prefer local schedule time (your API has scheduled_at_local)
+      const scheduledLocal =
+        job.scheduled_at_local ||
+        payloadOrder.scheduled_at_local ||
+        payloadOrder.scheduled_at ||
+        null;
 
-      const jobUser = job.user || {};
-      const customer_name = jobUser.name || payloadOrder.customer_name || payloadOrder.name || '';
-      const customer_phone = jobUser.phone || payloadOrder.customer_phone || payloadOrder.phone || '';
+      const scheduledUtc =
+        job.scheduled_at_utc ||
+        payloadOrder.scheduled_at_utc ||
+        job.scheduled_at ||
+        null;
+
+      const scheduledAt = scheduledLocal || scheduledUtc || null;
+
+      const pretty = scheduledAt ? showAsGiven(scheduledAt) : '';
+      const timeLabel =
+        payloadOrder.scheduled_label ||
+        payloadOrder.scheduled_time_label ||
+        payloadOrder.scheduledTimeLabel ||
+        payloadOrder.scheduled_at_label ||
+        (pretty ? `Scheduled • ${pretty}` : 'Scheduled');
+
+      const customer_name = job.name || payloadOrder.customer_name || payloadOrder.name || '';
+      const customer_phone = payloadOrder.customer_phone || payloadOrder.phone || '';
 
       const scheduledAddr =
         payloadOrder?.delivery_address?.address ||
         payloadOrder?.deliver_to?.address ||
         payloadOrder?.delivery_address ||
+        payloadOrder?.deliver_to?.label ||
+        payloadOrder?.deliver_to?.formatted ||
+        payloadOrder?.deliver_to ||
         '';
 
       list.push({
         id: String(job.job_id || job.id),
         type: payloadOrder.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
+
+        // used for sorting + fallback label
         created_at: scheduledAt,
+
+        // optional fields (handy for debugging)
+        scheduled_at_local: scheduledLocal || null,
+        scheduled_at_utc: scheduledUtc || null,
+
+        // ✅ card prints this
         time: timeLabel,
+
         items: itemsStr,
         total: Number(payloadOrder.total_amount ?? 0),
         status: 'SCHEDULED',
@@ -566,6 +610,7 @@ const normalizeScheduledForBiz = (payload, bizId) => {
       });
     }
 
+    // scheduled orders: soonest first
     return list.sort((a, b) => parseForSort(a.created_at) - parseForSort(b.created_at));
   } catch {
     return [];

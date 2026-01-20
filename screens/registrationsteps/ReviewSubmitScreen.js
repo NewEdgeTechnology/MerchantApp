@@ -11,7 +11,6 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
-// Keep Ionicons consistent with the rest of the app
 import { Ionicons } from "@expo/vector-icons";
 import HeaderWithSteps from "./HeaderWithSteps";
 import { SEND_OTP_ENDPOINT, SEND_OTP_REGISTER_SMS_ENDPOINT } from "@env";
@@ -23,6 +22,10 @@ const EDIT_BUSINESS_ROUTE = "MerchantRegistrationScreen";
 const EDIT_BANK_ROUTE = "BankPaymentInfoScreen";
 const EDIT_DELIVERY_ROUTE = "DeliveryOptionsScreen";
 const NEXT_ROUTE = "EmailOtpVerificationScreen";
+
+// ✅ NEW: Terms / Privacy screens
+const TERMS_ROUTE = "TermsOfServiceScreen";
+const PRIVACY_ROUTE = "PrivacyPolicyScreen";
 
 /* ─────────────────────── Normalizers ─────────────────────── */
 const normalizeCategoryIds = (v) => {
@@ -50,8 +53,7 @@ const normalizeCategoryIds = (v) => {
       .filter(Boolean);
   }
   if (typeof v === "object") {
-    const id =
-      v.id ?? v.value ?? v.business_type_id ?? v.businessTypeId ?? null;
+    const id = v.id ?? v.value ?? v.business_type_id ?? v.businessTypeId ?? null;
     return id != null && String(id).trim() ? [String(id).trim()] : [];
   }
   return [];
@@ -66,7 +68,6 @@ const normalizeDeliveryOption = (val) => {
     return null;
   }
   if (typeof val === "number") {
-    // tolerate both 0/1/2 and 1/2/3 styles
     const by0 = { 0: "self", 1: "grab", 2: "both" }[val];
     const by1 = { 1: "self", 2: "grab", 3: "both" }[val];
     return by0 || by1 || null;
@@ -126,6 +127,162 @@ const isUploaded = (v) => {
   return !!uri;
 };
 
+// ✅ CID/ID card normalizer (digits only, max 11)
+const normalizeCid11 = (v) =>
+  String(v || "")
+    .replace(/[^0-9]/g, "")
+    .slice(0, 11);
+
+/* ─────────────────── Verify Choice Modal ─────────────────── */
+function VerifyChoiceModal({ visible, onClose, onSms, onEmail, emailEnabled }) {
+  if (!visible) return null;
+
+  return (
+    <View style={modalStyles.overlay}>
+      <View style={modalStyles.card}>
+        <View style={modalStyles.headerRow}>
+          <Text style={modalStyles.title}>Verify your account</Text>
+
+          <TouchableOpacity
+            onPress={onClose}
+            activeOpacity={1}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={modalStyles.closeBtn}
+          >
+            <Ionicons name="close" size={20} color="#111827" />
+          </TouchableOpacity>
+        </View>
+
+        <Text style={modalStyles.subtitle}>Choose how you want to receive the OTP.</Text>
+
+        {/* SMS FIRST (neutral) */}
+        <TouchableOpacity
+          style={modalStyles.neutralBtn}
+          onPress={onSms}
+          activeOpacity={1}
+        >
+          <View style={modalStyles.btnRow}>
+            <Text style={modalStyles.neutralText}>SEND  SMS</Text>
+            <View style={modalStyles.badge}>
+              <Text style={modalStyles.badgeText}>RECOMMENDED</Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        {/* Email second */}
+        <TouchableOpacity
+          style={[modalStyles.grayBtn, !emailEnabled && { opacity: 0.5 }]}
+          onPress={onEmail}
+          activeOpacity={1}
+          disabled={!emailEnabled}
+        >
+          <Text style={modalStyles.grayText}>SEND  EMAIL  (OPTIONAL)</Text>
+        </TouchableOpacity>
+
+        {!emailEnabled ? (
+          <Text style={modalStyles.hint}>
+            Add email in Signup + ensure SEND_OTP_ENDPOINT exists to use email OTP.
+          </Text>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+const modalStyles = StyleSheet.create({
+  overlay: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 18,
+  },
+  card: {
+    width: "100%",
+    maxWidth: 420,
+    backgroundColor: "#fff",
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+  title: { fontSize: 18, fontWeight: "800", color: "#111827" },
+  closeBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F3F4F6",
+  },
+  subtitle: {
+    fontSize: 13,
+    color: "#6B7280",
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  neutralBtn: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 10,
+    borderWidth: 1.5,
+    borderColor: "#E5E7EB",
+  },
+  btnRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  neutralText: {
+    color: "#111827",
+    fontWeight: "900",
+    fontSize: 13,
+    letterSpacing: 1,
+  },
+  badge: {
+    backgroundColor: "#EAF8EE",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: "#BFE9CC",
+  },
+  badgeText: {
+    color: "#0A7B35",
+    fontWeight: "900",
+    fontSize: 10,
+    letterSpacing: 0.6,
+  },
+  grayBtn: {
+    backgroundColor: "#F3F4F6",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  grayText: {
+    color: "#111827",
+    fontWeight: "900",
+    fontSize: 13,
+    letterSpacing: 1,
+  },
+  hint: {
+    marginTop: 10,
+    textAlign: "center",
+    fontSize: 12,
+    color: "#6B7280",
+  },
+});
+
 /* ───────────────────────── Component ───────────────────────── */
 export default function ReviewSubmitScreen() {
   const navigation = useNavigation();
@@ -139,9 +296,7 @@ export default function ReviewSubmitScreen() {
   } = route.params ?? {};
 
   const effectiveOwnerType = useMemo(() => {
-    return String(
-      incomingOwnerType ?? merchant?.owner_type ?? serviceType ?? "food"
-    )
+    return String(incomingOwnerType ?? merchant?.owner_type ?? serviceType ?? "food")
       .trim()
       .toLowerCase();
   }, [incomingOwnerType, merchant?.owner_type, serviceType]);
@@ -155,6 +310,7 @@ export default function ReviewSubmitScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showAccountNumber, setShowAccountNumber] = useState(false);
+  const [showVerifyModal, setShowVerifyModal] = useState(false);
 
   const normalizedCategoryIds = normalizeCategoryIds(merchant?.category);
 
@@ -162,13 +318,22 @@ export default function ReviewSubmitScreen() {
     normalizedCategoryIds.length && Array.isArray(merchant?.categories)
       ? normalizedCategoryIds
           .map((id) => {
-            const found = merchant.categories.find(
-              (c) => String(c.id) === String(id)
-            );
+            const found = merchant.categories.find((c) => String(c.id) === String(id));
             return found ? (found.name ?? found.category_name ?? id) : id;
           })
           .join(", ")
       : normalizedCategoryIds.join(", ");
+
+  // ✅ read cid/idcard from merchant
+  const cid = useMemo(() => {
+    const raw =
+      merchant?.cid ??
+      merchant?.id_card_number ??
+      merchant?.idCardNo ??
+      merchant?.id_card_no ??
+      null;
+    return normalizeCid11(raw);
+  }, [merchant?.cid, merchant?.id_card_number, merchant?.idCardNo, merchant?.id_card_no]);
 
   const business = {
     fullName: merchant?.full_name ?? "",
@@ -181,9 +346,12 @@ export default function ReviewSubmitScreen() {
     email: merchant?.email ?? "",
     phone: merchant?.phone ?? "",
     password: merchant?.password ?? "",
+    cid,
   };
 
-  // Resolve possible logo/license shapes/keys
+  const emailEnabled =
+    !!String(business.email || "").trim() && !!String(SEND_OTP_ENDPOINT || "").trim();
+
   const businessLogoRaw = firstNonEmpty(
     merchant?.business_logo,
     merchant?.logo,
@@ -220,7 +388,6 @@ export default function ReviewSubmitScreen() {
     [bank?.account_number]
   );
 
-  // Build review payload (reused by both OTP flows)
   const buildReview = () => ({
     serviceType,
     owner_type: effectiveOwnerType,
@@ -249,13 +416,15 @@ export default function ReviewSubmitScreen() {
       phone: business.phone,
       password: business.password,
       delivery_option: deliveryOption,
+      cid: business.cid || undefined,
+      id_card_number: business.cid || undefined,
       bank,
       business_logo: businessLogoRaw ?? null,
       business_license: businessLicenseRaw ?? null,
     },
   });
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!agreeTerms) {
       Alert.alert(
         "Accept terms",
@@ -264,133 +433,64 @@ export default function ReviewSubmitScreen() {
       return;
     }
 
-    const email = String(business.email || "").trim();
     const phone = String(business.phone || "").trim();
-
     if (!phone) {
       Alert.alert("Missing phone", "Please add your phone number first.");
       return;
     }
 
+    if (!business.cid || business.cid.length !== 11) {
+      Alert.alert("Missing CID", "CID must be exactly 11 digits.");
+      return;
+    }
+
+    setShowVerifyModal(true);
+  };
+
+  const goToOtpScreen = ({ channel }) => {
+    const email = String(business.email || "").trim();
+    const phone = String(business.phone || "").trim();
     const review = buildReview();
 
-    const sendSmsOtp = async () => {
-      try {
-        setSubmitting(true);
+    navigation.navigate(NEXT_ROUTE, {
+      ...(route.params ?? {}),
+      otpChannel: channel,
+      phone,
+      email: email || null,
 
-        const url = String(SEND_OTP_REGISTER_SMS_ENDPOINT || "").trim();
-        if (!url) throw new Error("SEND_OTP_REGISTER_SMS_ENDPOINT is missing.");
+      idCardNo: business.cid,
 
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // ✅ change key if backend expects phone_number/mobile/etc.
-          body: JSON.stringify({ phone }),
-        });
+      skipAutoSend: false,
+      otpType: channel === "sms" ? "register_sms" : "email_verification",
+      serviceType,
+      owner_type: effectiveOwnerType,
+      deliveryOption,
+      initialCategory: business.category,
 
-        if (!res.ok) {
-          let msg = `HTTP ${res.status}`;
-          try {
-            const data = await res.json();
-            msg = data?.message || data?.error || msg;
-          } catch (_) {}
-          throw new Error(msg);
-        }
+      merchant: {
+        ...(merchant ?? {}),
+        category: business.category,
+        owner_type: effectiveOwnerType,
+        delivery_option: deliveryOption,
+        phone,
+        email,
+        cid: business.cid,
+        id_card_number: business.cid,
+      },
+      review,
+    });
+  };
 
-        navigation.navigate(NEXT_ROUTE, {
-          ...(route.params ?? {}),
-          otpChannel: "sms",
-          phone,
-          email: email || null, // optional
-          otpType: "register_sms",
-          skipAutoSend: true,
-          serviceType,
-          owner_type: effectiveOwnerType,
-          deliveryOption,
-          initialCategory: business.category,
-          merchant: {
-            ...(merchant ?? {}),
-            category: business.category,
-            owner_type: effectiveOwnerType,
-            delivery_option: deliveryOption,
-            phone,
-            email,
-          },
-          review,
-        });
-      } catch (e) {
-        Alert.alert("OTP failed", e?.message || "Please try again.");
-      } finally {
-        setSubmitting(false);
-      }
-    };
+  const closeVerifyModal = () => setShowVerifyModal(false);
 
-    const sendEmailOtp = async () => {
-      if (!email) {
-        Alert.alert("Missing email", "Please add your email in Signup first.");
-        return;
-      }
+  const onChooseSms = () => {
+    closeVerifyModal();
+    goToOtpScreen({ channel: "sms" });
+  };
 
-      try {
-        setSubmitting(true);
-
-        const url = String(SEND_OTP_ENDPOINT || "").trim();
-        if (!url) throw new Error("SEND_OTP_ENDPOINT is missing.");
-
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email }),
-        });
-
-        if (!res.ok) {
-          let msg = `HTTP ${res.status}`;
-          try {
-            const data = await res.json();
-            msg = data?.message || data?.error || msg;
-          } catch (_) {}
-          throw new Error(msg);
-        }
-
-        navigation.navigate(NEXT_ROUTE, {
-          ...(route.params ?? {}),
-          otpChannel: "email",
-          email,
-          phone: phone || null, // optional
-          otpType: "email_verification",
-          skipAutoSend: true,
-          serviceType,
-          owner_type: effectiveOwnerType,
-          deliveryOption,
-          initialCategory: business.category,
-          merchant: {
-            ...(merchant ?? {}),
-            category: business.category,
-            owner_type: effectiveOwnerType,
-            delivery_option: deliveryOption,
-            phone,
-            email,
-          },
-          review,
-        });
-      } catch (e) {
-        Alert.alert("OTP failed", e?.message || "Please try again.");
-      } finally {
-        setSubmitting(false);
-      }
-    };
-
-    // ✅ Popup: SMS default, Email optional
-    Alert.alert(
-      "Verify your account",
-      "Choose how you want to receive the OTP.",
-      [
-        { text: "Send SMS (Recommended)", onPress: sendSmsOtp },
-        { text: "Send Email (Optional)", onPress: sendEmailOtp },
-        { text: "Cancel", style: "cancel" },
-      ],
-      { cancelable: true }
-    );
+  const onChooseEmail = () => {
+    closeVerifyModal();
+    goToOtpScreen({ channel: "email" });
   };
 
   const jumpTo = (routeName) => {
@@ -401,7 +501,10 @@ export default function ReviewSubmitScreen() {
         category: business.category,
         owner_type: effectiveOwnerType,
         delivery_option: deliveryOption,
+        cid: business.cid || undefined,
+        id_card_number: business.cid || undefined,
       },
+      idCardNo: business.cid,
       initialCategory: business.category,
       deliveryOption,
       serviceType,
@@ -470,8 +573,7 @@ export default function ReviewSubmitScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.lead}>
-          Please review your details before submitting. You can edit any section
-          if needed.
+          Please review your details before submitting. You can edit any section if needed.
         </Text>
 
         <Section
@@ -484,13 +586,12 @@ export default function ReviewSubmitScreen() {
               business.password ? (
                 <View style={styles.secretRow}>
                   <Text style={styles.secretText}>
-                    {showPassword
-                      ? business.password
-                      : maskPassword(business.password)}
+                    {showPassword ? business.password : maskPassword(business.password)}
                   </Text>
                   <TouchableOpacity
                     onPress={() => setShowPassword((v) => !v)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    activeOpacity={1}
                   >
                     <Ionicons
                       name={showPassword ? "eye-off-outline" : "eye-outline"}
@@ -519,6 +620,7 @@ export default function ReviewSubmitScreen() {
             ["Full name", business.fullName || "—"],
             ["Business name", business.businessName || "—"],
             ["Category", displayCategory || "—"],
+            ["CID", business.cid || "—"],
             ["License number", business.regNo || "—"],
             ["Address", business.address || "—"],
             [
@@ -555,11 +657,10 @@ export default function ReviewSubmitScreen() {
                   <TouchableOpacity
                     onPress={() => setShowAccountNumber((v) => !v)}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    activeOpacity={1}
                   >
                     <Ionicons
-                      name={
-                        showAccountNumber ? "eye-off-outline" : "eye-outline"
-                      }
+                      name={showAccountNumber ? "eye-off-outline" : "eye-outline"}
                       size={18}
                       color="#6B7280"
                     />
@@ -572,9 +673,7 @@ export default function ReviewSubmitScreen() {
             ["Bank name", bank?.bank_name || "—"],
             [
               "Bank QR",
-              bank?.bank_qr?.uri ||
-              bank?.bank_qr?.url ||
-              bank?.bank_qr?.path
+              bank?.bank_qr?.uri || bank?.bank_qr?.url || bank?.bank_qr?.path
                 ? "Uploaded"
                 : "—",
             ],
@@ -586,29 +685,19 @@ export default function ReviewSubmitScreen() {
           <TouchableOpacity
             style={[styles.checkbox, agreeTerms && styles.checkboxChecked]}
             onPress={() => setAgreeTerms((v) => !v)}
-            activeOpacity={0.9}
+            activeOpacity={1}
           >
-            {agreeTerms ? (
-              <Ionicons name="checkmark" size={16} color="#000" />
-            ) : null}
+            {agreeTerms ? <Ionicons name="checkmark" size={16} color="#000" /> : null}
           </TouchableOpacity>
+
+          {/* ✅ UPDATED: open actual screens */}
           <Text style={styles.agreeText}>
             I accept the{" "}
-            <Text
-              style={styles.link}
-              onPress={() =>
-                Alert.alert("Terms & Conditions", "Open Terms screen in your app.")
-              }
-            >
+            <Text style={styles.link} onPress={() => navigation.navigate(TERMS_ROUTE)}>
               Terms &amp; Conditions
             </Text>{" "}
             and{" "}
-            <Text
-              style={styles.link}
-              onPress={() =>
-                Alert.alert("Privacy Policy", "Open Privacy screen in your app.")
-              }
-            >
+            <Text style={styles.link} onPress={() => navigation.navigate(PRIVACY_ROUTE)}>
               Privacy Policy
             </Text>
             .
@@ -627,19 +716,21 @@ export default function ReviewSubmitScreen() {
           {submitting ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text
-              style={
-                agreeTerms ? styles.btnPrimaryText : styles.btnPrimaryTextDisabled
-              }
-            >
+            <Text style={agreeTerms ? styles.btnPrimaryText : styles.btnPrimaryTextDisabled}>
               Submit
             </Text>
           )}
         </TouchableOpacity>
-        <Text style={styles.subNote}>
-          Your account will enter verification after submission.
-        </Text>
+        <Text style={styles.subNote}>Your account will enter verification after submission.</Text>
       </View>
+
+      <VerifyChoiceModal
+        visible={showVerifyModal}
+        onClose={() => setShowVerifyModal(false)}
+        onSms={onChooseSms}
+        onEmail={onChooseEmail}
+        emailEnabled={emailEnabled}
+      />
     </SafeAreaView>
   );
 }
@@ -650,10 +741,11 @@ function Section({ title, rows, onEdit }) {
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <Text style={styles.cardTitle}>{title}</Text>
-        <TouchableOpacity onPress={onEdit} activeOpacity={0.9}>
+        <TouchableOpacity onPress={onEdit} activeOpacity={1}>
           <Text style={styles.editBtn}>Edit</Text>
         </TouchableOpacity>
       </View>
+
       {rows.map(([label, value], idx) => (
         <View key={`${label}-${idx}`} style={styles.row}>
           <Text style={styles.rowLabel}>{label}</Text>

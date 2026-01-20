@@ -1,10 +1,8 @@
-// screens/food/GroupOrder/NearbyClusterOrdersScreen.js
-// ✅ UPDATE (your request): show ALL orders in this cluster (not only READY/ASSIGNED/OUT_FOR_DELIVERY...)
-// - Tabs include ALL statuses found (PENDING, CONFIRMED, READY, OUT_FOR_DELIVERY, COMPLETED, DECLINED, etc.)
-// - "Nearby orders" count = all orders in this cluster
-// - Still supports focusOrderId hydration when orders list is empty
-// - Distance label shows if coords exist, otherwise "—"
+// ✅ UPDATE NearbyClusterOrdersScreen:
+// - "Track orders" now redirects to NEW screen: BatchRidesScreen
+// - BatchRidesScreen fetches batches + ride_id using GET_BATCH_RIDE_ID_ENDPOINT
 
+// screens/food/GroupOrder/NearbyClusterOrdersScreen.js
 import React, { useCallback, useMemo, useEffect, useState } from 'react';
 import {
   View,
@@ -16,7 +14,7 @@ import {
   Alert,
   RefreshControl,
 } from 'react-native';
-import { useNavigation, useRoute, CommonActions } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
@@ -330,10 +328,14 @@ export default function NearbyClusterOrdersScreen() {
     delivery_option,
     detailsRoute = 'OrderDetails',
     centerCoords: centerCoordsFromParams,
+    // keep existing param but not used for tracking now
     nextTrackScreen = 'TrackBatchOrdersScreen',
 
     focusOrderId,
     ordersGroupedUrl,
+
+    // ✅ new: where to go when tracking
+    batchListScreen = 'BatchRidesScreen',
   } = route.params || {};
 
   const [clusterOrders, setClusterOrders] = useState(Array.isArray(orders) ? orders : []);
@@ -362,7 +364,7 @@ export default function NearbyClusterOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch {}
+      } catch { }
 
       if (!res.ok) throw new Error(json?.message || json?.error || text || `HTTP ${res.status}`);
 
@@ -451,7 +453,7 @@ export default function NearbyClusterOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch {}
+      } catch { }
       if (!json) return;
 
       const nextMap = {};
@@ -674,6 +676,7 @@ export default function NearbyClusterOrdersScreen() {
         Accept: 'application/json',
         'Content-Type': 'application/json',
       };
+      const token = await SecureStore.getItemAsync('auth_token');
       if (token) headers.Authorization = `Bearer ${token}`;
 
       const res = await fetch(url, {
@@ -686,7 +689,7 @@ export default function NearbyClusterOrdersScreen() {
       let bodyJson = null;
       try {
         bodyJson = bodyText ? JSON.parse(bodyText) : null;
-      } catch {}
+      } catch { }
 
       if (!res.ok) {
         const msg =
@@ -754,57 +757,59 @@ export default function NearbyClusterOrdersScreen() {
     );
   }, [readyOrders, createBatchForReadyOrders]);
 
-  /* ---------------- Track ---------------- */
-
-  const batchOrderIdSet = useMemo(() => {
-    const ids = lastBatch?.order_ids;
-    if (!Array.isArray(ids) || !ids.length) return new Set();
-    return new Set(ids.map((x) => String(x)));
-  }, [lastBatch]);
-
-  const batchOrdersOnly = useMemo(() => {
-    if (!batchOrderIdSet.size) return [];
-    return allOrders.filter((o) => {
-      const id = String(getOrderId(o) || o?.id || '');
-      return id && batchOrderIdSet.has(id);
-    });
-  }, [allOrders, batchOrderIdSet]);
+  /* ---------------- Track (redirect to batch list) ---------------- */
 
   const clusterTrackableOrders = useMemo(() => {
     return allOrders.filter((o) => isTrackableStatus(getLatestStatusNorm(o, statusMap)));
   }, [allOrders, statusMap]);
 
   const ordersToTrack = useMemo(() => {
-    if (lastBatch?.order_ids?.length && batchOrdersOnly.length) return batchOrdersOnly;
+    // keep old logic for enabling/disabling the button
+    if (lastBatch?.order_ids?.length) return clusterTrackableOrders;
     return clusterTrackableOrders;
-  }, [lastBatch, batchOrdersOnly, clusterTrackableOrders]);
+  }, [lastBatch, clusterTrackableOrders]);
 
   const trackDisabled = creatingBatch || ordersToTrack.length === 0;
 
+  // ✅ Track (redirect to batch list) — pass businessId to BatchRidesScreen
   const onTrackOrdersPress = useCallback(() => {
     if (ordersToTrack.length === 0) {
       Alert.alert('Nothing to track', 'No orders are Assigned / Out for delivery / Delivered yet.');
       return;
     }
 
-    navigation.navigate(nextTrackScreen, {
+    const cc = centerCoordsFromParams || centerCoords || null;
+
+    navigation.navigate(batchListScreen, {
+      // ✅ make sure BatchRidesScreen receives business id
       businessId,
+      bizId: businessId, // (optional) add if BatchRidesScreen expects "bizId"
+      merchant_id: businessId, // (optional) add if BatchRidesScreen expects "merchant_id"
+
       label,
       orders: ordersToTrack,
       batch_id: lastBatch?.batch_id,
       batch_order_ids: lastBatch?.order_ids,
       selectedMethod: 'GRAB',
-      centerCoords: centerCoordsFromParams || centerCoords,
+      centerCoords: cc,
+
+      ownerType,
+      delivery_option,
+      clusterOrders: allOrders,
+      lastBatch,
     });
   }, [
     navigation,
-    nextTrackScreen,
+    batchListScreen,
     businessId,
     label,
     ordersToTrack,
     lastBatch,
-    centerCoords,
     centerCoordsFromParams,
+    centerCoords,
+    ownerType,
+    delivery_option,
+    allOrders,
   ]);
 
   /* ---------------- UI ---------------- */

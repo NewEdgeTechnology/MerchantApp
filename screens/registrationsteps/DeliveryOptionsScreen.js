@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import HeaderWithSteps from "./HeaderWithSteps";
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView } from "react-native-safe-area-context";
 
 const NEXT_ROUTE = "ReviewSubmitScreen";
 const DELIVERY_OPTIONS = ["Self Delivery", "Grab Delivery", "Both"];
@@ -19,12 +19,13 @@ export default function DeliveryOptionsScreen() {
   const navigation = useNavigation();
   const route = useRoute();
 
-  // Support prefill + return target when editing from Review
+  // ✅ accept id card number from previous screen(s)
   const {
     initialDeliveryOption = null,
     returnTo = null,
     owner_type: incomingOwnerType = null,
     serviceType: incomingServiceType = null,
+    idCardNo: incomingIdCardNo = null, // ✅ NEW
   } = route.params ?? {};
 
   const effectiveOwnerType = String(
@@ -83,9 +84,19 @@ export default function DeliveryOptionsScreen() {
         []
     );
 
+    // ✅ choose id card number from params or merchant
+    const resolvedIdCardNo =
+      (incomingIdCardNo != null && String(incomingIdCardNo).trim()) ||
+      (route.params?.merchant?.id_card_number != null &&
+        String(route.params.merchant.id_card_number).trim()) ||
+      null;
+
     navigation.navigate(goNext, {
       ...(route.params ?? {}),
       deliveryOption: selected,
+
+      // ✅ pass forward
+      idCardNo: resolvedIdCardNo,
 
       // keep normalized IDs available at the root for downstream screens
       initialCategory: normalizedCategoryIds,
@@ -98,18 +109,19 @@ export default function DeliveryOptionsScreen() {
         ...(route.params?.merchant ?? {}),
         category: normalizedCategoryIds,
         owner_type: effectiveOwnerType,
+
+        // ✅ also keep it inside merchant
+        ...(resolvedIdCardNo ? { id_card_number: resolvedIdCardNo } : {}),
       },
-      
+
       serviceType: incomingServiceType ?? effectiveOwnerType,
     });
   };
 
   return (
     <SafeAreaView style={styles.safe}>
-      {/* Header styled like your other screens */}
       <HeaderWithSteps step="Step 5 of 7" />
 
-      {/* Fixed page title */}
       <View style={styles.fixedTitle}>
         <Text style={styles.h1}>Delivery Options</Text>
       </View>
@@ -132,7 +144,6 @@ export default function DeliveryOptionsScreen() {
                 style={[styles.option, isActive && styles.optionActive]}
                 onPress={() => setSelected(opt)}
               >
-                {/* Radio — circular with filled dot when selected */}
                 <View
                   style={[
                     styles.radioOuter,
@@ -160,7 +171,6 @@ export default function DeliveryOptionsScreen() {
         </View>
       </ScrollView>
 
-      {/* Bottom CTA */}
       <View style={styles.submitContainer}>
         <TouchableOpacity
           onPress={handleNext}
@@ -177,10 +187,8 @@ export default function DeliveryOptionsScreen() {
 }
 
 const styles = StyleSheet.create({
-  /* Screen */
   safe: { flex: 1, backgroundColor: "#fff" },
 
-  /* Header-like title block */
   fixedTitle: {
     backgroundColor: "#fff",
     paddingHorizontal: 20,
@@ -194,7 +202,6 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
 
-  /* Content */
   scrollContent: {
     paddingHorizontal: 20,
     paddingBottom: 120,
@@ -205,10 +212,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
 
-  /* Options */
-  optionsWrap: {
-    gap: 12,
-  },
+  optionsWrap: { gap: 12 },
   option: {
     flexDirection: "row",
     alignItems: "flex-start",
@@ -223,7 +227,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#EAF8EE",
   },
 
-  // Radio
   radioOuter: {
     width: 22,
     height: 22,
@@ -239,7 +242,7 @@ const styles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: BRAND, // filled dot
+    backgroundColor: BRAND,
   },
 
   optionTextWrap: { flex: 1 },
@@ -248,16 +251,9 @@ const styles = StyleSheet.create({
     color: "#222",
     fontWeight: "600",
   },
-  optionTextActive: {
-    color: BRAND,
-  },
-  optionSub: {
-    marginTop: 4,
-    fontSize: 13,
-    color: "#555",
-  },
+  optionTextActive: { color: BRAND },
+  optionSub: { marginTop: 4, fontSize: 13, color: "#555" },
 
-  /* Bottom CTA — same vibe as your other screen */
   submitContainer: {
     position: "absolute",
     left: 0,

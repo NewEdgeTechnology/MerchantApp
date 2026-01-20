@@ -1,6 +1,6 @@
 // screens/wallet/VerifyTPinOtpScreen.js
 
-import React, { useState, useRef } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,12 @@ import {
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { WALLET_TPIN_VERIFY_ENDPOINT } from '@env';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  WALLET_TPIN_VERIFY_ENDPOINT, // (email verify) keep if you already have it
+  FORGOT_TPIN_SMS_ENDPOINT, // send sms otp
+  VERIFY_TPIN_SMS_ENDPOINT, // verify sms otp
+} from '@env';
 
 const { width } = Dimensions.get('window');
 const isIOS = Platform.OS === 'ios';
@@ -34,6 +39,15 @@ const G = {
   slate: '#0F172A',
 };
 
+const CHANNEL_STORAGE_KEY = 'wallet:forgot_tpin:otp_channel_v1';
+
+const safeStr = (v) => (v == null ? '' : String(v));
+
+const replaceWalletId = (tpl, walletId) =>
+  safeStr(tpl).includes('{wallet_id}')
+    ? safeStr(tpl).replace('{wallet_id}', String(walletId))
+    : safeStr(tpl);
+
 export default function VerifyTPinOtpScreen() {
   const navigation = useNavigation();
   const route = useRoute();
@@ -42,10 +56,16 @@ export default function VerifyTPinOtpScreen() {
   const primary = G.grab;
 
   const walletId = route?.params?.walletId ?? '';
+
   const [otp, setOtp] = useState('');
   const [newTPin, setNewTPin] = useState('');
   const [confirmTPin, setConfirmTPin] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // remember last selected channel
+  const [channel, setChannel] = useState('email'); // 'email' | 'sms'
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [channelHydrated, setChannelHydrated] = useState(false);
 
   const scrollRef = useRef(null);
 
@@ -55,30 +75,125 @@ export default function VerifyTPinOtpScreen() {
     });
   };
 
-  const handleVerifyOtp = async () => {
+  // load last chosen channel once
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(CHANNEL_STORAGE_KEY);
+        const v = safeStr(saved).toLowerCase().trim();
+        if (mounted && (v === 'sms' || v === 'email')) setChannel(v);
+      } catch {
+        // ignore
+      } finally {
+        if (mounted) setChannelHydrated(true);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // persist channel whenever it changes (after hydration)
+  useEffect(() => {
+    if (!channelHydrated) return;
+    (async () => {
+      try {
+        await AsyncStorage.setItem(CHANNEL_STORAGE_KEY, channel);
+      } catch {
+        // ignore
+      }
+    })();
+  }, [channel, channelHydrated]);
+
+  const otpHint = useMemo(() => {
+    return channel === 'sms'
+      ? 'We have sent a one-time password (OTP) to your registered phone number.'
+      : 'We have sent a one-time password (OTP) to your registered email.';
+  }, [channel]);
+
+  const otpKeyboard = 'number-pad';
+
+  const validateInputs = () => {
     if (!walletId) {
-      Alert.alert('Wallet Not Found', 'Unable to verify OTP. Wallet ID missing.');
-      return;
+      Alert.alert('Wallet Not Found', 'Unable to proceed. Wallet ID missing.');
+      return false;
     }
 
     if (otp.trim().length < 4) {
-      Alert.alert('Invalid OTP', 'Please enter the OTP sent to your email.');
-      return;
+      Alert.alert(
+        'Invalid OTP',
+        `Please enter the OTP sent to your ${channel === 'sms' ? 'phone' : 'email'}.`
+      );
+      return false;
     }
 
     if (newTPin.trim().length !== 4 || /\D/.test(newTPin)) {
       Alert.alert('Invalid TPIN', 'TPIN must be exactly 4 digits.');
-      return;
+      return false;
     }
 
     if (newTPin !== confirmTPin) {
       Alert.alert('TPIN Mismatch', 'New TPIN and Confirm TPIN do not match.');
+      return false;
+    }
+
+    return true;
+  };
+
+  // NEW: send OTP based on channel
+  const handleSendOtp = async () => {
+    if (!walletId) {
+      Alert.alert('Wallet Not Found', 'Unable to send OTP. Wallet ID missing.');
       return;
     }
 
     try {
+      setSendingOtp(true);
+
+      if (channel === 'sms') {
+        const url = replaceWalletId(FORGOT_TPIN_SMS_ENDPOINT, walletId);
+
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        const isJson = (res.headers.get('content-type') || '').includes('application/json');
+        const data = isJson ? await res.json() : await res.text();
+
+        if (!res.ok) {
+          throw new Error((isJson && (data?.message || data?.error)) || 'Failed to send OTP via SMS.');
+        }
+
+        Alert.alert('OTP Sent', 'OTP has been sent via SMS.');
+      } else {
+        // If you have an EMAIL send endpoint, wire it here.
+        Alert.alert(
+          'Email OTP',
+          'Email OTP sending endpoint is not wired here. If your backend sends email OTP on the previous step, you can continue.'
+        );
+      }
+    } catch (err) {
+      Alert.alert('Error', err.message);
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  // UPDATED: verify OTP using channel-specific endpoint
+  const handleVerifyOtp = async () => {
+    if (!validateInputs()) return;
+
+    try {
       setLoading(true);
-      const url = WALLET_TPIN_VERIFY_ENDPOINT.replace('{wallet_id}', walletId);
+
+      const url =
+        channel === 'sms'
+          ? replaceWalletId(VERIFY_TPIN_SMS_ENDPOINT, walletId)
+          : replaceWalletId(WALLET_TPIN_VERIFY_ENDPOINT, walletId);
 
       const res = await fetch(url, {
         method: 'POST',
@@ -91,13 +206,13 @@ export default function VerifyTPinOtpScreen() {
 
       const isJson = (res.headers.get('content-type') || '').includes('application/json');
       const data = isJson ? await res.json() : await res.text();
-      if (!res.ok) throw new Error((isJson && (data?.message || data?.error)) || 'Failed to verify OTP.');
+
+      if (!res.ok) {
+        throw new Error((isJson && (data?.message || data?.error)) || 'Failed to verify OTP.');
+      }
 
       Alert.alert('Success', 'OTP verified and TPIN reset successfully.', [
-        {
-          text: 'OK',
-          onPress: () => navigation.navigate('TPinScreen', { walletId }),
-        },
+        { text: 'OK', onPress: () => navigation.navigate('TPinScreen', { walletId }) },
       ]);
     } catch (err) {
       Alert.alert('Error', err.message);
@@ -134,15 +249,63 @@ export default function VerifyTPinOtpScreen() {
         >
           <View style={styles.infoCard}>
             <View style={styles.iconWrap}>
-              <Ionicons name="mail-open-outline" size={26} color="#0ea5e9" />
+              <Ionicons
+                name={channel === 'sms' ? 'chatbox-ellipses-outline' : 'mail-open-outline'}
+                size={26}
+                color="#0ea5e9"
+              />
             </View>
+
             <Text style={styles.title}>Enter the OTP</Text>
-            <Text style={styles.sub}>
-              We have sent a one-time password (OTP) to your registered email.
-            </Text>
+            <Text style={styles.sub}>{otpHint}</Text>
+
+            <View style={styles.channelRow}>
+              <TouchableOpacity
+                onPress={() => setChannel('email')}
+                activeOpacity={0.9}
+                style={[styles.channelPill, channel === 'email' ? styles.channelPillActive : null]}
+                disabled={loading || sendingOtp}
+              >
+                <Ionicons name="mail-outline" size={16} color={channel === 'email' ? G.white : G.slate} />
+                <Text style={[styles.channelText, channel === 'email' ? styles.channelTextActive : null]}>
+                  Email
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => setChannel('sms')}
+                activeOpacity={0.9}
+                style={[styles.channelPill, channel === 'sms' ? styles.channelPillActive : null]}
+                disabled={loading || sendingOtp}
+              >
+                <Ionicons
+                  name="chatbubble-outline"
+                  size={16}
+                  color={channel === 'sms' ? G.white : G.slate}
+                />
+                <Text style={[styles.channelText, channel === 'sms' ? styles.channelTextActive : null]}>
+                  SMS
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleSendOtp}
+                activeOpacity={0.9}
+                style={[styles.sendOtpBtn, { opacity: loading ? 0.7 : 1 }]}
+                disabled={loading || sendingOtp}
+              >
+                {sendingOtp ? (
+                  <ActivityIndicator size="small" color={G.white} />
+                ) : (
+                  <>
+                    <Ionicons name="send-outline" size={16} color={G.white} />
+                    <Text style={styles.sendOtpText}>Send OTP</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
 
-          {/* OTP */}
           <View style={styles.inputBox}>
             <Text style={styles.inputLabel}>OTP</Text>
             <TextInput
@@ -151,13 +314,12 @@ export default function VerifyTPinOtpScreen() {
               onChangeText={setOtp}
               placeholder="Enter OTP"
               placeholderTextColor="#94a3b8"
-              keyboardType="number-pad"
+              keyboardType={otpKeyboard}
               maxLength={6}
               onFocus={scrollToEnd}
             />
           </View>
 
-          {/* NEW PIN */}
           <View style={[styles.inputBox, { marginTop: 14 }]}>
             <Text style={styles.inputLabel}>New TPIN</Text>
             <TextInput
@@ -173,7 +335,6 @@ export default function VerifyTPinOtpScreen() {
             />
           </View>
 
-          {/* CONFIRM PIN */}
           <View style={[styles.inputBox, { marginTop: 14 }]}>
             <Text style={styles.inputLabel}>Confirm TPIN</Text>
             <TextInput
@@ -189,7 +350,6 @@ export default function VerifyTPinOtpScreen() {
             />
           </View>
 
-          {/* SUBMIT */}
           <TouchableOpacity
             onPress={handleVerifyOtp}
             style={[
@@ -268,6 +428,57 @@ const styles = StyleSheet.create({
     color: G.slate,
   },
   sub: { marginTop: 6, color: G.sub, lineHeight: 20 },
+
+  channelRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+
+  channelPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: G.line,
+    backgroundColor: '#f9fafb',
+  },
+
+  channelPillActive: {
+    backgroundColor: G.grab,
+    borderColor: G.grab,
+  },
+
+  channelText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: G.slate,
+  },
+
+  channelTextActive: {
+    color: G.white,
+  },
+
+  sendOtpBtn: {
+    marginLeft: 'auto',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: '#0ea5e9',
+  },
+
+  sendOtpText: {
+    color: G.white,
+    fontSize: 13,
+    fontWeight: '800',
+  },
 
   inputBox: {
     marginTop: 8,

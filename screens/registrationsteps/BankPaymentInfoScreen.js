@@ -74,6 +74,9 @@ export default function BankPaymentInfoScreen() {
     initialDeliveryOption = null,
     returnTo = null,
     owner_type = null,
+
+    // ✅ accept from previous screen (MerchantExtrasScreen)
+    idCardNo: incomingIdCardNo = null,
   } = route.params ?? {};
 
   const effectiveOwnerType = String(
@@ -88,6 +91,9 @@ export default function BankPaymentInfoScreen() {
   const [accountNumber, setAccountNumber] = useState("");
   const [accountName, setAccountName] = useState("");
   const [qrImage, setQrImage] = useState(null);
+
+  // ✅ keep id card number in this screen too (so it’s always available to pass forward)
+  const [idCardNo, setIdCardNo] = useState("");
 
   // Simple modal (no search / no recent)
   const [bankModalVisible, setBankModalVisible] = useState(false);
@@ -113,6 +119,14 @@ export default function BankPaymentInfoScreen() {
 
   // Prefill (edit mode)
   useEffect(() => {
+    // ✅ prefill id card from route or merchant
+    const fromRoute = incomingIdCardNo != null ? String(incomingIdCardNo) : "";
+    const fromMerchant =
+      merchant?.id_card_number != null ? String(merchant.id_card_number) : "";
+
+    const cleaned = (fromRoute || fromMerchant).replace(/[^0-9]/g, "").slice(0, 11);
+    if (cleaned) setIdCardNo(cleaned);
+
     if (!existingBank) return;
     const incomingCode =
       existingBank.bank_code ||
@@ -138,6 +152,7 @@ export default function BankPaymentInfoScreen() {
       };
     };
     if (existingBank.bank_qr) setQrImage(normalizeImg(existingBank.bank_qr, "bank-qr.jpg"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selectedBank = useMemo(
@@ -151,11 +166,18 @@ export default function BankPaymentInfoScreen() {
   const accountNumberValid =
     accountNumber.trim().length === 0 ? true : accountRegex.test(accountNumber.trim());
 
+  // ✅ ID card validation (exact 11 digits)
+  const idCardValid = /^\d{11}$/.test(idCardNo.trim());
+
   const validate = () => {
     if (!bankCode) return false;
     if (!accountNumber.trim() || !accountRegex.test(accountNumber.trim())) return false;
     if (!accountName.trim()) return false;
     if (!qrImage?.uri) return false;
+
+    // ✅ require ID card number here too
+    if (!idCardValid) return false;
+
     return true;
   };
 
@@ -185,6 +207,15 @@ export default function BankPaymentInfoScreen() {
 
   const onSubmit = () => {
     if (!validate()) {
+      // more specific messages
+      if (!idCardNo.trim()) {
+        Alert.alert("Missing info", "Please enter your 11-digit ID card number.");
+        return;
+      }
+      if (!idCardValid) {
+        Alert.alert("Invalid ID", "ID card number must be exactly 11 digits.");
+        return;
+      }
       Alert.alert("Missing info", "Please complete all required fields.");
       return;
     }
@@ -198,6 +229,9 @@ export default function BankPaymentInfoScreen() {
 
     const payload = {
       ...merchant,
+      // ✅ keep it inside merchant too (so it stays with the object)
+      id_card_number: idCardNo.trim(),
+
       category: normalizedCategoryIds,
       categories: merchant?.categories ?? route.params?.merchant?.categories ?? [],
       bank: {
@@ -214,6 +248,10 @@ export default function BankPaymentInfoScreen() {
     navigation.navigate("DeliveryOptionsScreen", {
       ...(route.params ?? {}),
       merchant: payload,
+
+      // ✅ pass forward as separate param too
+      idCardNo: idCardNo.trim(),
+
       initialCategory: normalizedCategoryIds,
       category: normalizedCategoryIds,
       serviceType,
@@ -262,7 +300,9 @@ export default function BankPaymentInfoScreen() {
               </View>
               {/* Bigger dropdown icon */}
               <View style={styles.dropdownIcon}>
-                <Text allowFontScaling={false} style={styles.dropdownIconText}>▾</Text>
+                <Text allowFontScaling={false} style={styles.dropdownIconText}>
+                  ▾
+                </Text>
               </View>
             </Pressable>
             {!!requiredLen && (
@@ -369,7 +409,10 @@ export default function BankPaymentInfoScreen() {
                 >
                   <View style={styles.bankRowLeft}>
                     <Image source={b.logoSource} style={styles.logoLg} />
-                    <Text style={[styles.bankText, active && { fontWeight: "700" }]} numberOfLines={2}>
+                    <Text
+                      style={[styles.bankText, active && { fontWeight: "700" }]}
+                      numberOfLines={2}
+                    >
                       {b.name}
                     </Text>
                   </View>
@@ -460,10 +503,22 @@ function QRUploader({ value, onChange }) {
         <Text style={styles.logoCardTitle}>Add Bank QR</Text>
         <Text style={styles.logoCardHint}>Square image works best (1:1). Max 5MB.</Text>
         <View style={styles.logoActionsRow}>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => pickImage(false)} disabled={busy}>
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.actionBtnText}>Choose Image</Text>}
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={() => pickImage(false)}
+            disabled={busy}
+          >
+            {busy ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.actionBtnText}>Choose Image</Text>
+            )}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtnGhost} onPress={() => pickImage(true)} disabled={busy}>
+          <TouchableOpacity
+            style={styles.actionBtnGhost}
+            onPress={() => pickImage(true)}
+            disabled={busy}
+          >
             <Text style={styles.actionBtnGhostText}>Take Photo</Text>
           </TouchableOpacity>
         </View>
@@ -477,16 +532,26 @@ function QRUploader({ value, onChange }) {
         <Image source={{ uri: value.uri }} style={styles.logoPreviewLarge} />
       </View>
       <View style={{ marginTop: 8 }}>
-        <Text numberOfLines={1} style={styles.fileName}>{value.name}</Text>
+        <Text numberOfLines={1} style={styles.fileName}>
+          {value.name}
+        </Text>
         <Text style={styles.metaText}>
           {(value.size / 1024).toFixed(1)} KB · {value.mimeType || "image"}
         </Text>
       </View>
       <View style={styles.logoActionsRow}>
-        <TouchableOpacity style={styles.actionBtn} onPress={() => pickImage(false)} disabled={busy}>
+        <TouchableOpacity
+          style={styles.actionBtn}
+          onPress={() => pickImage(false)}
+          disabled={busy}
+        >
           <Text style={styles.actionBtnText}>Change</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtnGhost} onPress={() => onChange(null)} disabled={busy}>
+        <TouchableOpacity
+          style={styles.actionBtnGhost}
+          onPress={() => onChange(null)}
+          disabled={busy}
+        >
           <Text style={styles.actionBtnGhostText}>Remove</Text>
         </TouchableOpacity>
       </View>
@@ -547,7 +612,13 @@ const styles = StyleSheet.create({
 
   /* Logos / QR card */
   logoSm: { width: 24, height: 24, borderRadius: 6, resizeMode: "contain" },
-  logoLg: { width: 42, height: 42, borderRadius: 10, resizeMode: "contain", backgroundColor: "#fff" },
+  logoLg: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    resizeMode: "contain",
+    backgroundColor: "#fff",
+  },
 
   fileName: { fontSize: 13, color: "#374151" },
   metaText: { fontSize: 12, color: "#6b7280", marginTop: 2 },

@@ -86,7 +86,10 @@ import SimilarItemCatalog from './screens/food/OrderDetails/SimilarItemCatalog.j
 import TrackBatchOrdersScreen from './screens/food/GroupOrder/TrackBatchOrdersScreen.js';
 import TrackDeliveryDriver from './screens/food/GroupOrder/TrackDeliveryDriver.js';
 import DriverBatchDetailsOverlayScreen from "./screens/food/GroupOrder/DriverBatchDetailsOverlayScreen";
-
+import TermsOfServiceScreen from './screens/registrationsteps/TermsOfServiceScreen.js';
+import PrivacyPolicyScreen from './screens/registrationsteps/PrivacyPolicyScreen.js';
+import PasswordSentScreen from './screens/general/PasswordSentScreen.js';
+import BatchRidesScreen from './screens/food/GroupOrder/BatchRidesScreen.js';
 const Stack = createStackNavigator();
 
 export default function App() {
@@ -214,6 +217,10 @@ export default function App() {
               component={DriverBatchDetailsOverlayScreen}
               options={{ headerShown: false, presentation: "modal" }}
             />
+            <Stack.Screen name="TermsOfServiceScreen" component={TermsOfServiceScreen} />
+            <Stack.Screen name="PrivacyPolicyScreen" component={PrivacyPolicyScreen} />
+            <Stack.Screen name="PasswordSentScreen" component={PasswordSentScreen} />
+            <Stack.Screen name="BatchRidesScreen" component={BatchRidesScreen} />
           </Stack.Navigator>
         </AppLockGate>
       </NavigationContainer>

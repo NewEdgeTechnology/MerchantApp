@@ -1,11 +1,15 @@
 // services/food/GroupOrder/TrackBatchOrdersScreen.js
+// ✅ FULL UPDATED
+// ✅ Shows ONLY orders in the selected batch
 // ✅ Accepts batch_id + ride_id from params (any shape)
-// ✅ If redirected without params, restores batch_id + ride_id from SecureStore (SAFE keys)
+// ✅ If opened without params, restores batch_id + ride_id from SecureStore (SAFE keys)
 // ✅ If ride_id missing but batch_id exists, fetches delivery_ride_id using DELIVERY_RIDE_ID_ENDPOINT
 // ✅ Saves latest batch_id + ride_id back to SecureStore
 // ✅ Joins ride room(s) and listens deliveryDriverLocation
 // ✅ Map interactive + fullscreen overlay
 // ✅ Dark CARTO tiles + OSRM routing (driver->business, business->customer)
+// ✅ If params.orders contains clusterOrders, it will FILTER to batch only using batch_order_ids (or batch_id field)
+// ✅ If still empty -> fetch grouped orders and filter to batch only
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -20,6 +24,7 @@ import {
   Platform,
   Modal,
   Pressable,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNavigation, useRoute, useFocusEffect } from "@react-navigation/native";
@@ -36,6 +41,8 @@ import {
 
 /* ---------------- helpers ---------------- */
 
+const safeStr = (v) => (v == null ? "" : String(v)).trim();
+
 const getOrderId = (order = {}) => {
   const base = order.raw || order;
   const cand = [base.order_id, base.id, base.orderId, base.order_no, base.orderNo, base.order_code];
@@ -43,6 +50,109 @@ const getOrderId = (order = {}) => {
     if (v != null && String(v).trim().length > 0) return String(v).trim();
   }
   return null;
+};
+
+const getNumericOrderId = (order = {}) => {
+  const base = order.raw || order;
+  const cand = [
+    base.order_db_id,
+    base.db_id,
+    base.order_table_id,
+    base.numeric_order_id,
+    base.order_numeric_id,
+    base.orderIdNumeric,
+    base.order_id_numeric,
+    base.id,
+  ];
+  for (const v of cand) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  }
+  return null;
+};
+
+const getAllOrderKeys = (order = {}) => {
+  const base = order.raw || order;
+  const keys = [];
+
+  const code = getOrderId(base);
+  if (code) keys.push(String(code));
+
+  const numeric = getNumericOrderId(base);
+  if (numeric) keys.push(String(numeric));
+
+  const extra = [
+    base.order_id,
+    base.id,
+    base.order_code,
+    base.order_no,
+    base.orderNo,
+    base.order_db_id,
+    base.db_id,
+    base.order_table_id,
+    base.numeric_order_id,
+    base.order_numeric_id,
+    base.orderIdNumeric,
+    base.order_id_numeric,
+  ];
+
+  for (const v of extra) {
+    const s = safeStr(v);
+    if (s) keys.push(s);
+  }
+
+  return [...new Set(keys)];
+};
+
+const sameOrderKey = (a, b) => {
+  const A = safeStr(a);
+  const B = safeStr(b);
+  if (!A || !B) return false;
+  if (A === B) return true;
+
+  const na = Number(A);
+  const nb = Number(B);
+  if (Number.isFinite(na) && Number.isFinite(nb) && na === nb) return true;
+
+  const strip = (s) => String(s).replace(/^ORD[-_]?/i, "").replace(/^FOOD[-_]?/i, "");
+  return strip(A) === strip(B);
+};
+
+const normalizeOrderIdsList = (arr) => {
+  if (!Array.isArray(arr)) return [];
+  return arr.map((x) => safeStr(x)).filter(Boolean);
+};
+
+const filterOrdersByBatchIds = (allOrders = [], batchOrderIds = []) => {
+  const ids = normalizeOrderIdsList(batchOrderIds);
+  if (!ids.length) return [];
+  const idSet = new Set(ids);
+
+  return (Array.isArray(allOrders) ? allOrders : []).filter((o) => {
+    const keys = getAllOrderKeys(o);
+    for (const k of keys) {
+      for (const id of idSet) {
+        if (sameOrderKey(k, id)) return true;
+      }
+    }
+    return false;
+  });
+};
+
+const filterOrdersByBatchField = (allOrders = [], batchId) => {
+  const bid = safeStr(batchId);
+  if (!bid) return [];
+  return (Array.isArray(allOrders) ? allOrders : []).filter((o) => {
+    const base = o?.raw || o || {};
+    const b =
+      base?.batch_id ??
+      base?.delivery_batch_id ??
+      base?.batchId ??
+      base?.deliveryBatchId ??
+      base?.raw?.batch_id ??
+      null;
+    return b != null && safeStr(b) === bid;
+  });
 };
 
 const safePhone = (v) => {
@@ -215,7 +325,7 @@ const normalizeRideIdFromParams = (params) => {
 const asMapCoord = (p) => ({ latitude: p.lat, longitude: p.lng });
 
 /* ---------------- SecureStore keys (SAFE) ---------------- */
-// SecureStore keys: only alphanumeric, ".", "-", "_" and NOT empty.
+
 const sanitizeKeyPart = (v) => {
   const s = v == null ? "" : String(v).trim();
   const cleaned = s.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -247,15 +357,19 @@ export default function TrackBatchOrdersScreen() {
   const {
     businessId,
     label,
-    orders = [],
+
+    // ✅ IMPORTANT: this "orders" is usually clusterOrders passed through screens
+    orders: passedOrdersRaw = [],
+
     selectedMethod,
     driverDetails,
     driverRating,
     rideMessage,
     socketEndpoint,
     rideIds = [],
-    // optional: if previous screen passes already:
-    batch_order_ids,
+
+    batch_order_ids: batchOrderIdsFromParams,
+    centerCoords,
   } = params;
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
@@ -266,7 +380,33 @@ export default function TrackBatchOrdersScreen() {
   const [deliveryRideId, setDeliveryRideId] = useState(() => normalizeRideIdFromParams(params));
   const [restoredIds, setRestoredIds] = useState(false);
 
-  // ✅ Restore from SecureStore (if this screen opened without params)
+  /* ---------------- batch order ids ---------------- */
+
+  const batchOrderIds = useMemo(() => normalizeOrderIdsList(batchOrderIdsFromParams), [batchOrderIdsFromParams]);
+
+  /* ---------------- orders for this batch (BATCH ONLY) ---------------- */
+
+  const [batchOrders, setBatchOrders] = useState(() => {
+    const passedOrders = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
+
+    if (Array.isArray(batchOrderIdsFromParams) && batchOrderIdsFromParams.length) {
+      const filtered = filterOrdersByBatchIds(passedOrders, batchOrderIdsFromParams);
+      return filtered;
+    }
+
+    const initialBid = normalizeBatchIdFromParams(params);
+    if (initialBid) {
+      const filtered = filterOrdersByBatchField(passedOrders, initialBid);
+      return filtered;
+    }
+
+    return [];
+  });
+
+  const [batchOrdersLoading, setBatchOrdersLoading] = useState(false);
+
+  /* ---------------- Restore from SecureStore (if opened without params) ---------------- */
+
   useEffect(() => {
     let cancelled = false;
 
@@ -297,7 +437,8 @@ export default function TrackBatchOrdersScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId]);
 
-  // ✅ Save whenever we have ids
+  /* ---------------- Save whenever we have ids ---------------- */
+
   useEffect(() => {
     (async () => {
       try {
@@ -312,7 +453,8 @@ export default function TrackBatchOrdersScreen() {
     })();
   }, [businessId, batchId, deliveryRideId]);
 
-  // ✅ If ride id missing but batch id exists, fetch ride id (AFTER restore)
+  /* ---------------- If ride id missing but batch id exists, fetch ride id (AFTER restore) ---------------- */
+
   const fetchDeliveryRideId = useCallback(async () => {
     if (!batchId) {
       console.log("[MERCHANT][RIDE_ID] ⚠️ batch_id missing, will use rideIds if provided");
@@ -375,7 +517,7 @@ export default function TrackBatchOrdersScreen() {
     return Array.from(set);
   }, [deliveryRideId, rideIds]);
 
-  /* ---------------- state: orders + map data ---------------- */
+  /* ---------------- state: map + status/items ---------------- */
 
   const [refreshing, setRefreshing] = useState(false);
   const [statusMap, setStatusMap] = useState({});
@@ -383,18 +525,15 @@ export default function TrackBatchOrdersScreen() {
   const [loaded, setLoaded] = useState(false);
   const [businessCoords, setBusinessCoords] = useState(null);
 
-  // driversByRideId: { [rideId]: { coords, lastPing, batchId } }
   const [driversByRideId, setDriversByRideId] = useState({});
   const [drops, setDrops] = useState([]);
 
-  // route segments
   const [routeDriverToBiz, setRouteDriverToBiz] = useState([]);
   const [routeBizToCustomer, setRouteBizToCustomer] = useState([]);
 
   const lastRouteKeyRef = useRef("");
   const lastRouteAtMsRef = useRef(0);
 
-  // overlay
   const [overlayOpen, setOverlayOpen] = useState(false);
   const overlayMapRef = useRef(null);
   const overlayDidFitOnceRef = useRef(false);
@@ -406,7 +545,8 @@ export default function TrackBatchOrdersScreen() {
   const didFitOnceRef = useRef(false);
   const lastMarkerPressTsRef = useRef(0);
 
-  // seed initial driver (if provided)
+  /* ---------------- seed initial driver (if provided) ---------------- */
+
   useEffect(() => {
     const seed = extractLatLng(driverDetails);
     if (!seed) return;
@@ -420,18 +560,104 @@ export default function TrackBatchOrdersScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driverDetails]);
 
-  // build drops from route orders (fallback)
+  /* ---------------- ensure batchOrders always "batch only" when params change ---------------- */
+
+  useEffect(() => {
+    const passedOrders = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
+
+    if (batchOrderIds.length) {
+      setBatchOrders(filterOrdersByBatchIds(passedOrders, batchOrderIds));
+      return;
+    }
+
+    if (batchId) {
+      setBatchOrders(filterOrdersByBatchField(passedOrders, batchId));
+      return;
+    }
+
+    setBatchOrders([]);
+  }, [passedOrdersRaw, batchOrderIds.join("|"), batchId]);
+
+  /* ---------------- load batch orders (if not available) ---------------- */
+
+  const fetchAllGroupedOrdersFlat = useCallback(async () => {
+    const url = buildGroupedOrdersUrl(businessId);
+    if (!url) return [];
+
+    try {
+      const token = await SecureStore.getItemAsync("auth_token");
+      const headers = { Accept: "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const res = await fetch(url, { headers });
+      const text = await res.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {}
+
+      if (!res.ok) return [];
+
+      const rawData = Array.isArray(json?.data) ? json.data : json;
+      const collected = [];
+
+      if (Array.isArray(rawData)) {
+        for (const block of rawData) {
+          if (block && Array.isArray(block.orders)) {
+            for (const o of block.orders) collected.push(o);
+          } else if (block && (block.id || block.order_id || block.order_code)) {
+            collected.push(block);
+          }
+        }
+      }
+
+      return collected;
+    } catch {
+      return [];
+    }
+  }, [businessId]);
+
+  const loadBatchOrders = useCallback(async () => {
+    if (!businessId) return;
+    if (!batchOrderIds.length && !batchId) return;
+
+    // ✅ if we already have batch-only list, do nothing
+    if (Array.isArray(batchOrders) && batchOrders.length) return;
+
+    setBatchOrdersLoading(true);
+    try {
+      const all = await fetchAllGroupedOrdersFlat();
+      if (!all.length) return;
+
+      let picked = [];
+      if (batchOrderIds.length) picked = filterOrdersByBatchIds(all, batchOrderIds);
+      else picked = filterOrdersByBatchField(all, batchId);
+
+      if (picked.length) setBatchOrders(picked);
+    } finally {
+      setBatchOrdersLoading(false);
+    }
+  }, [businessId, batchOrderIds, batchId, batchOrders, fetchAllGroupedOrdersFlat]);
+
+  useEffect(() => {
+    loadBatchOrders();
+  }, [loadBatchOrders]);
+
+  /* ---------------- build drops from batchOrders ---------------- */
+
   useEffect(() => {
     const pts = [];
-    for (const it of orders || []) {
+    for (const it of batchOrders || []) {
       const base = it?.raw || it || {};
       const p = extractOrderDropCoords(base);
       if (!p) continue;
       const oid = getOrderId(base) || `${p.lat},${p.lng}`;
       pts.push({ ...p, key: oid });
     }
-    if (pts.length) setDrops(pts);
-  }, [orders]);
+    setDrops(pts);
+  }, [batchOrders]);
+
+  /* ---------------- grouped fetch (status/items only; doesn't override batchOrders) ---------------- */
 
   const fetchGroupedStatusesItemsAndDrops = useCallback(async () => {
     const url = buildGroupedOrdersUrl(businessId);
@@ -441,7 +667,11 @@ export default function TrackBatchOrdersScreen() {
     }
 
     try {
-      const res = await fetch(url);
+      const token = await SecureStore.getItemAsync("auth_token");
+      const headers = { Accept: "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const res = await fetch(url, { headers });
       if (!res.ok) {
         setLoaded(true);
         return;
@@ -450,7 +680,6 @@ export default function TrackBatchOrdersScreen() {
 
       const nextStatusMap = {};
       const nextItemsMap = {};
-      const dropPoints = [];
 
       const rawData = Array.isArray(json?.data) ? json.data : json;
       if (Array.isArray(rawData)) {
@@ -463,15 +692,15 @@ export default function TrackBatchOrdersScreen() {
               const status = o.status || o.order_status || o.current_status || o.orderStatus;
               if (status) nextStatusMap[id] = status;
               if (Array.isArray(o.items)) nextItemsMap[id] = o.items;
-
-              const drop = extractOrderDropCoords(o);
-              if (drop) dropPoints.push({ ...drop, key: id });
             }
+          } else if (block) {
+            const id = getOrderId(block);
+            const status = block.status || block.order_status || block.current_status || block.orderStatus;
+            if (id && status) nextStatusMap[id] = status;
+            if (id && Array.isArray(block.items)) nextItemsMap[id] = block.items;
           }
         }
       }
-
-      if (dropPoints.length) setDrops(dropPoints);
 
       setStatusMap(nextStatusMap);
       setItemsMap(nextItemsMap);
@@ -486,7 +715,11 @@ export default function TrackBatchOrdersScreen() {
     if (!url) return;
 
     try {
-      const res = await fetch(url);
+      const token = await SecureStore.getItemAsync("auth_token");
+      const headers = { Accept: "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const res = await fetch(url, { headers });
       if (!res.ok) return;
       const json = await res.json();
 
@@ -512,17 +745,26 @@ export default function TrackBatchOrdersScreen() {
       fetchGroupedStatusesItemsAndDrops();
       fetchBusinessLocation();
       if (restoredIds) fetchDeliveryRideId();
-    }, [fetchGroupedStatusesItemsAndDrops, fetchBusinessLocation, restoredIds, fetchDeliveryRideId])
+      loadBatchOrders();
+    }, [
+      fetchGroupedStatusesItemsAndDrops,
+      fetchBusinessLocation,
+      restoredIds,
+      fetchDeliveryRideId,
+      loadBatchOrders,
+    ])
   );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await Promise.all([fetchGroupedStatusesItemsAndDrops(), fetchBusinessLocation(), fetchDeliveryRideId()]);
+      setBatchOrders([]);
+      await loadBatchOrders();
     } finally {
       setRefreshing(false);
     }
-  }, [fetchGroupedStatusesItemsAndDrops, fetchBusinessLocation, fetchDeliveryRideId]);
+  }, [fetchGroupedStatusesItemsAndDrops, fetchBusinessLocation, fetchDeliveryRideId, loadBatchOrders]);
 
   /* ---------------- SOCKET ---------------- */
 
@@ -533,7 +775,6 @@ export default function TrackBatchOrdersScreen() {
       return;
     }
 
-    // ✅ wait until we tried restoring from store (otherwise you get your log)
     if (!restoredIds) return;
 
     if (!effectiveRideIds.length) {
@@ -559,8 +800,6 @@ export default function TrackBatchOrdersScreen() {
 
         socket.emit("joinRide", { rideId: String(rid) }, (ack) => {
           console.log("[MERCHANT][JOIN] ✅ joinRide ack:", rid, ack);
-          const ok = ack === true || ack?.success === true || ack?.ok === true || ack?.joined === true;
-          console.log("[MERCHANT][JOIN] status:", ok ? "✅ JOINED" : "⚠️ UNKNOWN/FAILED", rid, ack);
         });
       }
     });
@@ -604,7 +843,7 @@ export default function TrackBatchOrdersScreen() {
   /* ---------------- UI ---------------- */
 
   const title = useMemo(() => {
-    const c = orders.length;
+    const c = batchOrders.length;
     const base = c === 1 ? "1 order" : `${c} orders`;
     const method = selectedMethod ? ` · ${selectedMethod}` : "";
     const bid = batchId ? ` · Batch #${batchId}` : "";
@@ -615,7 +854,7 @@ export default function TrackBatchOrdersScreen() {
         ? ` · ${effectiveRideIds.length} rides`
         : "";
     return `${base}${method}${bid}${rid}`;
-  }, [orders.length, selectedMethod, batchId, effectiveRideIds]);
+  }, [batchOrders.length, selectedMethod, batchId, effectiveRideIds]);
 
   const driverSummaryText = useMemo(() => {
     if (!driverDetails) return "";
@@ -1025,6 +1264,13 @@ export default function TrackBatchOrdersScreen() {
           Restored: {restoredIds ? "Yes" : "No"} · Batch: {batchId || "—"} · Ride:{" "}
           {effectiveRideIds.length ? effectiveRideIds.join(", ") : "—"}
         </Text>
+
+        {batchOrdersLoading && (
+          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 8 }}>
+            <ActivityIndicator size="small" />
+            <Text style={[styles.summarySub, { marginTop: 0, marginLeft: 8 }]}>Loading batch orders…</Text>
+          </View>
+        )}
       </View>
 
       {/* MAP SHOWN DIRECTLY + TAP OPENS OVERLAY */}
@@ -1163,15 +1409,23 @@ export default function TrackBatchOrdersScreen() {
       )}
 
       <View style={styles.listHeader}>
-        <Text style={styles.listHeaderText}>Orders</Text>
+        <Text style={styles.listHeaderText}>Orders in this batch</Text>
+        {!!batchOrderIds.length && <Text style={styles.attribTextSmall}>IDs: {batchOrderIds.length}</Text>}
       </View>
 
       <FlatList
-        data={orders}
-        keyExtractor={(it) => String(getOrderId(it) || it?.id || Math.random())}
+        data={batchOrders}
+        keyExtractor={(it, idx) => String(getOrderId(it) || it?.id || idx)}
         renderItem={renderRow}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        ListEmptyComponent={
+          <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
+            <Text style={{ color: "#6b7280", fontWeight: "700" }}>
+              {batchOrdersLoading ? "Loading orders…" : "No orders found for this batch."}
+            </Text>
+          </View>
+        }
       />
     </SafeAreaView>
   );
@@ -1317,7 +1571,6 @@ const styles = StyleSheet.create({
   },
   noMapText: { marginTop: 8, fontSize: 12, color: "#6b7280", fontWeight: "800" },
 
-  // overlay styles
   overlaySafe: { flex: 1, backgroundColor: "#fff" },
   overlayHeader: {
     height: 54,
