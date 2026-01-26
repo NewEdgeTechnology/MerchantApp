@@ -1,18 +1,8 @@
 // screens/food/OrderDetails.js
-// ✅ FIX: If backend returns "ON ROAD" / "ON_ROAD" it will be normalized to "OUT_FOR_DELIVERY"
-// ✅ FIX: OrderDetails will not show old status (eg PENDING) when list already shows Out For Delivery
-// ✅ FIX: hydrateFromGrouped will normalize status and won't downgrade an already-updated local status
-// ✅ FIX: after pressing Out for delivery, UI updates immediately + emits order-updated with normalized status
-//
-// ✅ FIX (your issue): Deliver in group was opening MART NearbyClusterOrdersScreen because of route-name collision.
-// - Use a UNIQUE FOOD route name: "FoodNearbyClusterOrdersScreen"
-// - resolveClusterContext defaults to FoodNearbyClusterOrdersScreen
-// - candidates prefer FoodNearbyClusterOrdersScreen first
-//
-// ✅ NEW (your request): When redirected from OrderDetails, NearbyClusterOrdersScreen UI should look the SAME
-// as when coming from NearbyOrdersScreen (list of orders, tabs, counts, etc.).
-// - If OrderDetails does NOT have clusterCtx.orders, it will FETCH grouped orders and build nearby clusters
-//   based on lat/lng, then navigate with { orders, label, addrPreview, centerCoords } so UI shows properly.
+// ✅ UPDATED: Accept (CONFIRMED) now supports REMOVE / REPLACE payloads exactly like you provided
+//   - Sends: estimated_minutes, final_total_amount, final_platform_fee, final_discount_amount,
+//           final_delivery_fee, final_merchant_delivery_fee, unavailable_changes { removed[], replaced[] }
+// ✅ Keeps: status normalization, grouped hydrate protection, socket fast-status apply, deliver-in-group route fix, pull-to-refresh
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import {
@@ -24,6 +14,7 @@ import {
   ActivityIndicator,
   BackHandler,
   DeviceEventEmitter,
+  RefreshControl,
 } from "react-native";
 import {
   useRoute,
@@ -70,6 +61,21 @@ import ItemsBlock from "./OrderDetails/ItemsBlock";
 import TotalsBlock from "./OrderDetails/TotalsBlock";
 import DeclineModal from "./OrderDetails/DeclineModal";
 
+/* ---------------- debug helpers ---------------- */
+
+const logJson = (label, obj) => {
+  try {
+    console.log(label, JSON.stringify(obj, null, 2));
+  } catch (e) {
+    console.log(label, obj);
+  }
+};
+
+const logText = (label, txt) => {
+  const s = txt == null ? "" : String(txt);
+  console.log(label, s.length > 1200 ? `${s.slice(0, 1200)}... (truncated)` : s);
+};
+
 /* ===========================
    ✅ status normalizer
    =========================== */
@@ -78,12 +84,21 @@ const normalizeStatus = (v) => {
   if (!s) return "PENDING";
 
   if (s === "ACCEPTED") return "CONFIRMED";
+  if (s === "ACCEPT") return "CONFIRMED";
   if (s === "CONFIRM") return "CONFIRMED";
   if (s === "PREPARING") return "CONFIRMED";
 
-  // ✅ your case
+  // ✅ driver updates
   if (s === "ON ROAD" || s === "ON_ROAD" || s === "ONROAD") return "OUT_FOR_DELIVERY";
-  if (s === "OUT FOR DELIVERY") return "OUT_FOR_DELIVERY";
+  if (s === "OUT FOR DELIVERY" || s === "OUT_FOR_DELIVERY") return "OUT_FOR_DELIVERY";
+  if (s === "DELIVERING") return "OUT_FOR_DELIVERY";
+
+  // ✅ delivered variants
+  if (s === "DELIVERED") return "COMPLETED";
+  if (s === "DELIVERY_COMPLETE") return "COMPLETED";
+  if (s === "DELIVERY COMPLETE") return "COMPLETED";
+  if (s === "DELIVER_COMPLETE") return "COMPLETED";
+  if (s === "DELIVER COMPLETE") return "COMPLETED";
 
   return s;
 };
@@ -124,22 +139,15 @@ const normalizeDeliveryAddress = (v) => {
    resolve cluster context (safe)
    =========================== */
 const resolveClusterContext = (params = {}, order = {}, routeOrderId) => {
-  const orderIdKey =
-    order?.id ?? order?.order_id ?? order?.order_code ?? routeOrderId;
+  const orderIdKey = order?.id ?? order?.order_id ?? order?.order_code ?? routeOrderId;
 
   const direct =
-    params.clusterParams ||
-    params.cluster_context ||
-    params.clusterContext ||
-    params.cluster ||
-    null;
+    params.clusterParams || params.cluster_context || params.clusterContext || params.cluster || null;
 
   if (direct && typeof direct === "object") {
     return {
       screenName:
-        direct.screenName ||
-        params.clusterScreenName ||
-        "FoodNearbyClusterOrdersScreen",
+        direct.screenName || params.clusterScreenName || "FoodNearbyClusterOrdersScreen",
       ...direct,
 
       orderId: direct.orderId ?? orderIdKey,
@@ -176,25 +184,16 @@ const resolveClusterContext = (params = {}, order = {}, routeOrderId) => {
           direct.clusterOrders ??
           params.clusterOrders ??
           params.ordersInCluster ??
-          params.orders) ?? null,
-
-      group:
-        direct.group ??
-        params.group ??
-        params.clusterGroup ??
-        params.groupData ??
+          params.orders) ??
         null,
+
+      group: direct.group ?? params.group ?? params.clusterGroup ?? params.groupData ?? null,
     };
   }
 
-  const maybeOrders =
-    params.clusterOrders || params.ordersInCluster || params.orders || null;
+  const maybeOrders = params.clusterOrders || params.ordersInCluster || params.orders || null;
   const maybeClusterId =
-    params.cluster_id ||
-    params.clusterId ||
-    params.group_id ||
-    params.groupId ||
-    null;
+    params.cluster_id || params.clusterId || params.group_id || params.groupId || null;
 
   if (maybeOrders || maybeClusterId) {
     return {
@@ -272,8 +271,223 @@ const findNavigatorOwningRoute = (nav, routeName) => {
 };
 
 /* ===========================
+   money parser (GLOBAL)
+   =========================== */
+const toMoneyNumber = (v) => {
+  if (v == null) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+
+  const s = String(v).trim();
+  if (!s) return null;
+
+  const cleaned = s.replace(/[^0-9.-]/g, "");
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : null;
+};
+
+/* ===========================
+   ✅ NEW: stable item field getters for payloads
+   =========================== */
+const getItemMenuId = (it) =>
+  it?.menu_id ??
+  it?.menuId ??
+  it?.item_id ??
+  it?.itemId ??
+  it?.id ??
+  it?._id ??
+  null;
+
+const getItemName = (it) =>
+  it?.item_name ?? it?.name ?? it?.title ?? it?.menu_name ?? it?.product_name ?? "";
+
+const getItemImage = (it) =>
+  it?.item_image ?? it?.image ?? it?.image_url ?? it?.photo ?? it?.thumbnail ?? null;
+
+const getItemQty = (it) => {
+  const q = Number(it?.qty ?? it?.quantity ?? it?.quantity_ordered ?? it?.order_qty ?? 1);
+  return Number.isFinite(q) && q > 0 ? q : 1;
+};
+
+const getItemUnitPrice = (it) => {
+  const p = Number(it?.price ?? it?.unit_price ?? it?.item_price ?? it?.rate ?? it?.selling_price ?? 0);
+  return Number.isFinite(p) ? p : 0;
+};
+
+const sumItemsTotal = (itemsArr = []) => {
+  return (itemsArr || []).reduce((sum, it) => {
+    const qty = getItemQty(it);
+    const price = getItemUnitPrice(it);
+    return sum + qty * price;
+  }, 0);
+};
+
+/* ===========================
+   ✅ NEW: build unavailable_changes payloads (REMOVE / REPLACE)
+   - REMOVE:
+     unavailable_changes: { removed:[{business_id, menu_id, item_name}], replaced:[] }
+   - REPLACE:
+     unavailable_changes: { removed:[], replaced:[{old:{...}, new:{...}}] }
+   =========================== */
+const buildUnavailableChanges = ({
+  mode,
+  items,
+  unavailableMap,
+  replacementMap,
+  businessId,
+  businessName,
+}) => {
+  const bizIdNum = Number(businessId);
+  const business_id = Number.isFinite(bizIdNum) ? bizIdNum : businessId;
+
+  const removed = [];
+  const replaced = [];
+
+  const itemByKey = new Map((items || []).map((it) => [String(it?._key ?? getItemMenuId(it) ?? ""), it]));
+
+  if (String(mode).toUpperCase() === "REMOVE") {
+    for (const [k, v] of Object.entries(unavailableMap || {})) {
+      if (!v) continue;
+      const it = itemByKey.get(String(k)) || null;
+      if (!it) continue;
+
+      removed.push({
+        business_id,
+        menu_id: getItemMenuId(it),
+        item_name: getItemName(it),
+      });
+    }
+    return { removed, replaced: [] };
+  }
+
+  if (String(mode).toUpperCase() === "REPLACE") {
+    for (const [k, repl] of Object.entries(replacementMap || {})) {
+      if (!repl) continue;
+      const it = itemByKey.get(String(k)) || null;
+      if (!it) continue;
+
+      const qty = getItemQty(it);
+
+      const newMenuId = getItemMenuId(repl);
+      const newName = getItemName(repl);
+      const newPrice = toMoneyNumber(repl?.price) ?? getItemUnitPrice(repl);
+      const newImage = getItemImage(repl);
+
+      replaced.push({
+        old: {
+          business_id,
+          menu_id: getItemMenuId(it),
+          item_name: getItemName(it),
+        },
+        new: {
+          business_id,
+          business_name: businessName || "",
+          menu_id: newMenuId,
+          item_name: newName,
+          item_image: newImage,
+          quantity: qty,
+          price: Number(newPrice) || 0,
+          subtotal: (Number(newPrice) || 0) * qty,
+        },
+      });
+    }
+    return { removed: [], replaced };
+  }
+
+  return { removed: [], replaced: [] };
+};
+
+/* ===========================
+   ✅ NEW: status extraction from any socket payload
+   =========================== */
+const extractStatusFromPayload = (payload) => {
+  if (!payload) return null;
+
+  const direct =
+    payload.status ??
+    payload.order_status ??
+    payload.current_status ??
+    payload.orderStatus ??
+    payload.job_status ??
+    null;
+
+  if (direct) return direct;
+
+  const containers = [
+    payload.data,
+    payload.payload,
+    payload.message,
+    payload.meta,
+    payload.order,
+    payload.location,
+  ];
+  for (const c of containers) {
+    if (!c) continue;
+    const v =
+      c.status ?? c.order_status ?? c.current_status ?? c.orderStatus ?? c.job_status ?? null;
+    if (v) return v;
+  }
+
+  return null;
+};
+
+/* ===========================
+   ✅ NEW: order id extraction from socket payload (many shapes)
+   =========================== */
+const extractOrderIdFromPayload = (payload) => {
+  if (!payload) return null;
+
+  let v =
+    payload.order_id ??
+    payload.orderId ??
+    payload.order_code ??
+    payload.orderCode ??
+    payload.order_no ??
+    payload.orderNo ??
+    payload.job_id ??
+    payload.jobId ??
+    payload.delivery_order_id ??
+    payload.deliveryOrderId ??
+    payload.delivery_job_id ??
+    payload.deliveryJobId ??
+    null;
+
+  if (v != null) return String(v);
+
+  const containers = [
+    payload.data,
+    payload.payload,
+    payload.message,
+    payload.meta,
+    payload.location,
+    payload.order,
+  ];
+  for (const c of containers) {
+    if (!c) continue;
+    v =
+      c.order_id ??
+      c.orderId ??
+      c.order_code ??
+      c.orderCode ??
+      c.order_no ??
+      c.orderNo ??
+      c.job_id ??
+      c.jobId ??
+      c.delivery_order_id ??
+      c.deliveryOrderId ??
+      c.delivery_job_id ??
+      c.deliveryJobId ??
+      null;
+    if (v != null) return String(v);
+  }
+
+  const deep = payload?.order?.id ?? payload?.data?.order?.id ?? null;
+  if (deep != null) return String(deep);
+
+  return null;
+};
+
+/* ===========================
    ✅ NEW: build clusters from orders using lat/lng
-   - this is what makes the UI show list + counts even when coming from OrderDetails
    =========================== */
 const buildClustersFromOrders = (orders = [], thresholdKm = 5) => {
   const pickCoords = (o = {}) => {
@@ -301,13 +515,18 @@ const buildClustersFromOrders = (orders = [], thresholdKm = 5) => {
     const rawAddr = o.delivery_address ?? o.raw?.delivery_address;
     if (typeof rawAddr === "string" && rawAddr.trim()) return rawAddr.trim();
     if (rawAddr && typeof rawAddr === "object") {
-      if (typeof rawAddr.address === "string" && rawAddr.address.trim()) return rawAddr.address.trim();
-      if (typeof rawAddr.formatted === "string" && rawAddr.formatted.trim()) return rawAddr.formatted.trim();
-      if (typeof rawAddr.label === "string" && rawAddr.label.trim()) return rawAddr.label.trim();
+      if (typeof rawAddr.address === "string" && rawAddr.address.trim())
+        return rawAddr.address.trim();
+      if (typeof rawAddr.formatted === "string" && rawAddr.formatted.trim())
+        return rawAddr.formatted.trim();
+      if (typeof rawAddr.label === "string" && rawAddr.label.trim())
+        return rawAddr.label.trim();
     }
     if (typeof o.address === "string" && o.address.trim()) return o.address.trim();
-    if (typeof o.general_place === "string" && o.general_place.trim()) return o.general_place.trim();
-    if (typeof o.deliver_to?.address === "string" && o.deliver_to.address.trim()) return o.deliver_to.address.trim();
+    if (typeof o.general_place === "string" && o.general_place.trim())
+      return o.general_place.trim();
+    if (typeof o.deliver_to?.address === "string" && o.deliver_to.address.trim())
+      return o.deliver_to.address.trim();
     return "";
   };
 
@@ -348,7 +567,6 @@ const buildClustersFromOrders = (orders = [], thresholdKm = 5) => {
     }
   }
 
-  // fallback: if coords missing everywhere, still create a single cluster
   if (!clusters.length && (orders || []).length) {
     clusters.push({
       label: "Nearby cluster",
@@ -382,19 +600,27 @@ export default function OrderDetails() {
 
   const ownerType = params.ownerType ?? params.owner_type ?? null;
 
-  const deliveryOptionFromParamsRaw =
-    params.delivery_option ?? params.deliveryOption ?? null;
+  const deliveryOptionFromParamsRaw = params.delivery_option ?? params.deliveryOption ?? null;
 
+  // ✅ ensure id + order_code always exist (important for grouped matching)
   const [order, setOrder] = useState(() => {
     const o = orderProp || {};
+    const idRaw = o?.id ?? o?.order_id ?? o?.order_code ?? routeOrderId ?? null;
+    const codeRaw = o?.order_code ?? o?.order_id ?? o?.id ?? routeOrderId ?? null;
+
     return {
       ...o,
+      id: idRaw != null ? String(idRaw) : undefined,
+      order_id: o?.order_id ?? (idRaw != null ? String(idRaw) : undefined),
+      order_code: codeRaw != null ? normalizeOrderCode(codeRaw) : undefined,
       status: normalizeStatus(o?.status),
       delivery_address: normalizeDeliveryAddress(
         o?.delivery_address ?? o?.address ?? o?.deliver_to
       ),
     };
   });
+
+  const [refreshing, setRefreshing] = useState(false);
 
   const [updating, setUpdating] = useState(false);
   const [declineOpen, setDeclineOpen] = useState(false);
@@ -411,6 +637,13 @@ export default function OrderDetails() {
 
   const socketRef = useRef(null);
   const autoDeclinedRef = useRef(false);
+
+  // ✅ fast status confirmation + polling refs
+  const liveRefreshTimerRef = useRef(null);
+  const socketHydrateTimerRef = useRef(null);
+  const lastSocketAppliedStatusRef = useRef(null);
+
+  const LIVE_REFRESH_MS = 4000;
 
   // cluster context (or null)
   const clusterCtx = useMemo(
@@ -432,8 +665,7 @@ export default function OrderDetails() {
   const resolvedClusterRouteName = useMemo(() => {
     const preferred = clusterCtx?.screenName || params.clusterScreenName;
     return (
-      pickExistingRouteName(navigation, [preferred, ...CLUSTER_ROUTE_CANDIDATES]) ||
-      null
+      pickExistingRouteName(navigation, [preferred, ...CLUSTER_ROUTE_CANDIDATES]) || null
     );
   }, [navigation, clusterCtx?.screenName, params.clusterScreenName, CLUSTER_ROUTE_CANDIDATES]);
 
@@ -442,6 +674,12 @@ export default function OrderDetails() {
     setItemReplacementMap({});
     autoDeclinedRef.current = false;
     setDriverArrived(false);
+    lastSocketAppliedStatusRef.current = null;
+
+    if (socketHydrateTimerRef.current) {
+      clearTimeout(socketHydrateTimerRef.current);
+      socketHydrateTimerRef.current = null;
+    }
   }, [routeOrderId]);
 
   /* ---------- Back handling ---------- */
@@ -454,9 +692,8 @@ export default function OrderDetails() {
       const parent = navigation.getParent?.();
       const names = parent?.getState?.()?.routeNames ?? [];
       const target =
-        names.find((n) =>
-          /^(Orders|OrderTab|OrdersTab|MartOrders|FoodOrders)$/i.test(n)
-        ) || names.find((n) => /Order/i.test(n));
+        names.find((n) => /^(Orders|OrderTab|OrdersTab|MartOrders|FoodOrders)$/i.test(n)) ||
+        names.find((n) => /Order/i.test(n));
       if (parent && target) {
         parent.navigate(target);
         return;
@@ -486,65 +723,57 @@ export default function OrderDetails() {
   const [businessId, setBusinessId] = useState(paramBusinessId);
   const [businessCoords, setBusinessCoords] = useState(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const token = await SecureStore.getItemAsync("auth_token");
-        let finalBizId = businessId || paramBusinessId;
+  // ✅ reusable BUSINESS_DETAILS loader (used by initial load + refresh)
+  const loadBusinessDetails = useCallback(async () => {
+    try {
+      const token = await SecureStore.getItemAsync("auth_token");
+      let finalBizId = businessId || paramBusinessId;
 
-        if (!finalBizId) {
-          const saved = await SecureStore.getItemAsync("merchant_login");
-          if (saved) {
-            try {
-              const j = JSON.parse(saved);
-              finalBizId =
-                j?.business_id ||
-                j?.user?.business_id ||
-                j?.user?.businessId ||
-                j?.id ||
-                j?.user?.id ||
-                null;
-              if (finalBizId) setBusinessId(finalBizId);
-            } catch {}
-          }
+      if (!finalBizId) {
+        const saved = await SecureStore.getItemAsync("merchant_login");
+        if (saved) {
+          try {
+            const j = JSON.parse(saved);
+            finalBizId =
+              j?.business_id ||
+              j?.user?.business_id ||
+              j?.user?.businessId ||
+              j?.id ||
+              j?.user?.id ||
+              null;
+            if (finalBizId) setBusinessId(finalBizId);
+          } catch {}
         }
-
-        const bd = await fetchBusinessDetails({
-          token,
-          business_id: finalBizId,
-        });
-
-        if (bd) {
-          const opt = bd?.delivery_option ?? bd?.deliveryOption;
-          const nOpt = opt ? String(opt).toUpperCase() : "UNKNOWN";
-          setMerchantDeliveryOpt(nOpt);
-
-          const latRaw =
-            bd.latitude ??
-            bd.lat ??
-            bd.business_latitude ??
-            bd.business_lat ??
-            null;
-          const lngRaw =
-            bd.longitude ??
-            bd.lng ??
-            bd.business_longitude ??
-            bd.business_lng ??
-            null;
-
-          const latNum = latRaw != null ? Number(latRaw) : NaN;
-          const lngNum = lngRaw != null ? Number(lngRaw) : NaN;
-
-          if (!Number.isNaN(latNum) && !Number.isNaN(lngNum)) {
-            setBusinessCoords({ lat: latNum, lng: lngNum });
-          }
-        }
-      } catch (e) {
-        console.log("[OrderDetails] BUSINESS_DETAILS fetch error:", e?.message || e);
       }
-    })();
+
+      const bd = await fetchBusinessDetails({ token, business_id: finalBizId });
+
+      if (bd) {
+        const opt = bd?.delivery_option ?? bd?.deliveryOption;
+        const nOpt = opt ? String(opt).toUpperCase() : "UNKNOWN";
+        setMerchantDeliveryOpt(nOpt);
+
+        const latRaw =
+          bd.latitude ?? bd.lat ?? bd.business_latitude ?? bd.business_lat ?? null;
+        const lngRaw =
+          bd.longitude ?? bd.lng ?? bd.business_longitude ?? bd.business_lng ?? null;
+
+        const latNum = latRaw != null ? Number(latRaw) : NaN;
+        const lngNum = lngRaw != null ? Number(lngRaw) : NaN;
+
+        if (!Number.isNaN(latNum) && !Number.isNaN(lngNum)) {
+          setBusinessCoords({ lat: latNum, lng: lngNum });
+        }
+      }
+    } catch (e) {
+      console.log("[OrderDetails] BUSINESS_DETAILS fetch error:", e?.message || e);
+    }
+  }, [businessId, paramBusinessId]);
+
+  useEffect(() => {
+    loadBusinessDetails();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadBusinessDetails]);
 
   /* ---------- Normalize fulfillment ---------- */
   const fulfillment = useMemo(
@@ -563,8 +792,7 @@ export default function OrderDetails() {
   );
 
   const deliveryOptionInitial = useMemo(() => {
-    if (deliveryOptionFromParamsRaw)
-      return String(deliveryOptionFromParamsRaw).toUpperCase();
+    if (deliveryOptionFromParamsRaw) return String(deliveryOptionFromParamsRaw).toUpperCase();
     const m = merchantDeliveryOpt;
     if (m !== "UNKNOWN") return m;
     return orderDeliveryHint || "";
@@ -621,9 +849,7 @@ export default function OrderDetails() {
       order?.cancellation_reason ??
       "";
     const reason = String(reasonRaw || "").toLowerCase();
-    const cancelledBy = String(
-      order?.cancelled_by || order?.canceled_by || ""
-    ).toLowerCase();
+    const cancelledBy = String(order?.cancelled_by || order?.canceled_by || "").toLowerCase();
 
     if (cancelledBy && (cancelledBy.includes("customer") || cancelledBy.includes("user")))
       return true;
@@ -655,6 +881,26 @@ export default function OrderDetails() {
     order?.canceled_by,
   ]);
 
+  const shouldDriverControlAfterReady = useMemo(() => {
+    if (isScheduledOrder) return false;
+    if (isTerminalNegative || isTerminalSuccess) return false;
+    if (status !== "READY") return false;
+
+    // ✅ ONLY after a driver accepts
+    if (!driverAccepted) return false;
+
+    return isPlatformDelivery || (isBothOption && isGrabSelected);
+  }, [
+    isScheduledOrder,
+    isTerminalNegative,
+    isTerminalSuccess,
+    status,
+    driverAccepted,
+    isPlatformDelivery,
+    isBothOption,
+    isGrabSelected,
+  ]);
+
   const shouldBlockAtReady =
     status === "READY" &&
     (isPlatformDelivery || (isBothOption && isGrabSelected)) &&
@@ -665,13 +911,14 @@ export default function OrderDetails() {
       const s = normalizeStatus(curr);
       if (TERMINAL_NEGATIVE.has(s) || TERMINAL_SUCCESS.has(s)) return null;
       if (isPickupFulfillment && s === "READY") return null;
+      if (shouldDriverControlAfterReady) return null;
       if (s === "READY" && shouldBlockAtReady) return null;
 
       const idx = STATUS_SEQUENCE.indexOf(s);
       if (idx === -1) return "CONFIRMED";
       return STATUS_SEQUENCE[idx + 1] || null;
     },
-    [STATUS_SEQUENCE, shouldBlockAtReady, isPickupFulfillment]
+    [STATUS_SEQUENCE, shouldBlockAtReady, isPickupFulfillment, shouldDriverControlAfterReady]
   );
 
   const stepIndex = findStepIndex(status, STATUS_SEQUENCE);
@@ -714,10 +961,8 @@ export default function OrderDetails() {
   const ifUnavailableMode = useMemo(() => {
     const raw = order?.if_unavailable;
     const s = String(raw || "").toLowerCase();
-
     if (s.includes("replace") || s.includes("similar")) return "REPLACE";
     if (s.includes("remove") || s.includes("refund")) return "REMOVE";
-
     return "OTHER";
   }, [order?.if_unavailable]);
 
@@ -770,26 +1015,16 @@ export default function OrderDetails() {
       try {
         json = text ? JSON.parse(text) : null;
       } catch {}
-      if (!res.ok)
-        throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
-      const groups = Array.isArray(json?.data)
-        ? json.data
-        : Array.isArray(json)
-        ? json
-        : [];
+      const groups = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
 
       let allOrders = [];
       for (const g of groups) {
         if (Array.isArray(g?.orders)) {
           const user = g.user || g.customer || g.user_details || {};
           const userName =
-            g.customer_name ??
-            g.name ??
-            user.name ??
-            user.user_name ??
-            user.full_name ??
-            "";
+            g.customer_name ?? g.name ?? user.name ?? user.user_name ?? user.full_name ?? "";
           const userPhone =
             g.phone ?? user.phone ?? user.phone_number ?? user.mobile ?? "";
 
@@ -815,7 +1050,6 @@ export default function OrderDetails() {
       const matchStatus = normalizeStatus(match?.status ?? "PENDING");
       const localStatus = normalizeStatus(order?.status ?? "PENDING");
 
-      // ✅ do NOT downgrade local status if it is already ahead
       const finalStatus = isHigherOrEqualStatus(localStatus, matchStatus)
         ? localStatus
         : matchStatus;
@@ -823,6 +1057,7 @@ export default function OrderDetails() {
       const normalizedFromMatch = {
         ...match,
         id: String(match?.id ?? match?.order_id ?? match?.order_code ?? routeOrderId),
+        order_id: String(match?.order_id ?? match?.id ?? match?.order_code ?? routeOrderId),
         order_code: normalizeOrderCode(match?.order_code ?? match?.id ?? routeOrderId),
         customer_name:
           match?.customer_name ??
@@ -830,8 +1065,7 @@ export default function OrderDetails() {
           match?.user?.user_name ??
           match?.user?.name ??
           "",
-        customer_phone:
-          match?.customer_phone ?? match?.phone ?? match?.user?.phone ?? "",
+        customer_phone: match?.customer_phone ?? match?.phone ?? match?.user?.phone ?? "",
         payment_method: match?.payment_method ?? match?.payment ?? "",
         delivery_address: normalizeDeliveryAddress(
           match?.delivery_address ?? match?.address ?? match?.deliver_to
@@ -850,20 +1084,12 @@ export default function OrderDetails() {
           order?.type ??
           "",
         delivery_option:
-          match?.delivery_option ??
-          match?.delivery_by ??
-          order?.delivery_option ??
-          "",
-        status_timestamps:
-          match?.status_timestamps ?? order?.status_timestamps ?? {},
+          match?.delivery_option ?? match?.delivery_by ?? order?.delivery_option ?? "",
+        status_timestamps: match?.status_timestamps ?? order?.status_timestamps ?? {},
         if_unavailable: match?.if_unavailable ?? order?.if_unavailable ?? "",
         estimated_arrivial_time:
-          match?.estimated_arrivial_time ??
-          match?.eta_minutes ??
-          order?.estimated_arrivial_time ??
-          null,
-        delivery_fee:
-          match?.delivery_fee ?? match?.deliveryFee ?? order?.delivery_fee ?? null,
+          match?.estimated_arrivial_time ?? match?.eta_minutes ?? order?.estimated_arrivial_time ?? null,
+        delivery_fee: match?.delivery_fee ?? match?.deliveryFee ?? order?.delivery_fee ?? null,
         merchant_delivery_fee:
           match?.merchant_delivery_fee ??
           match?.merchantDeliveryFee ??
@@ -871,8 +1097,7 @@ export default function OrderDetails() {
           null,
         platform_fee: match?.platform_fee ?? order?.platform_fee ?? 0,
         discount_amount: match?.discount_amount ?? order?.discount_amount ?? 0,
-        totals_for_business:
-          match?.totals_for_business ?? order?.totals_for_business ?? null,
+        totals_for_business: match?.totals_for_business ?? order?.totals_for_business ?? null,
       };
 
       setOrder((prev) => ({
@@ -886,20 +1111,57 @@ export default function OrderDetails() {
     } catch (e) {
       console.warn("[OrderDetails] hydrate error:", e?.message);
     }
-  }, [
-    ordersGroupedUrl,
-    routeOrderId,
-    order?.status,
-    businessId,
-    paramBusinessId,
-    isScheduledOrder,
-  ]);
+  }, [ordersGroupedUrl, routeOrderId, order?.status, businessId, paramBusinessId, isScheduledOrder]);
 
   useFocusEffect(
     useCallback(() => {
       hydrateFromGrouped();
     }, [hydrateFromGrouped])
   );
+
+  // ✅ debounce grouped hydrate for socket bursts
+  const debounceHydrateFromGrouped = useCallback(() => {
+    if (socketHydrateTimerRef.current) clearTimeout(socketHydrateTimerRef.current);
+    socketHydrateTimerRef.current = setTimeout(() => {
+      socketHydrateTimerRef.current = null;
+      hydrateFromGrouped();
+    }, 350);
+  }, [hydrateFromGrouped]);
+
+  // ✅ LIVE AUTO-REFRESH while screen focused (catches missed socket events)
+  useFocusEffect(
+    useCallback(() => {
+      if (liveRefreshTimerRef.current) clearInterval(liveRefreshTimerRef.current);
+
+      if (!isScheduledOrder && !isTerminalNegative && !isTerminalSuccess) {
+        hydrateFromGrouped();
+      }
+
+      liveRefreshTimerRef.current = setInterval(() => {
+        if (isScheduledOrder) return;
+        if (isTerminalNegative || isTerminalSuccess) return;
+        hydrateFromGrouped();
+      }, LIVE_REFRESH_MS);
+
+      return () => {
+        if (liveRefreshTimerRef.current) {
+          clearInterval(liveRefreshTimerRef.current);
+          liveRefreshTimerRef.current = null;
+        }
+      };
+    }, [hydrateFromGrouped, isScheduledOrder, isTerminalNegative, isTerminalSuccess])
+  );
+
+  /* ---------- Pull-to-refresh ---------- */
+  const onRefresh = useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await Promise.all([loadBusinessDetails(), hydrateFromGrouped()]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshing, loadBusinessDetails, hydrateFromGrouped]);
 
   /* ---------- Distance & ETA (device) ---------- */
   const [routeInfo, setRouteInfo] = useState(null);
@@ -936,11 +1198,7 @@ export default function OrderDetails() {
         : null) ??
       "thimphu";
 
-    return {
-      lat: Number(lat),
-      lng: Number(lng),
-      cityId: String(cityId || "thimphu").toLowerCase(),
-    };
+    return { lat: Number(lat), lng: Number(lng), cityId: String(cityId || "thimphu").toLowerCase() };
   }, [order]);
 
   useEffect(() => {
@@ -987,16 +1245,10 @@ export default function OrderDetails() {
   }, [businessCoords, refCoords.lat, refCoords.lng, fulfillment]);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener(
-      "similar-item-chosen",
-      ({ itemKey, replacement }) => {
-        if (!itemKey || !replacement) return;
-        setItemReplacementMap((prev) => ({
-          ...prev,
-          [String(itemKey)]: replacement,
-        }));
-      }
-    );
+    const sub = DeviceEventEmitter.addListener("similar-item-chosen", ({ itemKey, replacement }) => {
+      if (!itemKey || !replacement) return;
+      setItemReplacementMap((prev) => ({ ...prev, [String(itemKey)]: replacement }));
+    });
     return () => sub?.remove?.();
   }, []);
 
@@ -1007,42 +1259,150 @@ export default function OrderDetails() {
     COMPLETED: "Order delivered",
   };
 
+  /* ===========================
+     ✅ FAST apply status from socket into UI + confirm via grouped
+     =========================== */
+  const applySocketStatusToUi = useCallback(
+    (incomingStatusRaw, extraPatch = {}) => {
+      const norm = normalizeStatus(incomingStatusRaw);
+      if (!norm) return;
+
+      // prevent repeated spam of same status
+      if (lastSocketAppliedStatusRef.current === norm) {
+        if (extraPatch && Object.keys(extraPatch).length) {
+          setOrder((prev) => ({ ...prev, ...extraPatch }));
+        }
+        return;
+      }
+
+      const current = normalizeStatus(order?.status || "PENDING");
+      const willAdvance = !isHigherOrEqualStatus(current, norm);
+
+      setOrder((prev) => {
+        const prevStatus = normalizeStatus(prev?.status || "PENDING");
+
+        // never downgrade
+        if (isHigherOrEqualStatus(prevStatus, norm)) {
+          return { ...prev, ...extraPatch };
+        }
+
+        const patch = { ...extraPatch, status: norm };
+        const next = { ...prev, ...patch };
+
+        DeviceEventEmitter.emit("order-updated", {
+          id: String(next?.id || routeOrderId),
+          patch: { ...patch, status: norm },
+        });
+
+        return next;
+      });
+
+      lastSocketAppliedStatusRef.current = norm;
+
+      // confirm quickly from grouped API
+      if (willAdvance) debounceHydrateFromGrouped();
+    },
+    [routeOrderId, order?.status, debounceHydrateFromGrouped]
+  );
+
+  /* ---------------- Items ---------------- */
+  const items = useMemo(() => {
+    const raw = Array.isArray(order?.raw_items) ? order.raw_items : [];
+    return raw.map((it, idx) => ({
+      ...it,
+      _key: String(it.item_id || it.menu_id || it.id || it.itemId || it.menuId || idx),
+    }));
+  }, [order?.raw_items]);
+
+  // ✅ compute totals for UI + payload
+  const originalItemsTotal = useMemo(() => sumItemsTotal(items), [items]);
+
+  const computedItemsTotal = useMemo(() => {
+    if (ifUnavailableMode !== "REMOVE" && ifUnavailableMode !== "REPLACE") return originalItemsTotal;
+
+    let total = 0;
+
+    items.forEach((it) => {
+      const key = it._key;
+      const qty = getItemQty(it);
+      const oldUnitPrice = getItemUnitPrice(it);
+
+      if (ifUnavailableMode === "REMOVE") {
+        const isRemoved = !!itemUnavailableMap[key];
+        if (isRemoved) return;
+        total += qty * oldUnitPrice;
+        return;
+      }
+
+      // REPLACE
+      const repl = itemReplacementMap[key];
+      if (repl) {
+        const newUnitPrice = toMoneyNumber(repl?.price) ?? getItemUnitPrice(repl);
+        total += qty * (Number(newUnitPrice) || 0);
+      } else {
+        total += qty * oldUnitPrice;
+      }
+    });
+
+    return total;
+  }, [items, ifUnavailableMode, itemUnavailableMap, itemReplacementMap, originalItemsTotal]);
+
+  const { effectiveTotalLabel, effectiveItemsCount } = useMemo(() => {
+    const count = items.reduce((sum, it) => sum + getItemQty(it), 0);
+    return { effectiveTotalLabel: money(computedItemsTotal), effectiveItemsCount: count };
+  }, [items, computedItemsTotal]);
+
+  const handleToggleUnavailable = useCallback(
+    (key) => {
+      if (normalizeStatus(status) !== "PENDING") return;
+      setItemUnavailableMap((prev) => ({ ...prev, [key]: !prev[key] }));
+    },
+    [status]
+  );
+
+  const handleOpenSimilarCatalog = useCallback(
+    (item) => {
+      if (ifUnavailableMode !== "REPLACE") return;
+      if (!item || !item._key) return;
+
+      const bizId =
+        businessId ||
+        paramBusinessId ||
+        order?.business_id ||
+        order?.merchant_id ||
+        order?.store_id ||
+        null;
+
+      navigation.navigate("SimilarItemCatalog", {
+        itemKey: item._key,
+        itemName: getItemName(item) || "",
+        businessId: bizId,
+        owner_type: ownerType,
+      });
+    },
+    [ifUnavailableMode, navigation, businessId, paramBusinessId, order, ownerType]
+  );
+
+  /* ===========================
+     ✅ UPDATED: doUpdate() now sends REMOVE / REPLACE payloads on CONFIRMED
+     =========================== */
   const doUpdate = useCallback(
     async (newStatusRaw, opts = {}, skipUnavailableCheck = false) => {
       try {
         const currentStatus = normalizeStatus(order?.status || "PENDING");
         const newStatus = normalizeStatus(newStatusRaw);
 
-        const fLower = (fulfillment || "").toLowerCase();
-        const needsPrep = fLower === "delivery" || fLower === "pickup";
-
-        if (
-          newStatus === "CONFIRMED" &&
-          currentStatus === "PENDING" &&
-          !skipUnavailableCheck
-        ) {
-          Alert.alert(
-            "Check unavailable items",
-            "Before accepting, please make sure any unavailable items are marked as unavailable in the list below.",
-            [
-              { text: "Go back", style: "cancel" },
-              {
-                text: "Accept anyway",
-                onPress: () => doUpdate(newStatus, opts, true),
-              },
-            ]
-          );
+        if (shouldDriverControlAfterReady) {
+          Alert.alert("Driver controlled", "Driver will update the status for Grab delivery.");
           return;
         }
 
+        // DECLINE (same as before)
         if (newStatus === "DECLINED") {
           const r = String(opts?.reason ?? "").trim();
           if (r.length < 3) {
             setDeclineOpen(true);
-            Alert.alert(
-              "Reason required",
-              "Please provide at least 3 characters explaining why the order is declined."
-            );
+            Alert.alert("Reason required", "Please provide at least 3 characters explaining why the order is declined.");
             return;
           }
 
@@ -1061,12 +1421,7 @@ export default function OrderDetails() {
           const raw = order?.order_code || order?.id || routeOrderId;
           const orderCode = normalizeOrderCode(raw);
 
-          await updateStatusApi({
-            endpoint: ENV_UPDATE_ORDER || "",
-            orderCode,
-            payload,
-            token,
-          });
+          await updateStatusApi({ endpoint: ENV_UPDATE_ORDER || "", orderCode, payload, token });
 
           const patch = {
             status: "DECLINED",
@@ -1083,29 +1438,144 @@ export default function OrderDetails() {
           return;
         }
 
-        if (
-          needsPrep &&
-          currentStatus === "PENDING" &&
-          newStatus === "CONFIRMED"
-        ) {
-          const prepVal = Number(manualPrepMin);
-          if (!Number.isFinite(prepVal) || prepVal <= 0) {
+        // ✅ CONFIRMED (ACCEPT) with REMOVE/REPLACE payloads
+        if (newStatus === "CONFIRMED" && currentStatus === "PENDING") {
+          // optional warning (kept)
+          if (!skipUnavailableCheck) {
             Alert.alert(
-              "Time required",
-              "Please enter the time to prepare (in minutes) before accepting the order."
+              "Confirm accept",
+              "Before accepting, ensure unavailable items are marked (Remove) or replaced (Replace).",
+              [
+                { text: "Go back", style: "cancel" },
+                { text: "Accept", onPress: () => doUpdate("CONFIRMED", opts, true) },
+              ]
             );
             return;
           }
+
+          // prep minutes required (kept)
+          const prepVal = Number(manualPrepMin);
+          if (!Number.isFinite(prepVal) || prepVal <= 0) {
+            Alert.alert("Time required", "Please enter the time to prepare (in minutes) before accepting the order.");
+            return;
+          }
+
+          // business info for payload
+          const bizId =
+            businessId ||
+            paramBusinessId ||
+            order?.business_id ||
+            order?.merchant_id ||
+            order?.store_id ||
+            null;
+
+          const bizName =
+            order?.business_name ||
+            order?.store_name ||
+            order?.merchant_name ||
+            params?.business_name ||
+            "";
+
+          // determine mode for payload: REMOVE / REPLACE (only when that mode is active)
+          const modeUpper = String(ifUnavailableMode || "").toUpperCase();
+
+          // build unavailable_changes only for REMOVE/REPLACE modes; otherwise keep empty arrays
+          const unavailable_changes =
+            modeUpper === "REMOVE" || modeUpper === "REPLACE"
+              ? buildUnavailableChanges({
+                  mode: modeUpper,
+                  items,
+                  unavailableMap: itemUnavailableMap,
+                  replacementMap: itemReplacementMap,
+                  businessId: bizId,
+                  businessName: bizName,
+                })
+              : { removed: [], replaced: [] };
+
+          const hasChanges =
+            (unavailable_changes.removed?.length || 0) > 0 ||
+            (unavailable_changes.replaced?.length || 0) > 0;
+
+          // reason text exactly like your examples
+          const reasonText =
+            String(opts?.reason || "").trim() ||
+            (modeUpper === "REMOVE" && hasChanges
+              ? "Some items unavailable"
+              : modeUpper === "REPLACE" && hasChanges
+              ? "Replaced unavailable item"
+              : "Order accepted by merchant");
+
+          // compute final totals like your payload (keep existing fees, adjust total by items delta)
+          const baseTotal = toMoneyNumber(order?.total_amount ?? order?.total ?? 0) ?? 0;
+          const deltaItems = Number(computedItemsTotal) - Number(originalItemsTotal);
+          const final_total_amount = Math.round((baseTotal + deltaItems) * 100) / 100;
+
+          const final_platform_fee = toMoneyNumber(order?.platform_fee ?? 0) ?? 0;
+          const final_discount_amount = toMoneyNumber(order?.discount_amount ?? 0) ?? 0;
+          const final_delivery_fee = toMoneyNumber(order?.delivery_fee ?? 0) ?? 0;
+          const final_merchant_delivery_fee =
+            toMoneyNumber(order?.merchant_delivery_fee ?? 0) ?? 0;
+
+          // delivery_option (kept so backend knows which option merchant selected)
+          const deliveryBy =
+            isBothOption && (isSelfSelected || isGrabSelected)
+              ? isSelfSelected
+                ? "SELF"
+                : "GRAB"
+              : deliveryOptionInitial || "";
+
+          // ✅ Payload EXACTLY matching your structure (plus delivery_option if available)
+          const payload = {
+            status: "CONFIRMED",
+            reason: reasonText,
+            estimated_minutes: Math.round(prepVal),
+            final_total_amount,
+            final_platform_fee,
+            final_discount_amount,
+            final_delivery_fee,
+            final_merchant_delivery_fee,
+            unavailable_changes: {
+              removed: unavailable_changes.removed || [],
+              replaced: unavailable_changes.replaced || [],
+            },
+            ...(deliveryBy ? { delivery_option: deliveryBy } : {}),
+          };
+
+          // ✅ optimistic patch for UI
+          setOrder((prev) => ({
+            ...prev,
+            status: "CONFIRMED",
+            status_reason: reasonText,
+            estimated_arrivial_time: Math.round(prepVal),
+          }));
+          DeviceEventEmitter.emit("order-updated", {
+            id: String(order?.id || routeOrderId),
+            patch: { status: "CONFIRMED", status_reason: reasonText },
+          });
+
+          setUpdating(true);
+          const token = await SecureStore.getItemAsync("auth_token");
+          const raw = order?.order_code || order?.id || routeOrderId;
+          const orderCode = normalizeOrderCode(raw);
+
+          logJson("[OrderDetails] CONFIRMED payload:", payload);
+
+          await updateStatusApi({
+            endpoint: ENV_UPDATE_ORDER || "",
+            orderCode,
+            payload,
+            token,
+          });
+
+          // after API update, re-hydrate quickly
+          debounceHydrateFromGrouped();
+          return;
         }
 
+        // ✅ other statuses (READY / OUT_FOR_DELIVERY / COMPLETED etc.) keep existing behavior
         let payload = { status: newStatus };
 
-        if (DEFAULT_REASON[newStatus]) {
-          const r = DEFAULT_REASON[newStatus];
-          payload.status_reason = r;
-          payload.reason = r;
-        }
-
+        // keep delivery option for non-confirmed as well
         const deliveryBy =
           isBothOption && (isSelfSelected || isGrabSelected)
             ? isSelfSelected
@@ -1114,47 +1584,17 @@ export default function OrderDetails() {
             : deliveryOptionInitial || "";
         if (deliveryBy) payload.delivery_option = deliveryBy;
 
-        const prepVal = Number(manualPrepMin);
-        const hasPrep = Number.isFinite(prepVal) && prepVal > 0;
-        const deliveryVal = routeInfo?.etaMin ?? null;
-        const hasDelivery =
-          fLower === "delivery" &&
-          deliveryVal != null &&
-          Number.isFinite(deliveryVal);
-
-        let computedEta = null;
-        if (hasPrep || hasDelivery) {
-          const total = (hasPrep ? prepVal : 0) + (hasDelivery ? deliveryVal : 0);
-          const totalRounded = Math.round(total);
-          if (totalRounded > 0) computedEta = totalRounded;
+        // optional reason defaults
+        if (DEFAULT_REASON[newStatus]) {
+          payload.status_reason = DEFAULT_REASON[newStatus];
+          payload.reason = DEFAULT_REASON[newStatus];
         }
 
-        if (newStatus === "CONFIRMED") {
-          if (computedEta != null) payload.estimated_minutes = computedEta;
-
-          const total = Number(order?.total ?? order?.total_amount ?? 0);
-          const platformFee = Number(
-            order?.platform_fee ?? order?.totals_for_business?.fee_share ?? 0
-          );
-          const discount = Number(order?.discount_amount ?? 0);
-
-          if (Number.isFinite(total)) payload.final_total_amount = total;
-          if (Number.isFinite(platformFee))
-            payload.final_platform_fee = platformFee;
-          if (Number.isFinite(discount))
-            payload.final_discount_amount = discount;
-        }
-
-        // ✅ optimistic UI update immediately
-        const optimisticPatch = { status: newStatus };
-        if (payload.status_reason) optimisticPatch.status_reason = payload.status_reason;
-        if (payload.delivery_option) optimisticPatch.delivery_option = payload.delivery_option;
-        if (computedEta != null) optimisticPatch.estimated_arrivial_time = computedEta;
-
-        setOrder((prev) => ({ ...prev, ...optimisticPatch, status: normalizeStatus(newStatus) }));
+        // optimistic UI
+        setOrder((prev) => ({ ...prev, status: newStatus }));
         DeviceEventEmitter.emit("order-updated", {
           id: String(order?.id || routeOrderId),
-          patch: { ...optimisticPatch, status: normalizeStatus(newStatus) },
+          patch: { status: newStatus },
         });
 
         setUpdating(true);
@@ -1162,12 +1602,9 @@ export default function OrderDetails() {
         const raw = order?.order_code || order?.id || routeOrderId;
         const orderCode = normalizeOrderCode(raw);
 
-        await updateStatusApi({
-          endpoint: ENV_UPDATE_ORDER || "",
-          orderCode,
-          payload,
-          token,
-        });
+        await updateStatusApi({ endpoint: ENV_UPDATE_ORDER || "", orderCode, payload, token });
+
+        debounceHydrateFromGrouped();
       } catch (e) {
         Alert.alert("Update failed", String(e?.message || e));
         hydrateFromGrouped();
@@ -1176,33 +1613,31 @@ export default function OrderDetails() {
       }
     },
     [
+      order,
       routeOrderId,
-      order?.id,
-      order?.order_code,
-      order?.status,
-      order?.total,
-      order?.total_amount,
-      order?.platform_fee,
-      order?.discount_amount,
-      order?.totals_for_business,
+      manualPrepMin,
+      businessId,
+      paramBusinessId,
+      params?.business_name,
+      ifUnavailableMode,
+      items,
+      itemUnavailableMap,
+      itemReplacementMap,
+      computedItemsTotal,
+      originalItemsTotal,
       isBothOption,
       isSelfSelected,
       isGrabSelected,
       deliveryOptionInitial,
-      manualPrepMin,
-      routeInfo,
-      fulfillment,
+      shouldDriverControlAfterReady,
       hydrateFromGrouped,
+      debounceHydrateFromGrouped,
     ]
   );
 
   const next = nextFor(status);
   const primaryLabel =
-    status === "PENDING"
-      ? "Accept"
-      : next
-      ? STATUS_META[next]?.label || "Next"
-      : null;
+    status === "PENDING" ? "Accept" : next ? STATUS_META[next]?.label || "Next" : null;
 
   const onPrimaryAction = useCallback(() => {
     if (!next || updating) return;
@@ -1210,10 +1645,7 @@ export default function OrderDetails() {
   }, [next, updating, doUpdate]);
 
   const onDecline = useCallback(() => setDeclineOpen(true), []);
-  const canDecline = useMemo(
-    () => String(declineReason).trim().length >= 3,
-    [declineReason]
-  );
+  const canDecline = useMemo(() => String(declineReason).trim().length >= 3, [declineReason]);
   const confirmDecline = useCallback(() => {
     const r = String(declineReason).trim();
     if (r.length < 3) {
@@ -1298,10 +1730,7 @@ export default function OrderDetails() {
         finalUrl = `${base}${sep}driver_id=${encodeURIComponent(String(driverId))}`;
       }
 
-      const res = await fetch(finalUrl, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-      });
+      const res = await fetch(finalUrl, { method: "GET", headers: { Accept: "application/json" } });
 
       const text = await res.text();
       let json = null;
@@ -1346,10 +1775,7 @@ export default function OrderDetails() {
           finalUrl = `${base}${sep}driverId=${encodeURIComponent(String(driverId))}`;
         }
 
-        const res = await fetch(finalUrl, {
-          method: "GET",
-          headers: { Accept: "application/json" },
-        });
+        const res = await fetch(finalUrl, { method: "GET", headers: { Accept: "application/json" } });
 
         const text = await res.text();
         let json = null;
@@ -1370,7 +1796,7 @@ export default function OrderDetails() {
     [fetchDriverRating]
   );
 
-  /* ---------- Grab broadcast-delivery + socket deliveryAccepted ---------- */
+  /* ---------- Grab broadcast-delivery + socket deliveryAccepted (kept as-is) ---------- */
   const [sendingGrab, setSendingGrab] = useState(false);
 
   const searchingGrabRef = useRef(false);
@@ -1395,158 +1821,69 @@ export default function OrderDetails() {
     }
   }, []);
 
-  const scheduleRetryAsk = useCallback((sendGrabDeliveryRequestFn) => {
-    if (retryPromptTimeoutRef.current) {
-      clearTimeout(retryPromptTimeoutRef.current);
-      retryPromptTimeoutRef.current = null;
-    }
-    if (retryCountdownIntervalRef.current) {
-      clearInterval(retryCountdownIntervalRef.current);
-      retryCountdownIntervalRef.current = null;
-    }
+  const scheduleRetryAsk = useCallback(
+    (sendGrabDeliveryRequestFn) => {
+      if (retryPromptTimeoutRef.current) {
+        clearTimeout(retryPromptTimeoutRef.current);
+        retryPromptTimeoutRef.current = null;
+      }
+      if (retryCountdownIntervalRef.current) {
+        clearInterval(retryCountdownIntervalRef.current);
+        retryCountdownIntervalRef.current = null;
+      }
 
-    setRetryInSec(60);
-    retryCountdownIntervalRef.current = setInterval(() => {
-      setRetryInSec((prev) => {
-        const nextVal = (Number.isFinite(prev) ? prev : 0) - 1;
-        if (nextVal <= 0) {
-          if (retryCountdownIntervalRef.current) {
-            clearInterval(retryCountdownIntervalRef.current);
-            retryCountdownIntervalRef.current = null;
+      setRetryInSec(60);
+      retryCountdownIntervalRef.current = setInterval(() => {
+        setRetryInSec((prev) => {
+          const nextVal = (Number.isFinite(prev) ? prev : 0) - 1;
+          if (nextVal <= 0) {
+            if (retryCountdownIntervalRef.current) {
+              clearInterval(retryCountdownIntervalRef.current);
+              retryCountdownIntervalRef.current = null;
+            }
+            return 0;
           }
-          return 0;
-        }
-        return nextVal;
-      });
-    }, 1000);
+          return nextVal;
+        });
+      }, 1000);
 
-    retryPromptTimeoutRef.current = setTimeout(() => {
-      retryPromptTimeoutRef.current = null;
+      retryPromptTimeoutRef.current = setTimeout(() => {
+        retryPromptTimeoutRef.current = null;
 
-      if (!searchingGrabRef.current) return;
-      if (driverAcceptedRef.current) return;
+        if (!searchingGrabRef.current) return;
+        if (driverAcceptedRef.current) return;
 
-      Alert.alert("No driver yet", "Do you want to send the delivery request again?", [
-        {
-          text: "Not now",
-          style: "cancel",
-          onPress: () =>
-            setRideMessage("Waiting for a driver… (you can send again anytime)"),
-        },
-        {
-          text: "Send again",
-          onPress: async () => {
-            if (!searchingGrabRef.current || driverAcceptedRef.current) return;
-            await sendGrabDeliveryRequestFn();
-            scheduleRetryAsk(sendGrabDeliveryRequestFn);
+        Alert.alert("No driver yet", "Do you want to send the delivery request again?", [
+          {
+            text: "Not now",
+            style: "cancel",
+            onPress: () => setRideMessage("Waiting for a driver… (you can send again anytime)"),
           },
-        },
-      ]);
-    }, 60000);
-  }, []);
+          {
+            text: "Send again",
+            onPress: async () => {
+              if (!searchingGrabRef.current || driverAcceptedRef.current) return;
+              await sendGrabDeliveryRequestFn();
+              scheduleRetryAsk(sendGrabDeliveryRequestFn);
+            },
+          },
+        ]);
+      }, 60000);
+    },
+    []
+  );
 
   const getOrderForFare = useCallback(async () => {
-    const hasFeeNow =
-      order?.delivery_fee != null || order?.merchant_delivery_fee != null;
+    const hasFeeNow = order?.delivery_fee != null || order?.merchant_delivery_fee != null;
     if (hasFeeNow) return order;
-
-    try {
-      const baseRaw = (ordersGroupedUrl || ENV_ORDER_ENDPOINT || "").trim();
-      if (!baseRaw) return order;
-
-      let bizId = businessId || paramBusinessId;
-
-      if (!bizId && baseRaw.includes("{businessId}")) {
-        try {
-          const saved = await SecureStore.getItemAsync("merchant_login");
-          if (saved) {
-            const j = JSON.parse(saved);
-            bizId =
-              j?.business_id ||
-              j?.user?.business_id ||
-              j?.user?.businessId ||
-              j?.id ||
-              j?.user?.id ||
-              null;
-          }
-        } catch {}
-      }
-
-      let groupedUrlFinal = baseRaw;
-      if (bizId)
-        groupedUrlFinal = groupedUrlFinal.replace(
-          /\{businessId\}/gi,
-          encodeURIComponent(String(bizId))
-        );
-
-      const token = await SecureStore.getItemAsync("auth_token");
-      const res = await fetch(groupedUrlFinal, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      });
-
-      const text = await res.text();
-      let json = null;
-      try {
-        json = text ? JSON.parse(text) : null;
-      } catch {}
-
-      if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
-
-      const groups = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
-
-      let allOrders = [];
-      for (const g of groups) {
-        if (Array.isArray(g?.orders)) {
-          for (const o of g.orders) allOrders.push(o);
-        } else if (g && (g.id || g.order_id || g.order_code)) {
-          allOrders.push(g);
-        }
-      }
-
-      const key = order?.order_code ?? order?.order_id ?? routeOrderId ?? order?.id;
-
-      const match = allOrders.find((o) =>
-        sameOrder(o?.id ?? o?.order_id ?? o?.order_code, key)
-      );
-      if (!match) return order;
-
-      const patch = {
-        delivery_fee: match?.delivery_fee ?? match?.deliveryFee ?? order?.delivery_fee ?? null,
-        merchant_delivery_fee:
-          match?.merchant_delivery_fee ??
-          match?.merchantDeliveryFee ??
-          order?.merchant_delivery_fee ??
-          null,
-        platform_fee: match?.platform_fee ?? order?.platform_fee ?? 0,
-        discount_amount: match?.discount_amount ?? order?.discount_amount ?? 0,
-        totals_for_business: match?.totals_for_business ?? order?.totals_for_business ?? null,
-        total_amount: match?.total_amount ?? match?.total ?? order?.total_amount ?? order?.total ?? 0,
-        delivery_address: normalizeDeliveryAddress(
-          match?.delivery_address ?? match?.address ?? match?.deliver_to ?? order?.delivery_address
-        ),
-      };
-
-      const merged = { ...order, ...patch };
-      setOrder((prev) => ({ ...prev, ...patch }));
-      return merged;
-    } catch (e) {
-      console.log("[OrderDetails] getOrderForFare error:", e?.message || e);
-      return order;
-    }
-  }, [order, ordersGroupedUrl, businessId, paramBusinessId, routeOrderId]);
+    return order;
+  }, [order]);
 
   const sendGrabDeliveryRequest = useCallback(async () => {
     try {
       if (!ENV_SEND_REQUEST_DRIVER) {
-        Alert.alert(
-          "Grab delivery not configured",
-          "SEND_REQUEST_DRIVER_ENDPOINT is missing in environment variables."
-        );
-        return;
+        Alert.alert("Grab delivery not configured", "SEND_REQUEST_DRIVER_ENDPOINT is missing in environment variables.");
+        return null;
       }
 
       setSendingGrab(true);
@@ -1570,23 +1907,24 @@ export default function OrderDetails() {
           ? Math.round(routeInfo.etaMin * 60)
           : 480;
 
-      const deliveryFeeRaw =
-        ordForFare?.delivery_fee != null ? Number(ordForFare.delivery_fee) : null;
-      const merchantDeliveryFeeRaw =
-        ordForFare?.merchant_delivery_fee != null
-          ? Number(ordForFare.merchant_delivery_fee)
-          : null;
+      const deliveryFeeRaw = toMoneyNumber(
+        ordForFare?.totals?.delivery_fee ?? ordForFare?.delivery_fee ?? ordForFare?.deliveryFee
+      );
+
+      const merchantDeliveryFeeRaw = toMoneyNumber(
+        ordForFare?.totals?.merchant_delivery_fee ??
+          ordForFare?.merchant_delivery_fee ??
+          ordForFare?.merchantDeliveryFee
+      );
 
       let baseFare = 0;
-      if (deliveryFeeRaw != null && Number.isFinite(deliveryFeeRaw) && deliveryFeeRaw > 0) {
-        baseFare = deliveryFeeRaw;
-      } else if (
+      if (deliveryFeeRaw != null && Number.isFinite(deliveryFeeRaw) && deliveryFeeRaw > 0) baseFare = deliveryFeeRaw;
+      else if (
         merchantDeliveryFeeRaw != null &&
         Number.isFinite(merchantDeliveryFeeRaw) &&
         merchantDeliveryFeeRaw > 0
-      ) {
+      )
         baseFare = merchantDeliveryFeeRaw;
-      }
 
       const fare = baseFare;
       const fareCents = Math.round(baseFare * 100);
@@ -1598,14 +1936,12 @@ export default function OrderDetails() {
           const j = JSON.parse(saved);
           passengerId = j?.user_id ?? j?.id ?? j?.user?.id ?? passengerId;
         }
-      } catch (err) {
-        console.log("[OrderDetails] Failed to read merchant_login for wallet user:", err);
-      }
+      } catch {}
       if (!passengerId) passengerId = 0;
 
       const payload = {
         passenger_id: Number(passengerId),
-        merchant_id: businessId ? Number(businessId) : undefined,
+        merchant_id: businessId != null ? String(businessId) : undefined,
         cityId: refCoords.cityId || "thimphu",
         service_code: "D",
         serviceType: "delivery_bike",
@@ -1632,10 +1968,18 @@ export default function OrderDetails() {
       });
 
       const text = await res.text();
-      if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {}
+
+      if (!res.ok) throw new Error(json?.message || json?.error || text || `HTTP ${res.status}`);
+
+      return json;
     } catch (e) {
       console.log("[OrderDetails] sendGrabDeliveryRequest ERROR:", e?.message || e);
       Alert.alert("Grab delivery failed", String(e?.message || e));
+      return null;
     } finally {
       setSendingGrab(false);
     }
@@ -1659,7 +2003,8 @@ export default function OrderDetails() {
   const driverSummaryText = useMemo(() => {
     if (!driverDetails) return "";
 
-    const name = driverDetails.user_name ?? driverDetails.name ?? driverDetails.full_name ?? "";
+    const name =
+      driverDetails.user_name ?? driverDetails.name ?? driverDetails.full_name ?? "";
     const phone = driverDetails.phone ?? driverDetails.mobile ?? "";
 
     const avg = driverRating?.average;
@@ -1676,12 +2021,16 @@ export default function OrderDetails() {
     return parts.join(" · ");
   }, [driverDetails, driverRating]);
 
+  /* ===========================
+     ✅ SOCKET: accept + arrived + STATUS updates (kept)
+     =========================== */
   useEffect(() => {
     if (!ENV_RIDE_SOCKET) return;
 
     let socket;
     let acceptedHandler;
     let arrivedHandler;
+    let statusHandler;
 
     (async () => {
       let merchantId = businessId || paramBusinessId;
@@ -1699,15 +2048,10 @@ export default function OrderDetails() {
               j?.user?.id ||
               null;
           }
-        } catch (err) {
-          console.log("[OrderDetails] Failed to read merchant_login from SecureStore:", err);
-        }
+        } catch {}
       }
 
-      if (!merchantId) {
-        console.log("[OrderDetails] No merchantId found, NOT connecting ride socket");
-        return;
-      }
+      if (!merchantId) return;
 
       socket = io(ENV_RIDE_SOCKET, {
         transports: ["websocket"],
@@ -1715,12 +2059,24 @@ export default function OrderDetails() {
       });
       socketRef.current = socket;
 
-      acceptedHandler = (payload) => {
+      const matchesThisOrder = (payload) => {
         try {
           const thisOrderCode = normalizeOrderCode(order?.order_code || order?.id || routeOrderId);
-          const payloadOrder = payload?.order_code || payload?.orderId || payload?.order_id;
-          if (payloadOrder && thisOrderCode && !sameOrder(payloadOrder, thisOrderCode)) return;
-        } catch {}
+          const payloadOrder =
+            payload?.order_code ||
+            payload?.orderId ||
+            payload?.order_id ||
+            extractOrderIdFromPayload(payload);
+
+          if (payloadOrder && thisOrderCode && !sameOrder(payloadOrder, thisOrderCode)) return false;
+          return true;
+        } catch {
+          return true;
+        }
+      };
+
+      acceptedHandler = (payload) => {
+        if (!matchesThisOrder(payload)) return;
 
         driverAcceptedRef.current = true;
         setDriverAccepted(true);
@@ -1730,37 +2086,59 @@ export default function OrderDetails() {
           payload?.driver_id ?? payload?.driverId ?? payload?.driver?.id ?? payload?.driver?.driver_id ?? null;
         if (driverId != null) fetchDriverDetails(driverId);
 
-        setRideMessage("Driver has accepted the delivery request (first come first basis).");
-        Alert.alert("Driver accepted", "Driver has accepted the delivery request (first come first basis).");
+        const st = extractStatusFromPayload(payload);
+        if (st) applySocketStatusToUi(st);
+
+        setRideMessage("Driver has accepted the delivery request");
+        Alert.alert("Driver accepted", "Driver has accepted the delivery request");
       };
 
       arrivedHandler = (payload) => {
-        try {
-          const thisOrderCode = normalizeOrderCode(order?.order_code || order?.id || routeOrderId);
-          const payloadOrder = payload?.order_code || payload?.orderId || payload?.order_id;
-          if (payloadOrder && thisOrderCode && !sameOrder(payloadOrder, thisOrderCode)) return;
-        } catch {}
+        if (!matchesThisOrder(payload)) return;
 
         setDriverArrived(true);
 
         const msg =
-          payload?.message || payload?.status_message || "Driver has arrived at customer location.";
+          payload?.message ||
+          payload?.status_message ||
+          "Driver has arrived at customer location.";
         setRideMessage(msg);
         Alert.alert("Driver arrived", msg);
 
         const driverId =
           payload?.driver_id ?? payload?.driverId ?? payload?.driver?.id ?? payload?.driver?.driver_id ?? null;
         if (driverId != null && !driverDetails) fetchDriverDetails(driverId);
+
+        const st = extractStatusFromPayload(payload);
+        if (st) applySocketStatusToUi(st);
+      };
+
+      statusHandler = (payload) => {
+        if (!matchesThisOrder(payload)) return;
+
+        const payloadOrderId = extractOrderIdFromPayload(payload);
+        if (!payloadOrderId && !driverAcceptedRef.current) return;
+
+        const st = extractStatusFromPayload(payload);
+        if (!st) return;
+
+        applySocketStatusToUi(st);
+
+        const norm = normalizeStatus(st);
+        if (norm === "OUT_FOR_DELIVERY") setRideMessage("Driver is on the way (Out for delivery).");
+        else if (norm === "COMPLETED") setRideMessage("Order delivered (Delivery complete).");
       };
 
       socket.on("deliveryAccepted", acceptedHandler);
       socket.on("delivery:driver_arrived", arrivedHandler);
+      socket.on("deliveryDriverLocation", statusHandler);
     })();
 
     return () => {
       if (socket) {
         if (acceptedHandler) socket.off("deliveryAccepted", acceptedHandler);
         if (arrivedHandler) socket.off("delivery:driver_arrived", arrivedHandler);
+        if (statusHandler) socket.off("deliveryDriverLocation", statusHandler);
         socket.disconnect();
       }
       stopGrabLoop();
@@ -1775,6 +2153,7 @@ export default function OrderDetails() {
     stopGrabLoop,
     fetchDriverDetails,
     driverDetails,
+    applySocketStatusToUi,
   ]);
 
   useEffect(() => {
@@ -1787,110 +2166,30 @@ export default function OrderDetails() {
     return () => sub?.remove?.();
   }, [routeOrderId, order?.id]);
 
-  /* ---------------- Items ---------------- */
-  const items = useMemo(() => {
-    const raw = Array.isArray(order?.raw_items) ? order.raw_items : [];
-    return raw.map((it, idx) => ({
-      ...it,
-      _key: String(it.item_id || it.id || it.itemId || idx),
-    }));
-  }, [order?.raw_items]);
-
-  const { effectiveTotalLabel, effectiveItemsCount } = useMemo(() => {
-    const sumQtyFromItems = () =>
-      items.reduce((sum, it) => {
-        const qty = Number(it.qty ?? it.quantity ?? it.quantity_ordered ?? it.order_qty ?? 1);
-        return sum + (Number.isFinite(qty) ? qty : 0);
-      }, 0);
-
-    if (ifUnavailableMode !== "REMOVE" && ifUnavailableMode !== "REPLACE") {
-      const rawTotal = Number(order?.total ?? order?.total_amount ?? 0);
-      return { effectiveTotalLabel: money(rawTotal), effectiveItemsCount: sumQtyFromItems() };
-    }
-
-    let total = 0;
-    let count = 0;
-
-    items.forEach((it) => {
-      const key = it._key;
-      const isRemoved = !!itemUnavailableMap[key];
-      const replacement = itemReplacementMap[key];
-
-      const qty = Number(it.qty ?? it.quantity ?? it.quantity_ordered ?? it.order_qty ?? 1);
-      if (!Number.isFinite(qty) || qty <= 0) return;
-
-      if (ifUnavailableMode === "REMOVE" && isRemoved) return;
-
-      const unitPriceOriginal = Number(
-        it.price ?? it.unit_price ?? it.item_price ?? it.rate ?? it.selling_price ?? 0
-      );
-
-      const unitPriceReplacement =
-        replacement && replacement.price != null ? Number(replacement.price) : NaN;
-
-      let unitPriceToUse = unitPriceOriginal;
-
-      if (
-        ifUnavailableMode === "REPLACE" &&
-        replacement &&
-        Number.isFinite(unitPriceReplacement) &&
-        unitPriceReplacement >= 0
-      ) {
-        unitPriceToUse = unitPriceReplacement;
-      }
-
-      if (!Number.isFinite(unitPriceToUse)) return;
-
-      total += qty * unitPriceToUse;
-      count += qty;
-    });
-
-    return { effectiveTotalLabel: money(total), effectiveItemsCount: count };
-  }, [items, itemUnavailableMap, itemReplacementMap, ifUnavailableMode, order?.total, order?.total_amount]);
-
-  const handleToggleUnavailable = useCallback(
-    (key) => {
-      if (normalizeStatus(status) !== "PENDING") return;
-      setItemUnavailableMap((prev) => ({ ...prev, [key]: !prev[key] }));
-    },
-    [status]
-  );
-
-  const handleOpenSimilarCatalog = useCallback(
-    (item) => {
-      if (ifUnavailableMode !== "REPLACE") return;
-      if (!item || !item._key) return;
-
-      const bizId =
-        businessId ||
-        paramBusinessId ||
-        order?.business_id ||
-        order?.merchant_id ||
-        order?.store_id ||
-        null;
-
-      navigation.navigate("SimilarItemCatalog", {
-        itemKey: item._key,
-        itemName: item.item_name || item.name || item.title || "",
-        businessId: bizId,
-        owner_type: ownerType,
-      });
-    },
-    [ifUnavailableMode, navigation, businessId, paramBusinessId, order, ownerType]
-  );
-
   /* ===========================
-     ✅ Deliver in group navigation (FULL UI from OrderDetails)
+     ✅ Deliver in group navigation (kept)
    =========================== */
   const goToCluster = useCallback(async () => {
     const focusOrderId = normalizeOrderCode(order?.order_code || order?.id || routeOrderId);
+    const resolvedUserId =
+      order?.user_id ??
+      order?.user?.user_id ??
+      order?.user?.id ??
+      order?.customer_id ??
+      order?.customer?.id ??
+      order?.userId ??
+      params.user_id ??
+      params.userId ??
+      null;
 
     const fallbackParams = {
       businessId: businessId ?? paramBusinessId ?? order?.business_id ?? order?.merchant_id ?? null,
       ownerType: ownerType ?? null,
       ordersGroupedUrl: ordersGroupedUrl ?? ENV_ORDER_ENDPOINT ?? null,
-      delivery_option: params.delivery_option ?? params.deliveryOption ?? order?.delivery_option ?? null,
+      delivery_option:
+        params.delivery_option ?? params.deliveryOption ?? order?.delivery_option ?? null,
       focusOrderId,
+      user_id: resolvedUserId,
     };
 
     const targetRoute = resolvedClusterRouteName;
@@ -1903,41 +2202,36 @@ export default function OrderDetails() {
       return;
     }
 
-    // 1) If we already have cluster orders, forward (fast path)
+    const ownerNav = findNavigatorOwningRoute(navigation, targetRoute);
+    const navTo = (payload) => {
+      if (ownerNav && ownerNav !== navigation) {
+        ownerNav.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+        return;
+      }
+      navigation.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+    };
+
     if (clusterCtx?.orders && Array.isArray(clusterCtx.orders) && clusterCtx.orders.length) {
-      const payload = {
+      navTo({
         ...clusterCtx,
         businessId: clusterCtx.businessId ?? fallbackParams.businessId,
         ownerType: clusterCtx.ownerType ?? fallbackParams.ownerType,
         ordersGroupedUrl: clusterCtx.ordersGroupedUrl ?? fallbackParams.ordersGroupedUrl,
         delivery_option: clusterCtx.delivery_option ?? fallbackParams.delivery_option,
         focusOrderId,
-
-        // ✅ ensure UI can show like NearbyOrdersScreen
+        user_id: clusterCtx.user_id ?? clusterCtx.userId ?? resolvedUserId,
         label: clusterCtx.label || clusterCtx.addrPreview || "Nearby cluster",
         addrPreview: clusterCtx.addrPreview || clusterCtx.label || "",
-        centerCoords: clusterCtx.centerCoords || null,
-        thresholdKm: clusterCtx.thresholdKm || 5,
-
-        screenName: undefined,
-      };
-
-      const ownerNav = findNavigatorOwningRoute(navigation, targetRoute);
-      if (ownerNav && ownerNav !== navigation) {
-        ownerNav.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
-        return;
-      }
-      navigation.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+      });
       return;
     }
 
-    // 2) Otherwise: fetch grouped orders, build clusters by lat/lng, open the cluster that contains this order
+    // fallback fetch grouped
     try {
       const baseRaw = (ordersGroupedUrl || ENV_ORDER_ENDPOINT || "").trim();
       if (!baseRaw) throw new Error("Grouped orders endpoint missing");
 
       let bizId = businessId || paramBusinessId;
-
       if (!bizId && baseRaw.includes("{businessId}")) {
         const saved = await SecureStore.getItemAsync("merchant_login");
         if (saved) {
@@ -1956,9 +2250,11 @@ export default function OrderDetails() {
       }
 
       let groupedUrlFinal = baseRaw;
-      if (bizId) {
-        groupedUrlFinal = groupedUrlFinal.replace(/\{businessId\}/gi, encodeURIComponent(String(bizId)));
-      }
+      if (bizId)
+        groupedUrlFinal = groupedUrlFinal.replace(
+          /\{businessId\}/gi,
+          encodeURIComponent(String(bizId))
+        );
 
       const token = await SecureStore.getItemAsync("auth_token");
       const res = await fetch(groupedUrlFinal, {
@@ -1974,93 +2270,38 @@ export default function OrderDetails() {
       try {
         json = text ? JSON.parse(text) : null;
       } catch {}
-
       if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
       const groups = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
 
-      // flatten (same style you use in hydrateFromGrouped)
       let allOrders = [];
       for (const g of groups) {
         if (Array.isArray(g?.orders)) {
-          const user = g.user || g.customer || g.user_details || {};
-          const userName =
-            g.customer_name ?? g.name ?? user.name ?? user.user_name ?? user.full_name ?? "";
-          const userPhone = g.phone ?? user.phone ?? user.phone_number ?? user.mobile ?? "";
-
-          for (const o of g.orders) {
-            allOrders.push({
-              ...o,
-              user: o.user || user,
-              customer_name: o.customer_name ?? userName,
-              customer_phone: o.customer_phone ?? userPhone,
-              user_name: o.user_name ?? userName,
-              status: normalizeStatus(o?.status),
-            });
-          }
+          for (const o of g.orders) allOrders.push({ ...o, status: normalizeStatus(o?.status) });
         } else if (g && (g.id || g.order_id || g.order_code)) {
           allOrders.push({ ...g, status: normalizeStatus(g?.status) });
         }
       }
 
-      const thresholdKm = 5;
-      const clusters = buildClustersFromOrders(allOrders, thresholdKm);
+      const clusters = buildClustersFromOrders(allOrders, 5);
+      const chosen = clusters[0] || { orders: allOrders, label: "Nearby cluster", addrPreview: "" };
 
-      // pick cluster containing this order
-      let chosen = clusters[0] || null;
-      for (const c of clusters) {
-        const found = (c.orders || []).some((o) => {
-          const oid = o?.id ?? o?.order_id ?? o?.order_code;
-          return sameOrder(oid, focusOrderId);
-        });
-        if (found) {
-          chosen = c;
-          break;
-        }
-      }
-
-      const payload = {
+      navTo({
         label: chosen?.label || "Nearby cluster",
         addrPreview: chosen?.addrPreview || "",
         orders: chosen?.orders || allOrders,
-        thresholdKm: chosen?.thresholdKm || thresholdKm,
+        thresholdKm: chosen?.thresholdKm || 5,
         centerCoords: chosen?.centerCoords || null,
-
         businessId: bizId ?? fallbackParams.businessId,
         ownerType: ownerType ?? fallbackParams.ownerType,
         delivery_option: fallbackParams.delivery_option,
         ordersGroupedUrl: groupedUrlFinal || fallbackParams.ordersGroupedUrl,
-
         focusOrderId,
         detailsRoute: "OrderDetails",
         nextTrackScreen: "TrackBatchOrdersScreen",
-
-        // keep context when opening details from cluster
-        clusterParams: {
-          screenName: targetRoute,
-          label: chosen?.label || "Nearby cluster",
-          addrPreview: chosen?.addrPreview || "",
-          orders: chosen?.orders || allOrders,
-          thresholdKm: chosen?.thresholdKm || thresholdKm,
-          centerCoords: chosen?.centerCoords || null,
-          businessId: bizId ?? fallbackParams.businessId,
-          ownerType: ownerType ?? fallbackParams.ownerType,
-          delivery_option: fallbackParams.delivery_option,
-          ordersGroupedUrl: groupedUrlFinal || fallbackParams.ordersGroupedUrl,
-          detailsRoute: "OrderDetails",
-          nextTrackScreen: "TrackBatchOrdersScreen",
-        },
-      };
-
-      const ownerNav = findNavigatorOwningRoute(navigation, targetRoute);
-      if (ownerNav && ownerNav !== navigation) {
-        ownerNav.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
-        return;
-      }
-      navigation.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+      });
     } catch (e) {
-      // final fallback: still open screen (it may show 0 if Nearby screen cannot fetch itself)
-      const payload = {
+      navTo({
         ...fallbackParams,
         label: "Nearby cluster",
         addrPreview: "",
@@ -2068,14 +2309,7 @@ export default function OrderDetails() {
         thresholdKm: 5,
         centerCoords: null,
         nextTrackScreen: "TrackBatchOrdersScreen",
-      };
-
-      const ownerNav = findNavigatorOwningRoute(navigation, targetRoute);
-      if (ownerNav && ownerNav !== navigation) {
-        ownerNav.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
-        return;
-      }
-      navigation.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+      });
     }
   }, [
     navigation,
@@ -2086,13 +2320,9 @@ export default function OrderDetails() {
     routeOrderId,
     businessId,
     paramBusinessId,
-    order?.business_id,
-    order?.merchant_id,
     ownerType,
     ordersGroupedUrl,
-    params.delivery_option,
-    params.deliveryOption,
-    order?.delivery_option,
+    params,
   ]);
 
   /* ---------------- UI helpers ---------------- */
@@ -2107,10 +2337,15 @@ export default function OrderDetails() {
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </Pressable>
         <Text style={styles.headerTitle}>Order details</Text>
-        <View style={{ width: 40 }} />
+        <View style={{ width: 40, alignItems: "flex-end", justifyContent: "center" }}>
+          <ActivityIndicator animating={refreshing} size="small" />
+        </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
+      <ScrollView
+        contentContainerStyle={{ padding: 16, paddingBottom: 24 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      >
         <View style={styles.card}>
           <View style={styles.idRow}>
             <Text style={styles.orderId}>#{order?.id || routeOrderId}</Text>
@@ -2158,9 +2393,7 @@ export default function OrderDetails() {
                 isGrabSelected={isGrabSelected}
                 sendingGrab={sendingGrab}
                 rideMessage={
-                  retryInSec > 0 && rideMessage
-                    ? `${rideMessage}\nRetry option in ${retryInSec}s`
-                    : rideMessage
+                  retryInSec > 0 && rideMessage ? `${rideMessage}\nRetry option in ${retryInSec}s` : rideMessage
                 }
                 driverSummaryText={driverSummaryText}
                 driverAccepted={driverAccepted}
@@ -2172,51 +2405,37 @@ export default function OrderDetails() {
               />
             </View>
 
-            {status === "READY" && driverArrived ? (
-              <View style={[styles.block, { marginTop: 12 }]}>
-                <Text style={[styles.segmentHint, { marginTop: 8, fontWeight: "700" }]}>
-                  Driver arrived at customer location.
-                </Text>
-              </View>
-            ) : null}
-
-            {status === "READY" &&
-              !isBothOption &&
-              isPlatformDelivery &&
-              (!!rideMessage || !!driverSummaryText) && (
+            <View style={{ marginTop: 12 }}>
+              {!shouldDriverControlAfterReady ? (
+                <UpdateStatusActions
+                  status={status}
+                  isCancelledByCustomer={isCancelledByCustomer}
+                  isTerminalNegative={isTerminalNegative}
+                  isTerminalSuccess={isTerminalSuccess}
+                  isBothOption={isBothOption}
+                  isGrabSelected={isGrabSelected}
+                  isPlatformDelivery={isPlatformDelivery}
+                  updating={updating}
+                  next={next}
+                  primaryLabel={primaryLabel}
+                  onPrimaryAction={onPrimaryAction}
+                  doUpdate={doUpdate}
+                  onDecline={onDecline}
+                  driverAccepted={driverAccepted}
+                />
+              ) : (
                 <View style={[styles.block, { marginTop: 12 }]}>
-                  {rideMessage ? (
-                    <Text style={[styles.segmentHint, { marginTop: 8 }]}>{rideMessage}</Text>
-                  ) : null}
-                  {driverSummaryText ? (
-                    <Text style={[styles.segmentHint, { marginTop: 4, fontWeight: "600" }]}>
-                      {driverSummaryText}
-                    </Text>
+                  <Text style={[styles.segmentHint, { fontWeight: "700" }]}>
+                    Driver will update order status automatically.
+                  </Text>
+                  <Text style={[styles.segmentHint, { marginTop: 6 }]}>
+                    Current status: {STATUS_META[status]?.label || status.replace(/_/g, " ")}
+                  </Text>
+                  {!!rideMessage ? (
+                    <Text style={[styles.segmentHint, { marginTop: 6 }]}>{rideMessage}</Text>
                   ) : null}
                 </View>
               )}
-
-            <View style={{ marginTop: 12 }}>
-              <View style={{ flexDirection: "row", alignItems: "stretch", gap: 12 }}>
-                <View style={{ flex: 1 }}>
-                  <UpdateStatusActions
-                    status={status}
-                    isCancelledByCustomer={isCancelledByCustomer}
-                    isTerminalNegative={isTerminalNegative}
-                    isTerminalSuccess={isTerminalSuccess}
-                    isBothOption={isBothOption}
-                    isGrabSelected={isGrabSelected}
-                    isPlatformDelivery={isPlatformDelivery}
-                    updating={updating}
-                    next={next}
-                    primaryLabel={primaryLabel}
-                    onPrimaryAction={onPrimaryAction}
-                    doUpdate={doUpdate}
-                    onDecline={onDecline}
-                    driverAccepted={driverAccepted}
-                  />
-                </View>
-              </View>
             </View>
           </>
         )}

@@ -258,52 +258,117 @@ const LoginScreen = () => {
   };
 
   // Core login routine — EMAIL based
-  const loginWithCredentials = async (emailVal, pwdVal) => {
-    const normalized = String(emailVal || '').trim().toLowerCase();
-    const variants = [{ val: normalized, _hint: 'email' }];
+// ✅ Replace your existing loginWithCredentials() with this version.
+// It saves access_token + refresh_token into SecureStore properly.
+//
+// What it stores:
+// - KEY_AUTH_TOKEN      = access_token
+// - KEY_REFRESH_TOKEN   = refresh_token (if present)
+// - access_token_time / refresh_token_time (optional)
 
-    let tokenStr = '';
-    let success = null;
-    let lastErr = '';
+const loginWithCredentials = async (emailVal, pwdVal) => {
+  const normalized = String(emailVal || "").trim().toLowerCase();
+  const variants = [{ val: normalized, _hint: "email" }];
 
-    for (let i = 0; i < variants.length; i++) {
-      const { val } = variants[i];
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ email: val, password: pwdVal }),   // ⬅️ email payload
-      });
+  let tokenStr = "";
+  let refreshStr = "";
+  let success = null;
+  let lastErr = "";
 
-      const txt = await res.text();
-      let data = {};
-      try { data = txt ? JSON.parse(txt) : {}; } catch {}
-      const serverMsg = (data?.message ?? data?.error ?? txt ?? '').toString().trim();
+  for (let i = 0; i < variants.length; i++) {
+    const { val } = variants[i];
 
-      const ok =
-        res.ok &&
-        (data?.success === true ||
-         typeof data?.token === 'string' ||
-         (data?.token && typeof data?.token?.access_token === 'string') ||
-         (data?.status && String(data.status).toLowerCase() === 'ok') ||
-         /login\s*successful/i.test(serverMsg));
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ email: val, password: pwdVal }),
+    });
 
-      if (ok) {
-        success = { data, usedEmail: val };
-        tokenStr = typeof data?.token === 'string'
-          ? data.token
-          : (data?.token?.access_token ?? '');
-        if (tokenStr) await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(tokenStr));
-        break;
-      } else {
-        lastErr = serverMsg || `HTTP ${res.status}`;
-        if (res.status >= 500) break;
-      }
+    const txt = await res.text();
+    let data = {};
+    try {
+      data = txt ? JSON.parse(txt) : {};
+    } catch {
+      data = {};
     }
 
-    if (!success) throw new Error(lastErr || 'Invalid email or password');
+    const serverMsg = (data?.message ?? data?.error ?? txt ?? "").toString().trim();
 
-    return { success, tokenStr };
-  };
+    // ✅ handle your real response shape:
+    // { data: { token: { access_token, refresh_token, ... }, message, user }, usedEmail }
+    const tokenObj =
+      data?.data?.token ||
+      data?.token ||
+      data?.data?.data?.token ||
+      null;
+
+    const access =
+      (typeof data?.token === "string" && data.token) ||
+      tokenObj?.access_token ||
+      tokenObj?.accessToken ||
+      data?.access_token ||
+      data?.accessToken ||
+      "";
+
+    const refresh =
+      tokenObj?.refresh_token ||
+      tokenObj?.refreshToken ||
+      data?.refresh_token ||
+      data?.refreshToken ||
+      "";
+
+    const ok =
+      res.ok &&
+      (!!access ||
+        data?.success === true ||
+        /login\s*successful/i.test(serverMsg) ||
+        /successful/i.test(serverMsg));
+
+    if (ok) {
+      success = { data, usedEmail: val };
+      tokenStr = String(access || "");
+      refreshStr = String(refresh || "");
+
+      // ✅ Save tokens to SecureStore
+      if (tokenStr) {
+        await SecureStore.setItemAsync(KEY_AUTH_TOKEN, tokenStr);
+      }
+
+      if (refreshStr) {
+        await SecureStore.setItemAsync(KEY_REFRESH_TOKEN, refreshStr);
+      }
+
+      // Optional: store token lifetimes if you want
+      const accessTime =
+        tokenObj?.access_token_time ??
+        tokenObj?.accessTokenTime ??
+        data?.access_token_time ??
+        null;
+
+      const refreshTime =
+        tokenObj?.refresh_token_time ??
+        tokenObj?.refreshTokenTime ??
+        data?.refresh_token_time ??
+        null;
+
+      if (accessTime != null) {
+        await SecureStore.setItemAsync("access_token_time", String(accessTime));
+      }
+      if (refreshTime != null) {
+        await SecureStore.setItemAsync("refresh_token_time", String(refreshTime));
+      }
+
+      break;
+    } else {
+      lastErr = serverMsg || `HTTP ${res.status}`;
+      if (res.status >= 500) break;
+    }
+  }
+
+  if (!success) throw new Error(lastErr || "Invalid email or password");
+
+  return { success, tokenStr, refreshStr };
+};
 
   const navigateHome = (extras = {}) => {
     navigation.dispatch(
@@ -325,7 +390,7 @@ const LoginScreen = () => {
     setLoading(true);
     try {
       const { success, tokenStr } = await loginWithCredentials(String(email), String(password));
-
+      console.log('Login successful for', success);
       // Persist “remember me”: email-first; clear legacy username if any
       await SecureStore.setItemAsync(KEY_LAST_LOGIN_EMAIL, success.usedEmail);
       await SecureStore.deleteItemAsync(KEY_LAST_LOGIN_USERNAME);

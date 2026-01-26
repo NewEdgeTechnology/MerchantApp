@@ -39,7 +39,7 @@ const BASE_STATUS_LABELS = [
   { key: 'CONFIRMED', label: 'Confirmed' },
   { key: 'READY', label: 'Ready' },
   { key: 'OUT_FOR_DELIVERY', label: 'Out for delivery' },
-  { key: 'COMPLETED', label: 'Completed' },
+  // { key: 'COMPLETED', label: 'Completed' },
   { key: 'DECLINED', label: 'Declined' },
 ];
 

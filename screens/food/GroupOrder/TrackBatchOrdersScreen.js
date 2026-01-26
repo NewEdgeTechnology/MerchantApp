@@ -1,15 +1,12 @@
 // services/food/GroupOrder/TrackBatchOrdersScreen.js
 // ✅ FULL UPDATED
-// ✅ Shows ONLY orders in the selected batch
-// ✅ Accepts batch_id + ride_id from params (any shape)
-// ✅ If opened without params, restores batch_id + ride_id from SecureStore (SAFE keys)
-// ✅ If ride_id missing but batch_id exists, fetches delivery_ride_id using DELIVERY_RIDE_ID_ENDPOINT
-// ✅ Saves latest batch_id + ride_id back to SecureStore
-// ✅ Joins ride room(s) and listens deliveryDriverLocation
-// ✅ Map interactive + fullscreen overlay
-// ✅ Dark CARTO tiles + OSRM routing (driver->business, business->customer)
-// ✅ If params.orders contains clusterOrders, it will FILTER to batch only using batch_order_ids (or batch_id field)
-// ✅ If still empty -> fetch grouped orders and filter to batch only
+// ✅ FIX: Overlay (expanded map) markers no longer disappear (tracksViewChanges kept ON for overlay markers)
+// ✅ FIX: Main markers still optimized (tracksViewChanges briefly true then off)
+// ✅ FIX: Tapping map DOES NOT open Chrome
+// ✅ NEW: Customer markers grouped by same location (distance-based) with count badge
+// ✅ NEW: Tap customer marker -> in-app modal lists ALL order IDs at that location (and status)
+// ✅ UPDATE: Driver marker callout shows Driver Name + Phone
+// ✅ UPDATE: Removed bottom legend (route/delivered legend) from maps
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -228,27 +225,6 @@ const buildDeliveryRideUrl = (batchId) => {
   return `${base}${join}delivery_batch_id=${encodeURIComponent(String(batchId))}`;
 };
 
-const buildOSMUrl = ({ lat, lng, zoom = 16, label = "" }) => {
-  const la = Number(lat);
-  const lo = Number(lng);
-  const z = Number(zoom);
-  const q = label ? `&query=${encodeURIComponent(label)}` : "";
-  return `https://www.openstreetmap.org/?mlat=${la}&mlon=${lo}${q}#map=${Number.isFinite(z) ? z : 16}/${la}/${lo}`;
-};
-
-const openOSM = async ({ lat, lng, label }) => {
-  const la = Number(lat);
-  const lo = Number(lng);
-  if (!Number.isFinite(la) || !Number.isFinite(lo)) {
-    return Alert.alert("No location", "Valid coordinates are not available.");
-  }
-  try {
-    await Linking.openURL(buildOSMUrl({ lat: la, lng: lo, zoom: 16, label: label || "" }));
-  } catch (e) {
-    Alert.alert("Cannot open map", String(e?.message || e));
-  }
-};
-
 const isDelivered = (status) => {
   const s = String(status || "").toUpperCase().trim();
   return s === "DELIVERED" || s === "COMPLETED" || s === "COMPLETE";
@@ -309,13 +285,7 @@ const normalizeBatchIdFromParams = (params) => {
 };
 
 const normalizeRideIdFromParams = (params) => {
-  const cand = [
-    params?.ride_id,
-    params?.rideId,
-    params?.delivery_ride_id,
-    params?.deliveryRideId,
-    params?.ride?.id,
-  ];
+  const cand = [params?.ride_id, params?.rideId, params?.delivery_ride_id, params?.deliveryRideId, params?.ride?.id];
   for (const v of cand) {
     if (v != null && String(v).trim().length > 0) return String(v).trim();
   }
@@ -331,10 +301,13 @@ const sanitizeKeyPart = (v) => {
   const cleaned = s.replace(/[^a-zA-Z0-9._-]/g, "_");
   return cleaned || "global";
 };
+
 const keyBatchId = (businessId) => `cluster_last_batch_id_${sanitizeKeyPart(businessId)}`;
 const keyRideId = (businessId) => `cluster_last_ride_id_${sanitizeKeyPart(businessId)}`;
+const keyDriver = (businessId) => `cluster_last_driver_${sanitizeKeyPart(businessId)}`;
+const keyDriverRating = (businessId) => `cluster_last_driver_rating_${sanitizeKeyPart(businessId)}`;
 
-/* ---------------- OSM routing (OSRM) ---------------- */
+/* ---------------- OSRM routing ---------------- */
 
 const OSRM_ROUTE_BASE = "https://router.project-osrm.org/route/v1/driving";
 const tileTemplate = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
@@ -348,6 +321,109 @@ const fetchOsrmRoute2 = async (a, b) => {
   return line.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
 };
 
+/* ---------------- Items helpers ---------------- */
+
+const pickItemName = (it) =>
+  safeStr(
+    it?.item_name ??
+      it?.name ??
+      it?.product_name ??
+      it?.title ??
+      it?.item?.name ??
+      it?.product?.name ??
+      it?.food_name ??
+      it?.menu_name ??
+      it?.variant_name
+  ) || "Item";
+
+const pickItemQty = (it) => {
+  const n = Number(
+    it?.qty ??
+      it?.quantity ??
+      it?.count ??
+      it?.item_qty ??
+      it?.itemQuantity ??
+      it?.order_qty ??
+      it?.cart_qty ??
+      it?.units
+  );
+  return Number.isFinite(n) && n > 0 ? n : 1;
+};
+
+const pickItemPrice = (it) => {
+  const n = Number(it?.price ?? it?.unit_price ?? it?.unitPrice ?? it?.selling_price ?? it?.amount ?? it?.rate ?? it?.mrp);
+  return Number.isFinite(n) ? n : null;
+};
+
+const formatMoney = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "";
+  return `${n.toFixed(2)}`;
+};
+
+const extractDriverInfoFromPayload = (p) => {
+  if (!p) return null;
+  const name =
+    p?.driver_name ??
+    p?.driverName ??
+    p?.user_name ??
+    p?.userName ??
+    p?.name ??
+    p?.full_name ??
+    p?.fullName ??
+    "";
+  const phone = p?.driver_phone ?? p?.driverPhone ?? p?.phone ?? p?.mobile ?? p?.contact ?? "";
+  const coords = extractLatLng(p) || extractLatLng(p?.driver) || extractLatLng(p?.location);
+  const out = {};
+  if (name) out.user_name = name;
+  if (phone) out.phone = phone;
+  if (coords) {
+    out.lat = coords.lat;
+    out.lng = coords.lng;
+  }
+  return Object.keys(out).length ? out : null;
+};
+
+/* ---------------- Location grouping ---------------- */
+
+const groupDropsByDistance = (orders = [], distanceMeters = 12) => {
+  const groups = [];
+  for (const o of orders || []) {
+    const base = o?.raw || o || {};
+    const coords = extractOrderDropCoords(base);
+    if (!coords) continue;
+
+    const orderId = getOrderId(base) || getOrderId(o) || safeStr(base?.id) || "";
+    if (!orderId) continue;
+
+    let placed = false;
+    for (const g of groups) {
+      const d = haversineMeters({ lat: g.lat, lng: g.lng }, coords);
+      if (d <= distanceMeters) {
+        g.orderIds.push(orderId);
+        g.orders.push(o);
+        placed = true;
+        break;
+      }
+    }
+
+    if (!placed) {
+      groups.push({
+        lat: coords.lat,
+        lng: coords.lng,
+        orderIds: [orderId],
+        orders: [o],
+      });
+    }
+  }
+
+  return groups.map((g, idx) => ({
+    ...g,
+    key: `${g.lat.toFixed(5)},${g.lng.toFixed(5)}_${idx}`,
+    count: g.orderIds.length,
+  }));
+};
+
 export default function TrackBatchOrdersScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -357,19 +433,14 @@ export default function TrackBatchOrdersScreen() {
   const {
     businessId,
     label,
-
-    // ✅ IMPORTANT: this "orders" is usually clusterOrders passed through screens
     orders: passedOrdersRaw = [],
-
     selectedMethod,
-    driverDetails,
-    driverRating,
+    driverDetails: driverDetailsFromParams,
+    driverRating: driverRatingFromParams,
     rideMessage,
     socketEndpoint,
     rideIds = [],
-
     batch_order_ids: batchOrderIdsFromParams,
-    centerCoords,
   } = params;
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
@@ -379,6 +450,19 @@ export default function TrackBatchOrdersScreen() {
   const [batchId, setBatchId] = useState(() => normalizeBatchIdFromParams(params));
   const [deliveryRideId, setDeliveryRideId] = useState(() => normalizeRideIdFromParams(params));
   const [restoredIds, setRestoredIds] = useState(false);
+
+  /* ---------------- Driver details ---------------- */
+
+  const [driverInfo, setDriverInfo] = useState(driverDetailsFromParams || null);
+  const [driverRating, setDriverRating] = useState(driverRatingFromParams || null);
+
+  useEffect(() => {
+    if (driverDetailsFromParams) setDriverInfo(driverDetailsFromParams);
+  }, [driverDetailsFromParams]);
+
+  useEffect(() => {
+    if (driverRatingFromParams) setDriverRating(driverRatingFromParams);
+  }, [driverRatingFromParams]);
 
   /* ---------------- batch order ids ---------------- */
 
@@ -390,22 +474,18 @@ export default function TrackBatchOrdersScreen() {
     const passedOrders = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
 
     if (Array.isArray(batchOrderIdsFromParams) && batchOrderIdsFromParams.length) {
-      const filtered = filterOrdersByBatchIds(passedOrders, batchOrderIdsFromParams);
-      return filtered;
+      return filterOrdersByBatchIds(passedOrders, batchOrderIdsFromParams);
     }
 
     const initialBid = normalizeBatchIdFromParams(params);
-    if (initialBid) {
-      const filtered = filterOrdersByBatchField(passedOrders, initialBid);
-      return filtered;
-    }
+    if (initialBid) return filterOrdersByBatchField(passedOrders, initialBid);
 
     return [];
   });
 
   const [batchOrdersLoading, setBatchOrdersLoading] = useState(false);
 
-  /* ---------------- Restore from SecureStore (if opened without params) ---------------- */
+  /* ---------------- Restore from SecureStore ---------------- */
 
   useEffect(() => {
     let cancelled = false;
@@ -414,16 +494,33 @@ export default function TrackBatchOrdersScreen() {
       try {
         const bKey = keyBatchId(businessId);
         const rKey = keyRideId(businessId);
+        const dKey = keyDriver(businessId);
+        const drKey = keyDriverRating(businessId);
 
-        const [savedBatch, savedRide] = await Promise.all([
+        const [savedBatch, savedRide, savedDriverJson, savedDriverRatingJson] = await Promise.all([
           SecureStore.getItemAsync(bKey),
           SecureStore.getItemAsync(rKey),
+          SecureStore.getItemAsync(dKey),
+          SecureStore.getItemAsync(drKey),
         ]);
 
         if (cancelled) return;
 
         if (!batchId && savedBatch && String(savedBatch).trim()) setBatchId(String(savedBatch).trim());
         if (!deliveryRideId && savedRide && String(savedRide).trim()) setDeliveryRideId(String(savedRide).trim());
+
+        if (!driverInfo && savedDriverJson) {
+          try {
+            const parsed = JSON.parse(savedDriverJson);
+            if (parsed && typeof parsed === "object") setDriverInfo(parsed);
+          } catch {}
+        }
+        if (!driverRating && savedDriverRatingJson) {
+          try {
+            const parsed = JSON.parse(savedDriverRatingJson);
+            if (parsed && typeof parsed === "object") setDriverRating(parsed);
+          } catch {}
+        }
       } catch (e) {
         console.log("[SecureStore] restore error:", e?.message || e);
       } finally {
@@ -437,23 +534,36 @@ export default function TrackBatchOrdersScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [businessId]);
 
-  /* ---------------- Save whenever we have ids ---------------- */
+  /* ---------------- Save whenever we have ids + driver ---------------- */
 
   useEffect(() => {
     (async () => {
       try {
         const bKey = keyBatchId(businessId);
         const rKey = keyRideId(businessId);
+        const dKey = keyDriver(businessId);
+        const drKey = keyDriverRating(businessId);
 
         if (batchId) await SecureStore.setItemAsync(bKey, String(batchId));
         if (deliveryRideId) await SecureStore.setItemAsync(rKey, String(deliveryRideId));
+
+        if (driverInfo) {
+          try {
+            await SecureStore.setItemAsync(dKey, JSON.stringify(driverInfo));
+          } catch {}
+        }
+        if (driverRating) {
+          try {
+            await SecureStore.setItemAsync(drKey, JSON.stringify(driverRating));
+          } catch {}
+        }
       } catch (e) {
         console.log("[SecureStore] save error:", e?.message || e);
       }
     })();
-  }, [businessId, batchId, deliveryRideId]);
+  }, [businessId, batchId, deliveryRideId, driverInfo, driverRating]);
 
-  /* ---------------- If ride id missing but batch id exists, fetch ride id (AFTER restore) ---------------- */
+  /* ---------------- If ride id missing but batch id exists, fetch ride id ---------------- */
 
   const fetchDeliveryRideId = useCallback(async () => {
     if (!batchId) {
@@ -526,8 +636,6 @@ export default function TrackBatchOrdersScreen() {
   const [businessCoords, setBusinessCoords] = useState(null);
 
   const [driversByRideId, setDriversByRideId] = useState({});
-  const [drops, setDrops] = useState([]);
-
   const [routeDriverToBiz, setRouteDriverToBiz] = useState([]);
   const [routeBizToCustomer, setRouteBizToCustomer] = useState([]);
 
@@ -545,10 +653,19 @@ export default function TrackBatchOrdersScreen() {
   const didFitOnceRef = useRef(false);
   const lastMarkerPressTsRef = useRef(0);
 
-  /* ---------------- seed initial driver (if provided) ---------------- */
+  // ✅ Main map: briefly true then off
+  const [trackMarkerViewsMain, setTrackMarkerViewsMain] = useState(true);
 
   useEffect(() => {
-    const seed = extractLatLng(driverDetails);
+    setTrackMarkerViewsMain(true);
+    const t = setTimeout(() => setTrackMarkerViewsMain(false), 1400);
+    return () => clearTimeout(t);
+  }, [Object.keys(driversByRideId || {}).length, businessCoords?.lat, businessCoords?.lng]);
+
+  /* ---------------- seed initial driver coords (if available) ---------------- */
+
+  useEffect(() => {
+    const seed = extractLatLng(driverInfo);
     if (!seed) return;
 
     setDriversByRideId((prev) => {
@@ -558,9 +675,9 @@ export default function TrackBatchOrdersScreen() {
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [driverDetails]);
+  }, [driverInfo]);
 
-  /* ---------------- ensure batchOrders always "batch only" when params change ---------------- */
+  /* ---------------- ensure batchOrders always "batch only" ---------------- */
 
   useEffect(() => {
     const passedOrders = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
@@ -621,7 +738,6 @@ export default function TrackBatchOrdersScreen() {
     if (!businessId) return;
     if (!batchOrderIds.length && !batchId) return;
 
-    // ✅ if we already have batch-only list, do nothing
     if (Array.isArray(batchOrders) && batchOrders.length) return;
 
     setBatchOrdersLoading(true);
@@ -643,23 +759,23 @@ export default function TrackBatchOrdersScreen() {
     loadBatchOrders();
   }, [loadBatchOrders]);
 
-  /* ---------------- build drops from batchOrders ---------------- */
-
   useEffect(() => {
-    const pts = [];
-    for (const it of batchOrders || []) {
-      const base = it?.raw || it || {};
-      const p = extractOrderDropCoords(base);
-      if (!p) continue;
-      const oid = getOrderId(base) || `${p.lat},${p.lng}`;
-      pts.push({ ...p, key: oid });
-    }
-    setDrops(pts);
-  }, [batchOrders]);
+    if (!restoredIds) return;
+    if (!businessId) return;
+    if (!batchId && !batchOrderIds.length) return;
+    if (batchOrdersLoading) return;
+    if (Array.isArray(batchOrders) && batchOrders.length > 0) return;
 
-  /* ---------------- grouped fetch (status/items only; doesn't override batchOrders) ---------------- */
+    const t = setInterval(() => {
+      loadBatchOrders();
+    }, 6000);
 
-  const fetchGroupedStatusesItemsAndDrops = useCallback(async () => {
+    return () => clearInterval(t);
+  }, [restoredIds, businessId, batchId, batchOrderIds.length, batchOrders?.length, batchOrdersLoading, loadBatchOrders]);
+
+  /* ---------------- grouped fetch (status/items only) ---------------- */
+
+  const fetchGroupedStatusesItems = useCallback(async () => {
     const url = buildGroupedOrdersUrl(businessId);
     if (!url) {
       setLoaded(true);
@@ -736,35 +852,29 @@ export default function TrackBatchOrdersScreen() {
   }, [businessId]);
 
   useEffect(() => {
-    fetchGroupedStatusesItemsAndDrops();
+    fetchGroupedStatusesItems();
     fetchBusinessLocation();
-  }, [fetchGroupedStatusesItemsAndDrops, fetchBusinessLocation]);
+  }, [fetchGroupedStatusesItems, fetchBusinessLocation]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchGroupedStatusesItemsAndDrops();
+      fetchGroupedStatusesItems();
       fetchBusinessLocation();
       if (restoredIds) fetchDeliveryRideId();
       loadBatchOrders();
-    }, [
-      fetchGroupedStatusesItemsAndDrops,
-      fetchBusinessLocation,
-      restoredIds,
-      fetchDeliveryRideId,
-      loadBatchOrders,
-    ])
+    }, [fetchGroupedStatusesItems, fetchBusinessLocation, restoredIds, fetchDeliveryRideId, loadBatchOrders])
   );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      await Promise.all([fetchGroupedStatusesItemsAndDrops(), fetchBusinessLocation(), fetchDeliveryRideId()]);
+      await Promise.all([fetchGroupedStatusesItems(), fetchBusinessLocation(), fetchDeliveryRideId()]);
       setBatchOrders([]);
       await loadBatchOrders();
     } finally {
       setRefreshing(false);
     }
-  }, [fetchGroupedStatusesItemsAndDrops, fetchBusinessLocation, fetchDeliveryRideId, loadBatchOrders]);
+  }, [fetchGroupedStatusesItems, fetchBusinessLocation, fetchDeliveryRideId, loadBatchOrders]);
 
   /* ---------------- SOCKET ---------------- */
 
@@ -818,6 +928,11 @@ export default function TrackBatchOrdersScreen() {
       const ridFromPayload = pickRideIdFromPayload(p);
       const rid = String(ridFromPayload || effectiveRideIds[0] || "driver").trim();
 
+      const maybeDriver = extractDriverInfoFromPayload(p);
+      if (maybeDriver) {
+        setDriverInfo((prev) => ({ ...(prev || {}), ...maybeDriver }));
+      }
+
       setDriversByRideId((prev) => {
         const prevEntry = prev?.[rid];
         if (prevEntry?.coords && haversineMeters(prevEntry.coords, coords) < 5) return prev;
@@ -826,6 +941,10 @@ export default function TrackBatchOrdersScreen() {
         next[rid] = { coords, lastPing: new Date().toISOString(), batchId: batchId || null };
         return next;
       });
+
+      // retrigger main marker tracking (overlay markers are always tracking)
+      setTrackMarkerViewsMain(true);
+      setTimeout(() => setTrackMarkerViewsMain(false), 1400);
     };
 
     socket.on("deliveryDriverLocation", onDriverLocation);
@@ -840,7 +959,7 @@ export default function TrackBatchOrdersScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [socketEndpoint, restoredIds, effectiveRideIds.join("|"), batchId]);
 
-  /* ---------------- UI ---------------- */
+  /* ---------------- UI derived ---------------- */
 
   const title = useMemo(() => {
     const c = batchOrders.length;
@@ -856,37 +975,36 @@ export default function TrackBatchOrdersScreen() {
     return `${base}${method}${bid}${rid}`;
   }, [batchOrders.length, selectedMethod, batchId, effectiveRideIds]);
 
-  const driverSummaryText = useMemo(() => {
-    if (!driverDetails) return "";
-    const name = driverDetails.user_name ?? driverDetails.name ?? driverDetails.full_name ?? "";
-    const phone = driverDetails.phone ?? driverDetails.mobile ?? "";
+  const driverName = useMemo(() => {
+    const d = driverInfo || {};
+    return safeStr(d?.user_name ?? d?.name ?? d?.full_name ?? d?.fullName ?? "") || "Driver";
+  }, [driverInfo]);
 
+  const driverPhoneText = useMemo(() => {
+    const p = driverInfo?.phone ?? driverInfo?.mobile ?? driverInfo?.contact ?? "";
+    return safePhone(p);
+  }, [driverInfo]);
+
+  const driverSummaryText = useMemo(() => {
     const avg = driverRating?.average;
     const count = driverRating?.count;
-    const ratingPart =
-      avg != null ? `Rating: ${Number(avg).toFixed(1)}${count != null ? ` (${count})` : ""}` : null;
-
-    const parts = [];
-    if (name) parts.push(name);
-    if (phone) parts.push(safePhone(phone));
-    if (ratingPart) parts.push(ratingPart);
-    return parts.join(" · ");
-  }, [driverDetails, driverRating]);
+    const ratingPart = avg != null ? ` · ${Number(avg).toFixed(1)}${count != null ? ` (${count})` : ""}` : "";
+    const phonePart = driverPhoneText ? ` · ${driverPhoneText}` : "";
+    return `${driverName}${phonePart}${ratingPart}`.trim();
+  }, [driverName, driverPhoneText, driverRating]);
 
   const onCallDriver = useCallback(async () => {
-    const phone = driverDetails?.phone ?? driverDetails?.mobile ?? "";
-    const full = safePhone(phone);
-    if (!full) return Alert.alert("No phone", "Driver phone number not available.");
+    if (!driverPhoneText) return Alert.alert("No phone", "Driver phone number not available yet.");
     try {
-      await Linking.openURL(`tel:${full}`);
+      await Linking.openURL(`tel:${driverPhoneText}`);
     } catch {
       Alert.alert("Cannot call", "Your device cannot place calls.");
     }
-  }, [driverDetails]);
+  }, [driverPhoneText]);
 
   const mapInitialRegion = useMemo(() => {
     const anyDriver = Object.values(driversByRideId || {})[0]?.coords || null;
-    const base = businessCoords || anyDriver || drops?.[0] || null;
+    const base = businessCoords || anyDriver || null;
     if (!base) return null;
     return {
       latitude: base.lat,
@@ -894,7 +1012,15 @@ export default function TrackBatchOrdersScreen() {
       latitudeDelta: businessCoords ? 0.02 : 0.06,
       longitudeDelta: businessCoords ? 0.02 : 0.06,
     };
-  }, [businessCoords, driversByRideId, drops]);
+  }, [businessCoords, driversByRideId]);
+
+  const showMap = Boolean(mapInitialRegion);
+
+  /* ---------------- Grouped customer points ---------------- */
+
+  const groupedDropPoints = useMemo(() => groupDropsByDistance(batchOrders, 12), [batchOrders]);
+
+  /* ---------------- Fit helpers (includes grouped customers) ---------------- */
 
   const fitToPoints = useCallback(
     (ref) => {
@@ -908,8 +1034,9 @@ export default function TrackBatchOrdersScreen() {
         if (c) pts.push(asMapCoord(c));
       }
 
-      const customer = drops?.[0] || null;
-      if (customer) pts.push(asMapCoord(customer));
+      for (const g of groupedDropPoints) {
+        pts.push({ latitude: g.lat, longitude: g.lng });
+      }
 
       if (!pts.length) return;
 
@@ -925,7 +1052,7 @@ export default function TrackBatchOrdersScreen() {
         );
       }
     },
-    [businessCoords, driversByRideId, drops]
+    [businessCoords, driversByRideId, groupedDropPoints]
   );
 
   const fitAll = useCallback(() => fitToPoints(mapRef), [fitToPoints]);
@@ -933,34 +1060,34 @@ export default function TrackBatchOrdersScreen() {
 
   const openOverlay = useCallback(() => {
     if (!mapInitialRegion) return;
-    if (Date.now() - lastMarkerPressTsRef.current < 350) return;
+    if (Date.now() - lastMarkerPressTsRef.current < 300) return;
     overlayDidFitOnceRef.current = false;
     setOverlayOpen(true);
   }, [mapInitialRegion]);
 
-  const onPressBusinessCallout = useCallback(async () => {
-    if (!businessCoords) return;
-    await openOSM({ lat: businessCoords.lat, lng: businessCoords.lng, label: "Business" });
-  }, [businessCoords]);
-
   /* ---------------- ROUTES: driver->business and business->customer ---------------- */
 
-  const pickCustomerDrop = useMemo(() => {
-    if (!Array.isArray(drops) || drops.length === 0) return null;
-
-    for (const d of drops) {
-      const id = d?.key;
-      const st = id ? statusMap?.[id] : null;
-      if (!isDelivered(st)) return d;
+  const pickCustomerGroupForRoute = useMemo(() => {
+    if (!groupedDropPoints.length) return null;
+    for (const g of groupedDropPoints) {
+      let anyUndelivered = false;
+      for (const oid of g.orderIds) {
+        const st = statusMap?.[oid];
+        if (!isDelivered(st)) {
+          anyUndelivered = true;
+          break;
+        }
+      }
+      if (anyUndelivered) return g;
     }
-    return drops[0];
-  }, [drops, statusMap]);
+    return groupedDropPoints[0];
+  }, [groupedDropPoints, statusMap]);
 
   const computeTwoLegRoute = useCallback(async () => {
     const firstDriverKey = Object.keys(driversByRideId || {})[0];
     const driver = firstDriverKey ? driversByRideId?.[firstDriverKey]?.coords : null;
     const biz = businessCoords;
-    const customer = pickCustomerDrop ? { lat: pickCustomerDrop.lat, lng: pickCustomerDrop.lng } : null;
+    const customer = pickCustomerGroupForRoute ? { lat: pickCustomerGroupForRoute.lat, lng: pickCustomerGroupForRoute.lng } : null;
 
     const key = [
       driver ? `${driver.lat.toFixed(5)},${driver.lng.toFixed(5)}` : "no-driver",
@@ -1001,108 +1128,263 @@ export default function TrackBatchOrdersScreen() {
         ]);
       }
     }
-  }, [driversByRideId, businessCoords, pickCustomerDrop]);
+  }, [driversByRideId, businessCoords, pickCustomerGroupForRoute]);
 
   useEffect(() => {
     computeTwoLegRoute();
   }, [computeTwoLegRoute]);
 
-  /* ---------------- Render helpers ---------------- */
+  /* ---------------- Expandable items dropdown ---------------- */
 
-  const DropMarker = ({ d, idx }) => {
-    const isSelected =
-      pickCustomerDrop &&
-      Number(pickCustomerDrop.lat) === Number(d.lat) &&
-      Number(pickCustomerDrop.lng) === Number(d.lng) &&
-      String(pickCustomerDrop.key || "") === String(d.key || "");
+  const [expandedMap, setExpandedMap] = useState({});
+  const toggleExpanded = useCallback((orderId) => {
+    const id = String(orderId || "");
+    if (!id) return;
+    setExpandedMap((prev) => ({ ...(prev || {}), [id]: !prev?.[id] }));
+  }, []);
 
-    if (!isSelected) return null;
+  /* ---------------- Marker -> Orders modal (group) ---------------- */
 
-    const orderId = d?.key || null;
-    const status = orderId ? statusMap[orderId] : null;
-    const done = isDelivered(status);
+  const [locationModalOpen, setLocationModalOpen] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState(null);
 
-    const titleText = orderId ? `Order #${orderId}` : "Customer";
-    const descText = done ? "Delivered" : "Customer drop";
+  const openGroupModal = useCallback((group) => {
+    if (!group) return;
+    lastMarkerPressTsRef.current = Date.now();
+    setSelectedGroup(group);
+    setLocationModalOpen(true);
+  }, []);
 
-    if (done) {
-      return (
-        <Marker
-          key={orderId || `${d.lat},${d.lng},${idx}`}
-          coordinate={{ latitude: d.lat, longitude: d.lng }}
-          title={titleText}
-          description={descText}
-          tracksViewChanges={false}
-          anchor={{ x: 0.5, y: 0.8 }}
-          onPress={() => (lastMarkerPressTsRef.current = Date.now())}
-        >
-          <View style={styles.tickMarkerOuter}>
-            <View style={styles.tickMarkerInner}>
-              <Ionicons name="checkmark" size={16} color="#ffffff" />
-            </View>
-          </View>
-        </Marker>
-      );
-    }
+  const closeGroupModal = useCallback(() => {
+    setLocationModalOpen(false);
+    setSelectedGroup(null);
+  }, []);
+
+  const selectedGroupRows = useMemo(() => {
+    const g = selectedGroup;
+    if (!g?.orderIds?.length) return [];
+    return g.orderIds.map((oid) => {
+      const st = statusMap?.[oid] || "";
+      const label = st ? String(st).toUpperCase().replace(/_/g, " ") : "—";
+      return { orderId: oid, status: label, delivered: isDelivered(st) };
+    });
+  }, [selectedGroup, statusMap]);
+
+  /* ---------------- Marker Components ---------------- */
+
+  const DriverMarker = ({ rid, entry, overlay }) => {
+    if (!entry?.coords) return null;
+
+    const titleText = `${driverName} (Live)`;
+    const descText = driverPhoneText ? `${driverPhoneText}` : "Phone not available";
+
+    // ✅ Overlay markers: keep tracksViewChanges ON so they won't disappear in Modal on Android
+    const tvc = overlay ? true : trackMarkerViewsMain;
 
     return (
       <Marker
-        key={orderId || `${d.lat},${d.lng},${idx}`}
-        pinColor="#f59e0b"
-        coordinate={{ latitude: d.lat, longitude: d.lng }}
+        key={`${overlay ? "overlay" : "main"}-driver-${rid}`}
+        coordinate={{ latitude: entry.coords.lat, longitude: entry.coords.lng }}
         title={titleText}
         description={descText}
-        tracksViewChanges={false}
+        tracksViewChanges={tvc}
         onPress={() => (lastMarkerPressTsRef.current = Date.now())}
-      />
+        anchor={{ x: 0.5, y: 0.5 }}
+        zIndex={60}
+      >
+        <View
+          style={styles.driverMarkerOuter}
+          collapsable={false}
+          renderToHardwareTextureAndroid
+          needsOffscreenAlphaCompositing
+        >
+          <Ionicons name="car" size={16} color="#ffffff" />
+        </View>
+      </Marker>
     );
   };
+
+  const CustomerGroupMarker = ({ g, overlay }) => {
+    const deliveredAll =
+      Array.isArray(g?.orderIds) &&
+      g.orderIds.length > 0 &&
+      g.orderIds.every((oid) => isDelivered(statusMap?.[oid]));
+
+    const count = g?.count || 1;
+
+    // ✅ Overlay markers: keep tracksViewChanges ON so they won't disappear in Modal on Android
+    const tvc = overlay ? true : trackMarkerViewsMain;
+
+    return (
+      <Marker
+        key={`${overlay ? "overlay" : "main"}-cust-${g.key}`}
+        coordinate={{ latitude: g.lat, longitude: g.lng }}
+        title={count > 1 ? `Customer (${count} orders)` : "Customer"}
+        description={count > 1 ? `Orders: ${g.orderIds.join(", ")}` : `Order #${g.orderIds?.[0] || "—"}`}
+        tracksViewChanges={tvc}
+        onPress={() => openGroupModal(g)}
+        anchor={{ x: 0.5, y: 0.9 }}
+        zIndex={50}
+      >
+        {deliveredAll ? (
+          <View
+            style={styles.tickMarkerOuter}
+            collapsable={false}
+            renderToHardwareTextureAndroid
+            needsOffscreenAlphaCompositing
+          >
+            <View style={styles.tickMarkerInner}>
+              <Ionicons name="checkmark" size={16} color="#ffffff" />
+            </View>
+            {count > 1 && (
+              <View style={styles.countBadge}>
+                <Text style={styles.countBadgeText}>{count}</Text>
+              </View>
+            )}
+          </View>
+        ) : (
+          <View
+            style={styles.customerMarkerOuter}
+            collapsable={false}
+            renderToHardwareTextureAndroid
+            needsOffscreenAlphaCompositing
+          >
+            <View style={styles.customerMarkerInner} />
+            {count > 1 && (
+              <View style={styles.countBadge}>
+                <Text style={styles.countBadgeText}>{count}</Text>
+              </View>
+            )}
+          </View>
+        )}
+      </Marker>
+    );
+  };
+
+  /* ---------------- Render order list row ---------------- */
 
   const renderRow = ({ item }) => {
     const base = item.raw || item || {};
     const id = getOrderId(base) || getOrderId(item) || item.id;
 
     const statusRaw = (loaded && id ? statusMap[id] : "") || "";
-    const statusLabel = statusRaw
-      ? String(statusRaw).toUpperCase().replace(/_/g, " ")
-      : loaded
-      ? "—"
-      : "...";
+    const statusLabel = statusRaw ? String(statusRaw).toUpperCase().replace(/_/g, " ") : loaded ? "—" : "...";
 
     const name = base.customer_name ?? base.user_name ?? base.full_name ?? "";
+
     const itemsFromMap = id && itemsMap[id] ? itemsMap[id] : null;
     const itemsBase = Array.isArray(base.items) ? base.items : null;
     const items = itemsFromMap || itemsBase || [];
     const hasItems = Array.isArray(items) && items.length > 0;
 
+    const expanded = !!expandedMap?.[String(id || "")];
+
     return (
       <View style={styles.orderRow}>
-        <View style={styles.orderTop}>
-          <Text style={styles.orderId}>#{id}</Text>
-          <View style={styles.statusPill}>
-            <Text style={styles.statusPillText}>{statusLabel}</Text>
+        <Pressable onPress={() => toggleExpanded(id)} style={({ pressed }) => [styles.orderPress, pressed ? { opacity: 0.85 } : null]}>
+          <View style={styles.orderTop}>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Text style={styles.orderId}>#{id}</Text>
+              <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={18} color="#6b7280" style={{ marginLeft: 8 }} />
+            </View>
+
+            <View style={styles.statusPill}>
+              <Text style={styles.statusPillText}>{statusLabel}</Text>
+            </View>
           </View>
-        </View>
 
-        {!!name && (
-          <Text style={styles.orderName} numberOfLines={1}>
-            {name}
-          </Text>
-        )}
+          {!!name && (
+            <Text style={styles.orderName} numberOfLines={1}>
+              {name}
+            </Text>
+          )}
 
-        {hasItems && (
           <Text style={styles.orderMeta} numberOfLines={1}>
-            {items.length} item{items.length === 1 ? "" : "s"}
+            {hasItems ? `${items.length} item${items.length === 1 ? "" : "s"}` : "Items: —"}
           </Text>
+        </Pressable>
+
+        {expanded && (
+          <View style={styles.itemsDropdown}>
+            {hasItems ? (
+              <>
+                {items.map((it, idx) => {
+                  const title = pickItemName(it);
+                  const qty = pickItemQty(it);
+                  const price = pickItemPrice(it);
+                  const lineTotal = price != null ? price * qty : null;
+
+                  return (
+                    <View key={`${id}-it-${idx}`} style={styles.itemRow}>
+                      <View style={{ flex: 1, paddingRight: 8 }}>
+                        <Text style={styles.itemName} numberOfLines={2}>
+                          {title}
+                        </Text>
+                        {price != null ? (
+                          <Text style={styles.itemSub}>
+                            Price: {formatMoney(price)} {lineTotal != null ? `· Total: ${formatMoney(lineTotal)}` : ""}
+                          </Text>
+                        ) : (
+                          <Text style={styles.itemSub}>Price: —</Text>
+                        )}
+                      </View>
+                      <View style={styles.qtyPill}>
+                        <Text style={styles.qtyText}>x{qty}</Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </>
+            ) : (
+              <Text style={styles.noItemsText}>No item details found for this order.</Text>
+            )}
+          </View>
         )}
       </View>
     );
   };
 
-  const showMap = Boolean(mapInitialRegion);
+  const driverCardText = driverSummaryText || "Driver details not available yet.";
 
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
+      {/* LOCATION -> ORDERS MODAL */}
+      <Modal visible={locationModalOpen} transparent animationType="fade" onRequestClose={closeGroupModal}>
+        <Pressable style={styles.modalBackdrop} onPress={closeGroupModal}>
+          <Pressable style={styles.modalCard} onPress={() => {}}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                Orders at this location {selectedGroup?.count > 1 ? `(${selectedGroup.count})` : ""}
+              </Text>
+              <Pressable onPress={closeGroupModal} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={18} color="#0f172a" />
+              </Pressable>
+            </View>
+
+            <View style={{ marginTop: 10 }}>
+              {selectedGroupRows.length ? (
+                selectedGroupRows.map((r) => (
+                  <View key={`loc-${r.orderId}`} style={styles.modalRow}>
+                    <View style={{ flexDirection: "row", alignItems: "center" }}>
+                      <Text style={styles.modalOrderId}>#{r.orderId}</Text>
+                      {r.delivered ? (
+                        <View style={styles.modalDeliveredPill}>
+                          <Ionicons name="checkmark" size={14} color="#16a34a" />
+                          <Text style={styles.modalDeliveredText}>Delivered</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text style={styles.modalStatus}>{r.status}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.modalEmpty}>No orders found.</Text>
+              )}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* FULLSCREEN OVERLAY MAP */}
       <Modal
         visible={overlayOpen}
@@ -1149,26 +1431,14 @@ export default function TrackBatchOrdersScreen() {
                     }, 180);
                   }}
                 >
-                  <UrlTile urlTemplate={tileTemplate} maximumZ={20} tileSize={256} shouldReplaceMapContent zIndex={-1} />
+                  <UrlTile urlTemplate={tileTemplate} maximumZ={20} tileSize={256} shouldReplaceMapContent zIndex={0} />
 
                   {!!routeDriverToBiz?.length && routeDriverToBiz.length >= 2 && (
-                    <Polyline
-                      coordinates={routeDriverToBiz}
-                      strokeWidth={4}
-                      strokeColor="#2563eb"
-                      lineCap="round"
-                      lineJoin="round"
-                    />
+                    <Polyline coordinates={routeDriverToBiz} strokeWidth={4} strokeColor="#2563eb" lineCap="round" lineJoin="round" />
                   )}
 
                   {!!routeBizToCustomer?.length && routeBizToCustomer.length >= 2 && (
-                    <Polyline
-                      coordinates={routeBizToCustomer}
-                      strokeWidth={4}
-                      strokeColor="#60a5fa"
-                      lineCap="round"
-                      lineJoin="round"
-                    />
+                    <Polyline coordinates={routeBizToCustomer} strokeWidth={4} strokeColor="#60a5fa" lineCap="round" lineJoin="round" />
                   )}
 
                   {!!businessCoords && (
@@ -1177,36 +1447,22 @@ export default function TrackBatchOrdersScreen() {
                       coordinate={{ latitude: businessCoords.lat, longitude: businessCoords.lng }}
                       title="Business"
                       description={`Business ID: ${businessId ?? "—"}`}
-                      tracksViewChanges={false}
-                      onCalloutPress={onPressBusinessCallout}
+                      // keep overlay markers stable too
+                      tracksViewChanges={true}
                       onPress={() => (lastMarkerPressTsRef.current = Date.now())}
+                      zIndex={40}
                     />
                   )}
 
+                  {/* ✅ Driver marker (overlay - never disappears) */}
                   {Object.keys(driversByRideId || {}).map((rid) => {
                     const entry = driversByRideId?.[rid];
-                    if (!entry?.coords) return null;
-                    return (
-                      <Marker
-                        key={`overlay-driver-${rid}`}
-                        coordinate={{ latitude: entry.coords.lat, longitude: entry.coords.lng }}
-                        title="Driver (Live)"
-                        description={`Ride #${rid}${entry?.lastPing ? ` · ${entry.lastPing}` : ""}`}
-                        tracksViewChanges={false}
-                        onPress={() => {
-                          lastMarkerPressTsRef.current = Date.now();
-                        }}
-                        anchor={{ x: 0.5, y: 0.5 }}
-                      >
-                        <View style={styles.carMarker}>
-                          <Ionicons name="car" size={16} color="#ffffff" />
-                        </View>
-                      </Marker>
-                    );
+                    return <DriverMarker key={`ov-d-${rid}`} rid={rid} entry={entry} overlay />;
                   })}
 
-                  {(drops || []).map((d, idx) => (
-                    <DropMarker key={`overlay-${d.key || `${d.lat},${d.lng},${idx}`}`} d={d} idx={idx} />
+                  {/* ✅ Grouped customer markers (overlay - never disappears) */}
+                  {groupedDropPoints.map((g) => (
+                    <CustomerGroupMarker key={`ov-g-${g.key}`} g={g} overlay />
                   ))}
                 </MapView>
 
@@ -1215,17 +1471,6 @@ export default function TrackBatchOrdersScreen() {
                     <Ionicons name="scan-outline" size={16} color="#ffffff" />
                     <Text style={styles.fitBtnText}>Fit</Text>
                   </TouchableOpacity>
-                </View>
-
-                <View style={styles.overlayLegend}>
-                  <Text style={styles.mapLegendText}>
-                    <Text style={styles.dotRed}>●</Text> Business · <Text style={styles.dotCar}>●</Text> Driver ·{" "}
-                    <Text style={styles.dotBlue}>●</Text> Route · <Text style={styles.dotOrange}>●</Text> Customer ·{" "}
-                    <Text style={styles.dotGreen}>●</Text> Delivered ✓
-                  </Text>
-                  <Text style={styles.attribTextSmall}>
-                    Batch: {batchId || "—"} · Ride(s): {effectiveRideIds.length ? effectiveRideIds.join(", ") : "—"}
-                  </Text>
                 </View>
               </View>
             ) : (
@@ -1273,7 +1518,7 @@ export default function TrackBatchOrdersScreen() {
         )}
       </View>
 
-      {/* MAP SHOWN DIRECTLY + TAP OPENS OVERLAY */}
+      {/* MAP SHOWN DIRECTLY + BUTTON OPENS OVERLAY */}
       <View style={styles.mapCard}>
         {showMap ? (
           <View style={styles.mapWrap}>
@@ -1290,6 +1535,10 @@ export default function TrackBatchOrdersScreen() {
               onMapReady={() => {
                 if (didFitOnceRef.current) return;
                 didFitOnceRef.current = true;
+
+                setTrackMarkerViewsMain(true);
+                setTimeout(() => setTrackMarkerViewsMain(false), 1400);
+
                 setTimeout(() => {
                   try {
                     fitAll();
@@ -1304,25 +1553,13 @@ export default function TrackBatchOrdersScreen() {
               scrollDuringRotateOrZoomEnabled
               onPress={() => openOverlay()}
             >
-              <UrlTile urlTemplate={tileTemplate} maximumZ={20} tileSize={256} shouldReplaceMapContent zIndex={-1} />
+              <UrlTile urlTemplate={tileTemplate} maximumZ={20} tileSize={256} shouldReplaceMapContent zIndex={0} />
 
               {!!routeDriverToBiz?.length && routeDriverToBiz.length >= 2 && (
-                <Polyline
-                  coordinates={routeDriverToBiz}
-                  strokeWidth={4}
-                  strokeColor="#2563eb"
-                  lineCap="round"
-                  lineJoin="round"
-                />
+                <Polyline coordinates={routeDriverToBiz} strokeWidth={4} strokeColor="#2563eb" lineCap="round" lineJoin="round" />
               )}
               {!!routeBizToCustomer?.length && routeBizToCustomer.length >= 2 && (
-                <Polyline
-                  coordinates={routeBizToCustomer}
-                  strokeWidth={4}
-                  strokeColor="#60a5fa"
-                  lineCap="round"
-                  lineJoin="round"
-                />
+                <Polyline coordinates={routeBizToCustomer} strokeWidth={4} strokeColor="#60a5fa" lineCap="round" lineJoin="round" />
               )}
 
               {!!businessCoords && (
@@ -1331,50 +1568,35 @@ export default function TrackBatchOrdersScreen() {
                   coordinate={{ latitude: businessCoords.lat, longitude: businessCoords.lng }}
                   title="Business"
                   description={`Business ID: ${businessId ?? "—"}`}
-                  tracksViewChanges={false}
-                  onCalloutPress={onPressBusinessCallout}
+                  tracksViewChanges={trackMarkerViewsMain}
                   onPress={() => (lastMarkerPressTsRef.current = Date.now())}
+                  zIndex={40}
                 />
               )}
 
+              {/* ✅ Driver marker */}
               {Object.keys(driversByRideId || {}).map((rid) => {
                 const entry = driversByRideId?.[rid];
-                if (!entry?.coords) return null;
-                return (
-                  <Marker
-                    key={`driver-${rid}`}
-                    coordinate={{ latitude: entry.coords.lat, longitude: entry.coords.lng }}
-                    title="Driver (Live)"
-                    description={`Ride #${rid}${entry?.lastPing ? ` · ${entry.lastPing}` : ""}`}
-                    tracksViewChanges={false}
-                    onPress={() => (lastMarkerPressTsRef.current = Date.now())}
-                    anchor={{ x: 0.5, y: 0.5 }}
-                  >
-                    <View style={styles.carMarker}>
-                      <Ionicons name="car" size={16} color="#ffffff" />
-                    </View>
-                  </Marker>
-                );
+                return <DriverMarker key={`main-d-${rid}`} rid={rid} entry={entry} overlay={false} />;
               })}
 
-              {(drops || []).map((d, idx) => (
-                <DropMarker key={d.key || `${d.lat},${d.lng},${idx}`} d={d} idx={idx} />
+              {/* ✅ Grouped customer markers */}
+              {groupedDropPoints.map((g) => (
+                <CustomerGroupMarker key={`main-g-${g.key}`} g={g} overlay={false} />
               ))}
             </MapView>
-
-            <View style={styles.mapLegend}>
-              <Text style={styles.mapLegendText}>
-                <Text style={styles.dotRed}>●</Text> Business · <Text style={styles.dotCar}>●</Text> Driver ·{" "}
-                <Text style={styles.dotBlue}>●</Text> Route · <Text style={styles.dotOrange}>●</Text> Customer ·{" "}
-                <Text style={styles.dotGreen}>●</Text> Delivered ✓
-              </Text>
-              <Text style={styles.attribTextSmall}>Tap map to open full screen</Text>
-            </View>
 
             <View style={styles.mapActions}>
               <TouchableOpacity style={styles.fitBtn} onPress={fitAll} activeOpacity={0.85}>
                 <Ionicons name="scan-outline" size={16} color="#ffffff" />
                 <Text style={styles.fitBtnText}>Fit</Text>
+              </TouchableOpacity>
+
+              <View style={{ height: 8 }} />
+
+              <TouchableOpacity style={styles.expandBtn} onPress={openOverlay} activeOpacity={0.85}>
+                <Ionicons name="expand-outline" size={16} color="#ffffff" />
+                <Text style={styles.fitBtnText}>Open</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1386,27 +1608,41 @@ export default function TrackBatchOrdersScreen() {
         )}
       </View>
 
-      {!!driverSummaryText && (
-        <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
-          <View style={styles.driverCard}>
+      {/* DRIVER CARD */}
+      <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
+        <View style={styles.driverCard}>
+          <View style={styles.driverHeaderRow}>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <Ionicons name="car-outline" size={18} color="#111827" />
               <Text style={styles.driverTitle}>Driver</Text>
             </View>
 
-            <Text style={styles.driverText}>{driverSummaryText}</Text>
+            <TouchableOpacity onPress={onRefresh} style={styles.driverRefreshBtn} activeOpacity={0.8}>
+              <Ionicons name="refresh" size={18} color="#111827" />
+            </TouchableOpacity>
+          </View>
 
-            <TouchableOpacity style={styles.callBtn} activeOpacity={0.85} onPress={onCallDriver}>
+          <Text style={styles.driverText}>{driverCardText}</Text>
+
+          <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10 }}>
+            <TouchableOpacity
+              style={[styles.callBtn, !driverPhoneText ? styles.callBtnDisabled : null]}
+              activeOpacity={0.85}
+              onPress={onCallDriver}
+              disabled={!driverPhoneText}
+            >
               <Ionicons name="call-outline" size={16} color="#ffffff" />
               <Text style={styles.callBtnText}>Call driver</Text>
             </TouchableOpacity>
 
-            <Text style={styles.liveHint}>
-              Live update event: <Text style={styles.liveHintStrong}>deliveryDriverLocation</Text>
-            </Text>
+            <View style={{ flex: 1 }} />
+
+            <TouchableOpacity style={styles.moreBtn} activeOpacity={0.85} onPress={onRefresh}>
+              <Ionicons name="ellipsis-vertical" size={18} color="#6b7280" />
+            </TouchableOpacity>
           </View>
         </View>
-      )}
+      </View>
 
       <View style={styles.listHeader}>
         <Text style={styles.listHeaderText}>Orders in this batch</Text>
@@ -1467,11 +1703,9 @@ const styles = StyleSheet.create({
   },
   map: { height: 260, width: "100%" },
 
-  mapLegend: { paddingVertical: 8, paddingHorizontal: 10, borderTopWidth: 1, borderTopColor: "#e5e7eb" },
-  mapLegendText: { fontSize: 11, color: "#374151", fontWeight: "900" },
   attribTextSmall: { marginTop: 4, fontSize: 10, color: "#6b7280", fontWeight: "700" },
 
-  mapActions: { position: "absolute", right: 10, bottom: 54 },
+  mapActions: { position: "absolute", right: 10, bottom: 14 },
   fitBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1485,18 +1719,25 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 3,
   },
+  expandBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#0f172a",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
   fitBtnText: { marginLeft: 6, color: "#fff", fontSize: 12, fontWeight: "900" },
 
-  dotRed: { color: "#ef4444" },
-  dotGreen: { color: "#16a34a" },
-  dotOrange: { color: "#f59e0b" },
-  dotCar: { color: "#0f172a" },
-  dotBlue: { color: "#2563eb" },
-
-  carMarker: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+  driverMarkerOuter: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: "#0f172a",
     alignItems: "center",
     justifyContent: "center",
@@ -1504,12 +1745,55 @@ const styles = StyleSheet.create({
     borderColor: "#ffffff",
   },
 
+  customerMarkerOuter: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "rgba(245,158,11,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  customerMarkerInner: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#f59e0b",
+    borderWidth: 2,
+    borderColor: "#ffffff",
+  },
+
+  countBadge: {
+    position: "absolute",
+    right: -4,
+    top: -4,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: "#111827",
+    borderWidth: 2,
+    borderColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
+  },
+  countBadgeText: { color: "#ffffff", fontSize: 10, fontWeight: "900" },
+
   driverCard: { borderRadius: 14, borderWidth: 1, borderColor: "#e5e7eb", padding: 12, backgroundColor: "#f9fafb" },
+  driverHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   driverTitle: { marginLeft: 6, fontSize: 13, fontWeight: "800", color: "#111827" },
+  driverRefreshBtn: {
+    height: 34,
+    width: 34,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
   driverText: { marginTop: 6, fontSize: 12, color: "#374151", fontWeight: "600" },
 
   callBtn: {
-    marginTop: 10,
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
@@ -1518,15 +1802,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     borderRadius: 999,
   },
+  callBtnDisabled: { backgroundColor: "#9ca3af" },
   callBtnText: { marginLeft: 6, color: "#fff", fontSize: 12, fontWeight: "800" },
-
-  liveHint: { marginTop: 8, fontSize: 11, color: "#6b7280", fontWeight: "800" },
-  liveHintStrong: { color: "#111827", fontWeight: "900" },
+  moreBtn: {
+    height: 34,
+    width: 34,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
 
   listHeader: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
   listHeaderText: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
 
   orderRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#e5e7eb" },
+  orderPress: { paddingVertical: 2 },
   orderTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   orderId: { fontSize: 13, fontWeight: "800", color: "#0f172a" },
   statusPill: {
@@ -1539,7 +1832,35 @@ const styles = StyleSheet.create({
   },
   statusPillText: { fontSize: 10, fontWeight: "700", color: "#166534" },
   orderName: { marginTop: 3, fontSize: 12, color: "#6b7280" },
-  orderMeta: { marginTop: 2, fontSize: 11, color: "#4b5563" },
+  orderMeta: { marginTop: 2, fontSize: 11, color: "#4b5563", fontWeight: "700" },
+
+  itemsDropdown: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 12,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+  },
+  itemName: { fontSize: 12, color: "#111827", fontWeight: "800" },
+  itemSub: { marginTop: 3, fontSize: 11, color: "#6b7280", fontWeight: "700" },
+  qtyPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "#f3f4f6",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  qtyText: { fontSize: 11, fontWeight: "900", color: "#111827" },
+  noItemsText: { fontSize: 12, color: "#6b7280", fontWeight: "800" },
 
   tickMarkerOuter: {
     width: 30,
@@ -1585,17 +1906,56 @@ const styles = StyleSheet.create({
   overlayTitle: { flex: 1, textAlign: "center", fontSize: 16, fontWeight: "900", color: "#0f172a" },
   overlayMapWrap: { flex: 1, backgroundColor: "#fff" },
   overlayActions: { position: "absolute", right: 14, top: 70 },
-  overlayLegend: {
-    position: "absolute",
-    left: 12,
-    right: 12,
-    bottom: 16,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    backgroundColor: "rgba(255,255,255,0.92)",
+  noMapFull: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#fff" },
+
+  // Orders-at-location modal
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    justifyContent: "center",
+    paddingHorizontal: 18,
+  },
+  modalCard: {
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
+  },
+  modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  modalTitle: { fontSize: 14, fontWeight: "900", color: "#0f172a" },
+  modalCloseBtn: {
+    height: 32,
+    width: 32,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f3f4f6",
     borderWidth: 1,
     borderColor: "#e5e7eb",
   },
-  noMapFull: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#fff" },
+  modalRow: {
+    marginTop: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: "#f9fafb",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  modalOrderId: { fontSize: 13, fontWeight: "900", color: "#111827" },
+  modalStatus: { marginTop: 4, fontSize: 11, fontWeight: "900", color: "#0f172a" },
+  modalEmpty: { marginTop: 10, fontSize: 12, color: "#6b7280", fontWeight: "800" },
+  modalDeliveredPill: {
+    marginLeft: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: "#ecfdf3",
+    borderWidth: 1,
+    borderColor: "#bbf7d0",
+  },
+  modalDeliveredText: { marginLeft: 4, fontSize: 11, fontWeight: "900", color: "#16a34a" },
 });
