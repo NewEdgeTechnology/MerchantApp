@@ -1,7 +1,8 @@
 // screens/food/OrderDetails.js
 // ✅ UPDATED: Accept (CONFIRMED) now supports REMOVE / REPLACE payloads exactly like you provided
-//   - Sends: estimated_minutes, final_total_amount, final_platform_fee, final_discount_amount,
-//           final_delivery_fee, final_merchant_delivery_fee, unavailable_changes { removed[], replaced[] }
+// ✅ FIX: Fees (platform/delivery/merchant delivery/discount) are preserved using robust extraction (nested totals etc.)
+// ✅ FIX: Item totals now correctly parse string prices (e.g., "Nu. 20") and prefer line totals/subtotals when present
+// ✅ UPDATED: TotalsBlock now displays GRAND TOTAL (items + fees - discount) so it matches backend totals
 // ✅ Keeps: status normalization, grouped hydrate protection, socket fast-status apply, deliver-in-group route fix, pull-to-refresh
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
@@ -237,7 +238,7 @@ const pickExistingRouteName = (nav, candidates = []) => {
       chain.push(n);
       n = n.getParent?.();
     }
-  } catch {}
+  } catch { }
 
   for (const raw of candidates.map(clean).filter(Boolean)) {
     for (const n of chain) {
@@ -266,7 +267,7 @@ const findNavigatorOwningRoute = (nav, routeName) => {
       if (existsIn(n, routeName)) return n;
       n = n.getParent?.();
     }
-  } catch {}
+  } catch { }
   return null;
 };
 
@@ -283,6 +284,122 @@ const toMoneyNumber = (v) => {
   const cleaned = s.replace(/[^0-9.-]/g, "");
   const n = parseFloat(cleaned);
   return Number.isFinite(n) ? n : null;
+};
+
+/* ===========================
+   ✅ NEW: robust totals/fees extraction (supports nested totals objects)
+   =========================== */
+const pickMoney = (...vals) => {
+  for (const v of vals) {
+    const n = toMoneyNumber(v);
+    if (n != null) return n; // includes 0
+  }
+  return null;
+};
+
+const getOrderTotalsSnapshot = (src = {}, fallback = {}) => {
+  const a = src || {};
+  const b = fallback || {};
+
+  const aTotals = a.totals || a.total_breakdown || a.breakdown || a.pricing || null;
+  const aBizTotals =
+    a.totals_for_business ||
+    a.totalsForBusiness ||
+    a.business_totals ||
+    a.businessTotals ||
+    null;
+
+  const bTotals = b.totals || b.total_breakdown || b.breakdown || b.pricing || null;
+  const bBizTotals =
+    b.totals_for_business ||
+    b.totalsForBusiness ||
+    b.business_totals ||
+    b.businessTotals ||
+    null;
+
+  const platform_fee = pickMoney(
+    a.platform_fee,
+    a.platformFee,
+    aTotals?.platform_fee,
+    aTotals?.platformFee,
+    aBizTotals?.platform_fee,
+    aBizTotals?.platformFee,
+    a.fees?.platform_fee,
+    a.charges?.platform_fee,
+    b.platform_fee,
+    b.platformFee,
+    bTotals?.platform_fee,
+    bTotals?.platformFee,
+    bBizTotals?.platform_fee,
+    bBizTotals?.platformFee,
+    b.fees?.platform_fee,
+    b.charges?.platform_fee
+  );
+
+  const discount_amount = pickMoney(
+    a.discount_amount,
+    a.discountAmount,
+    a.discount,
+    aTotals?.discount_amount,
+    aTotals?.discountAmount,
+    aTotals?.discount,
+    aBizTotals?.discount_amount,
+    aBizTotals?.discountAmount,
+    aBizTotals?.discount,
+    aTotals?.total_discount,
+    aBizTotals?.total_discount,
+    b.discount_amount,
+    b.discountAmount,
+    b.discount,
+    bTotals?.discount_amount,
+    bTotals?.discountAmount,
+    bTotals?.discount,
+    bBizTotals?.discount_amount,
+    bBizTotals?.discountAmount,
+    bBizTotals?.discount,
+    bTotals?.total_discount,
+    bBizTotals?.total_discount
+  );
+
+  const delivery_fee = pickMoney(
+    a.delivery_fee,
+    a.deliveryFee,
+    aTotals?.delivery_fee,
+    aTotals?.deliveryFee,
+    aBizTotals?.delivery_fee,
+    aBizTotals?.deliveryFee,
+    a.fees?.delivery_fee,
+    a.charges?.delivery_fee,
+    b.delivery_fee,
+    b.deliveryFee,
+    bTotals?.delivery_fee,
+    bTotals?.deliveryFee,
+    bBizTotals?.delivery_fee,
+    bBizTotals?.deliveryFee,
+    b.fees?.delivery_fee,
+    b.charges?.delivery_fee
+  );
+
+  const merchant_delivery_fee = pickMoney(
+    a.merchant_delivery_fee,
+    a.merchantDeliveryFee,
+    aTotals?.merchant_delivery_fee,
+    aTotals?.merchantDeliveryFee,
+    aBizTotals?.merchant_delivery_fee,
+    aBizTotals?.merchantDeliveryFee,
+    a.fees?.merchant_delivery_fee,
+    a.charges?.merchant_delivery_fee,
+    b.merchant_delivery_fee,
+    b.merchantDeliveryFee,
+    bTotals?.merchant_delivery_fee,
+    bTotals?.merchantDeliveryFee,
+    bBizTotals?.merchant_delivery_fee,
+    bBizTotals?.merchantDeliveryFee,
+    b.fees?.merchant_delivery_fee,
+    b.charges?.merchant_delivery_fee
+  );
+
+  return { platform_fee, discount_amount, delivery_fee, merchant_delivery_fee };
 };
 
 /* ===========================
@@ -309,16 +426,41 @@ const getItemQty = (it) => {
 };
 
 const getItemUnitPrice = (it) => {
-  const p = Number(it?.price ?? it?.unit_price ?? it?.item_price ?? it?.rate ?? it?.selling_price ?? 0);
-  return Number.isFinite(p) ? p : 0;
+  const p =
+    toMoneyNumber(it?.unit_price) ??
+    toMoneyNumber(it?.price) ??
+    toMoneyNumber(it?.item_price) ??
+    toMoneyNumber(it?.rate) ??
+    toMoneyNumber(it?.selling_price) ??
+    toMoneyNumber(it?.unitPrice) ??
+    null;
+
+  if (p != null) return p;
+
+  const n = Number(it?.price ?? it?.unit_price ?? it?.item_price ?? it?.rate ?? it?.selling_price ?? 0);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// Prefer explicit line totals/subtotals (supports addons/toppings already applied by backend)
+const getItemLineTotal = (it) => {
+  const direct = pickMoney(
+    it?.subtotal,
+    it?.sub_total,
+    it?.line_total,
+    it?.lineTotal,
+    it?.total,
+    it?.amount,
+    it?.final_amount
+  );
+  if (direct != null) return direct;
+
+  const qty = getItemQty(it);
+  const unit = getItemUnitPrice(it);
+  return qty * unit;
 };
 
 const sumItemsTotal = (itemsArr = []) => {
-  return (itemsArr || []).reduce((sum, it) => {
-    const qty = getItemQty(it);
-    const price = getItemUnitPrice(it);
-    return sum + qty * price;
-  }, 0);
+  return (itemsArr || []).reduce((sum, it) => sum + getItemLineTotal(it), 0);
 };
 
 /* ===========================
@@ -608,6 +750,8 @@ export default function OrderDetails() {
     const idRaw = o?.id ?? o?.order_id ?? o?.order_code ?? routeOrderId ?? null;
     const codeRaw = o?.order_code ?? o?.order_id ?? o?.id ?? routeOrderId ?? null;
 
+    const feeSnap = getOrderTotalsSnapshot(o, null);
+
     return {
       ...o,
       id: idRaw != null ? String(idRaw) : undefined,
@@ -617,6 +761,12 @@ export default function OrderDetails() {
       delivery_address: normalizeDeliveryAddress(
         o?.delivery_address ?? o?.address ?? o?.deliver_to
       ),
+      // ✅ normalize fee fields so Accept payload doesn't accidentally send zeros
+      platform_fee: feeSnap.platform_fee ?? toMoneyNumber(o?.platform_fee) ?? 0,
+      discount_amount: feeSnap.discount_amount ?? toMoneyNumber(o?.discount_amount) ?? 0,
+      delivery_fee: feeSnap.delivery_fee ?? toMoneyNumber(o?.delivery_fee) ?? null,
+      merchant_delivery_fee:
+        feeSnap.merchant_delivery_fee ?? toMoneyNumber(o?.merchant_delivery_fee) ?? null,
     };
   });
 
@@ -698,7 +848,7 @@ export default function OrderDetails() {
         parent.navigate(target);
         return;
       }
-    } catch {}
+    } catch { }
     navigation.dispatch(
       CommonActions.navigate({
         name: "MainTabs",
@@ -742,7 +892,7 @@ export default function OrderDetails() {
               j?.user?.id ||
               null;
             if (finalBizId) setBusinessId(finalBizId);
-          } catch {}
+          } catch { }
         }
       }
 
@@ -927,8 +1077,8 @@ export default function OrderDetails() {
   const progressPct = isTerminalNegative
     ? 0
     : isTerminalSuccess
-    ? 100
-    : ((progressIndex + 1) / STATUS_SEQUENCE.length) * 100;
+      ? 100
+      : ((progressIndex + 1) / STATUS_SEQUENCE.length) * 100;
 
   const restaurantNote = useMemo(() => {
     const n =
@@ -991,7 +1141,7 @@ export default function OrderDetails() {
               null;
             if (bizId && !businessId) setBusinessId(bizId);
           }
-        } catch {}
+        } catch { }
       }
 
       let groupedUrlFinal = baseRaw;
@@ -1014,7 +1164,7 @@ export default function OrderDetails() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch {}
+      } catch { }
       if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
       const groups = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
@@ -1054,6 +1204,9 @@ export default function OrderDetails() {
         ? localStatus
         : matchStatus;
 
+      // ✅ preserve fees from match OR nested totals OR current local order (prevents accidental zeros)
+      const feeSnap = getOrderTotalsSnapshot(match, order);
+
       const normalizedFromMatch = {
         ...match,
         id: String(match?.id ?? match?.order_id ?? match?.order_code ?? routeOrderId),
@@ -1073,9 +1226,9 @@ export default function OrderDetails() {
         raw_items: Array.isArray(match?.raw_items)
           ? match.raw_items
           : Array.isArray(match?.items)
-          ? match.items
-          : [],
-        total: match?.total ?? match?.total_amount ?? 0,
+            ? match.items
+            : [],
+        total: match?.total ?? match?.total_amount ?? order?.total ?? 0,
         status: finalStatus,
         type:
           match?.type ??
@@ -1089,15 +1242,15 @@ export default function OrderDetails() {
         if_unavailable: match?.if_unavailable ?? order?.if_unavailable ?? "",
         estimated_arrivial_time:
           match?.estimated_arrivial_time ?? match?.eta_minutes ?? order?.estimated_arrivial_time ?? null,
-        delivery_fee: match?.delivery_fee ?? match?.deliveryFee ?? order?.delivery_fee ?? null,
-        merchant_delivery_fee:
-          match?.merchant_delivery_fee ??
-          match?.merchantDeliveryFee ??
-          order?.merchant_delivery_fee ??
-          null,
-        platform_fee: match?.platform_fee ?? order?.platform_fee ?? 0,
-        discount_amount: match?.discount_amount ?? order?.discount_amount ?? 0,
+
+        // ✅ FEES (robust)
+        delivery_fee: feeSnap.delivery_fee ?? null,
+        merchant_delivery_fee: feeSnap.merchant_delivery_fee ?? null,
+        platform_fee: feeSnap.platform_fee ?? 0,
+        discount_amount: feeSnap.discount_amount ?? 0,
+
         totals_for_business: match?.totals_for_business ?? order?.totals_for_business ?? null,
+        totals: match?.totals ?? order?.totals ?? null,
       };
 
       setOrder((prev) => ({
@@ -1314,7 +1467,7 @@ export default function OrderDetails() {
     }));
   }, [order?.raw_items]);
 
-  // ✅ compute totals for UI + payload
+  // ✅ compute totals for UI + payload (uses robust line total parsing)
   const originalItemsTotal = useMemo(() => sumItemsTotal(items), [items]);
 
   const computedItemsTotal = useMemo(() => {
@@ -1325,12 +1478,12 @@ export default function OrderDetails() {
     items.forEach((it) => {
       const key = it._key;
       const qty = getItemQty(it);
-      const oldUnitPrice = getItemUnitPrice(it);
+      const oldLineTotal = getItemLineTotal(it);
 
       if (ifUnavailableMode === "REMOVE") {
         const isRemoved = !!itemUnavailableMap[key];
         if (isRemoved) return;
-        total += qty * oldUnitPrice;
+        total += oldLineTotal;
         return;
       }
 
@@ -1340,17 +1493,35 @@ export default function OrderDetails() {
         const newUnitPrice = toMoneyNumber(repl?.price) ?? getItemUnitPrice(repl);
         total += qty * (Number(newUnitPrice) || 0);
       } else {
-        total += qty * oldUnitPrice;
+        total += oldLineTotal;
       }
     });
 
     return total;
   }, [items, ifUnavailableMode, itemUnavailableMap, itemReplacementMap, originalItemsTotal]);
 
+  // ✅ fees snapshot for UI + accept payload consistency
+  const feeSnapForUi = useMemo(() => getOrderTotalsSnapshot(order, null), [order]);
+
+  const displayGrandTotal = useMemo(() => {
+    // ✅ DISPLAY TOTAL (customer-facing): exclude platform_fee (admin/internal)
+    const df = feeSnapForUi.delivery_fee ?? 0;
+    const mdf = feeSnapForUi.merchant_delivery_fee ?? 0;
+    const disc = feeSnapForUi.discount_amount ?? 0;
+
+    const raw =
+      Number(computedItemsTotal || 0) +
+      Number(df || 0) +
+      Number(mdf || 0) -
+      Number(disc || 0);
+
+    return Math.round(raw * 100) / 100;
+  }, [computedItemsTotal, feeSnapForUi]);
+
   const { effectiveTotalLabel, effectiveItemsCount } = useMemo(() => {
     const count = items.reduce((sum, it) => sum + getItemQty(it), 0);
-    return { effectiveTotalLabel: money(computedItemsTotal), effectiveItemsCount: count };
-  }, [items, computedItemsTotal]);
+    return { effectiveTotalLabel: money(displayGrandTotal), effectiveItemsCount: count };
+  }, [items, displayGrandTotal]);
 
   const handleToggleUnavailable = useCallback(
     (key) => {
@@ -1483,13 +1654,13 @@ export default function OrderDetails() {
           const unavailable_changes =
             modeUpper === "REMOVE" || modeUpper === "REPLACE"
               ? buildUnavailableChanges({
-                  mode: modeUpper,
-                  items,
-                  unavailableMap: itemUnavailableMap,
-                  replacementMap: itemReplacementMap,
-                  businessId: bizId,
-                  businessName: bizName,
-                })
+                mode: modeUpper,
+                items,
+                unavailableMap: itemUnavailableMap,
+                replacementMap: itemReplacementMap,
+                businessId: bizId,
+                businessName: bizName,
+              })
               : { removed: [], replaced: [] };
 
           const hasChanges =
@@ -1502,19 +1673,28 @@ export default function OrderDetails() {
             (modeUpper === "REMOVE" && hasChanges
               ? "Some items unavailable"
               : modeUpper === "REPLACE" && hasChanges
-              ? "Replaced unavailable item"
-              : "Order accepted by merchant");
+                ? "Replaced unavailable item"
+                : "Order accepted by merchant");
 
-          // compute final totals like your payload (keep existing fees, adjust total by items delta)
-          const baseTotal = toMoneyNumber(order?.total_amount ?? order?.total ?? 0) ?? 0;
-          const deltaItems = Number(computedItemsTotal) - Number(originalItemsTotal);
-          const final_total_amount = Math.round((baseTotal + deltaItems) * 100) / 100;
+          // ✅ FIX: preserve fees from any field shape (so they don't become 0 on accept)
+          const feeSnap = getOrderTotalsSnapshot(order, null);
 
-          const final_platform_fee = toMoneyNumber(order?.platform_fee ?? 0) ?? 0;
-          const final_discount_amount = toMoneyNumber(order?.discount_amount ?? 0) ?? 0;
-          const final_delivery_fee = toMoneyNumber(order?.delivery_fee ?? 0) ?? 0;
-          const final_merchant_delivery_fee =
-            toMoneyNumber(order?.merchant_delivery_fee ?? 0) ?? 0;
+          const final_platform_fee = feeSnap.platform_fee ?? 0;
+          const final_discount_amount = feeSnap.discount_amount ?? 0;
+          const final_delivery_fee = feeSnap.delivery_fee ?? 0;
+          const final_merchant_delivery_fee = feeSnap.merchant_delivery_fee ?? 0;
+
+          // ✅ ONLY items total changes (REMOVE / REPLACE affects computedItemsTotal)
+          // ✅ total = items + fixed fees - fixed discount
+          const final_total_amount_raw =
+            Number(computedItemsTotal || 0) +
+            Number(final_platform_fee || 0) +
+            Number(final_delivery_fee || 0) +
+            Number(final_merchant_delivery_fee || 0) -
+            Number(final_discount_amount || 0);
+
+          // round to 2 decimals
+          const final_total_amount = Math.round(final_total_amount_raw * 100) / 100;
 
           // delivery_option (kept so backend knows which option merchant selected)
           const deliveryBy =
@@ -1541,16 +1721,27 @@ export default function OrderDetails() {
             ...(deliveryBy ? { delivery_option: deliveryBy } : {}),
           };
 
-          // ✅ optimistic patch for UI
-          setOrder((prev) => ({
-            ...prev,
+          // ✅ optimistic patch for UI (also preserves fees/total)
+          const optimisticPatch = {
             status: "CONFIRMED",
             status_reason: reasonText,
             estimated_arrivial_time: Math.round(prepVal),
+            platform_fee: final_platform_fee,
+            discount_amount: final_discount_amount,
+            delivery_fee: final_delivery_fee,
+            merchant_delivery_fee: final_merchant_delivery_fee,
+            total: final_total_amount,
+            total_amount: final_total_amount,
+          };
+
+          setOrder((prev) => ({
+            ...prev,
+            ...optimisticPatch,
           }));
+
           DeviceEventEmitter.emit("order-updated", {
             id: String(order?.id || routeOrderId),
-            patch: { status: "CONFIRMED", status_reason: reasonText },
+            patch: { ...optimisticPatch, status: normalizeStatus(optimisticPatch.status) },
           });
 
           setUpdating(true);
@@ -1736,7 +1927,7 @@ export default function OrderDetails() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch {}
+      } catch { }
 
       if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
@@ -1781,7 +1972,7 @@ export default function OrderDetails() {
         let json = null;
         try {
           json = text ? JSON.parse(text) : null;
-        } catch {}
+        } catch { }
 
         if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
@@ -1913,8 +2104,8 @@ export default function OrderDetails() {
 
       const merchantDeliveryFeeRaw = toMoneyNumber(
         ordForFare?.totals?.merchant_delivery_fee ??
-          ordForFare?.merchant_delivery_fee ??
-          ordForFare?.merchantDeliveryFee
+        ordForFare?.merchant_delivery_fee ??
+        ordForFare?.merchantDeliveryFee
       );
 
       let baseFare = 0;
@@ -1936,7 +2127,7 @@ export default function OrderDetails() {
           const j = JSON.parse(saved);
           passengerId = j?.user_id ?? j?.id ?? j?.user?.id ?? passengerId;
         }
-      } catch {}
+      } catch { }
       if (!passengerId) passengerId = 0;
 
       const payload = {
@@ -1971,7 +2162,7 @@ export default function OrderDetails() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch {}
+      } catch { }
 
       if (!res.ok) throw new Error(json?.message || json?.error || text || `HTTP ${res.status}`);
 
@@ -2048,7 +2239,7 @@ export default function OrderDetails() {
               j?.user?.id ||
               null;
           }
-        } catch {}
+        } catch { }
       }
 
       if (!merchantId) return;
@@ -2245,7 +2436,7 @@ export default function OrderDetails() {
               j?.user?.id ||
               null;
             if (bizId && !businessId) setBusinessId(bizId);
-          } catch {}
+          } catch { }
         }
       }
 
@@ -2269,7 +2460,7 @@ export default function OrderDetails() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch {}
+      } catch { }
       if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
       const groups = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];

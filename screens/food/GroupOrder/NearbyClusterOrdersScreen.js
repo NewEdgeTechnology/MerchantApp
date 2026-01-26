@@ -8,6 +8,7 @@
 //    1) If order lat/lng is null -> DO NOT show anything (no "- km", no "—")
 //    2) If business coords are missing -> DO NOT calculate distance (prevents 0.00 for all)
 //    3) Validate coords (range check) before calculating
+// - ✅ NEW: DO NOT show DECLINED (and REJECTED) orders in the list/tabs
 
 import React, { useCallback, useMemo, useEffect, useState } from "react";
 import {
@@ -137,7 +138,6 @@ const isPriorityOrder = (order = {}) => {
 const toNum = (v) => {
   if (v === null || v === undefined) return null;
 
-  // handle strings like "", " ", "null", "undefined"
   if (typeof v === "string") {
     const s = v.trim();
     if (!s) return null;
@@ -149,7 +149,6 @@ const toNum = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
-
 const isValidCoords = (lat, lng) => {
   const la = Number(lat);
   const ln = Number(lng);
@@ -160,7 +159,6 @@ const isValidCoords = (lat, lng) => {
 };
 
 const extractCoords = (order = {}) => {
-  // already precomputed
   if (
     order.coords &&
     Number.isFinite(Number(order.coords.lat)) &&
@@ -355,10 +353,14 @@ const STATUS_COLORS = {
   COMPLETED: "#0ea5e9",
   COMPLETE: "#0ea5e9",
   DECLINED: "#ef4444",
+  REJECTED: "#ef4444",
   CANCELLED: "#ef4444",
   CANCELED: "#ef4444",
   UNKNOWN: "#94a3b8",
 };
+
+// ✅ HIDE these orders from list/tabs
+const HIDDEN_STATUSES = new Set(["DECLINED", "REJECTED"]);
 
 /* ---------------- batch helpers ---------------- */
 
@@ -460,7 +462,7 @@ export default function NearbyClusterOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch { }
+      } catch {}
 
       if (!res.ok) return;
 
@@ -500,7 +502,7 @@ export default function NearbyClusterOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch { }
+      } catch {}
 
       if (!res.ok) throw new Error(json?.message || json?.error || text || `HTTP ${res.status}`);
 
@@ -560,14 +562,25 @@ export default function NearbyClusterOrdersScreen() {
     return null;
   }, [businessCoords, centerCoordsFromParams]);
 
+  /* ---------------- hide declined/rejected orders ---------------- */
+
+  const visibleOrders = useMemo(() => {
+    const src = Array.isArray(clusterOrders) ? clusterOrders : [];
+    if (!src.length) return [];
+    return src.filter((o) => {
+      const s = getLatestStatusNorm(o, statusMap);
+      return !HIDDEN_STATUSES.has(s);
+    });
+  }, [clusterOrders, statusMap]);
+
   const clusterAddress = useMemo(() => {
     if (addrPreview && safeStr(addrPreview)) return safeStr(addrPreview);
-    for (const o of clusterOrders) {
+    for (const o of visibleOrders) {
       const addrText = getOrderAddressText(o);
       if (addrText) return addrText;
     }
     return null;
-  }, [addrPreview, clusterOrders]);
+  }, [addrPreview, visibleOrders]);
 
   /* ----- load statuses (keeps list live) ----- */
 
@@ -587,7 +600,7 @@ export default function NearbyClusterOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch { }
+      } catch {}
       if (!json) return;
 
       const nextMap = {};
@@ -653,9 +666,9 @@ export default function NearbyClusterOrdersScreen() {
     return () => sub?.remove?.();
   }, []);
 
-  /* ---------------- SHOW ALL orders ---------------- */
+  /* ---------------- SHOW ALL (VISIBLE) orders ---------------- */
 
-  const allOrders = useMemo(() => clusterOrders || [], [clusterOrders]);
+  const allOrders = useMemo(() => visibleOrders || [], [visibleOrders]);
 
   const statusTabs = useMemo(() => {
     const counts = {};
@@ -701,7 +714,7 @@ export default function NearbyClusterOrdersScreen() {
     setSelectedReadyMap((prev) => {
       const next = { ...prev };
       const readyNow = new Set(
-        (clusterOrders || [])
+        (allOrders || [])
           .filter((o) => getLatestStatusNorm(o, statusMap) === "READY")
           .map((o) => getOrderId(o) || safeStr(o?.id))
           .filter(Boolean)
@@ -716,7 +729,7 @@ export default function NearbyClusterOrdersScreen() {
       }
       return changed ? next : prev;
     });
-  }, [clusterOrders, statusMap]);
+  }, [allOrders, statusMap]);
 
   /* ---------------- open details ---------------- */
 
@@ -859,7 +872,7 @@ export default function NearbyClusterOrdersScreen() {
       let bodyJson = null;
       try {
         bodyJson = bodyText ? JSON.parse(bodyText) : null;
-      } catch { }
+      } catch {}
 
       if (!res.ok) {
         const msg =

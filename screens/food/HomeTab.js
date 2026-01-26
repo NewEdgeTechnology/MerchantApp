@@ -25,6 +25,7 @@ import {
   MENU_IMAGE_ENDPOINT as ENV_MENU_IMAGE_ENDPOINT,
   ITEM_IMAGE_ENDPOINT as ENV_ITEM_IMAGE_ENDPOINT,
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
+  TOTAL_SALES_ENDPOINT as ENV_TOTAL_SALES_ENDPOINT,
 } from '@env';
 
 /* ---------------- constants for Quick Actions ---------------- */
@@ -51,17 +52,24 @@ const BASE_STATUS_LABELS = [
 ];
 
 /* ---------------- Small UI bits ---------------- */
-const KpiCard = ({ icon, label, value, sub, isTablet }) => {
+const KpiCard = ({ icon, label, value, sub, isTablet, onPress }) => {
   const size = isTablet ? 40 : 36;
+  const Container = onPress ? Pressable : View;
+
   return (
-    <View style={[styles.kpiCard, { width: isTablet ? '23.5%' : '48%' }]}>
+    <Container
+      onPress={onPress}
+      android_ripple={onPress ? { color: 'rgba(0,0,0,0.06)', borderless: false } : undefined}
+      style={[styles.kpiCard, { width: isTablet ? '23.5%' : '48%' }]}
+      accessibilityRole={onPress ? 'button' : undefined}
+    >
       <View style={[styles.kpiIconWrap, { width: size, height: size, borderRadius: size / 2 }]}>
         <Ionicons name={icon} size={isTablet ? 20 : 18} color="#0f172a" />
       </View>
       <Text style={[styles.kpiLabel, { fontSize: isTablet ? 13 : 12 }]}>{label}</Text>
       <Text style={[styles.kpiValue, { fontSize: isTablet ? 22 : 20 }]}>{value}</Text>
       {!!sub && <Text style={[styles.kpiSub, { fontSize: isTablet ? 12 : 11 }]}>{sub}</Text>}
-    </View>
+    </Container>
   );
 };
 
@@ -91,9 +99,7 @@ const StatusChip = ({ label, count = 0, onPress, active = false }) => (
 // Menu/Item card
 const MenuItem = ({ item, isTablet, money, onPress = () => {} }) => {
   const price =
-    typeof item?.price === 'number'
-      ? money(item.price, item.currency || 'Nu')
-      : item?.price ?? '';
+    typeof item?.price === 'number' ? money(item.price, item.currency || 'Nu') : item?.price ?? '';
   const inStock = item?.inStock ?? true;
   const cat = item?.category || item?.categoryName || '';
 
@@ -217,16 +223,8 @@ async function getStoredOwnerId() {
     const raw = await SecureStore.getItemAsync('merchant_login');
     if (!raw) return '';
     const json = JSON.parse(raw);
-    const candidates = [
-      json?.user?.id,
-      json?.merchant?.id,
-      json?.merchant_id,
-      json?.owner_id,
-      json?.id,
-    ];
-    const found = candidates.find(
-      (v) => v !== undefined && v !== null && String(v).trim() !== ''
-    );
+    const candidates = [json?.user?.id, json?.merchant?.id, json?.merchant_id, json?.owner_id, json?.id];
+    const found = candidates.find((v) => v !== undefined && v !== null && String(v).trim() !== '');
     return found ? String(found) : '';
   } catch {
     return '';
@@ -242,16 +240,15 @@ const normalizeOwnerType = (v) => {
 
 /* ---------------- KPI helpers ---------------- */
 const toNumber = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-const isTodayLocal = (iso) => {
-  if (!iso) return false;
-  const d = new Date(iso);
+
+const isTodayLocal = (isoOrDateLike) => {
+  if (!isoOrDateLike) return false;
+  const d = new Date(isoOrDateLike);
+  if (Number.isNaN(d.getTime())) return false;
   const n = new Date();
-  return (
-    d.getFullYear() === n.getFullYear() &&
-    d.getMonth() === n.getMonth() &&
-    d.getDate() === n.getDate()
-  );
+  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
 };
+
 const normalizeBusinessId = (v) => {
   const s = String(v ?? '').trim();
   if (!s) return null;
@@ -273,9 +270,10 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
       json = looksLikeHtml ? null : text ? JSON.parse(text) : null;
     } catch {}
     if (!res.ok || looksLikeHtml) {
-      const msg = looksLikeHtml
-        ? '404 page not found'
-        : (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
+      const msg =
+        looksLikeHtml
+          ? '404 page not found'
+          : (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
       throw new Error(msg);
     }
     return json;
@@ -312,10 +310,8 @@ const buildOrdersUrlSmart = (
   return replaced;
 };
 
-const getCreated = (o) =>
-  o?.created_at || o?.createdAt || o?.ordered_at || o?.order_date || null;
-const getTotal = (o) =>
-  toNumber(o?.total_amount ?? o?.total ?? o?.grand_total ?? o?.amount ?? 0);
+const getCreated = (o) => o?.created_at || o?.createdAt || o?.ordered_at || o?.order_date || null;
+const getTotal = (o) => toNumber(o?.total_amount ?? o?.total ?? o?.grand_total ?? o?.amount ?? 0);
 const getStatus = (o) => String(o?.status ?? o?.order_status ?? '').toUpperCase();
 
 const pluckOrdersLight = (payload) => {
@@ -331,47 +327,30 @@ const pluckOrdersLight = (payload) => {
       if (out.length) return out;
     }
     if (Array.isArray(payload))
-      return payload.map((o) => ({
-        status: getStatus(o),
-        total: getTotal(o),
-        created_at: getCreated(o),
-      }));
+      return payload.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
     if (Array.isArray(payload?.orders))
-      return payload.orders.map((o) => ({
-        status: getStatus(o),
-        total: getTotal(o),
-        created_at: getCreated(o),
-      }));
+      return payload.orders.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
     if (Array.isArray(payload?.rows))
-      return payload.rows.map((o) => ({
-        status: getStatus(o),
-        total: getTotal(o),
-        created_at: getCreated(o),
-      }));
+      return payload.rows.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
     if (Array.isArray(payload?.result))
-      return payload.result.map((o) => ({
-        status: getStatus(o),
-        total: getTotal(o),
-        created_at: getCreated(o),
-      }));
+      return payload.result.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
   } catch {}
   return [];
 };
 
 const UP = (s) => String(s || '').toUpperCase();
+
 const countKpisLikeOrdersTab = (rows, kind = 'food') => {
   const ACTIVE_SET = new Set(
     String(kind).toLowerCase() === 'mart'
       ? ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY']
       : ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY']
   );
-  const CANCEL_SET = new Set(['CANCELLED', 'CANCELED', 'REJECTED', 'DECLINED']);
   const ACCEPTED_SET = new Set([...ACTIVE_SET, 'COMPLETED']);
 
   let active = 0;
   let cancelledToday = 0;
   let accepted = 0;
-  let salesToday = 0;
 
   const statusCounts = Object.create(null);
 
@@ -382,29 +361,45 @@ const countKpisLikeOrdersTab = (rows, kind = 'food') => {
     statusCounts[st] = (statusCounts[st] || 0) + 1;
 
     if (ACTIVE_SET.has(st)) active += 1;
-    if (
-      (st === 'CANCELLED' || st === 'CANCELED' || st === 'REJECTED' || st === 'DECLINED') &&
-      today
-    ) {
+    if ((st === 'CANCELLED' || st === 'CANCELED' || st === 'REJECTED' || st === 'DECLINED') && today) {
       cancelledToday += 1;
     }
     if (ACCEPTED_SET.has(st)) accepted += 1;
-    if (!CANCEL_SET.has(st) && today) salesToday += toNumber(r.total);
   }
 
   const denom = accepted + cancelledToday;
   const acceptanceRate = denom > 0 ? Math.round((accepted / denom) * 100) : 0;
 
   return {
-    kpis: {
-      salesToday,
-      salesCurrency: 'Nu',
-      activeOrders: active,
-      cancellations: cancelledToday,
-      acceptanceRate,
-    },
+    kpis: { activeOrders: active, cancellations: cancelledToday, acceptanceRate },
     statusCounts,
   };
+};
+
+/* ---------------- ✅ TOTAL SALES (Today) from merchant-earnings ---------------- */
+const buildTotalSalesUrl = (base, businessId) => {
+  if (!base || !isValidBusinessId(businessId)) return '';
+  const id = encodeURIComponent(normalizeBusinessId(businessId));
+  const b = String(base).trim().replace(/\/+$/, '');
+
+  let u = b
+    .replace(/\{\s*business_id\s*\}/gi, id)
+    .replace(/\{\s*businessId\s*\}/g, id)
+    .replace(/:business_id/gi, id)
+    .replace(/:businessId/g, id);
+
+  if (u === b) u = `${b}/${id}`;
+  return normalizeHost(u);
+};
+
+const sumTodayFromEarningsRows = (rows) => {
+  const arr = Array.isArray(rows) ? rows : [];
+  let total = 0;
+  for (const r of arr) {
+    const d = r?.date;
+    if (isTodayLocal(d)) total += toNumber(r?.total_amount ?? r?.total ?? r?.amount ?? 0);
+  }
+  return total;
 };
 
 /* ---------------- IMAGE HELPERS ---------------- */
@@ -443,10 +438,7 @@ const absJoin = (base, raw) => {
 
   path = sanitizePath(path);
   const encodedPath = encodePathSegments(path);
-  const joined = `${baseNorm}${encodedPath.startsWith('/') ? '' : '/'}${encodedPath}`.replace(
-    /([^:]\/)\/+/g,
-    '$1'
-  );
+  const joined = `${baseNorm}${encodedPath.startsWith('/') ? '' : '/'}${encodedPath}`.replace(/([^:]\/)\/+/g, '$1');
   return joined;
 };
 
@@ -458,20 +450,12 @@ const hostOnly = (u) => {
 const IMAGE_BASES = (owner) =>
   ({
     food: {
-      item:
-        normalizeHost(ENV_MENU_IMAGE_ENDPOINT) ||
-        originOf(ENV_DISPLAY_MENU_ENDPOINT || ''),
-      promo:
-        normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT) ||
-        originOf(ENV_BANNERS_ENDPOINT || ''),
+      item: normalizeHost(ENV_MENU_IMAGE_ENDPOINT) || originOf(ENV_DISPLAY_MENU_ENDPOINT || ''),
+      promo: normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT) || originOf(ENV_BANNERS_ENDPOINT || ''),
     },
     mart: {
-      item:
-        normalizeHost(ENV_ITEM_IMAGE_ENDPOINT) ||
-        originOf(ENV_DISPLAY_ITEM_ENDPOINT || ''),
-      promo:
-        normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT) ||
-        originOf(ENV_BANNERS_ENDPOINT || ''),
+      item: normalizeHost(ENV_ITEM_IMAGE_ENDPOINT) || originOf(ENV_DISPLAY_ITEM_ENDPOINT || ''),
+      promo: normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT) || originOf(ENV_BANNERS_ENDPOINT || ''),
     },
   }[owner] || { item: '', promo: '' });
 
@@ -495,9 +479,7 @@ const useBuildImg = (ownerType, listBase) => {
       if (!raw) return '';
       if (/^https?:\/\//i.test(raw)) return normalizeHost(raw);
 
-      const chosenBase =
-        (kind === 'promo' ? bases.promo || fallbackBase : bases.item || fallbackBase) || '';
-
+      const chosenBase = (kind === 'promo' ? bases.promo || fallbackBase : bases.item || fallbackBase) || '';
       const baseNorm = String(normalizeHost(chosenBase)).replace(/\/+$/, '');
       let path = raw.startsWith('/') ? raw : `/${raw}`;
 
@@ -508,14 +490,13 @@ const useBuildImg = (ownerType, listBase) => {
         const baseIsFoodOrMart = /\/(food|mart)$/i.test(baseNorm);
         const missingUploads = !/^\/(?:uploads|merchant\/uploads)\//i.test(path);
         if (baseIsFoodOrMart && missingUploads) path = `/uploads${path}`;
-        if (/\/uploads$/i.test(baseNorm) && /^\/uploads\//i.test(path))
-          path = path.replace(/^\/uploads/i, '');
+        if (/\/uploads$/i.test(baseNorm) && /^\/uploads\//i.test(path)) path = path.replace(/^\/uploads/i, '');
       }
 
       path = sanitizePath(path);
       return absJoin(baseNorm, path);
     },
-    [ownerType, bases, fallbackBase]
+    [bases, fallbackBase]
   );
 };
 
@@ -530,8 +511,7 @@ const buildBannerImg = (raw, bannerImgBase, endpointByBiz, endpointAll) => {
     '';
 
   const needsMerchant =
-    /\/merchant(\/|$)/i.test(String(endpointByBiz || '')) ||
-    /\/merchant(\/|$)/i.test(String(endpointAll || ''));
+    /\/merchant(\/|$)/i.test(String(endpointByBiz || '')) || /\/merchant(\/|$)/i.test(String(endpointAll || ''));
 
   let path = raw.startsWith('/') ? raw : `/${raw}`;
 
@@ -545,8 +525,7 @@ const buildBannerImg = (raw, bannerImgBase, endpointByBiz, endpointAll) => {
   }
 
   path = sanitizePath(path);
-  const finalUrl = absJoin(baseHost, path);
-  return finalUrl;
+  return absJoin(baseHost, path);
 };
 
 /* ---------------- per-context storage key ---------------- */
@@ -568,8 +547,7 @@ const buildBaseCandidates = (kind, serviceOrdersBase) => {
   const fromService = normalizeHost(serviceOrdersBase || '');
   const base = normalizeHost(origin);
 
-  const swapFoodMart = (u) =>
-    u ? u.replace(/\/food\//g, '/mart/').replace(/\/mart\//g, '/food/') : u;
+  const swapFoodMart = (u) => (u ? u.replace(/\/food\//g, '/mart/').replace(/\/mart\//g, '/food/') : u);
 
   const candidates = [
     fromEnv,
@@ -594,13 +572,7 @@ async function probeOrdersPayload({ baseCandidates, businessId, kind }) {
 
   for (const base of baseCandidates) {
     idParams.forEach((idKey) => {
-      tries.push(
-        buildOrdersUrlSmart(base, businessId, {
-          appendOwnerType: true,
-          ownerType: kind,
-          altParam: idKey,
-        })
-      );
+      tries.push(buildOrdersUrlSmart(base, businessId, { appendOwnerType: true, ownerType: kind, altParam: idKey }));
     });
     idParams.forEach((idKey) => {
       typeParams.forEach((tKey) => {
@@ -633,29 +605,31 @@ export default function HomeTab({
   menus = [],
   money: moneyProp,
   onPressNav = () => {},
+
   ownerType: ownerTypeProp,
   businessId: businessIdProp,
   serviceConfig,
   kpis: kpisProp,
+
+  // ✅ receive full context from GrabMerchantHomeScreen (so we can open tabs WITHOUT remount)
+  userId,
+  businessName,
+  logoUrl,
+  address,
+  businessLicense,
+  context: authContext,
+  delivery_option,
 }) {
   const navigation = useNavigation();
   const route = useRoute();
 
-  // ✅ categories JSON from route (your big JSON)
   const categoriesPayload = useMemo(
-    () =>
-      route?.params?.categoriesPayload ??
-      route?.params?.categories ??
-      route?.params?.categoryData ??
-      null,
+    () => route?.params?.categoriesPayload ?? route?.params?.categories ?? route?.params?.categoryData ?? null,
     [route?.params]
   );
 
   const ownerType = useMemo(
-    () =>
-      normalizeOwnerType(
-        ownerTypeProp ?? route?.params?.owner_type ?? route?.params?.ownerType ?? 'food'
-      ),
+    () => normalizeOwnerType(ownerTypeProp ?? route?.params?.owner_type ?? route?.params?.ownerType ?? 'food'),
     [ownerTypeProp, route?.params?.owner_type, route?.params?.ownerType]
   );
   const isMart = ownerType === 'mart';
@@ -672,9 +646,7 @@ export default function HomeTab({
       quickActionTitle: isMart ? 'Items' : 'Menu',
       addBtn: isMart ? 'Add item' : 'Add menu',
       headerAdded: isMart ? 'Added items' : 'Added menus',
-      emptyText: isMart
-        ? 'No items available for your account.'
-        : 'No menus available for your account.',
+      emptyText: isMart ? 'No items available for your account.' : 'No menus available for your account.',
       emptyListTitle: isMart ? 'No items yet' : 'No menu items yet',
       emptyListSub: 'Add your first item to start selling.',
     };
@@ -682,18 +654,47 @@ export default function HomeTab({
 
   const BUSINESS_ID_RAW = useMemo(() => {
     const p = route?.params ?? {};
-    return (
-      businessIdProp ||
-      p.businessId ||
-      p.business_id ||
-      p.merchant?.businessId ||
-      p.merchant?.id ||
-      ''
-    )
+    return (businessIdProp || p.businessId || p.business_id || p.merchant?.businessId || p.merchant?.id || '')
       .toString()
       .trim();
   }, [businessIdProp, route?.params]);
   const BUSINESS_ID = useMemo(() => String(BUSINESS_ID_RAW || ''), [BUSINESS_ID_RAW]);
+
+  const USER_ID = useMemo(() => {
+    const p = route?.params ?? {};
+    return String(userId || p.user_id || p.userId || p.merchant?.user_id || p.merchant?.id || '').trim();
+  }, [route?.params, userId]);
+
+  // ✅ build SAME context payload used by GrabMerchantHomeScreen header
+  const ctxPayload = useCallback(
+    () => ({
+      user_id: USER_ID,
+      userId: USER_ID,
+      business_id: BUSINESS_ID,
+      businessId: BUSINESS_ID,
+      owner_type: ownerType,
+      ownerType,
+      business_name: businessName || route?.params?.business_name,
+      business_logo: logoUrl || route?.params?.business_logo,
+      business_address: address || route?.params?.business_address,
+      business_license: businessLicense || route?.params?.business_license,
+      authContext: authContext || route?.params?.authContext,
+      delivery_option: delivery_option || route?.params?.delivery_option,
+      deliveryOption: delivery_option || route?.params?.deliveryOption,
+    }),
+    [
+      USER_ID,
+      BUSINESS_ID,
+      ownerType,
+      businessName,
+      logoUrl,
+      address,
+      businessLicense,
+      authContext,
+      delivery_option,
+      route?.params,
+    ]
+  );
 
   const [ownerId, setOwnerId] = useState('');
   const [allMenus, setAllMenus] = useState(() => (Array.isArray(menus) ? menus : []));
@@ -716,9 +717,7 @@ export default function HomeTab({
   const [bannersLoading, setBannersLoading] = useState(false);
   const [bannersError, setBannersError] = useState('');
 
-  const contextKey = `${String(BUSINESS_ID || '')}|${String(ownerId || '')}|${String(
-    ownerType || ''
-  )}`;
+  const contextKey = `${String(BUSINESS_ID || '')}|${String(ownerId || '')}|${String(ownerType || '')}`;
   const latestContextRef = useRef(contextKey);
   useEffect(() => {
     latestContextRef.current = contextKey;
@@ -794,8 +793,7 @@ export default function HomeTab({
   }, [route?.params?.serviceConfig, serviceConfig, isMart]);
 
   const LIST_BASE = useMemo(() => {
-    const chosen =
-      (ENV_LIST_BASE && ENV_LIST_BASE.length) || !CONFIG_LIST ? ENV_LIST_BASE : CONFIG_LIST || '';
+    const chosen = (ENV_LIST_BASE && ENV_LIST_BASE.length) || !CONFIG_LIST ? ENV_LIST_BASE : CONFIG_LIST || '';
     return normalizeHost((chosen || '').replace(/\/+$/, ''));
   }, [ENV_LIST_BASE, CONFIG_LIST]);
 
@@ -841,32 +839,15 @@ export default function HomeTab({
         ? x.price
         : Number(x?.price ?? 0);
 
-      const hasPromo =
-        Number(x?.discount_percentage) > 0 ||
-        Boolean(x?.has_promo) ||
-        Boolean(x?.promo_active);
+      const hasPromo = Number(x?.discount_percentage) > 0 || Boolean(x?.has_promo) || Boolean(x?.promo_active);
 
       const rawPromoImg = x?.promo_image || x?.promoImage || x?.banner_image || '';
       const rawItemImg = x?.image_url ?? x?.item_image_url ?? x?.item_image ?? x?.image ?? '';
 
-      const absImage =
-        hasPromo && rawPromoImg
-          ? buildImg('promo', rawPromoImg)
-          : buildImg('item', rawItemImg);
+      const absImage = hasPromo && rawPromoImg ? buildImg('promo', rawPromoImg) : buildImg('item', rawItemImg);
 
-      const bizId =
-        x?.business_id ??
-        x?.businessId ??
-        x?.merchant_business_id ??
-        x?.restaurant_id ??
-        x?.store_id;
-      const ownId =
-        x?.owner_id ??
-        x?.ownerId ??
-        x?.merchant_id ??
-        x?.merchantId ??
-        x?.created_by ??
-        x?.user_id;
+      const bizId = x?.business_id ?? x?.businessId ?? x?.merchant_business_id ?? x?.restaurant_id ?? x?.store_id;
+      const ownId = x?.owner_id ?? x?.ownerId ?? x?.merchant_id ?? x?.merchantId ?? x?.created_by ?? x?.user_id;
 
       return {
         id: String(x?.id ?? x?._id ?? x?.menu_id ?? idx),
@@ -893,9 +874,7 @@ export default function HomeTab({
     (arr) => {
       if (!ownerId && !BUSINESS_ID) return arr;
       return arr.filter((it) => {
-        const matchBusiness = BUSINESS_ID
-          ? String(it.businessId || '') === String(BUSINESS_ID)
-          : true;
+        const matchBusiness = BUSINESS_ID ? String(it.businessId || '') === String(BUSINESS_ID) : true;
         const matchOwner = ownerId ? String(it.ownerId || '') === String(ownerId) : true;
         return matchBusiness && matchOwner;
       });
@@ -923,10 +902,7 @@ export default function HomeTab({
 
       const res = await fetch(url, {
         method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       });
 
       const text = await res.text();
@@ -938,8 +914,7 @@ export default function HomeTab({
       }
 
       if (!res.ok) {
-        const msg =
-          (parsed && (parsed.message || parsed.error)) || text || `HTTP ${res.status}`;
+        const msg = (parsed && (parsed.message || parsed.error)) || text || `HTTP ${res.status}`;
         throw new Error(msg);
       }
 
@@ -957,9 +932,7 @@ export default function HomeTab({
         setErrorMsg('');
       }
     } catch (e) {
-      if (latestContextRef.current === myKey) {
-        setErrorMsg(`Error fetching ${nouns.nounPlural}: ${e.message}`);
-      }
+      if (latestContextRef.current === myKey) setErrorMsg(`Error fetching ${nouns.nounPlural}: ${e.message}`);
     } finally {
       if (latestContextRef.current === myKey) setLoading(false);
     }
@@ -978,26 +951,51 @@ export default function HomeTab({
     const id = normalizeBusinessId(BUSINESS_ID);
     if (!isValidBusinessId(id)) return;
 
-    try {
-      const baseCandidates = buildBaseCandidates(ownerType, serviceConfig?.orders);
-      const rows = await probeOrdersPayload({ baseCandidates, businessId: id, kind: ownerType });
-      const { kpis: computed, statusCounts: counts } = countKpisLikeOrdersTab(rows, ownerType);
-      setKpis(computed);
-      setStatusCounts(counts);
-    } catch (e) {
-      // ignore, keep last KPIs
+    const token = (await SecureStore.getItemAsync('auth_token')) || '';
+    const headers = { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+
+    const ordersPromise = (async () => {
+      try {
+        const baseCandidates = buildBaseCandidates(ownerType, serviceConfig?.orders);
+        const rows = await probeOrdersPayload({ baseCandidates, businessId: id, kind: ownerType });
+        const { kpis: computed, statusCounts: counts } = countKpisLikeOrdersTab(rows, ownerType);
+        return { computed, counts };
+      } catch {
+        return { computed: null, counts: null };
+      }
+    })();
+
+    const salesPromise = (async () => {
+      try {
+        const base = normalizeHost(ENV_TOTAL_SALES_ENDPOINT || '');
+        const url = buildTotalSalesUrl(base, id);
+        if (!url) return null;
+
+        const payload = await fetchJSON(url, { method: 'GET', headers });
+        const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+        const todayTotal = sumTodayFromEarningsRows(rows);
+
+        return { salesToday: todayTotal, salesCurrency: 'Nu' };
+      } catch {
+        return null;
+      }
+    })();
+
+    const [ordersRes, salesRes] = await Promise.all([ordersPromise, salesPromise]);
+
+    if (ordersRes?.counts) setStatusCounts(ordersRes.counts);
+    if (ordersRes?.computed || salesRes) {
+      setKpis((prev) => ({
+        ...prev,
+        ...(ordersRes?.computed || {}),
+        ...(salesRes || {}),
+      }));
     }
   }, [BUSINESS_ID, ownerType, serviceConfig?.orders]);
 
   const BANNERS_ENDPOINT = useMemo(() => normalizeHost(ENV_BANNERS_ENDPOINT || ''), []);
-  const BANNERS_BY_BUSINESS_ENDPOINT = useMemo(
-    () => normalizeHost(ENV_BANNERS_BY_BUSINESS_ENDPOINT || ''),
-    []
-  );
-  const BANNERS_IMG_BASE = useMemo(
-    () => normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT || ''),
-    []
-  );
+  const BANNERS_BY_BUSINESS_ENDPOINT = useMemo(() => normalizeHost(ENV_BANNERS_BY_BUSINESS_ENDPOINT || ''), []);
+  const BANNERS_IMG_BASE = useMemo(() => normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT || ''), []);
   const originFromUrl = (u) => {
     try {
       return new URL(u).origin;
@@ -1014,12 +1012,7 @@ export default function HomeTab({
       id: String(b?.id ?? b?._id ?? ''),
       title: b?.title ?? '',
       description: b?.description ?? '',
-      image: buildBannerImg(
-        rawImg,
-        imgBase,
-        BANNERS_BY_BUSINESS_ENDPOINT,
-        BANNERS_ENDPOINT
-      ),
+      image: buildBannerImg(rawImg, imgBase, BANNERS_BY_BUSINESS_ENDPOINT, BANNERS_ENDPOINT),
       is_active: Number(b?.is_active ?? 1),
       start_date: b?.start_date ? String(b.start_date).slice(0, 10) : '',
       end_date: b?.end_date ? String(b.end_date).slice(0, 10) : '',
@@ -1052,10 +1045,8 @@ export default function HomeTab({
     const imgBaseByBiz = BANNERS_IMG_BASE || imgOriginByBiz;
     const imgBaseAll = BANNERS_IMG_BASE || imgOriginAll;
 
-    const sameBiz = (b) =>
-      String(b?.business_id ?? b?.businessId ?? '') === String(BUSINESS_ID);
-    const isActiveNow = (b) =>
-      Number(b.is_active) === 1 && (!b.end_date || b.end_date > todayISO());
+    const sameBiz = (b) => String(b?.business_id ?? b?.businessId ?? '') === String(BUSINESS_ID);
+    const isActiveNow = (b) => Number(b.is_active) === 1 && (!b.end_date || b.end_date > todayISO());
 
     try {
       let list = [];
@@ -1066,11 +1057,7 @@ export default function HomeTab({
         const raw = await res.text();
         if (res.ok) {
           const json = raw ? JSON.parse(raw) : [];
-          const arr = Array.isArray(json)
-            ? json
-            : Array.isArray(json.data)
-            ? json.data
-            : [];
+          const arr = Array.isArray(json) ? json : Array.isArray(json.data) ? json.data : [];
           list = (arr || []).map((b) => normalizeBanner(b, imgBaseByBiz)).filter(sameBiz);
         }
       }
@@ -1081,11 +1068,7 @@ export default function HomeTab({
         const raw = await res.text();
         if (res.ok) {
           const json = raw ? JSON.parse(raw) : [];
-          const arr = Array.isArray(json)
-            ? json
-            : Array.isArray(json.data)
-            ? json.data
-            : [];
+          const arr = Array.isArray(json) ? json : Array.isArray(json.data) ? json.data : [];
           list = (arr || []).map((b) => normalizeBanner(b, imgBaseAll)).filter(sameBiz);
         }
       }
@@ -1093,20 +1076,14 @@ export default function HomeTab({
       if (latestContextRef.current !== myKey) return;
       setBanners(list.filter(isActiveNow));
       setBannersError('');
-    } catch (e) {
+    } catch {
       if (latestContextRef.current !== myKey) return;
       setBanners([]);
       setBannersError('');
     } finally {
       if (latestContextRef.current === myKey) setBannersLoading(false);
     }
-  }, [
-    BUSINESS_ID,
-    BANNERS_ENDPOINT,
-    BANNERS_BY_BUSINESS_ENDPOINT,
-    BANNERS_IMG_BASE,
-    ownerType,
-  ]);
+  }, [BUSINESS_ID, BANNERS_ENDPOINT, BANNERS_BY_BUSINESS_ENDPOINT, BANNERS_IMG_BASE]);
 
   const ready = useMemo(() => Boolean(BUSINESS_ID && LIST_BASE), [BUSINESS_ID, LIST_BASE]);
 
@@ -1127,28 +1104,18 @@ export default function HomeTab({
 
   useFocusEffect(
     useCallback(() => {
-      if (BUSINESS_ID) {
-        fetchKpis();
-      }
+      if (BUSINESS_ID) fetchKpis();
     }, [BUSINESS_ID, ownerType, fetchKpis])
   );
   useEffect(() => {
-    if (BUSINESS_ID) {
-      fetchKpis();
-    }
+    if (BUSINESS_ID) fetchKpis();
   }, [BUSINESS_ID, ownerType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fmtMoney = useCallback(
-    (n, ccy = 'Nu') =>
-      typeof moneyProp === 'function'
-        ? moneyProp(n, ccy)
-        : `${ccy} ${Number(n || 0).toFixed(2)}`,
+    (n, ccy = 'Nu') => (typeof moneyProp === 'function' ? moneyProp(n, ccy) : `${ccy} ${Number(n || 0).toFixed(2)}`),
     [moneyProp]
   );
-  const pct = useCallback(
-    (v) => `${Math.round(Number.isFinite(v) ? v : 0)}%`,
-    []
-  );
+  const pct = useCallback((v) => `${Math.round(Number.isFinite(v) ? v : 0)}%`, []);
 
   const eff = (obj) => (obj && typeof obj === 'object' ? obj : {});
   const mergedKpis = {
@@ -1163,9 +1130,7 @@ export default function HomeTab({
   const salesToday = Number(mergedKpis.salesToday ?? 0);
   const salesCurrency = mergedKpis.salesCurrency || 'Nu';
   const activeOrders = Number(mergedKpis.activeOrders ?? 0);
-  const acceptanceRate = Number.isFinite(mergedKpis.acceptanceRate)
-    ? mergedKpis.acceptanceRate
-    : 0;
+  const acceptanceRate = Number.isFinite(mergedKpis.acceptanceRate) ? mergedKpis.acceptanceRate : 0;
   const cancellations = Number(mergedKpis.cancellations ?? 0);
 
   const visibleMenus = useMemo(() => allMenus.slice(0, 3), [allMenus]);
@@ -1173,7 +1138,62 @@ export default function HomeTab({
 
   useEffect(() => {
     if (!loading && visibleMenus.length === 0) setErrorMsg(nouns.emptyText);
-  }, [nouns.emptyText, isMart, loading, visibleMenus.length]);
+  }, [nouns.emptyText, loading, visibleMenus.length]);
+
+  /* ---------------- ✅ NAV HELPERS (NO REMOUNT) ---------------- */
+  const openTabSafe = useCallback(
+    (key) => {
+      // prefer openTab from parent so header/logo stays mounted
+      try {
+        if (typeof onPressNav === 'function') {
+          onPressNav(key, ctxPayload());
+          return true;
+        }
+      } catch {}
+      return false;
+    },
+    [onPressNav, ctxPayload]
+  );
+
+  const goOrdersTab = useCallback(() => {
+    if (openTabSafe('Orders')) return;
+
+    const candidates = ['OrdersTab', 'Orders', 'OrderTab', 'FoodOrdersTab', 'OrdersScreen'];
+    for (const name of candidates) {
+      try {
+        navigation.navigate(name, { ...ctxPayload(), owner_type: ownerType, businessId: BUSINESS_ID });
+        return;
+      } catch {}
+    }
+  }, [openTabSafe, navigation, ctxPayload, ownerType, BUSINESS_ID]);
+
+  const goPayoutTab = useCallback(() => {
+    // ✅ FIX: switch tab instead of navigation.navigate (prevents logo reload)
+    if (openTabSafe('PayoutTab')) return;
+
+    const payload = { ...ctxPayload(), owner_type: ownerType, businessId: BUSINESS_ID };
+    const candidates = ['PayoutTab', 'Payouts', 'PayoutsTab', 'PayoutScreen'];
+    for (const name of candidates) {
+      try {
+        navigation.navigate(name, payload);
+        return;
+      } catch {}
+    }
+  }, [openTabSafe, navigation, ctxPayload, ownerType, BUSINESS_ID]);
+
+  const goSalesAnalytics = useCallback(() => {
+    // ✅ FIX: open "Sales" tab inside same screen (keeps header/logo)
+    if (openTabSafe('Sales')) return;
+
+    const payload = { ...ctxPayload(), owner_type: ownerType, businessId: BUSINESS_ID };
+    const candidates = ['SalesAnalytics', 'SalesAnalyticsScreen', 'SalesAnalyticsTab', 'SalesScreen'];
+    for (const name of candidates) {
+      try {
+        navigation.navigate(name, payload);
+        return;
+      } catch {}
+    }
+  }, [openTabSafe, navigation, ctxPayload, ownerType, BUSINESS_ID]);
 
   const onShortcutPress = useCallback(
     (key) => {
@@ -1182,32 +1202,40 @@ export default function HomeTab({
           navigation.navigate('MenuScreen', {
             businessId: BUSINESS_ID || 'YOUR_BUSINESS_ID',
             owner_type: ownerType,
-            categoriesPayload, // ✅ pass categories JSON
+            categoriesPayload,
           });
           break;
         case 'promos':
-          onPressNav('Promos');
+          // ✅ inside same screen
+          openTabSafe('Promos');
           break;
         case 'payouts':
-          onPressNav('Payouts');
+          goPayoutTab(); // ✅ now opens tab (no remount)
           break;
         case 'settings':
-          navigation.navigate('AccountSettings', { businessId: BUSINESS_ID });
+          navigation.navigate('AccountSettings', { ...ctxPayload(), businessId: BUSINESS_ID });
           break;
         case 'orders':
-          onPressNav('Orders');
+          goOrdersTab(); // ✅ now opens tab (no remount)
           break;
         case 'addItem':
-          onPressNav('AddMenuTab', {
-            businessId: BUSINESS_ID || 'YOUR_BUSINESS_ID',
-            owner_type: ownerType,
-          });
+          // ✅ open Add Menu/Add Item inside same screen
+          openTabSafe('Add Menu');
           break;
         default:
           break;
       }
     },
-    [navigation, onPressNav, BUSINESS_ID, ownerType, categoriesPayload]
+    [
+      navigation,
+      BUSINESS_ID,
+      ownerType,
+      categoriesPayload,
+      goOrdersTab,
+      goPayoutTab,
+      openTabSafe,
+      ctxPayload,
+    ]
   );
 
   const actionLabelFor = useCallback(
@@ -1230,31 +1258,21 @@ export default function HomeTab({
   );
 
   const totalStatusCount = useMemo(
-    () =>
-      Object.values(statusCounts || {}).reduce(
-        (a, b) => a + (Number(b) || 0),
-        0
-      ),
+    () => Object.values(statusCounts || {}).reduce((a, b) => a + (Number(b) || 0), 0),
     [statusCounts]
   );
 
-  /* ---------- Header as a React node (we'll render it inside ScrollView) ---------- */
   const Header = useMemo(
     () => (
       <>
-        {/* KPIs */}
-        <View
-          style={[
-            styles.kpiRow,
-            { marginHorizontal: isTablet ? 20 : 12, marginTop: isTablet ? 20 : 16 },
-          ]}
-        >
+        <View style={[styles.kpiRow, { marginHorizontal: isTablet ? 20 : 12, marginTop: isTablet ? 20 : 16 }]}>
           <KpiCard
             isTablet={isTablet}
             icon="cash-outline"
             label="Today"
             value={fmtMoney(salesToday, salesCurrency)}
             sub="Sales"
+            onPress={goSalesAnalytics}
           />
           <KpiCard
             isTablet={isTablet}
@@ -1262,6 +1280,7 @@ export default function HomeTab({
             label="Active"
             value={String(activeOrders)}
             sub="Orders"
+            onPress={goOrdersTab}
           />
           <KpiCard
             isTablet={isTablet}
@@ -1269,6 +1288,7 @@ export default function HomeTab({
             label="Accept"
             value={pct(acceptanceRate)}
             sub="Rate"
+            onPress={goOrdersTab}
           />
           <KpiCard
             isTablet={isTablet}
@@ -1276,42 +1296,26 @@ export default function HomeTab({
             label="Cancel"
             value={String(cancellations)}
             sub="Today"
+            onPress={goOrdersTab}
           />
         </View>
 
-        {/* Status chips placeholder (if you enable later) */}
         <View style={[styles.section, { marginTop: 8 }]}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{
-              alignItems: 'center',
-              paddingVertical: 6,
-              gap: 8,
-            }}
+            contentContainerStyle={{ alignItems: 'center', paddingVertical: 6, gap: 8 }}
           >
             {/* you can render StatusChip here if you want */}
           </ScrollView>
         </View>
 
-        {/* Quick actions */}
         <View style={styles.section}>
           <View style={styles.sectionHead}>
-            <Text style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}>
-              Quick actions
-            </Text>
-            <TouchableOpacity
-              style={styles.linkRow}
-              onPress={() => navigation.navigate('ManageQuickActions')}
-            >
-              <Text style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}>
-                Manage
-              </Text>
-              <Ionicons
-                name="chevron-forward"
-                size={isTablet ? 18 : 16}
-                color="#00b14f"
-              />
+            <Text style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}>Quick actions</Text>
+            <TouchableOpacity style={styles.linkRow} onPress={() => navigation.navigate('ManageQuickActions')}>
+              <Text style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}>Manage</Text>
+              <Ionicons name="chevron-forward" size={isTablet ? 18 : 16} color="#00b14f" />
             </TouchableOpacity>
           </View>
 
@@ -1332,77 +1336,41 @@ export default function HomeTab({
           </View>
         </View>
 
-        {/* Added menus/items */}
         <View style={styles.section}>
           <View style={styles.sectionHead}>
-            <Text style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}>
-              {nouns.headerAdded}
-            </Text>
+            <Text style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}>{nouns.headerAdded}</Text>
             <TouchableOpacity
               style={styles.linkRow}
               onPress={() =>
                 navigation.navigate('MenuScreen', {
                   businessId: BUSINESS_ID || 'YOUR_BUSINESS_ID',
                   owner_type: ownerType,
-                  categoriesPayload, // ✅ pass here too
+                  categoriesPayload,
                 })
               }
             >
-              <Text style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}>
-                View all
-              </Text>
-              <Ionicons
-                name="chevron-forward"
-                size={isTablet ? 18 : 16}
-                color="#00b14f"
-              />
+              <Text style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}>View all</Text>
+              <Ionicons name="chevron-forward" size={isTablet ? 18 : 16} color="#00b14f" />
             </TouchableOpacity>
           </View>
-          {showCountNote && (
-            <Text style={styles.countNote}>
-              {`Showing 3 of ${allMenus.length} ${nouns.nounPlural}`}
-            </Text>
-          )}
+
+          {showCountNote && <Text style={styles.countNote}>{`Showing 3 of ${allMenus.length} ${nouns.nounPlural}`}</Text>}
 
           {!loading && !errorMsg && visibleMenus.length === 0 && (
-            <View
-              style={[
-                styles.section,
-                styles.emptyBox,
-                { marginHorizontal: 0, marginTop: 10 },
-              ]}
-            >
-              <Ionicons
-                name={isMart ? 'cube-outline' : 'fast-food-outline'}
-                size={isTablet ? 30 : 28}
-                color="#0f172a"
-              />
-              <Text
-                style={[styles.emptyTitle, { fontSize: isTablet ? 15 : 14 }]}
-              >
-                {nouns.emptyListTitle}
-              </Text>
-              <Text
-                style={[styles.emptySub, { fontSize: isTablet ? 13 : 12 }]}
-              >
-                {nouns.emptyListSub}
-              </Text>
+            <View style={[styles.section, styles.emptyBox, { marginHorizontal: 0, marginTop: 10 }]}>
+              <Ionicons name={isMart ? 'cube-outline' : 'fast-food-outline'} size={isTablet ? 30 : 28} color="#0f172a" />
+              <Text style={[styles.emptyTitle, { fontSize: isTablet ? 15 : 14 }]}>{nouns.emptyListTitle}</Text>
+              <Text style={[styles.emptySub, { fontSize: isTablet ? 13 : 12 }]}>{nouns.emptyListSub}</Text>
             </View>
           )}
 
           {!!errorMsg && (
             <View style={[styles.emptyBox, { marginHorizontal: 0, marginTop: 10 }]}>
               <Ionicons name="warning-outline" size={20} color="#ef4444" />
-              <Text
-                style={[styles.emptyTitle, { color: '#ef4444' }]}
-                selectable
-              >
+              <Text style={[styles.emptyTitle, { color: '#ef4444' }]} selectable>
                 {errorMsg}
               </Text>
-              <TouchableOpacity
-                onPress={fetchMenus}
-                style={[styles.badge, { marginTop: 8 }]}
-              >
+              <TouchableOpacity onPress={fetchMenus} style={[styles.badge, { marginTop: 8 }]}>
                 <Text style={styles.badgeText}>Retry</Text>
               </TouchableOpacity>
             </View>
@@ -1435,89 +1403,52 @@ export default function HomeTab({
       actionIconFor,
       actionLabelFor,
       ownerType,
-      statusCounts,
-      totalStatusCount,
-      onPressNav,
       categoriesPayload,
+      goOrdersTab,
+      goSalesAnalytics,
     ]
   );
 
-  /* ---------- Row renderer for menu items & banners section ---------- */
   const renderRow = useCallback(
     (item) => {
       if (item?.__type === 'bannersSection') {
         return (
           <View style={[styles.section, { marginTop: 16 }]}>
             <View style={styles.sectionHead}>
-              <Text
-                style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}
-              >
-                Promo banners
-              </Text>
-              <TouchableOpacity
-                style={styles.linkRow}
-                onPress={() => onPressNav('Promos')}
-              >
-                <Text
-                  style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}
-                >
-                  View all
-                </Text>
-                <Ionicons
-                  name="chevron-forward"
-                  size={isTablet ? 18 : 16}
-                  color="#00b14f"
-                />
+              <Text style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}>Promo banners</Text>
+              <TouchableOpacity style={styles.linkRow} onPress={() => openTabSafe('Promos')}>
+                <Text style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}>View all</Text>
+                <Ionicons name="chevron-forward" size={isTablet ? 18 : 16} color="#00b14f" />
               </TouchableOpacity>
             </View>
 
             {bannersLoading ? (
               <View style={[styles.emptyBox, { marginHorizontal: 0 }]}>
                 <ActivityIndicator />
-                <Text
-                  style={[styles.emptySub, { marginTop: 6 }]}
-                >
-                  Loading banners…
-                </Text>
+                <Text style={[styles.emptySub, { marginTop: 6 }]}>Loading banners…</Text>
               </View>
             ) : bannersError ? (
               <View style={[styles.emptyBox, { marginHorizontal: 0 }]}>
                 <Ionicons name="warning-outline" size={20} color="#ef4444" />
-                <Text
-                  style={[styles.emptyTitle, { color: '#ef4444' }]}
-                  selectable
-                >
+                <Text style={[styles.emptyTitle, { color: '#ef4444' }]} selectable>
                   {bannersError}
                 </Text>
-                <TouchableOpacity
-                  onPress={fetchBanners}
-                  style={[styles.badge, { marginTop: 8 }]}
-                >
+                <TouchableOpacity onPress={fetchBanners} style={[styles.badge, { marginTop: 8 }]}>
                   <Text style={styles.badgeText}>Retry</Text>
                 </TouchableOpacity>
               </View>
             ) : (
               <>
-                {banners.length > 3 && (
-                  <Text style={styles.countNote}>
-                    Showing 3 of {banners.length} banners
-                  </Text>
-                )}
+                {banners.length > 3 && <Text style={styles.countNote}>Showing 3 of {banners.length} banners</Text>}
                 <View style={{ gap: 12, marginTop: 8 }}>
                   {banners.slice(0, 3).map((b) => (
                     <BannerItem key={b.id} b={b} isTablet={isTablet} />
                   ))}
                   {banners.slice(0, 3).length === 0 && (
                     <View style={[styles.emptyBox, { marginHorizontal: 0 }]}>
-                      <Ionicons
-                        name="image-outline"
-                        size={24}
-                        color="#64748b"
-                      />
+                      <Ionicons name="image-outline" size={24} color="#64748b" />
                       <Text style={styles.emptyTitle}>No banners yet</Text>
-                      <Text style={styles.emptySub}>
-                        Create your first banner in Promotions.
-                      </Text>
+                      <Text style={styles.emptySub}>Create your first banner in Promotions.</Text>
                     </View>
                   )}
                 </View>
@@ -1537,7 +1468,7 @@ export default function HomeTab({
               businessId: BUSINESS_ID || 'YOUR_BUSINESS_ID',
               editItem: it,
               owner_type: ownerType,
-              categoriesPayload, // ✅ pass when editing too
+              categoriesPayload,
             })
           }
         />
@@ -1548,26 +1479,20 @@ export default function HomeTab({
       fmtMoney,
       navigation,
       BUSINESS_ID,
-      onPressNav,
       bannersLoading,
       bannersError,
       banners,
       fetchBanners,
       ownerType,
       categoriesPayload,
+      openTabSafe,
     ]
   );
 
-  const listData = useMemo(
-    () => [...visibleMenus, { __type: 'bannersSection', id: '__banners__' }],
-    [visibleMenus]
-  );
+  const listData = useMemo(() => [...visibleMenus, { __type: 'bannersSection', id: '__banners__' }], [visibleMenus]);
 
   const keyFor = useCallback(
-    (item, i) =>
-      String(
-        item?.id ?? item?._id ?? item?.slug ?? item?.name ?? item?.__type ?? i
-      ),
+    (item, i) => String(item?.id ?? item?._id ?? item?.slug ?? item?.name ?? item?.__type ?? i),
     []
   );
 
@@ -1579,23 +1504,16 @@ export default function HomeTab({
     setBannersLoading(false);
   }, [fetchMenus, fetchBanners, fetchKpis]);
 
-  /* ---------- ✅ NO FlatList here anymore, just a ScrollView ---------- */
   return (
     <ScrollView
       contentContainerStyle={{ paddingBottom: 75 }}
       nestedScrollEnabled
-      refreshControl={
-        <RefreshControl
-          refreshing={loading || bannersLoading}
-          onRefresh={onRefreshBoth}
-        />
-      }
+      refreshControl={<RefreshControl refreshing={loading || bannersLoading} onRefresh={onRefreshBoth} />}
     >
       {Header}
 
       {listData.map((item, index) => (
         <View key={keyFor(item, index)}>
-          {/* separator like FlatList's ItemSeparatorComponent */}
           {index > 0 && <View style={{ height: 12, marginHorizontal: 16 }} />}
           {renderRow(item)}
         </View>
@@ -1628,10 +1546,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
-  statusChipActive: {
-    backgroundColor: '#16a34a1A',
-    borderColor: '#16a34a',
-  },
+  statusChipActive: { backgroundColor: '#16a34a1A', borderColor: '#16a34a' },
   statusChipText: { color: '#0f172a', fontWeight: '700', fontSize: 14 },
   statusChipTextActive: { color: '#065f46' },
 
@@ -1714,23 +1629,12 @@ const styles = StyleSheet.create({
     elevation: 2,
     marginHorizontal: 16,
   },
-  menuThumb: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    backgroundColor: '#e2e8f0',
-  },
+  menuThumb: { width: 48, height: 48, borderRadius: 8, backgroundColor: '#e2e8f0' },
   menuThumbFallback: { alignItems: 'center', justifyContent: 'center' },
   menuTitle: { fontWeight: '700', color: '#111827' },
   menuMeta: { color: '#6b7280', marginTop: 2 },
   menuPrice: { color: '#0f172a', fontWeight: '700', marginTop: 4 },
-  stockPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    marginLeft: 8,
-  },
-
+  stockPill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, marginLeft: 8 },
   stockText: { fontWeight: '700' },
 
   bannerCard: {
@@ -1747,12 +1651,7 @@ const styles = StyleSheet.create({
     elevation: 2,
     marginHorizontal: 16,
   },
-  bannerThumb: {
-    width: 64,
-    height: 48,
-    borderRadius: 8,
-    backgroundColor: '#e2e8f0',
-  },
+  bannerThumb: { width: 64, height: 48, borderRadius: 8, backgroundColor: '#e2e8f0' },
   bannerTitle: { fontWeight: '800', color: '#111827' },
   bannerDesc: { color: '#6b7280', marginTop: 2 },
   bannerDates: { color: '#94a3b8', marginTop: 2 },
@@ -1769,10 +1668,5 @@ const styles = StyleSheet.create({
   emptySub: { color: '#6b7280' },
 
   badgeTextAlt: { color: '#fff', fontWeight: '700' },
-  badgeAlt: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: '#00b14f',
-  },
+  badgeAlt: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#00b14f' },
 });
