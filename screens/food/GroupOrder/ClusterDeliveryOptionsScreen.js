@@ -15,6 +15,14 @@
 // - If driver updates status to "ON ROAD", treat it as "OUT_FOR_DELIVERY"
 // - Immediately reflect UI: status pills + list title + bulkPhase -> OUT_FOR_DELIVERY
 // - This is UI marking (does NOT call update API automatically)
+//
+// ✅ FIX (your current issue):
+// - passenger_id was missing because grouped API stores customer user_id under block.user (saved into orderLookup[id].__user)
+// - buildBatchPayload now derives passenger_id from orderLookup.__user first, then falls back to order fields
+//
+// ✅ UPDATE (your request now):
+// - Hide "Mark all as Out for delivery" and "Mark all as delivered" buttons when selected delivery option is GRAB
+//   (SELF-only bulk buttons)
 
 import React, { useMemo, useEffect, useState, useCallback, useRef } from 'react';
 import {
@@ -1131,8 +1139,30 @@ export default function ClusterDeliveryOptionsScreen() {
   const buildBatchPayload = useCallback(async () => {
     if (!ordersOnScreen?.length) throw new Error('No orders in this batch');
 
-    const first = ordersOnScreen[0]?.raw || ordersOnScreen[0] || {};
-    const passengerId = first.user_id ?? first.customer_id ?? first.userId ?? first.customerId ?? null;
+    const firstOrder = ordersOnScreen[0] || {};
+    const first = firstOrder?.raw || firstOrder || {};
+
+    // ✅ FIX: passenger_id must come from grouped user (block.user) saved into orderLookup[id].__user
+    const firstRawId = getOrderId(first) || getOrderId(firstOrder) || first.order_code || first.id || '';
+    const firstNormId = normalizeOrderCode(firstRawId);
+    const firstId =
+      firstNormId && String(firstNormId).trim().length ? String(firstNormId).trim() : String(firstRawId).trim();
+
+    const firstLookup = (orderLookupRef.current || {})[firstId] || null;
+
+    const passengerId =
+      firstLookup?.__user?.user_id ??
+      firstLookup?.__user?.id ??
+      firstLookup?.__user?.userId ??
+      firstLookup?.user_id ??
+      firstLookup?.customer_id ??
+      firstLookup?.userId ??
+      firstLookup?.customerId ??
+      first?.user_id ??
+      first?.customer_id ??
+      first?.userId ??
+      first?.customerId ??
+      null;
 
     const pickupLat = businessCoords?.lat ?? 27.4728;
     const pickupLng = businessCoords?.lng ?? 89.639;
@@ -1189,9 +1219,18 @@ export default function ClusterDeliveryOptionsScreen() {
         0
       );
 
+      const dropUserId =
+        info?.__user?.user_id ??
+        info?.__user?.id ??
+        info?.user_id ??
+        base?.user_id ??
+        info?.customer_id ??
+        base?.customer_id ??
+        null;
+
       return {
         order_id: id,
-        user_id: info.user_id ?? base.user_id ?? info.customer_id ?? base.customer_id ?? null,
+        user_id: dropUserId,
         address: pickAddressText(info) || pickAddressText(base),
         lat,
         lng,
@@ -1202,6 +1241,9 @@ export default function ClusterDeliveryOptionsScreen() {
           base.customer_name ??
           base.user_name ??
           base.full_name ??
+          info?.__user?.name ??
+          info?.__user?.user_name ??
+          info?.__user?.full_name ??
           '',
         customer_phone:
           info.customer_phone ??
@@ -1210,6 +1252,8 @@ export default function ClusterDeliveryOptionsScreen() {
           base.customer_phone ??
           base.phone ??
           base.mobile ??
+          info?.__user?.phone ??
+          info?.__user?.mobile ??
           null,
         amount: Number(amount.toFixed(2)),
         delivery_fee: Number(deliveryFee.toFixed(2)),
@@ -1768,7 +1812,8 @@ export default function ClusterDeliveryOptionsScreen() {
 
         {!!driverLiveCoords && (
           <Text style={styles.summarySub}>
-            Driver live: {driverLiveCoords.lat.toFixed(5)}, {driverLiveCoords.lng.toFixed(5)} {lastDriverPing ? '· updated' : ''}
+            Driver live: {driverLiveCoords.lat.toFixed(5)}, {driverLiveCoords.lng.toFixed(5)}{' '}
+            {lastDriverPing ? '· updated' : ''}
           </Text>
         )}
       </View>
@@ -1811,7 +1856,7 @@ export default function ClusterDeliveryOptionsScreen() {
           </TouchableOpacity>
         )}
       </View>
-
+{/* 
       {showTrackBtn && (
         <View style={styles.actionsRow}>
           <TouchableOpacity style={styles.trackBtn} activeOpacity={0.85} onPress={onTrackLiveMap}>
@@ -1819,11 +1864,10 @@ export default function ClusterDeliveryOptionsScreen() {
             <Text style={styles.trackBtnText}>Track live map</Text>
           </TouchableOpacity>
         </View>
-      )}
+      )} */}
 
-      {readyCount > 0 &&
-      bulkPhase === 'READY' &&
-      (selectedMethod === 'SELF' || (selectedMethod === 'GRAB' && driverAccepted)) && (
+      {/* ✅ SELF ONLY: bulk buttons hidden when selectedMethod === 'GRAB' */}
+      {readyCount > 0 && bulkPhase === 'READY' && selectedMethod === 'SELF' && (
         <View style={styles.actionsRow}>
           <TouchableOpacity
             style={[styles.actionBtnPrimary, bulkUpdating && { opacity: 0.5 }]}

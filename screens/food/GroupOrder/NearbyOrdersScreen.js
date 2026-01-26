@@ -1,8 +1,12 @@
 // screens/food/NearbyOrdersScreen.js
-// ✅ FIX: FOOD version (no Mart tab fallback)
-// ✅ FIX: uses UNIQUE FOOD cluster route name: "FoodNearbyClusterOrdersScreen"
-// ✅ FIX: adds auth token header when fetching orders (common reason for "not showing")
-// ✅ FIX: normalizes backend statuses like "ON ROAD" so clustering/filtering works
+// ✅ FOOD version (no Mart tab fallback)
+// ✅ Uses UNIQUE FOOD cluster route name: "FoodNearbyClusterOrdersScreen"
+// ✅ Fetches orders directly from ORDER_ENDPOINT (no reliance on paramOrders shape)
+// ✅ FIX: extracts coords from YOUR payload: order.deliver_to.lat/lng (and also legacy fields)
+// ✅ FIX: extracts address from order.deliver_to.address (and also legacy fields)
+// ✅ FIX: "tight" clustering (complete-linkage) + grid pre-bucketing (prevents far merge)
+// ✅ FIX: unique cluster label per card (no duplicate place names on same screen)
+// ✅ Default thresholdKm = 2
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,41 +29,58 @@ import { ORDER_ENDPOINT as ENV_ORDER_ENDPOINT, BUSINESS_DETAILS } from "@env";
 const normalizeStatusForCluster = (v) => {
   const s = String(v || "").trim().toUpperCase();
   if (!s) return "PENDING";
-
   if (s === "ON ROAD" || s === "ON_ROAD" || s === "ONROAD") return "OUT_FOR_DELIVERY";
   if (s === "OUT FOR DELIVERY") return "OUT_FOR_DELIVERY";
   if (s === "DELIVERED") return "COMPLETED";
-
   return s;
 };
 
-/* ---------------- status helper ---------------- */
 /** ✅ Cluster should show ALL statuses EXCEPT pending + delivered/completed */
 const shouldIncludeInCluster = (statusRaw) => {
   const s = normalizeStatusForCluster(statusRaw);
   if (!s) return false;
-
   if (s === "PENDING") return false;
   if (s === "DELIVERED") return false;
   if (s === "COMPLETED") return false;
   if (s === "COMPLETE") return false;
-
   return true;
 };
 
 /* ---------------- coords helpers ---------------- */
 const extractCoords = (order = {}) => {
+  const base = order?.raw && typeof order.raw === "object" ? order.raw : order;
+
+  // ✅ your payload: deliver_to: { address, lat, lng }
+  const deliverTo =
+    base?.deliver_to && typeof base.deliver_to === "object" ? base.deliver_to : null;
+
+  const deliverTo2 =
+    base?.deliverTo && typeof base.deliverTo === "object" ? base.deliverTo : null;
+
   const addrObj =
-    order?.delivery_address && typeof order.delivery_address === "object"
-      ? order.delivery_address
+    base?.delivery_address && typeof base.delivery_address === "object"
+      ? base.delivery_address
       : null;
 
   const cand = [
-    addrObj && { lat: addrObj.lat ?? addrObj.latitude, lng: addrObj.lng ?? addrObj.longitude ?? addrObj.lon },
-    { lat: order.delivery_lat, lng: order.delivery_lng },
-    { lat: order.delivery_latitude, lng: order.delivery_longitude },
-    { lat: order.deliveryLatitude, lng: order.deliveryLongitude },
-    { lat: order.lat, lng: order.lng },
+    deliverTo && {
+      lat: deliverTo.lat ?? deliverTo.latitude,
+      lng: deliverTo.lng ?? deliverTo.longitude ?? deliverTo.lon,
+    },
+    deliverTo2 && {
+      lat: deliverTo2.lat ?? deliverTo2.latitude,
+      lng: deliverTo2.lng ?? deliverTo2.longitude ?? deliverTo2.lon,
+    },
+
+    // legacy patterns
+    addrObj && {
+      lat: addrObj.lat ?? addrObj.latitude,
+      lng: addrObj.lng ?? addrObj.longitude ?? addrObj.lon,
+    },
+    { lat: base.delivery_lat, lng: base.delivery_lng },
+    { lat: base.delivery_latitude, lng: base.delivery_longitude },
+    { lat: base.deliveryLatitude, lng: base.deliveryLongitude },
+    { lat: base.lat, lng: base.lng },
   ];
 
   for (const x of cand) {
@@ -85,11 +106,10 @@ const distanceKm = (a, b) => {
   return 2 * R * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 };
 
-/* ---------------- helpers: normalize address & place ---------------- */
+/* ---------------- address / naming helpers ---------------- */
 const normalizeAddressField = (v) => {
   if (!v) return null;
   if (typeof v === "string") return v.trim() || null;
-
   if (typeof v === "object") {
     if (typeof v.address === "string" && v.address.trim()) return v.address.trim();
     if (typeof v.label === "string" && v.label.trim()) return v.label.trim();
@@ -98,216 +118,60 @@ const normalizeAddressField = (v) => {
   return null;
 };
 
-const toPlaceKey = (place) => {
-  if (!place) return "unknown";
-  return place.trim().toLowerCase();
-};
-
 const isNumericish = (s) => /^[0-9\s-]+$/.test(s);
 const isPlusCodeish = (s) => /^[A-Z0-9+ ]+$/.test(s || "") && String(s).includes("+");
 
-const deriveLocationKeyFromAddress = (address) => {
-  if (!address || typeof address !== "string") return null;
-
-  const line = address.split("\n")[0];
+/** Pick 2nd place name if available else 1st; from "a, b, c" -> prefer b */
+const pick2ndOr1stPlace = (addressLike) => {
+  const raw = normalizeAddressField(addressLike) || "";
+  const line = raw.split("\n")[0] || "";
   const parts = line
     .split(",")
     .map((p) => p.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((p) => !isNumericish(p) && !isPlusCodeish(p));
 
-  if (!parts.length) return null;
-
-  for (let i = parts.length - 1; i >= 0; i--) {
-    const p = parts[i];
-    const low = p.toLowerCase();
-
-    if (!p) continue;
-    if (low === "bhutan") continue;
-    if (isNumericish(p)) continue;
-    if (isPlusCodeish(p)) continue;
-
-    return low;
-  }
-
-  return null;
-};
-
-const getGeneralPlaceName = (order, fallback) => {
-  const rawCandidates = [
-    order?.general_place,
-    order?.label,
-    order?.area_name,
-    order?.delivery_address,
-    order?.dropoff_address,
-    order?.shipping_address,
-    order?.address,
-    order?.customer_address,
-  ];
-
-  const candidates = rawCandidates
-    .map(normalizeAddressField)
-    .filter((x) => typeof x === "string" && x.length > 0);
-
-  if (!candidates.length) return fallback;
-
-  const raw = String(candidates[0]);
-  const line = raw.split("\n")[0];
-
-  const parts = line
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean);
-
-  if (!parts.length) return fallback;
-
-  let main = "";
-
-  if (parts[2] && !isNumericish(parts[2]) && !isPlusCodeish(parts[2])) {
-    main = parts[2];
-  } else if (parts[1] && !isNumericish(parts[1]) && !isPlusCodeish(parts[1])) {
-    main = parts[1];
-  } else {
-    main = parts[0];
-  }
-
-  if (!main) return fallback;
-  return main.length > 40 ? main.slice(0, 37) + "..." : main;
+  if (!parts.length) return "Nearby orders";
+  if (parts[1]) return parts[1].length > 40 ? parts[1].slice(0, 37) + "..." : parts[1];
+  return parts[0].length > 40 ? parts[0].slice(0, 37) + "..." : parts[0];
 };
 
 /* ---------------- decoration helper ---------------- */
-const decorateOrdersFromSource = (source) => {
+const decorateOrdersFromApiPayload = (apiJson) => {
+  // your endpoint returns:
+  // { success:true, data:[ { user:{...}, orders:[...] } ] }
   const list = [];
-  if (!Array.isArray(source)) return list;
+  const groups = Array.isArray(apiJson?.data) ? apiJson.data : [];
 
-  const pushDecorated = (o) => {
-    if (!o) return;
+  for (const g of groups) {
+    const orders = Array.isArray(g?.orders) ? g.orders : [];
+    for (const o of orders) {
+      const addr =
+        normalizeAddressField(o?.deliver_to?.address) ||
+        normalizeAddressField(o?.deliverTo?.address) ||
+        normalizeAddressField(o?.delivery_address) ||
+        normalizeAddressField(o?.dropoff_address) ||
+        normalizeAddressField(o?.shipping_address) ||
+        normalizeAddressField(o?.address) ||
+        "";
 
-    const addr =
-      normalizeAddressField(o.delivery_address) ||
-      normalizeAddressField(o.dropoff_address) ||
-      normalizeAddressField(o.shipping_address) ||
-      normalizeAddressField(o.address) ||
-      normalizeAddressField(o.customer_address) ||
-      "";
+      const coords = extractCoords(o);
 
-    const general_place = getGeneralPlaceName({ ...o, delivery_address: addr }, "Unknown Area");
+      const rawStatus = o.status || o.order_status || "";
+      const statusNorm = normalizeStatusForCluster(rawStatus);
 
-    const coords = extractCoords(o);
-    const placeKey = toPlaceKey(general_place);
-
-    const rawStatus = o.status || o.order_status || "";
-    const statusNorm = normalizeStatusForCluster(rawStatus);
-
-    list.push({
-      id: String(o.order_id ?? o.id ?? o.order_code ?? ""),
-      raw: o,
-      general_place,
-      placeKey,
-      coords,
-      delivery_address: addr,
-      customer_name: o.customer_name,
-      status: rawStatus,
-      statusNorm,
-    });
-  };
-
-  for (const entry of source) {
-    if (entry && Array.isArray(entry.orders)) {
-      for (const o of entry.orders) pushDecorated(o);
-    } else {
-      pushDecorated(entry);
+      list.push({
+        id: String(o.order_id ?? o.id ?? o.order_code ?? ""),
+        raw: o,
+        coords,
+        delivery_address: addr,
+        status: rawStatus,
+        statusNorm,
+      });
     }
   }
 
   return list;
-};
-
-/* ---------------- place-name helpers for cluster naming ---------------- */
-const BAN_GLOBAL = new Set(["bhutan"]);
-
-const extractPlaceCandidates = (order = {}, extraBanSet = new Set()) => {
-  const base = order.raw || order;
-  const out = [];
-  const seen = new Set();
-
-  const pushFrom = (val) => {
-    if (!val || typeof val !== "string") return;
-    const firstLine = val.split("\n")[0];
-    const parts = firstLine
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean);
-
-    for (const part of parts) {
-      const low = part.toLowerCase();
-      if (!part) continue;
-      if (part.length < 2) continue;
-      if (isNumericish(part)) continue;
-      if (isPlusCodeish(part)) continue;
-      if (BAN_GLOBAL.has(low)) continue;
-      if (extraBanSet.has(low)) continue;
-      if (seen.has(low)) continue;
-      seen.add(low);
-      out.push(part);
-    }
-  };
-
-  const dAddr = order.delivery_address ?? base.delivery_address;
-  if (typeof dAddr === "string") pushFrom(dAddr);
-  else if (dAddr && typeof dAddr === "object") {
-    if (typeof dAddr.address === "string") pushFrom(dAddr.address);
-    if (typeof dAddr.label === "string") pushFrom(dAddr.label);
-    if (typeof dAddr.formatted === "string") pushFrom(dAddr.formatted);
-  }
-
-  if (order.general_place) pushFrom(order.general_place);
-  if (base.general_place) pushFrom(base.general_place);
-  if (base.area_name) pushFrom(base.area_name);
-  if (order.address) pushFrom(order.address);
-  if (base.address) pushFrom(base.address);
-
-  return out;
-};
-
-const bumpNameCounts = (nameCounts, order, extraBanSet) => {
-  const names = extractPlaceCandidates(order, extraBanSet || new Set());
-  for (const name of names) {
-    const prev = nameCounts.get(name) || 0;
-    nameCounts.set(name, prev + 1);
-  }
-};
-
-const chooseClusterTitle = (
-  nameCounts,
-  fallbackLabel,
-  { isNoCoords = false, banSet = new Set() } = {}
-) => {
-  let entries = Array.from(nameCounts.entries());
-
-  entries = entries.filter(([name]) => {
-    const low = String(name).toLowerCase();
-    if (!name) return false;
-    if (isNumericish(name)) return false;
-    if (isPlusCodeish(name)) return false;
-    if (BAN_GLOBAL.has(low)) return false;
-    if (banSet.has(low)) return false;
-    return true;
-  });
-
-  if (!entries.length) {
-    return isNoCoords ? "Orders without location" : fallbackLabel || "Nearby orders";
-  }
-
-  const common = entries.filter(([, count]) => count >= 2);
-  const listToUse = (common.length ? common : entries).sort((a, b) => {
-    if (b[1] !== a[1]) return b[1] - a[1];
-    return a[0].localeCompare(b[0]);
-  });
-
-  const namesOnly = listToUse.slice(0, 3).map(([name]) => name);
-  if (!namesOnly.length) return isNoCoords ? "Orders without location" : fallbackLabel || "Nearby orders";
-  if (namesOnly.length === 1) return namesOnly[0];
-  return namesOnly.join(" · ");
 };
 
 /* ---------------- ENV URL helpers ---------------- */
@@ -317,7 +181,6 @@ const buildBusinessDetailsUrl = (bizId) => {
   if (!rawId || !tpl) return null;
 
   const enc = encodeURIComponent(rawId);
-
   let url = tpl
     .replace("{business_id}", enc)
     .replace("{businessId}", enc)
@@ -355,13 +218,12 @@ const buildOrdersUrl = (bizId, ownerType, overrideBase) => {
   return url;
 };
 
-/* ---------------- clustering (single-linkage connectivity) ---------------- */
+/* ---------------- clustering (GRID + tight complete-linkage) ---------------- */
 const clusterOrdersByRadius = (ordersList, radiusKm) => {
-  const coordsIdx = [];
+  const coordsOnly = [];
   const noCoords = [];
 
-  for (let i = 0; i < (ordersList || []).length; i++) {
-    const o = ordersList[i];
+  for (const o of ordersList || []) {
     const c =
       o?.coords &&
       Number.isFinite(Number(o.coords.lat)) &&
@@ -370,66 +232,121 @@ const clusterOrdersByRadius = (ordersList, radiusKm) => {
         : null;
 
     if (!c) noCoords.push(o);
-    else coordsIdx.push({ o, c });
+    else coordsOnly.push({ o, c });
   }
 
-  const visited = new Array(coordsIdx.length).fill(false);
-  const clusters = [];
+  // pre-bucket to prevent long-chain merge
+  const kmPerDegLat = 111;
+  const latStep = Math.max(radiusKm / kmPerDegLat, 0.00001);
 
-  for (let i = 0; i < coordsIdx.length; i++) {
-    if (visited[i]) continue;
+  const keyFor = (c) => {
+    const lat = c.lat;
+    const lng = c.lng;
+    const cos = Math.cos((lat * Math.PI) / 180) || 1;
+    const lngStep = Math.max(radiusKm / (kmPerDegLat * cos), 0.00001);
 
-    visited[i] = true;
-    const queue = [i];
-    const members = [];
+    const a = Math.floor(lat / latStep);
+    const b = Math.floor(lng / lngStep);
+    return `${a}:${b}`;
+  };
 
-    while (queue.length) {
-      const cur = queue.shift();
-      const { o, c } = coordsIdx[cur];
-      members.push({ o, c });
+  const buckets = new Map();
+  for (const it of coordsOnly) {
+    const k = keyFor(it.c);
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(it);
+  }
 
-      for (let j = 0; j < coordsIdx.length; j++) {
-        if (visited[j]) continue;
-        const d = distanceKm(c, coordsIdx[j].c);
-        if (d <= radiusKm) {
-          visited[j] = true;
-          queue.push(j);
-        }
-      }
-    }
+  const out = [];
+  let idx = 0;
 
+  const buildClusterObj = (members) => {
     let latSum = 0;
     let lngSum = 0;
     for (const m of members) {
       latSum += m.c.lat;
       lngSum += m.c.lng;
     }
-
     const centerCoords =
-      members.length > 0 ? { lat: latSum / members.length, lng: lngSum / members.length } : null;
+      members.length > 0
+        ? { lat: latSum / members.length, lng: lngSum / members.length }
+        : null;
 
-    clusters.push({
-      id: `cluster-${clusters.length + 1}`,
+    idx += 1;
+    return {
+      id: `cluster-${idx}`,
       orders: members.map((m) => m.o),
       centerCoords,
       isNoCoords: false,
       count: members.length,
-      nameCounts: new Map(),
-    });
+    };
+  };
+
+  for (const [, bucket] of buckets) {
+    const clusters = []; // { members: [{o,c}] }
+
+    for (const item of bucket) {
+      let placed = false;
+
+      for (const cl of clusters) {
+        // complete-linkage: must be within radius of EVERY member
+        let ok = true;
+        for (const m of cl.members) {
+          if (distanceKm(item.c, m.c) > radiusKm) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) {
+          cl.members.push(item);
+          placed = true;
+          break;
+        }
+      }
+
+      if (!placed) clusters.push({ members: [item] });
+    }
+
+    for (const cl of clusters) out.push(buildClusterObj(cl.members));
   }
 
   if (noCoords.length) {
-    clusters.push({
+    out.push({
       id: "no-coords",
       orders: noCoords,
       centerCoords: null,
       isNoCoords: true,
       count: noCoords.length,
-      nameCounts: new Map(),
     });
   }
 
-  return clusters;
+  return out;
+};
+
+/* ---------------- unique label helper ---------------- */
+const labelForCluster = (cluster) => {
+  const first = cluster?.orders?.[0]?.raw;
+  const addr =
+    first?.deliver_to?.address ||
+    first?.deliverTo?.address ||
+    cluster?.orders?.[0]?.delivery_address ||
+    "Nearby orders";
+  return pick2ndOr1stPlace(addr);
+};
+
+const applyUniqueLabels = (clusters) => {
+  const used = new Map(); // base -> count
+  return (clusters || []).map((c) => {
+    const base = c.isNoCoords ? "Orders without location" : labelForCluster(c);
+    const prev = used.get(base) || 0;
+    const next = prev + 1;
+    used.set(base, next);
+
+    return {
+      ...c,
+      label: next === 1 ? base : `${base} #${next}`,
+    };
+  });
 };
 
 /* ---------------- screen ---------------- */
@@ -438,25 +355,18 @@ function NearbyOrdersScreen() {
   const route = useRoute();
   const insets = useSafeAreaInsets();
 
-  const paramOrders = route?.params?.orders;
   const businessIdFromParams = route?.params?.businessId;
 
-  // ✅ FOOD default (not mart)
   const ownerType = route?.params?.ownerType || route?.params?.owner_type || "food";
-
   const orderEndpointFromParams = route?.params?.orderEndpoint;
   const detailsRoute = route?.params?.detailsRoute || "OrderDetails";
+  const thresholdKm = Number(route?.params?.thresholdKm ?? 2);
 
-  // ✅ default 3km
-  const thresholdKm = Number(route?.params?.thresholdKm ?? 3);
-
-  // ✅ delivery_option from BUSINESS_DETAILS (SecureStore + API)
   const [deliveryOption, setDeliveryOption] = useState(null);
-
   const [bizId, setBizId] = useState(businessIdFromParams || null);
+
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [merchantLocationKey, setMerchantLocationKey] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const abortRef = useRef(null);
@@ -488,14 +398,8 @@ function NearbyOrdersScreen() {
       const optRaw = biz.delivery_option ?? biz.deliveryOption ?? null;
       const opt = optRaw ? String(optRaw).toUpperCase().trim() : null;
       if (opt) setDeliveryOption(opt);
-
-      const addr = biz.address || biz.business_address || biz.location || "";
-      if (addr && !merchantLocationKey) {
-        const locKey = deriveLocationKeyFromAddress(addr);
-        if (locKey) setMerchantLocationKey(locKey);
-      }
     },
-    [bizId, merchantLocationKey]
+    [bizId]
   );
 
   const fetchBusinessDetailsFromApi = useCallback(async () => {
@@ -523,7 +427,6 @@ function NearbyOrdersScreen() {
 
       const biz = json?.data || json;
       applyBizDetails(biz);
-
       await SecureStore.setItemAsync("business_details", JSON.stringify(biz));
     } catch (e) {
       console.log("[NearbyOrders][FOOD] BUSINESS_DETAILS fetch error:", e?.message || e);
@@ -534,32 +437,17 @@ function NearbyOrdersScreen() {
     (async () => {
       try {
         const blob = await SecureStore.getItemAsync("business_details");
-        if (blob) {
-          const j = JSON.parse(blob);
-          applyBizDetails(j);
-        }
+        if (blob) applyBizDetails(JSON.parse(blob));
       } catch {}
       await fetchBusinessDetailsFromApi();
     })();
   }, [applyBizDetails, fetchBusinessDetailsFromApi]);
-
-  useEffect(() => {
-    if (!paramOrders) return;
-
-    let source = [];
-    if (Array.isArray(paramOrders)) source = paramOrders;
-    else if (Array.isArray(paramOrders.data)) source = paramOrders.data;
-
-    const decorated = decorateOrdersFromSource(source);
-    setOrders(decorated);
-  }, [paramOrders]);
 
   const buildUrl = useCallback(() => {
     return buildOrdersUrl(bizId, ownerType, orderEndpointFromParams);
   }, [bizId, ownerType, orderEndpointFromParams]);
 
   const fetchOrders = useCallback(async () => {
-    if (paramOrders) return;
     if (!bizId) return;
 
     try {
@@ -575,14 +463,13 @@ function NearbyOrdersScreen() {
         return;
       }
 
-      // ✅ IMPORTANT: include token; otherwise many backends return 401/empty
       const headers = { Accept: "application/json" };
       const token = await SecureStore.getItemAsync("auth_token");
       if (token) headers.Authorization = `Bearer ${token}`;
 
       const res = await fetch(url, { signal: controller.signal, headers });
-
       const text = await res.text();
+
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
@@ -590,40 +477,40 @@ function NearbyOrdersScreen() {
         json = null;
       }
 
-      const blocks = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
-      const decorated = decorateOrdersFromSource(blocks);
+      const decorated = decorateOrdersFromApiPayload(json);
       setOrders(decorated);
+
+      console.log(
+        "[NearbyOrders] fetch coords sample:",
+        decorated.map((x) => ({ id: x.id, coords: x.coords })).slice(0, 20)
+      );
     } catch (e) {
       console.warn("[NearbyOrders][FOOD] fetch error", e?.message || e);
     } finally {
       setLoading(false);
     }
-  }, [bizId, buildUrl, paramOrders]);
+  }, [bizId, buildUrl]);
 
   useEffect(() => {
-    if (!paramOrders) fetchOrders();
-  }, [fetchOrders, paramOrders]);
+    fetchOrders();
+  }, [fetchOrders]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchBusinessDetailsFromApi();
+      fetchOrders();
+    }, [fetchBusinessDetailsFromApi, fetchOrders])
+  );
 
   const onRefresh = useCallback(async () => {
-    if (paramOrders) return;
     if (!bizId) return;
-
     setRefreshing(true);
     try {
       await Promise.all([fetchBusinessDetailsFromApi(), fetchOrders()]);
     } finally {
       setRefreshing(false);
     }
-  }, [paramOrders, bizId, fetchBusinessDetailsFromApi, fetchOrders]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!paramOrders) {
-        fetchBusinessDetailsFromApi();
-        fetchOrders();
-      }
-    }, [paramOrders, fetchBusinessDetailsFromApi, fetchOrders])
-  );
+  }, [bizId, fetchBusinessDetailsFromApi, fetchOrders]);
 
   const clusterEligibleOrders = useMemo(
     () => (orders || []).filter((o) => shouldIncludeInCluster(o.statusNorm || o.status)),
@@ -631,34 +518,14 @@ function NearbyOrdersScreen() {
   );
 
   const clusters = useMemo(() => {
-    const threshold = Number.isFinite(thresholdKm) && thresholdKm > 0 ? thresholdKm : 3;
+    const threshold = Number.isFinite(thresholdKm) && thresholdKm > 0 ? thresholdKm : 2;
 
-    const banSet = new Set(BAN_GLOBAL);
-    if (merchantLocationKey) banSet.add(merchantLocationKey);
+    const rawClusters = clusterOrdersByRadius(clusterEligibleOrders || [], threshold);
+    const labeled = applyUniqueLabels(rawClusters);
 
-    const res = clusterOrdersByRadius(clusterEligibleOrders || [], threshold);
-
-    for (const c of res) {
-      for (const o of c.orders || []) bumpNameCounts(c.nameCounts, o, banSet);
-    }
-
-    const usedBaseTitles = new Map();
-    for (const c of res) {
-      const fallbackLabel = c.isNoCoords ? "Orders without location" : "Nearby orders";
-      const baseTitle = chooseClusterTitle(c.nameCounts, fallbackLabel, {
-        isNoCoords: c.isNoCoords,
-        banSet,
-      });
-
-      const prevCount = usedBaseTitles.get(baseTitle) || 0;
-      usedBaseTitles.set(baseTitle, prevCount + 1);
-
-      c.label = prevCount > 0 ? `${baseTitle} #${prevCount + 1}` : baseTitle;
-    }
-
-    res.sort((a, b) => (b.orders?.length || 0) - (a.orders?.length || 0));
-    return res;
-  }, [clusterEligibleOrders, thresholdKm, merchantLocationKey]);
+    labeled.sort((a, b) => (b.orders?.length || 0) - (a.orders?.length || 0));
+    return labeled;
+  }, [clusterEligibleOrders, thresholdKm]);
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
@@ -695,11 +562,19 @@ function NearbyOrdersScreen() {
             const { label, orders: clusterOrders, centerCoords } = item;
             const order_ids = (clusterOrders || []).map((o) => o?.id).filter(Boolean);
 
+            const showLat = centerCoords?.lat != null ? Number(centerCoords.lat).toFixed(6) : "—";
+            const showLng = centerCoords?.lng != null ? Number(centerCoords.lng).toFixed(6) : "—";
+
+            const firstAddr =
+              clusterOrders?.[0]?.raw?.deliver_to?.address ||
+              clusterOrders?.[0]?.raw?.deliverTo?.address ||
+              clusterOrders?.[0]?.delivery_address ||
+              "—";
+
             return (
               <TouchableOpacity
                 style={styles.clusterCard}
                 onPress={() => {
-                  // ✅ IMPORTANT: FOOD unique route name (prevents MART collision)
                   navigation.navigate("FoodNearbyClusterOrdersScreen", {
                     label,
 
@@ -729,6 +604,10 @@ function NearbyOrdersScreen() {
                     {label}
                   </Text>
                 </View>
+
+                <Text style={styles.clusterSub} numberOfLines={2}>
+                  {firstAddr}
+                </Text>
 
                 <View style={styles.clusterBadge}>
                   <Text style={styles.clusterBadgeText}>{clusterOrders.length} orders</Text>
@@ -790,8 +669,15 @@ const styles = StyleSheet.create({
     color: "#0f172a",
     flexShrink: 1,
   },
+
+  clusterSub: {
+    marginTop: 6,
+    fontSize: 12,
+    color: "#64748b",
+  },
+
   clusterBadge: {
-    marginTop: 8,
+    marginTop: 10,
     alignSelf: "flex-start",
     backgroundColor: "#dcfce7",
     borderRadius: 10,
@@ -806,4 +692,3 @@ const styles = StyleSheet.create({
 });
 
 export default NearbyOrdersScreen;
-export { NearbyOrdersScreen };

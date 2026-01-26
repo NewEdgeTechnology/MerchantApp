@@ -1,11 +1,11 @@
 // screens/general/MobileLoginScreen.js
-// ✅ Updated to match LoginScreen layout:
-// - Same header style (back + centered "Log In" + help) EXACT like LoginScreen
-// - Same inner paddingTop: 40
-// - Phone "Format: 77/17/16 XXXXXX (8 digits)" shown BELOW the input (not as placeholder)
-// - Placeholder becomes "Enter mobile number"
-// - Keeps your masking rule: after 8 digits, shows •••••••• but uses real digits for login
-// - Redirects to GrabMerchantHomeScreen (reset) like your LoginScreen
+// ✅ Updated (NO masking / NO dots):
+// - Phone input always shows digits as typed (no ••••••••)
+// - Still validates 77/17/16 + 8 digits
+// - Same header style + paddingTop: 40
+// - Format tip shown BELOW the input
+// - Placeholder: "Enter mobile number"
+// - Redirects to GrabMerchantHomeScreen (reset) like LoginScreen
 
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
@@ -144,16 +144,14 @@ export default function MobileLoginScreen() {
     enableAndroidLayoutAnimationOnPaper();
   }, []);
 
-  // keep real digits separate from display (mask after 8 digits)
+  // ✅ Keep only REAL digits (no masking)
   const [phoneDigits, setPhoneDigits] = useState("");
-  const [phoneDisplay, setPhoneDisplay] = useState("");
 
   const [password, setPassword] = useState("");
   const [touched, setTouched] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // like LoginScreen
   const [errorText, setErrorText] = useState("");
 
   const phoneRef = useRef(null);
@@ -172,7 +170,6 @@ export default function MobileLoginScreen() {
     setTouched(true);
     const digits = digitsOnly(text).slice(0, 8);
     setPhoneDigits(digits);
-    setPhoneDisplay(digits.length === 8 ? "••••••••" : digits);
     setErrorText("");
   };
 
@@ -323,7 +320,6 @@ export default function MobileLoginScreen() {
           <View style={styles.form}>
             <Text style={styles.title}>Log in with mobile number</Text>
 
-            {/* ✅ Like LoginScreen: label + tip */}
             <Text style={styles.label}>Mobile number</Text>
 
             <View style={styles.phoneRow}>
@@ -335,7 +331,7 @@ export default function MobileLoginScreen() {
                 <TextInput
                   ref={phoneRef}
                   style={styles.inputField}
-                  value={phoneDisplay}
+                  value={phoneDigits}              // ✅ always show digits (no dots)
                   onChangeText={handlePhoneChange}
                   placeholder="Enter mobile number"
                   placeholderTextColor="#9CA3AF"
@@ -351,9 +347,12 @@ export default function MobileLoginScreen() {
               </View>
             </View>
 
-            {hasPhoneError && touched && (
-              <Text style={styles.inlineError}>Enter 8 digits starting with 77, 17, or 16</Text>
-            )}
+            {/* ✅ Format tip BELOW the input */}
+            <Text style={styles.tip}>Format: 77/17/16 XXXXXX (8 digits)</Text>
+
+            {/* {hasPhoneError && touched && ( */}
+              {/* <Text style={styles.inlineError}>Enter 8 digits starting with 77, 17, or 16</Text> */}
+            {/* )} */}
 
             <Text style={[styles.label, { marginTop: 14 }]}>Password</Text>
             <View style={styles.passwordContainer}>
@@ -381,7 +380,6 @@ export default function MobileLoginScreen() {
 
             {!!errorText && <Text style={styles.inlineError}>{errorText}</Text>}
 
-            {/* spacer like your screenshot */}
             <View style={{ height: 40 }} />
           </View>
         </ScrollView>
@@ -425,16 +423,17 @@ const styles = StyleSheet.create({
 
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 20 },
   iconButton: { padding: 8 },
+
+  // Keeping your original marginRight to preserve your current layout
   headerTitle: { fontSize: 22, fontWeight: "600", color: "#1A1D1F", marginRight: 180 },
 
   form: { flexGrow: 1, padding: 8 },
   title: { fontSize: 18, fontWeight: "500", color: "#1A1D1F", marginBottom: 15 },
 
-  // ✅ Like LoginScreen
   label: { marginBottom: 6, fontSize: 14, color: "#333" },
   tip: { marginTop: -4, marginBottom: 10, fontSize: 12, color: "#6B7280" },
 
-  phoneRow: { flexDirection: "row", marginBottom: 12, gap: 8 },
+  phoneRow: { flexDirection: "row", marginBottom: 6, gap: 8 },
   countrySelector: {
     flexDirection: "row",
     alignItems: "center",

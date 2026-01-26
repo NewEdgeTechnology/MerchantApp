@@ -90,6 +90,9 @@ import TermsOfServiceScreen from './screens/registrationsteps/TermsOfServiceScre
 import PrivacyPolicyScreen from './screens/registrationsteps/PrivacyPolicyScreen.js';
 import PasswordSentScreen from './screens/general/PasswordSentScreen.js';
 import BatchRidesScreen from './screens/food/GroupOrder/BatchRidesScreen.js';
+import SalesAnalyticsScreen from './screens/food/SalesAnalyticsScreen.js';
+import EditBusinessDetails from './screens/profile/component/EditBusinessDetails.js';
+
 const Stack = createStackNavigator();
 
 export default function App() {
@@ -166,6 +169,8 @@ export default function App() {
             <Stack.Screen name="SecuritySettings" component={SecuritySettings} />
             <Stack.Screen name="NotificationSettings" component={NotificationSettings} />
             <Stack.Screen name="ProfileBusinessDetails" component={ProfileBusinessDetails} />
+            <Stack.Screen name="EditBusinessDetails" component={EditBusinessDetails} />
+
             <Stack.Screen name="ManageQuickActions" component={ManageQuickActionsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="OrderDetails" component={OrderDetails} />
             <Stack.Screen name="WalletScreen" component={WalletScreen} />
@@ -189,7 +194,7 @@ export default function App() {
             <Stack.Screen name="ForgotTPinScreen" component={ForgotTPinScreen} />
             <Stack.Screen name="ChangeTPinScreen" component={ChangeTPinScreen} />
             <Stack.Screen name="VerifyTPinOtpScreen" component={VerifyTPinOtpScreen} />
-
+            <Stack.Screen name="SalesAnalyticsScreen" component={SalesAnalyticsScreen} />
             {/* ---------------- FOOD GROUP ORDER ROUTES ---------------- */}
             <Stack.Screen name="NearbyOrdersScreen" component={NearbyOrdersScreen} />
 

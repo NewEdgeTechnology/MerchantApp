@@ -42,9 +42,9 @@ import OrdersTab from './OrderTab';
 import FoodAddMenuTab from './AddMenuTab';
 import MartAddItemTab from '../mart/AddItemTab';
 import NotificationsTab from './NotificationsTab';
-import PayoutsTab from './PayoutTab';
 import MerchantBottomBar from './MerchantBottomBar';
 import PromosTab from './PromoTab';
+import SalesAnalyticsScreen from "./SalesAnalyticsScreen";
 
 /* ───────────────────────── Constants / Keys ───────────────────────── */
 const KEY_MERCHANT_LOGIN = 'merchant_login';
@@ -1256,7 +1256,7 @@ export default function GrabMerchantHomeScreen() {
     { key: 'Add Menu', label: isFood ? 'Add Menu' : 'Add Item', icon: 'add' },
     // renamed for UI only; key stays "Notifications" so existing logic still works
     { key: 'Notifications', label: 'Activities', icon: 'time-outline' },
-    { key: 'Payouts', label: 'Payouts', icon: 'card-outline' },
+    { key: "Sales", label: "Sales", icon: "stats-chart-outline" },
   ];
 
   const AddTabComponent = isFood ? FoodAddMenuTab : MartAddItemTab;
@@ -1351,19 +1351,20 @@ export default function GrabMerchantHomeScreen() {
         </View>
       )}
 
-      {activeTab === 'Payouts' && (
-        <View style={[styles.tabWrap, { paddingBottom: bottomBarHeight }]}>
-          <Header />
-          <PayoutsTab
-            isTablet={isTablet}
-            businessId={businessId}
-            context={authContext}
-            ownerType={ownerType}
-            userId={userId}
-            kpis={kpis}
-          />
-        </View>
-      )}
+
+{activeTab === "Sales" && (
+  <View style={[styles.tabWrap, { paddingBottom: bottomBarHeight }]}>
+    <Header />
+    <SalesAnalyticsScreen
+      business_id={businessId}
+      businessId={businessId}
+      owner_type={ownerType}
+      user_id={userId}
+      authContext={authContext}
+      auth_token={authToken}
+    />
+  </View>
+)}
 
       {/* {activeTab === 'Home' && (
         <TouchableOpacity

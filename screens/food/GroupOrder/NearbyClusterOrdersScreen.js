@@ -1,9 +1,15 @@
 // ✅ UPDATE NearbyClusterOrdersScreen:
-// - "Track orders" now redirects to NEW screen: BatchRidesScreen
-// - BatchRidesScreen fetches batches + ride_id using GET_BATCH_RIDE_ID_ENDPOINT
+// - "Track orders" redirects to BatchRidesScreen
+// - Checkbox shows ONLY for READY orders (no checkbox for other statuses)
+// - READY orders are selectable; batch creation uses ONLY selected READY orders
+// - Beside Order ID, show PRIORITY tag when priority === 1 (instead of small READY tag)
+// - Distance is calculated using BUSINESS_DETAILS coords (merchant lat/lng)
+// - ✅ IMPORTANT FIXES:
+//    1) If order lat/lng is null -> DO NOT show anything (no "- km", no "—")
+//    2) If business coords are missing -> DO NOT calculate distance (prevents 0.00 for all)
+//    3) Validate coords (range check) before calculating
 
-// screens/food/GroupOrder/NearbyClusterOrdersScreen.js
-import React, { useCallback, useMemo, useEffect, useState } from 'react';
+import React, { useCallback, useMemo, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -13,19 +19,22 @@ import {
   DeviceEventEmitter,
   Alert,
   RefreshControl,
-} from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
+} from "react-native";
+import { useNavigation, useRoute } from "@react-navigation/native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import * as SecureStore from "expo-secure-store";
 import {
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
   GROUP_NEARBY_ORDER_ENDPOINT as ENV_GROUP_NEARBY_ORDER_ENDPOINT,
-} from '@env';
+  BUSINESS_DETAILS as ENV_BUSINESS_DETAILS,
+} from "@env";
+
+/* ---------------- helpers: strings ---------------- */
+
+const safeStr = (v) => (v == null ? "" : String(v)).trim();
 
 /* ---------------- helpers: ids ---------------- */
-
-const safeStr = (v) => (v == null ? '' : String(v)).trim();
 
 const sameOrder = (a, b) => {
   const A = safeStr(a);
@@ -37,7 +46,7 @@ const sameOrder = (a, b) => {
   const nb = Number(B);
   if (Number.isFinite(na) && Number.isFinite(nb) && na === nb) return true;
 
-  const strip = (s) => s.replace(/^ORD[-_]?/i, '').replace(/^FOOD[-_]?/i, '');
+  const strip = (s) => s.replace(/^ORD[-_]?/i, "").replace(/^FOOD[-_]?/i, "");
   return strip(A) === strip(B);
 };
 
@@ -110,13 +119,53 @@ const getAllOrderKeys = (order = {}) => {
   return [...new Set(keys)];
 };
 
-/* ---------------- helpers: coords ---------------- */
+/* ---------------- helpers: priority ---------------- */
+
+const isPriorityOrder = (order = {}) => {
+  const base = order.raw || order;
+  const p =
+    base?.priority ??
+    order?.priority ??
+    base?.is_priority ??
+    base?.isPriority ??
+    base?.priority_level ??
+    0;
+  return Number(p) === 1;
+};
+
+// ✅ FIX: do NOT treat null/undefined/""/"null" as 0
+const toNum = (v) => {
+  if (v === null || v === undefined) return null;
+
+  // handle strings like "", " ", "null", "undefined"
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return null;
+    if (s.toLowerCase() === "null") return null;
+    if (s.toLowerCase() === "undefined") return null;
+  }
+
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+
+const isValidCoords = (lat, lng) => {
+  const la = Number(lat);
+  const ln = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(ln)) return false;
+  if (Math.abs(la) > 90) return false;
+  if (Math.abs(ln) > 180) return false;
+  return true;
+};
 
 const extractCoords = (order = {}) => {
+  // already precomputed
   if (
     order.coords &&
     Number.isFinite(Number(order.coords.lat)) &&
-    Number.isFinite(Number(order.coords.lng))
+    Number.isFinite(Number(order.coords.lng)) &&
+    isValidCoords(Number(order.coords.lat), Number(order.coords.lng))
   ) {
     return { lat: Number(order.coords.lat), lng: Number(order.coords.lng) };
   }
@@ -132,8 +181,10 @@ const extractCoords = (order = {}) => {
     { lat: base.latitude, lng: base.longitude },
     { lat: base.lat, lng: base.long },
 
+    // ✅ order endpoint shape
     { lat: base.deliver_to?.lat, lng: base.deliver_to?.lng },
     { lat: base.deliver_to?.latitude, lng: base.deliver_to?.longitude },
+
     { lat: base.destination?.lat, lng: base.destination?.lng },
     { lat: base.geo?.lat, lng: base.geo?.lng },
 
@@ -144,15 +195,18 @@ const extractCoords = (order = {}) => {
   ];
 
   for (const c of candidates) {
-    const lat = Number(c.lat);
-    const lng = Number(c.lng);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+    const lat = toNum(c.lat);
+    const lng = toNum(c.lng);
+    if (lat != null && lng != null && isValidCoords(lat, lng)) return { lat, lng };
   }
 
   return null;
 };
 
 const distanceKm = (a, b) => {
+  if (!a || !b) return null;
+  if (!isValidCoords(a.lat, a.lng) || !isValidCoords(b.lat, b.lng)) return null;
+
   const R = 6371;
   const dLat = ((b.lat - a.lat) * Math.PI) / 180;
   const dLng = ((b.lng - a.lng) * Math.PI) / 180;
@@ -171,36 +225,36 @@ const distanceKm = (a, b) => {
 const getOrderAddressText = (order = {}) => {
   const rawAddr = order.delivery_address ?? order.raw?.delivery_address;
 
-  if (typeof rawAddr === 'string' && rawAddr.trim().length > 0) return rawAddr.trim();
+  if (typeof rawAddr === "string" && rawAddr.trim().length > 0) return rawAddr.trim();
 
-  if (rawAddr && typeof rawAddr === 'object') {
-    if (typeof rawAddr.address === 'string' && rawAddr.address.trim().length > 0)
+  if (rawAddr && typeof rawAddr === "object") {
+    if (typeof rawAddr.address === "string" && rawAddr.address.trim().length > 0)
       return rawAddr.address.trim();
-    if (typeof rawAddr.formatted === 'string' && rawAddr.formatted.trim().length > 0)
+    if (typeof rawAddr.formatted === "string" && rawAddr.formatted.trim().length > 0)
       return rawAddr.formatted.trim();
-    if (typeof rawAddr.label === 'string' && rawAddr.label.trim().length > 0)
+    if (typeof rawAddr.label === "string" && rawAddr.label.trim().length > 0)
       return rawAddr.label.trim();
   }
 
   const base = order.raw || order;
 
-  if (typeof base.address === 'string' && base.address.trim().length > 0) return base.address.trim();
-  if (typeof base.general_place === 'string' && base.general_place.trim().length > 0)
+  if (typeof base.address === "string" && base.address.trim().length > 0) return base.address.trim();
+  if (typeof base.general_place === "string" && base.general_place.trim().length > 0)
     return base.general_place.trim();
 
-  if (typeof base.deliver_to?.address === 'string' && base.deliver_to.address.trim().length > 0)
+  if (typeof base.deliver_to?.address === "string" && base.deliver_to.address.trim().length > 0)
     return base.deliver_to.address.trim();
 
-  return '';
+  return "";
 };
 
-/* ---------------- endpoint builder ---------------- */
+/* ---------------- endpoint builders ---------------- */
 
 const buildGroupedOrdersUrl = (businessId, ordersGroupedUrlFromParams) => {
   const fromParams = safeStr(ordersGroupedUrlFromParams);
   if (fromParams) {
-    if (businessId && fromParams.includes('{businessId}'))
-      return fromParams.replace('{businessId}', encodeURIComponent(String(businessId)));
+    if (businessId && fromParams.includes("{businessId}"))
+      return fromParams.replace("{businessId}", encodeURIComponent(String(businessId)));
     return fromParams;
   }
 
@@ -208,41 +262,55 @@ const buildGroupedOrdersUrl = (businessId, ordersGroupedUrlFromParams) => {
   const tmpl = safeStr(ENV_ORDER_ENDPOINT);
   if (!tmpl) return null;
 
-  if (tmpl.includes('{businessId}')) return tmpl.replace('{businessId}', encodeURIComponent(businessId));
-  if (tmpl.includes(':businessId')) return tmpl.replace(':businessId', encodeURIComponent(businessId));
-  if (tmpl.includes(':business_id')) return tmpl.replace(':business_id', encodeURIComponent(businessId));
+  if (tmpl.includes("{businessId}")) return tmpl.replace("{businessId}", encodeURIComponent(businessId));
+  if (tmpl.includes(":businessId")) return tmpl.replace(":businessId", encodeURIComponent(businessId));
+  if (tmpl.includes(":business_id")) return tmpl.replace(":business_id", encodeURIComponent(businessId));
 
-  return `${tmpl.replace(/\/+$/, '')}/${encodeURIComponent(businessId)}`;
+  return `${tmpl.replace(/\/+$/, "")}/${encodeURIComponent(businessId)}`;
+};
+
+const buildBusinessDetailsUrl = (businessId) => {
+  if (!businessId) return null;
+  const tmpl = safeStr(ENV_BUSINESS_DETAILS);
+  if (!tmpl) return null;
+
+  const bid = encodeURIComponent(String(businessId));
+
+  return tmpl
+    .replace("{business_id}", bid)
+    .replace("{businessId}", bid)
+    .replace(":business_id", bid)
+    .replace(":businessId", bid);
 };
 
 /* ---------------- status helpers ---------------- */
 
 const normalizeStatus = (raw) => {
-  if (!raw) return 'UNKNOWN';
+  if (!raw) return "UNKNOWN";
   const s = String(raw).toUpperCase().trim();
 
   if (
-    s === 'ON ROAD' ||
-    s === 'ON_ROAD' ||
-    s === 'ONROAD' ||
-    s === 'OUT FOR DELIVERY' ||
-    s === 'OUT_FOR_DELIVERY' ||
-    s === 'OUT_FOR_DEL' ||
-    s === 'DELIVERING'
+    s === "ON ROAD" ||
+    s === "ON_ROAD" ||
+    s === "ONROAD" ||
+    s === "OUT FOR DELIVERY" ||
+    s === "OUT_FOR_DELIVERY" ||
+    s === "OUT_FOR_DEL" ||
+    s === "DELIVERING"
   ) {
-    return 'OUT_FOR_DELIVERY';
+    return "OUT_FOR_DELIVERY";
   }
 
-  if (s === 'ACCEPT') return 'ACCEPTED';
+  if (s === "ACCEPT") return "ACCEPTED";
   return s;
 };
 
 const statusKeyToLabel = (statusKey) => {
-  const s = String(statusKey || '').toUpperCase().trim();
-  if (!s) return '';
-  if (s === 'OUT_FOR_DELIVERY') return 'Out for delivery';
+  const s = String(statusKey || "").toUpperCase().trim();
+  if (!s) return "";
+  if (s === "OUT_FOR_DELIVERY") return "Out for delivery";
   return s
-    .replaceAll('_', ' ')
+    .replaceAll("_", " ")
     .toLowerCase()
     .replace(/^\w/, (c) => c.toUpperCase());
 };
@@ -263,33 +331,33 @@ const getLatestStatusNorm = (order, statusMap) => {
 };
 
 const isTrackableStatus = (statusNorm) => {
-  const s = String(statusNorm || '').toUpperCase().trim();
+  const s = String(statusNorm || "").toUpperCase().trim();
   return (
-    s === 'ASSIGNED' ||
-    s === 'RIDER_ASSIGNED' ||
-    s === 'DRIVER_ASSIGNED' ||
-    s === 'OUT_FOR_DELIVERY' ||
-    s === 'DELIVERED' ||
-    s === 'COMPLETED' ||
-    s === 'COMPLETE'
+    s === "ASSIGNED" ||
+    s === "RIDER_ASSIGNED" ||
+    s === "DRIVER_ASSIGNED" ||
+    s === "OUT_FOR_DELIVERY" ||
+    s === "DELIVERED" ||
+    s === "COMPLETED" ||
+    s === "COMPLETE"
   );
 };
 
 const STATUS_COLORS = {
-  PENDING: '#64748b',
-  CONFIRMED: '#7c3aed',
-  READY: '#16a34a',
-  ASSIGNED: '#f59e0b',
-  RIDER_ASSIGNED: '#f59e0b',
-  DRIVER_ASSIGNED: '#f59e0b',
-  OUT_FOR_DELIVERY: '#2563eb',
-  DELIVERED: '#0ea5e9',
-  COMPLETED: '#0ea5e9',
-  COMPLETE: '#0ea5e9',
-  DECLINED: '#ef4444',
-  CANCELLED: '#ef4444',
-  CANCELED: '#ef4444',
-  UNKNOWN: '#94a3b8',
+  PENDING: "#64748b",
+  CONFIRMED: "#7c3aed",
+  READY: "#16a34a",
+  ASSIGNED: "#f59e0b",
+  RIDER_ASSIGNED: "#f59e0b",
+  DRIVER_ASSIGNED: "#f59e0b",
+  OUT_FOR_DELIVERY: "#2563eb",
+  DELIVERED: "#0ea5e9",
+  COMPLETED: "#0ea5e9",
+  COMPLETE: "#0ea5e9",
+  DECLINED: "#ef4444",
+  CANCELLED: "#ef4444",
+  CANCELED: "#ef4444",
+  UNKNOWN: "#94a3b8",
 };
 
 /* ---------------- batch helpers ---------------- */
@@ -311,6 +379,17 @@ const pickBatchOrderIds = (json) => {
   return arr.map((x) => String(x)).filter(Boolean);
 };
 
+/* ---------------- token helper ---------------- */
+
+async function getAccessToken() {
+  const keysToTry = ["auth_token", "accessToken", "ACCESS_TOKEN", "token", "authToken", "jwt"];
+  for (const k of keysToTry) {
+    const v = await SecureStore.getItemAsync(k);
+    if (v && String(v).trim()) return String(v).trim();
+  }
+  return null;
+}
+
 /* ---------------- screen ---------------- */
 
 export default function NearbyClusterOrdersScreen() {
@@ -326,16 +405,12 @@ export default function NearbyClusterOrdersScreen() {
     businessId,
     ownerType,
     delivery_option,
-    detailsRoute = 'OrderDetails',
+    detailsRoute = "OrderDetails",
     centerCoords: centerCoordsFromParams,
-    // keep existing param but not used for tracking now
-    nextTrackScreen = 'TrackBatchOrdersScreen',
-
+    nextTrackScreen = "TrackBatchOrdersScreen",
     focusOrderId,
     ordersGroupedUrl,
-
-    // ✅ new: where to go when tracking
-    batchListScreen = 'BatchRidesScreen',
+    batchListScreen = "BatchRidesScreen",
   } = route.params || {};
 
   const [clusterOrders, setClusterOrders] = useState(Array.isArray(orders) ? orders : []);
@@ -343,10 +418,71 @@ export default function NearbyClusterOrdersScreen() {
   const [creatingBatch, setCreatingBatch] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  const [selectedStatus, setSelectedStatus] = useState('ALL');
+  const [selectedStatus, setSelectedStatus] = useState("ALL");
   const [lastBatch, setLastBatch] = useState(null);
 
-  // ✅ hydrate focused order if list empty
+  // ✅ business coords from BUSINESS_DETAILS endpoint
+  const [businessCoords, setBusinessCoords] = useState(null); // {lat,lng}
+  const [businessName, setBusinessName] = useState(null);
+
+  // selected READY orders by orderId
+  const [selectedReadyMap, setSelectedReadyMap] = useState({}); // { [orderId]: true }
+
+  const toggleReadySelected = useCallback((order) => {
+    const id = getOrderId(order) || safeStr(order?.id);
+    if (!id) return;
+
+    setSelectedReadyMap((prev) => {
+      const next = { ...prev };
+      if (next[id]) delete next[id];
+      else next[id] = true;
+      return next;
+    });
+  }, []);
+
+  const clearSelectedReady = useCallback(() => {
+    setSelectedReadyMap({});
+  }, []);
+
+  /* ---------------- fetch BUSINESS_DETAILS coords ---------------- */
+
+  const loadBusinessCoords = useCallback(async () => {
+    const url = buildBusinessDetailsUrl(businessId);
+    if (!url) return;
+
+    try {
+      const token = await getAccessToken();
+      const headers = { Accept: "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const res = await fetch(url, { headers });
+      const text = await res.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch { }
+
+      if (!res.ok) return;
+
+      const data = json?.data || json;
+      const lat = toNum(data?.latitude);
+      const lng = toNum(data?.longitude);
+
+      if (lat != null && lng != null && isValidCoords(lat, lng)) setBusinessCoords({ lat, lng });
+      else setBusinessCoords(null);
+
+      if (data?.business_name) setBusinessName(String(data.business_name));
+    } catch (e) {
+      console.log("[NearbyClusterOrdersScreen] loadBusinessCoords error:", e?.message || e);
+    }
+  }, [businessId]);
+
+  useEffect(() => {
+    loadBusinessCoords();
+  }, [loadBusinessCoords]);
+
+  /* ---------------- hydrate focused order if missing ---------------- */
+
   const hydrateFocusedOrderIfMissing = useCallback(async () => {
     try {
       if (clusterOrders.length) return;
@@ -355,8 +491,8 @@ export default function NearbyClusterOrdersScreen() {
       const url = buildGroupedOrdersUrl(businessId, ordersGroupedUrl);
       if (!url) return;
 
-      const token = await SecureStore.getItemAsync('auth_token');
-      const headers = { Accept: 'application/json' };
+      const token = await getAccessToken();
+      const headers = { Accept: "application/json" };
       if (token) headers.Authorization = `Bearer ${token}`;
 
       const res = await fetch(url, { headers });
@@ -388,7 +524,7 @@ export default function NearbyClusterOrdersScreen() {
 
       if (match) setClusterOrders([match]);
     } catch (e) {
-      console.log('[NearbyClusterOrdersScreen] hydrateFocusedOrderIfMissing error:', e?.message || e);
+      console.log("[NearbyClusterOrdersScreen] hydrateFocusedOrderIfMissing error:", e?.message || e);
     }
   }, [clusterOrders.length, focusOrderId, businessId, ordersGroupedUrl]);
 
@@ -402,29 +538,27 @@ export default function NearbyClusterOrdersScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [Array.isArray(orders) ? orders.length : 0]);
 
-  const centerCoords = useMemo(() => {
+  /* ---------------- distance center (NO AVERAGE FALLBACK) ----------------
+     ✅ Only calculate distance if we truly have a "from" point.
+     - Prefer BUSINESS_DETAILS coords
+     - Optional fallback: valid centerCoordsFromParams
+     - Otherwise: null (and we show NOTHING for distance)
+  */
+
+  const distanceCenter = useMemo(() => {
+    if (businessCoords && isValidCoords(businessCoords.lat, businessCoords.lng)) return businessCoords;
+
     if (
       centerCoordsFromParams &&
       Number.isFinite(Number(centerCoordsFromParams.lat)) &&
-      Number.isFinite(Number(centerCoordsFromParams.lng))
+      Number.isFinite(Number(centerCoordsFromParams.lng)) &&
+      isValidCoords(Number(centerCoordsFromParams.lat), Number(centerCoordsFromParams.lng))
     ) {
       return { lat: Number(centerCoordsFromParams.lat), lng: Number(centerCoordsFromParams.lng) };
     }
 
-    const coordsList = [];
-    for (const o of clusterOrders) {
-      const c = extractCoords(o);
-      if (c) coordsList.push(c);
-    }
-    if (!coordsList.length) return null;
-
-    const sum = coordsList.reduce(
-      (acc, cur) => ({ lat: acc.lat + cur.lat, lng: acc.lng + cur.lng }),
-      { lat: 0, lng: 0 }
-    );
-
-    return { lat: sum.lat / coordsList.length, lng: sum.lng / coordsList.length };
-  }, [clusterOrders, centerCoordsFromParams]);
+    return null;
+  }, [businessCoords, centerCoordsFromParams]);
 
   const clusterAddress = useMemo(() => {
     if (addrPreview && safeStr(addrPreview)) return safeStr(addrPreview);
@@ -435,15 +569,15 @@ export default function NearbyClusterOrdersScreen() {
     return null;
   }, [addrPreview, clusterOrders]);
 
-  /* ----- load statuses (optional, keeps list live) ----- */
+  /* ----- load statuses (keeps list live) ----- */
 
   const loadStatuses = useCallback(async () => {
     const url = buildGroupedOrdersUrl(businessId, ordersGroupedUrl);
     if (!url) return;
 
     try {
-      const token = await SecureStore.getItemAsync('auth_token');
-      const headers = { Accept: 'application/json' };
+      const token = await getAccessToken();
+      const headers = { Accept: "application/json" };
       if (token) headers.Authorization = `Bearer ${token}`;
 
       const res = await fetch(url, { headers });
@@ -480,7 +614,7 @@ export default function NearbyClusterOrdersScreen() {
 
       setStatusMap(nextMap);
     } catch (err) {
-      console.log('NearbyClusterOrdersScreen status fetch error', err);
+      console.log("NearbyClusterOrdersScreen status fetch error", err);
     }
   }, [businessId, ordersGroupedUrl]);
 
@@ -493,14 +627,14 @@ export default function NearbyClusterOrdersScreen() {
     setRefreshing(true);
     try {
       await hydrateFocusedOrderIfMissing();
-      await loadStatuses();
+      await Promise.all([loadStatuses(), loadBusinessCoords()]);
     } finally {
       setRefreshing(false);
     }
-  }, [creatingBatch, hydrateFocusedOrderIfMissing, loadStatuses]);
+  }, [creatingBatch, hydrateFocusedOrderIfMissing, loadStatuses, loadBusinessCoords]);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('order-updated', ({ id, patch }) => {
+    const sub = DeviceEventEmitter.addListener("order-updated", ({ id, patch }) => {
       if (!id) return;
       const newStatus = patch?.status || patch?.order_status || patch?.current_status || null;
       if (!newStatus) return;
@@ -526,11 +660,11 @@ export default function NearbyClusterOrdersScreen() {
   const statusTabs = useMemo(() => {
     const counts = {};
     for (const o of allOrders) {
-      const s = getLatestStatusNorm(o, statusMap) || 'UNKNOWN';
+      const s = getLatestStatusNorm(o, statusMap) || "UNKNOWN";
       counts[s] = (counts[s] || 0) + 1;
     }
 
-    const tabs = [{ key: 'ALL', label: 'All', count: allOrders.length }];
+    const tabs = [{ key: "ALL", label: "All", count: allOrders.length }];
 
     Object.keys(counts)
       .sort((a, b) => a.localeCompare(b))
@@ -542,14 +676,47 @@ export default function NearbyClusterOrdersScreen() {
   }, [allOrders, statusMap]);
 
   const filteredOrders = useMemo(() => {
-    if (selectedStatus === 'ALL') return allOrders;
+    if (selectedStatus === "ALL") return allOrders;
     return allOrders.filter((o) => getLatestStatusNorm(o, statusMap) === selectedStatus);
   }, [allOrders, selectedStatus, statusMap]);
 
   const readyOrders = useMemo(
-    () => allOrders.filter((o) => getLatestStatusNorm(o, statusMap) === 'READY'),
+    () => allOrders.filter((o) => getLatestStatusNorm(o, statusMap) === "READY"),
     [allOrders, statusMap]
   );
+
+  const selectedReadyOrders = useMemo(() => {
+    const selKeys = new Set(Object.keys(selectedReadyMap || {}));
+    if (!selKeys.size) return [];
+    return readyOrders.filter((o) => {
+      const id = getOrderId(o) || safeStr(o?.id);
+      return id && selKeys.has(id);
+    });
+  }, [readyOrders, selectedReadyMap]);
+
+  const selectedReadyCount = selectedReadyOrders.length;
+
+  // keep selection clean if orders/status change
+  useEffect(() => {
+    setSelectedReadyMap((prev) => {
+      const next = { ...prev };
+      const readyNow = new Set(
+        (clusterOrders || [])
+          .filter((o) => getLatestStatusNorm(o, statusMap) === "READY")
+          .map((o) => getOrderId(o) || safeStr(o?.id))
+          .filter(Boolean)
+      );
+
+      let changed = false;
+      for (const k of Object.keys(next)) {
+        if (!readyNow.has(k)) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [clusterOrders, statusMap]);
 
   /* ---------------- open details ---------------- */
 
@@ -564,7 +731,7 @@ export default function NearbyClusterOrdersScreen() {
       ownerType,
       delivery_option,
       detailsRoute,
-      centerCoords: centerCoordsFromParams || centerCoords || null,
+      centerCoords: distanceCenter || null,
       nextTrackScreen,
       ordersGroupedUrl: ordersGroupedUrl || null,
     }),
@@ -579,8 +746,7 @@ export default function NearbyClusterOrdersScreen() {
       ownerType,
       delivery_option,
       detailsRoute,
-      centerCoordsFromParams,
-      centerCoords,
+      distanceCenter,
       nextTrackScreen,
       ordersGroupedUrl,
     ]
@@ -632,32 +798,36 @@ export default function NearbyClusterOrdersScreen() {
     ]
   );
 
-  /* ---------------- create batch ---------------- */
+  /* ---------------- create batch (SELECTED READY ONLY) ---------------- */
 
-  const createBatchForReadyOrders = useCallback(async () => {
+  const createBatchForSelectedReadyOrders = useCallback(async () => {
     const url = safeStr(ENV_GROUP_NEARBY_ORDER_ENDPOINT);
     if (!url) {
-      Alert.alert('Configuration error', 'GROUP_NEARBY_ORDER_ENDPOINT is not configured.');
+      Alert.alert("Configuration error", "GROUP_NEARBY_ORDER_ENDPOINT is not configured.");
       return;
     }
 
     if (!businessId) {
-      Alert.alert('Missing business', 'Business ID / merchant ID is missing.');
+      Alert.alert("Missing business", "Business ID / merchant ID is missing.");
       return;
     }
 
-    const orderCodes = readyOrders
+    if (selectedReadyOrders.length === 0) {
+      Alert.alert("No selection", "Select at least 1 READY order to create a delivery batch.");
+      return;
+    }
+
+    const orderCodes = selectedReadyOrders
       .map((o) => getOrderId(o) || o?.id)
       .map((x) => safeStr(x))
       .filter(Boolean);
 
     if (!orderCodes.length) {
-      Alert.alert('No order IDs', 'There are no READY orders to group yet.');
+      Alert.alert("No order IDs", "Selected orders are missing order IDs.");
       return;
     }
 
-    const numericIds = readyOrders.map((o) => getNumericOrderId(o)).filter((x) => x != null);
-    const token = await SecureStore.getItemAsync('auth_token');
+    const numericIds = selectedReadyOrders.map((o) => getNumericOrderId(o)).filter((x) => x != null);
 
     const payload = {
       merchant_id: Number.isFinite(Number(businessId)) ? Number(businessId) : businessId,
@@ -673,14 +843,14 @@ export default function NearbyClusterOrdersScreen() {
       setCreatingBatch(true);
 
       const headers = {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
+        Accept: "application/json",
+        "Content-Type": "application/json",
       };
-      const token = await SecureStore.getItemAsync('auth_token');
+      const token = await getAccessToken();
       if (token) headers.Authorization = `Bearer ${token}`;
 
       const res = await fetch(url, {
-        method: 'POST',
+        method: "POST",
         headers,
         body: JSON.stringify(payload),
       });
@@ -698,7 +868,7 @@ export default function NearbyClusterOrdersScreen() {
           bodyJson?.details ||
           bodyText ||
           `Server returned status ${res.status}.`;
-        Alert.alert('Failed to create batch', safeStr(msg));
+        Alert.alert("Failed to create batch", safeStr(msg));
         return;
       }
 
@@ -711,51 +881,59 @@ export default function NearbyClusterOrdersScreen() {
         order_ids: batchOrderIds.length ? batchOrderIds : orderCodes,
       });
 
-      navigation.navigate('ClusterDeliveryOptionsScreen', {
+      clearSelectedReady();
+
+      navigation.navigate("ClusterDeliveryOptionsScreen", {
         label,
         businessId,
         ownerType,
         delivery_option,
-        centerCoords: centerCoordsFromParams || centerCoords,
-        readyOrders,
+        centerCoords: distanceCenter,
+        readyOrders: selectedReadyOrders,
         batch_id: batchId,
         batch_order_ids: batchOrderIds.length ? batchOrderIds : orderCodes,
         batchResponse: json,
       });
     } catch (err) {
-      console.log('Batch create error', err);
-      Alert.alert('Network error', String(err?.message || err));
+      console.log("Batch create error", err);
+      Alert.alert("Network error", String(err?.message || err));
     } finally {
       setCreatingBatch(false);
     }
   }, [
     businessId,
-    centerCoords,
-    centerCoordsFromParams,
+    ownerType,
     delivery_option,
     label,
     navigation,
-    ownerType,
-    readyOrders,
+    distanceCenter,
+    selectedReadyOrders,
+    clearSelectedReady,
   ]);
 
   const onReadyForDeliveryPress = useCallback(() => {
-    const count = readyOrders.length;
-    if (count === 0) {
-      Alert.alert('No ready orders', 'There are no orders in READY status in this cluster yet.');
+    if (readyOrders.length === 0) {
+      Alert.alert("No ready orders", "There are no orders in READY status in this cluster yet.");
       return;
     }
 
+    if (selectedReadyOrders.length === 0) {
+      Alert.alert("Select orders", "Please select READY orders to include in the delivery batch.");
+      return;
+    }
+
+    const count = selectedReadyOrders.length;
+
     Alert.alert(
-      'Deliver all ready orders?',
-      `There ${count === 1 ? 'is' : 'are'} ${count} Order${count === 1 ? '' : 's'} ready.\nCreate delivery batch now?`,
+      "Deliver selected ready orders?",
+      `Create delivery batch for ${count} selected READY order${count === 1 ? "" : "s"}?`,
       [
-        { text: 'No', style: 'cancel' },
-        { text: 'Yes', onPress: createBatchForReadyOrders },
+        { text: "No", style: "cancel" },
+        { text: "Yes", onPress: createBatchForSelectedReadyOrders },
       ],
       { cancelable: true }
     );
-  }, [readyOrders, createBatchForReadyOrders]);
+  }, [readyOrders.length, selectedReadyOrders.length, createBatchForSelectedReadyOrders]);
 
   /* ---------------- Track (redirect to batch list) ---------------- */
 
@@ -763,35 +941,27 @@ export default function NearbyClusterOrdersScreen() {
     return allOrders.filter((o) => isTrackableStatus(getLatestStatusNorm(o, statusMap)));
   }, [allOrders, statusMap]);
 
-  const ordersToTrack = useMemo(() => {
-    // keep old logic for enabling/disabling the button
-    if (lastBatch?.order_ids?.length) return clusterTrackableOrders;
-    return clusterTrackableOrders;
-  }, [lastBatch, clusterTrackableOrders]);
+  const ordersToTrack = useMemo(() => clusterTrackableOrders, [clusterTrackableOrders]);
 
   const trackDisabled = creatingBatch || ordersToTrack.length === 0;
 
-  // ✅ Track (redirect to batch list) — pass businessId to BatchRidesScreen
   const onTrackOrdersPress = useCallback(() => {
     if (ordersToTrack.length === 0) {
-      Alert.alert('Nothing to track', 'No orders are Assigned / Out for delivery / Delivered yet.');
+      Alert.alert("Nothing to track", "No orders are Assigned / Out for delivery / Delivered yet.");
       return;
     }
 
-    const cc = centerCoordsFromParams || centerCoords || null;
-
     navigation.navigate(batchListScreen, {
-      // ✅ make sure BatchRidesScreen receives business id
       businessId,
-      bizId: businessId, // (optional) add if BatchRidesScreen expects "bizId"
-      merchant_id: businessId, // (optional) add if BatchRidesScreen expects "merchant_id"
+      bizId: businessId,
+      merchant_id: businessId,
 
       label,
       orders: ordersToTrack,
       batch_id: lastBatch?.batch_id,
       batch_order_ids: lastBatch?.order_ids,
-      selectedMethod: 'GRAB',
-      centerCoords: cc,
+      selectedMethod: "GRAB",
+      centerCoords: distanceCenter,
 
       ownerType,
       delivery_option,
@@ -805,8 +975,7 @@ export default function NearbyClusterOrdersScreen() {
     label,
     ordersToTrack,
     lastBatch,
-    centerCoordsFromParams,
-    centerCoords,
+    distanceCenter,
     ownerType,
     delivery_option,
     allOrders,
@@ -816,8 +985,8 @@ export default function NearbyClusterOrdersScreen() {
 
   const renderStatusTab = ({ item }) => {
     const active = item.key === selectedStatus;
-    const bg = active ? '#16a34a' : '#e2e8f0';
-    const txt = active ? '#fff' : '#0f172a';
+    const bg = active ? "#16a34a" : "#e2e8f0";
+    const txt = active ? "#fff" : "#0f172a";
 
     return (
       <TouchableOpacity
@@ -828,8 +997,8 @@ export default function NearbyClusterOrdersScreen() {
         <Text style={[styles.statusTabText, { color: txt }]} numberOfLines={1}>
           {item.label}
         </Text>
-        <View style={[styles.statusTabCountPill, { backgroundColor: active ? '#ffffff22' : '#fff' }]}>
-          <Text style={[styles.statusTabCountText, { color: active ? '#fff' : '#0f172a' }]}>
+        <View style={[styles.statusTabCountPill, { backgroundColor: active ? "#ffffff22" : "#fff" }]}>
+          <Text style={[styles.statusTabCountText, { color: active ? "#fff" : "#0f172a" }]}>
             {item.count}
           </Text>
         </View>
@@ -839,19 +1008,67 @@ export default function NearbyClusterOrdersScreen() {
 
   const renderRow = ({ item }) => {
     const coords = extractCoords(item);
-    const distanceLabel =
-      coords && centerCoords ? `${distanceKm(centerCoords, coords).toFixed(2)} km` : '—';
-
-    const addressText = getOrderAddressText(item);
-    const orderId = getOrderId(item);
+    const orderId = getOrderId(item) || item.id;
 
     const latestStatusNorm = getLatestStatusNorm(item, statusMap);
     const statusLabel = statusKeyToLabel(latestStatusNorm);
 
+    const ready = latestStatusNorm === "READY";
+    const selected = ready ? !!selectedReadyMap[String(orderId)] : false;
+
+    const priority = isPriorityOrder(item);
+
+    // ✅ Distance rules:
+    // - If order coords missing -> show NOTHING
+    // - If business coords missing (distanceCenter null) -> show NOTHING
+    // - Otherwise calculate km
+    let distanceLabel = "";
+    if (coords && distanceCenter) {
+      const km = distanceKm(distanceCenter, coords);
+      if (km != null && Number.isFinite(km) && km >= 0) distanceLabel = `${km.toFixed(2)} km`;
+    }
+
+    const addressText = getOrderAddressText(item);
+
     return (
-      <TouchableOpacity style={styles.orderRow} activeOpacity={0.7} onPress={() => openOrderDetails(item)}>
+      <TouchableOpacity
+        style={[styles.orderRow, selected && styles.orderRowSelected]}
+        activeOpacity={0.75}
+        onPress={() => openOrderDetails(item)}
+      >
+        {/* ✅ Checkbox ONLY for READY orders */}
+        {ready ? (
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => toggleReadySelected(item)}
+            style={styles.checkWrap}
+          >
+            <View style={[styles.checkBox, selected && styles.checkBoxChecked]}>
+              {selected ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
+            </View>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.checkSpacer} />
+        )}
+
         <View style={{ flex: 1 }}>
-          <Text style={styles.orderIdText}>#{orderId || item.id}</Text>
+          <View style={styles.orderIdRow}>
+            <Text style={styles.orderIdText} numberOfLines={1}>
+              #{orderId}
+            </Text>
+
+            {/* ✅ PRIORITY when priority=1; else READY pill only if READY */}
+            {priority ? (
+              <View style={styles.priorityPill}>
+                <Ionicons name="flash" size={12} color="#fff" />
+                <Text style={styles.priorityText}>PRIORITY</Text>
+              </View>
+            ) : ready ? (
+              <View style={styles.readyPill}>
+                <Text style={styles.readyText}>READY</Text>
+              </View>
+            ) : null}
+          </View>
 
           {!!item.customer_name && (
             <Text style={styles.orderCustomerText} numberOfLines={1}>
@@ -871,7 +1088,7 @@ export default function NearbyClusterOrdersScreen() {
             <View
               style={[
                 styles.statusChip,
-                { backgroundColor: STATUS_COLORS[latestStatusNorm] || '#64748b' },
+                { backgroundColor: STATUS_COLORS[latestStatusNorm] || "#64748b" },
               ]}
             >
               <Text style={styles.statusChipText} numberOfLines={1}>
@@ -880,7 +1097,9 @@ export default function NearbyClusterOrdersScreen() {
             </View>
           )}
 
-          <Text style={styles.orderDistanceText}>{distanceLabel}</Text>
+          {/* ✅ show NOTHING if distanceLabel is empty */}
+          {!!distanceLabel && <Text style={styles.orderDistanceText}>{distanceLabel}</Text>}
+
           <Ionicons name="chevron-forward" size={18} color="#94a3b8" style={{ marginLeft: 4 }} />
         </View>
       </TouchableOpacity>
@@ -890,25 +1109,51 @@ export default function NearbyClusterOrdersScreen() {
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
   const readyCount = readyOrders.length;
-  const fabDisabled = readyCount === 0 || creatingBatch;
-  const fabLabel = creatingBatch ? 'Creating...' : `Ready for delivery (${readyCount})`;
+  const fabDisabled = selectedReadyCount === 0 || creatingBatch;
+  const fabLabel = creatingBatch
+    ? "Creating..."
+    : `Ready for delivery (${selectedReadyCount}/${readyCount})`;
+
+  const selectionSubtitle = readyCount > 0 ? `Selected READY: ${selectedReadyCount}/${readyCount}` : null;
+  const trackSubtitle = ordersToTrack.length ? `Trackable: ${ordersToTrack.length}` : null;
+
+  const businessLine =
+    businessName || businessCoords ? `${businessName ? businessName : "Business"}` : null;
 
   return (
-    <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
       <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
 
-        <Text style={styles.headerTitle}>{label}</Text>
-        <View style={{ width: 40 }} />
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          {label}
+        </Text>
+
+        <TouchableOpacity
+          onPress={() => {
+            if (selectedReadyCount === 0) return;
+            clearSelectedReady();
+          }}
+          activeOpacity={selectedReadyCount === 0 ? 1 : 0.8}
+          style={[styles.clearBtn, selectedReadyCount === 0 && { opacity: 0.35 }]}
+        >
+          <Text style={styles.clearBtnText}>Clear</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.subHeader}>
         <Text style={styles.headerSubtitleMain}>
           Nearby orders: {filteredOrders.length}
-          {centerCoords ? ` (within ~${thresholdKm} km)` : ''}
+          {distanceCenter ? ` (within ~${thresholdKm} km)` : ""}
         </Text>
+
+        {!!businessLine && (
+          <Text style={styles.headerSubtitle} numberOfLines={1}>
+            From: {businessLine}
+          </Text>
+        )}
 
         {!!clusterAddress && (
           <Text style={styles.headerSubtitle} numberOfLines={1}>
@@ -916,9 +1161,15 @@ export default function NearbyClusterOrdersScreen() {
           </Text>
         )}
 
-        {!!ordersToTrack.length && (
+        {!!trackSubtitle && (
           <Text style={styles.headerSubtitle} numberOfLines={1}>
-            Trackable: {ordersToTrack.length}
+            {trackSubtitle}
+          </Text>
+        )}
+
+        {!!selectionSubtitle && (
+          <Text style={styles.headerSubtitle} numberOfLines={1}>
+            {selectionSubtitle}
           </Text>
         )}
       </View>
@@ -943,11 +1194,11 @@ export default function NearbyClusterOrdersScreen() {
           paddingHorizontal: 16,
           paddingTop: 10,
           paddingBottom: 90,
-          gap: 10,
         }}
+        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
         ListEmptyComponent={
           <View style={{ padding: 16 }}>
-            <Text style={{ color: '#64748b' }}>No orders found. Pull to refresh.</Text>
+            <Text style={{ color: "#64748b" }}>No orders found. Pull to refresh.</Text>
           </View>
         }
       />
@@ -984,87 +1235,149 @@ export default function NearbyClusterOrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#fff' },
+  safe: { flex: 1, backgroundColor: "#fff" },
 
   headerBar: {
     minHeight: 52,
     paddingHorizontal: 12,
     paddingBottom: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomColor: '#e5e7eb',
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomColor: "#e5e7eb",
     borderBottomWidth: 1,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
   },
   backBtn: {
     height: 40,
     width: 40,
     borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   headerTitle: {
     flex: 1,
-    textAlign: 'center',
+    textAlign: "center",
     fontSize: 17,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: "700",
+    color: "#0f172a",
+    paddingHorizontal: 8,
   },
+  clearBtn: {
+    height: 32,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  clearBtnText: { fontSize: 12, fontWeight: "800", color: "#0f172a" },
 
   subHeader: {
     paddingHorizontal: 16,
     paddingVertical: 8,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    borderBottomColor: "#e5e7eb",
   },
-  headerSubtitleMain: { fontSize: 13, fontWeight: '600', color: '#0f172a' },
-  headerSubtitle: { marginTop: 2, fontSize: 12, color: '#64748b' },
+  headerSubtitleMain: { fontSize: 13, fontWeight: "600", color: "#0f172a" },
+  headerSubtitle: { marginTop: 2, fontSize: 12, color: "#64748b" },
 
   tabsWrap: {
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#fff',
+    borderBottomColor: "#e5e7eb",
+    backgroundColor: "#fff",
   },
   tabsContent: { paddingHorizontal: 16, gap: 10 },
   statusTab: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
   },
-  statusTabText: { fontSize: 12, fontWeight: '800' },
+  statusTabText: { fontSize: 12, fontWeight: "800" },
   statusTabCountPill: {
     marginLeft: 8,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 999,
   },
-  statusTabCountText: { fontSize: 11, fontWeight: '900' },
+  statusTabCountText: { fontSize: 11, fontWeight: "900" },
 
   orderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingVertical: 10,
     paddingHorizontal: 12,
-    backgroundColor: '#ffffff',
+    backgroundColor: "#ffffff",
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#000',
+    borderColor: "#e2e8f0",
+    shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
     elevation: 1,
   },
-  orderIdText: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
-  orderCustomerText: { marginTop: 2, fontSize: 13, color: '#475569' },
-  orderAddressText: { marginTop: 2, fontSize: 12, color: '#64748b' },
+  orderRowSelected: {
+    borderColor: "#16a34a",
+    backgroundColor: "#f0fdf4",
+  },
 
-  orderRight: { marginLeft: 8, alignItems: 'flex-end' },
-  orderDistanceText: { marginTop: 2, fontSize: 11, color: '#94a3b8' },
+  // checkbox only for READY; spacer keeps alignment for other rows
+  checkWrap: { marginRight: 10 },
+  checkSpacer: { width: 32, height: 22 },
+  checkBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#cbd5e1",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#fff",
+  },
+  checkBoxChecked: {
+    borderColor: "#16a34a",
+    backgroundColor: "#16a34a",
+  },
+
+  orderIdRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
+  orderIdText: { fontSize: 14, fontWeight: "800", color: "#0f172a" },
+
+  priorityPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#ef4444",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  priorityText: {
+    color: "#fff",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.2,
+  },
+
+  readyPill: {
+    backgroundColor: "#dcfce7",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: "#bbf7d0",
+  },
+  readyText: { color: "#16a34a", fontSize: 10, fontWeight: "900" },
+
+  orderCustomerText: { marginTop: 2, fontSize: 13, color: "#475569" },
+  orderAddressText: { marginTop: 2, fontSize: 12, color: "#64748b" },
+
+  orderRight: { marginLeft: 8, alignItems: "flex-end" },
+  orderDistanceText: { marginTop: 2, fontSize: 11, color: "#94a3b8" },
 
   statusChip: {
     paddingHorizontal: 10,
@@ -1072,31 +1385,31 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   statusChipText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 11,
-    fontWeight: '900',
+    fontWeight: "900",
   },
 
   fabWrapper: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 50,
     left: 0,
     right: 0,
-    backgroundColor: 'transparent',
+    backgroundColor: "transparent",
     paddingHorizontal: 16,
   },
-  fabRow: { flexDirection: 'row', alignItems: 'center', gap: 12, width: '100%' },
-  fabHalf: { flex: 1, justifyContent: 'center' },
+  fabRow: { flexDirection: "row", alignItems: "center", gap: 12, width: "100%" },
+  fabHalf: { flex: 1, justifyContent: "center" },
 
   fab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     paddingHorizontal: 12,
     paddingVertical: 15,
     borderRadius: 999,
-    backgroundColor: '#16a34a',
-    shadowColor: '#000',
+    backgroundColor: "#16a34a",
+    shadowColor: "#000",
     shadowOpacity: 0.2,
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 3 },
@@ -1104,10 +1417,10 @@ const styles = StyleSheet.create({
   },
   fabText: {
     marginLeft: 8,
-    color: '#fff',
+    color: "#fff",
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: "700",
     flexShrink: 1,
   },
-  trackFabBg: { backgroundColor: '#0ea5e9' },
+  trackFabBg: { backgroundColor: "#0ea5e9" },
 });
