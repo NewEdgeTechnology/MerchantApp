@@ -1,13 +1,11 @@
 // screens/food/GrabMerchantHomeScreen.js
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   StatusBar,
-  ScrollView,
   TouchableOpacity,
-  RefreshControl,
   Platform,
   useWindowDimensions,
   AppState,
@@ -34,7 +32,9 @@ import {
   PROMOS_MART_ENDPOINT,
   MEDIA_BASE_URL,
   STATUS_COUNT_ENDPOINT as ENV_STATUS_COUNT_ENDPOINT,
-  SALES_TODAY_ENDPOINT,
+
+  // ✅ UPDATED: use TOTAL_SALES_ENDPOINT (remove SALES_TODAY_ENDPOINT)
+  TOTAL_SALES_ENDPOINT,
 } from '@env';
 
 import HomeTab from './HomeTab';
@@ -44,7 +44,8 @@ import MartAddItemTab from '../mart/AddItemTab';
 import NotificationsTab from './NotificationsTab';
 import MerchantBottomBar from './MerchantBottomBar';
 import PromosTab from './PromoTab';
-import SalesAnalyticsScreen from "./SalesAnalyticsScreen";
+import PayoutTab from './PayoutTab';
+import SalesAnalyticsScreen from './SalesAnalyticsScreen';
 
 /* ───────────────────────── Constants / Keys ───────────────────────── */
 const KEY_MERCHANT_LOGIN = 'merchant_login';
@@ -98,7 +99,7 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
     let json = null;
     try {
       json = text ? JSON.parse(text) : null;
-    } catch { }
+    } catch {}
     if (!res.ok) {
       const msg = (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
       throw new Error(msg);
@@ -114,7 +115,7 @@ const getBaseOrigin = () => {
     if (typeof globalThis.URL === 'function' && LOGIN_USERNAME_MERCHANT_ENDPOINT) {
       return new globalThis.URL(LOGIN_USERNAME_MERCHANT_ENDPOINT).origin;
     }
-  } catch { }
+  } catch {}
   return DEFAULT_DEV_ORIGIN;
 };
 const candidateProfileUrls = () => {
@@ -201,8 +202,9 @@ const buildStatusCountsUrl = (businessId) => {
   return url;
 };
 
-const buildSalesTodayUrl = (businessId) => {
-  const tpl = (SALES_TODAY_ENDPOINT || '').trim();
+// ✅ TOTAL sales endpoint url builder
+const buildTotalSalesUrl = (businessId) => {
+  const tpl = (TOTAL_SALES_ENDPOINT || '').trim();
   if (!tpl) return '';
   const id = encodeURIComponent(String(businessId));
 
@@ -253,6 +255,183 @@ function kpisFromStatusCounts(counts = {}, ownerType = 'food') {
   };
 }
 
+/* ───────────────────────── Header (kept mounted) ───────────────────────── */
+const HeaderBar = React.memo(function HeaderBar({
+  isTablet,
+  insets,
+  avatarSize,
+  showWelcome,
+  activeTab,
+
+  userId,
+  businessId,
+  merchantName,
+  merchantLogo,
+  profileAvatar,
+  businessAddress,
+  businessLicense,
+  ownerType,
+  authContext,
+  authToken,
+  serviceConfig,
+  deliveryOption,
+
+  logoVersion,
+  addBuster,
+}) {
+  const nav = useNavigation();
+  const [loadingLogo, setLoadingLogo] = useState(false);
+  const loadedUrisRef = useRef(new Set());
+
+  const params = useMemo(
+    () => ({
+      user_id: userId,
+      business_id: businessId,
+      business_name: merchantName,
+      business_logo: merchantLogo,
+      profile_image: profileAvatar,
+      business_address: businessAddress,
+      business_license: businessLicense,
+      owner_type: normalizeOwnerType(ownerType),
+      authContext,
+      auth_token: authToken,
+      serviceConfig,
+      delivery_option: deliveryOption,
+    }),
+    [
+      userId,
+      businessId,
+      merchantName,
+      merchantLogo,
+      profileAvatar,
+      businessAddress,
+      businessLicense,
+      ownerType,
+      authContext,
+      authToken,
+      serviceConfig,
+      deliveryOption,
+    ]
+  );
+
+  const safeNav = useCallback(
+    (target, fallback) => {
+      try {
+        nav.navigate(target, params);
+      } catch {
+        if (fallback) {
+          try {
+            nav.navigate(fallback, params);
+          } catch {}
+        }
+      }
+    },
+    [nav, params]
+  );
+
+  const goToAccountSettings = useCallback(() => safeNav('AccountSettings', 'ProfileBusinessDetails'), [safeNav]);
+  const goToProfileBusinessDetails = useCallback(() => safeNav('ProfileBusinessDetails'), [safeNav]);
+
+  const logoUri = useMemo(() => {
+    const u = addBuster(merchantLogo, logoVersion) || DEFAULT_AVATAR;
+    return u;
+  }, [merchantLogo, logoVersion, addBuster]);
+
+  const shouldShowSpinner = useMemo(() => {
+    if (!logoUri) return false;
+    return loadingLogo && !loadedUrisRef.current.has(logoUri);
+  }, [loadingLogo, logoUri]);
+
+  const onLogoLoadStart = useCallback(() => {
+    if (!logoUri) return;
+    if (loadedUrisRef.current.has(logoUri)) return; // ✅ already loaded in this session
+    setLoadingLogo(true);
+  }, [logoUri]);
+
+  const onLogoLoadEnd = useCallback(() => {
+    if (logoUri) loadedUrisRef.current.add(logoUri);
+    setLoadingLogo(false);
+  }, [logoUri]);
+
+  const onLogoError = useCallback(() => {
+    setLoadingLogo(false);
+  }, []);
+
+  return (
+    <LinearGradient
+      colors={['#00b14f', '#4de6de']}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={{
+        paddingTop: (isTablet ? 24 : 18) + (insets.top || 0),
+        paddingBottom: isTablet ? 16 : 12,
+        paddingHorizontal: isTablet ? 24 : 18,
+      }}
+    >
+      {showWelcome && activeTab === 'Home' && <Text style={styles.hi}>Welcome</Text>}
+
+      <View style={styles.headerRow}>
+        <View style={styles.inlineRow}>
+          <TouchableOpacity
+            onPress={goToProfileBusinessDetails}
+            activeOpacity={0.85}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ position: 'relative' }}
+          >
+            <Image
+              source={{ uri: logoUri }}
+              style={[styles.avatar, { width: avatarSize, height: avatarSize }]}
+              onLoadStart={onLogoLoadStart}
+              onLoadEnd={onLogoLoadEnd}
+              onError={onLogoError}
+            />
+            {shouldShowSpinner && (
+              <ActivityIndicator
+                style={{
+                  position: 'absolute',
+                  left: avatarSize / 2 - 12,
+                  top: avatarSize / 2 - 12,
+                }}
+                size="small"
+                color="#00b14f"
+              />
+            )}
+          </TouchableOpacity>
+
+          <Text style={[styles.merchantName, { marginLeft: 6 }]} numberOfLines={1} ellipsizeMode="tail">
+            {merchantName || DEFAULT_NAME}
+          </Text>
+        </View>
+
+        <View style={styles.inlineRow}>
+          <TouchableOpacity
+            onPress={goToAccountSettings}
+            activeOpacity={0.85}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Image
+              source={{ uri: profileAvatar || DEFAULT_AVATAR }}
+              style={[styles.profileCircle, { width: avatarSize, height: avatarSize }]}
+              onError={() => {}}
+            />
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {!!businessAddress && (
+        <View style={{ marginTop: 10, alignItems: 'center', width: '100%' }}>
+          <View style={styles.addressChip}>
+            <Ionicons name="location-outline" size={16} color="#00b14f" />
+            <Text style={styles.addressText} numberOfLines={1} ellipsizeMode="tail">
+              {businessAddress}
+            </Text>
+          </View>
+        </View>
+      )}
+    </LinearGradient>
+  );
+});
+
 export default function GrabMerchantHomeScreen() {
   const route = useRoute();
   const navigation = useNavigation();
@@ -266,7 +445,6 @@ export default function GrabMerchantHomeScreen() {
   const softKeyPad = Platform.OS === 'android' ? Math.max(bottomInset, 8) : bottomInset;
   const bottomBarBase = isTablet ? 84 : 76;
   const bottomBarHeight = bottomBarBase + softKeyPad;
-  const fabBottom = bottomBarHeight + 20;
   const avatarSize = isTablet ? 56 : isLargePhone ? 48 : 44;
 
   const [merchantName, setMerchantName] = useState(DEFAULT_NAME);
@@ -277,7 +455,7 @@ export default function GrabMerchantHomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
   const [menus, setMenus] = useState([]);
-  const [loadingAvatar, setLoadingAvatar] = useState(false);
+
   const initialOpenTab = route?.params?.openTab || 'Home';
   const initialBid = route?.params?.businessId || route?.params?.business_id || null;
   const [activeTab, setActiveTab] = useState(initialOpenTab);
@@ -306,7 +484,7 @@ export default function GrabMerchantHomeScreen() {
       : null
   );
 
-  const serviceConfig = React.useMemo(() => {
+  const serviceConfig = useMemo(() => {
     const base = getBaseOrigin();
 
     const resolvedFoodPromos =
@@ -340,7 +518,7 @@ export default function GrabMerchantHomeScreen() {
       payouts: `${base}/api/mart/payouts`,
       notifications: `${base}/api/mart/notifications`,
     };
-  }, [ownerType]);
+  }, [isFood]); // depends on isFood
 
   useEffect(() => {
     navigation.setParams({
@@ -377,22 +555,20 @@ export default function GrabMerchantHomeScreen() {
     const base = normalizeHost((PROFILE_ENDPOINT || '').trim()).replace(/\/+$/, '');
     return `${base}/${encodeURIComponent(String(uid))}`;
   }, []);
+
   const buildBusinessUrl = useCallback((bid) => {
     const rawBid = bid != null ? String(bid).trim() : '';
     const tpl = (BUSINESS_DETAILS || '').trim();
-
     if (!rawBid || !tpl) return '';
 
     const id = encodeURIComponent(rawBid);
 
-    // 1) Try to replace placeholders in the template itself
     let url = tpl
       .replace('{business_id}', id)
       .replace('{businessId}', id)
       .replace(':business_id', id)
       .replace(':businessId', id);
 
-    // 2) If there was no placeholder, treat env as base and append /id
     if (url === tpl) {
       const base = tpl.replace(/\/+$/, '');
       url = `${base}/${id}`;
@@ -452,7 +628,7 @@ export default function GrabMerchantHomeScreen() {
       let blob = {};
       try {
         blob = JSON.parse(raw);
-      } catch { }
+      } catch {}
       const user = blob?.user ?? blob;
 
       const idCandidates = [
@@ -482,8 +658,7 @@ export default function GrabMerchantHomeScreen() {
           user?.photo_url,
       });
 
-      const bidCandidate =
-        user?.business_id || user?.id || blob?.business_id || blob?.id || null;
+      const bidCandidate = user?.business_id || user?.id || blob?.business_id || blob?.id || null;
       if (bidCandidate) setBusinessId(String(bidCandidate));
 
       maybeApplyKind(user?.owner_type ?? blob?.owner_type, setOwnerType);
@@ -496,10 +671,9 @@ export default function GrabMerchantHomeScreen() {
         '';
       if (licenseCandidate) setBusinessLicense(String(licenseCandidate));
 
-      const storedDelivery =
-        (blob?.delivery_option || user?.delivery_option || user?.deliveryOption || '')
-          ?.toString()
-          ?.toUpperCase();
+      const storedDelivery = (blob?.delivery_option || user?.delivery_option || user?.deliveryOption || '')
+        ?.toString()
+        ?.toUpperCase();
       if (storedDelivery && !deliveryOption) setDeliveryOption(storedDelivery);
 
       const tokenCandidate =
@@ -508,7 +682,7 @@ export default function GrabMerchantHomeScreen() {
         (await SecureStore.getItemAsync(KEY_AUTH_TOKEN)) ||
         null;
       if (tokenCandidate && !authToken) setAuthToken(String(tokenCandidate));
-    } catch { }
+    } catch {}
   }, [userId, applyHeaderIfChanged, deliveryOption, authToken]);
 
   const loadFromBackend = useCallback(
@@ -535,7 +709,7 @@ export default function GrabMerchantHomeScreen() {
           let blob = {};
           try {
             blob = raw ? JSON.parse(raw) : {};
-          } catch { }
+          } catch {}
           const providedKind =
             data?.owner_type != null && String(data.owner_type).trim() !== ''
               ? normalizeOwnerType(data.owner_type)
@@ -546,19 +720,12 @@ export default function GrabMerchantHomeScreen() {
             business_license: license || blob?.business_license,
             business_name: data?.business_name ?? blob?.business_name,
             business_address:
-              (data?.business_address ?? data?.address ?? data?.location) ??
-              blob?.business_address,
+              (data?.business_address ?? data?.address ?? data?.location) ?? blob?.business_address,
             business_logo: data?.business_logo ?? blob?.business_logo,
             owner_type: providedKind ?? (blob?.owner_type ?? ownerType),
             business_id: (data?.business_id ?? data?.id) ?? blob?.business_id,
             user_id: data?.user_id ?? blob?.user_id,
-            delivery_option: (
-              data?.delivery_option ||
-              blob?.delivery_option ||
-              ''
-            )
-              .toString()
-              .toUpperCase(),
+            delivery_option: (data?.delivery_option || blob?.delivery_option || '').toString().toUpperCase(),
             user: {
               ...(blob.user || {}),
               business_license: license || blob?.user?.business_license,
@@ -570,22 +737,17 @@ export default function GrabMerchantHomeScreen() {
               owner_type: providedKind ?? (blob?.user?.owner_type ?? ownerType),
               business_id: (data?.business_id ?? data?.id) ?? blob?.user?.business_id,
               user_id: data?.user_id ?? blob?.user?.user_id,
-              delivery_option: (
-                data?.delivery_option ||
-                blob?.user?.delivery_option ||
-                ''
-              )
+              delivery_option: (data?.delivery_option || blob?.user?.delivery_option || '')
                 .toString()
                 .toUpperCase(),
             },
           };
           await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
-        } catch { }
+        } catch {}
       } catch (e) {
         if (e?.name === 'AbortError' || e?.message === 'Aborted') return;
         if (__DEV__) console.log('[Home] profile fetch failed:', e?.message);
       }
-
     },
     [buildProfileUrl, ownerType, applyHeaderIfChanged, deliveryOption]
   );
@@ -608,17 +770,14 @@ export default function GrabMerchantHomeScreen() {
           const blob = raw ? JSON.parse(raw) : {};
           const merged = {
             ...blob,
-            business_name:
-              (data?.business_name ?? data?.name) ?? blob?.business_name,
+            business_name: (data?.business_name ?? data?.name) ?? blob?.business_name,
             business_address:
-              (data?.business_address ?? data?.address ?? data?.location) ??
-              blob?.business_address,
+              (data?.business_address ?? data?.address ?? data?.location) ?? blob?.business_address,
             business_logo: data?.business_logo ?? blob?.business_logo,
             business_id: bid ?? blob?.business_id,
             user: {
               ...(blob.user || {}),
-              business_name:
-                (data?.business_name ?? data?.name) ?? blob?.user?.business_name,
+              business_name: (data?.business_name ?? data?.name) ?? blob?.user?.business_name,
               business_address:
                 (data?.business_address ?? data?.address ?? data?.location) ??
                 blob?.user?.business_address,
@@ -627,15 +786,11 @@ export default function GrabMerchantHomeScreen() {
             },
           };
           await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
-        } catch { }
+        } catch {}
       } catch (e) {
-        if (e?.name === 'AbortError' || e?.message === 'Aborted') {
-          // Ignore Abort (timeout) — do not log
-          return;
-        }
+        if (e?.name === 'AbortError' || e?.message === 'Aborted') return;
         if (__DEV__) console.log('[Home] loadBusinessFromBackend failed:', e?.message);
       }
-
     },
     [buildBusinessUrl, applyHeaderIfChanged]
   );
@@ -664,8 +819,7 @@ export default function GrabMerchantHomeScreen() {
 
             applyHeaderIfChanged({
               business_name: user?.business_name,
-              business_address:
-                user?.business_address ?? user?.address ?? user?.location,
+              business_address: user?.business_address ?? user?.address ?? user?.location,
               business_logo: user?.logo_url ?? user?.business_logo,
               profile_image:
                 user?.profile_photo ??
@@ -715,15 +869,15 @@ export default function GrabMerchantHomeScreen() {
       const next = kpisFromStatusCounts(payload, kind);
       setKpis((prev) => ({
         ...prev,
-        ...next, // keep existing salesToday / salesCurrency
+        ...next,
       }));
     } catch (e) {
       if (e?.name === 'AbortError' || e?.message === 'Aborted') return;
       if (__DEV__) console.log('[KPI] status-count fetch failed:', e?.message);
     }
-
   }, []);
 
+  // ✅ calculate salesToday from TOTAL_SALES_ENDPOINT rows for "today"
   const fetchSalesToday = useCallback(async (bid) => {
     const business = String(bid || '').trim();
     if (!business) return;
@@ -735,36 +889,33 @@ export default function GrabMerchantHomeScreen() {
         ...(await getAuthHeader()),
       };
 
-      const url = buildSalesTodayUrl(business);
+      const url = buildTotalSalesUrl(business);
       if (!url) return;
 
       const payload = await fetchJSON(url, { headers });
+      const rows = Array.isArray(payload?.rows) ? payload.rows : [];
 
-      const data = payload?.data || payload || {};
-      const rawAmount =
-        data?.net_sales ??
-        data?.gross_sales ??
-        data?.total_sales ??
-        data?.total ??
-        0;
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
 
-      const amount = Number(rawAmount || 0);
-      const currency =
-        data?.currency ||
-        payload?.currency ||
-        'Nu';
+      let totalToday = 0;
+      for (const r of rows) {
+        const d = r?.date ? new Date(r.date) : null;
+        if (!d || Number.isNaN(d.getTime())) continue;
+        if (d >= start && d < end) totalToday += Number(r?.total_amount || 0);
+      }
 
       setKpis((prev) => ({
         ...prev,
-        salesToday: amount,
-        salesCurrency: currency || prev.salesCurrency || 'Nu',
+        salesToday: Number(totalToday || 0),
+        salesCurrency: prev.salesCurrency || 'Nu',
         lastUpdatedAt: new Date().toISOString(),
       }));
     } catch (e) {
       if (e?.name === 'AbortError' || e?.message === 'Aborted') return;
-      if (__DEV__) console.log('[KPI] sales-today fetch failed:', e?.message);
+      if (__DEV__) console.log('[KPI] total-sales fetch failed:', e?.message);
     }
-
   }, []);
 
   useEffect(() => {
@@ -784,13 +935,8 @@ export default function GrabMerchantHomeScreen() {
       }
       if (route?.params?.authContext) setAuthContext(route.params.authContext);
 
-      if (
-        (route?.params?.delivery_option || route?.params?.deliveryOption) &&
-        !deliveryOption
-      ) {
-        setDeliveryOption(
-          String(route.params.delivery_option || route.params.deliveryOption).toUpperCase()
-        );
+      if ((route?.params?.delivery_option || route?.params?.deliveryOption) && !deliveryOption) {
+        setDeliveryOption(String(route.params.delivery_option || route.params.deliveryOption).toUpperCase());
       }
     })();
   }, [
@@ -925,6 +1071,7 @@ export default function GrabMerchantHomeScreen() {
       setMenus([]);
     }
   }, []);
+
   useEffect(() => {
     if (businessId) loadMenusFromStorage(businessId, ownerType);
   }, [businessId, ownerType, loadMenusFromStorage]);
@@ -944,6 +1091,55 @@ export default function GrabMerchantHomeScreen() {
     [ownerType, businessId]
   );
 
+  // ✅ reliable "open tab" router
+  const openTab = useCallback(
+    (key, params = {}) => {
+      const target = String(key || '').trim();
+      if (!target) return;
+
+      const norm =
+        target === 'Payouts' || target === 'Payout' || target === 'PayoutTab'
+          ? 'PayoutTab'
+          : target;
+
+      if (norm === 'PayoutTab') {
+        setActiveTab('PayoutTab');
+      } else if (norm === 'Promos') {
+        setActiveTab('Promos');
+      } else if (norm === 'Orders') {
+        setActiveTab('Orders');
+      } else if (norm === 'Sales') {
+        setActiveTab('Sales');
+      } else if (norm === 'Activities' || norm === 'Notifications') {
+        setActiveTab('Notifications');
+      } else if (norm === 'Home') {
+        setActiveTab('Home');
+      } else if (norm === 'AddMenuTab' || norm === 'Add Menu') {
+        setActiveTab('Add Menu');
+      } else {
+        setActiveTab(target);
+      }
+
+      if (params.user_id || params.userId) {
+        setUserId(String(params.user_id || params.userId));
+      }
+
+      if (params.businessId || params.business_id) setBusinessId(String(params.businessId || params.business_id));
+      if (params.business_name) setMerchantName(String(params.business_name));
+      if (params.business_logo && belongsToCurrentContext(params)) {
+        applyHeaderIfChanged({ business_logo: params.business_logo });
+      }
+      if (params.owner_type != null && String(params.owner_type).trim() !== '') {
+        maybeApplyKind(params.owner_type, setOwnerType);
+      }
+      if (params.authContext) setAuthContext(params.authContext);
+      if (params.delivery_option || params.deliveryOption) {
+        setDeliveryOption(String(params.delivery_option || params.deliveryOption).toUpperCase());
+      }
+    },
+    [belongsToCurrentContext, applyHeaderIfChanged]
+  );
+
   useEffect(() => {
     const sub1 = DeviceEventEmitter.addListener('merchant-updated', async () => {
       await loadFromStore();
@@ -955,33 +1151,22 @@ export default function GrabMerchantHomeScreen() {
         await fetchSalesToday(String(businessId));
       }
     });
+
     const sub2 = DeviceEventEmitter.addListener('menus-updated', async (payload) => {
       const bid = payload?.businessId || businessId;
       const kind = normalizeOwnerType(payload?.owner_type || ownerType);
       if (bid) await loadMenusFromStorage(bid, kind);
     });
+
     const sub3 = DeviceEventEmitter.addListener('open-tab', async (payload) => {
       const key = payload?.key;
       const params = payload?.params || {};
-      if (key) setActiveTab(String(key));
-      if (params.businessId || params.business_id)
-        setBusinessId(String(params.businessId || params.business_id));
-      if (params.business_name) setMerchantName(String(params.business_name));
-      if (params.business_logo && belongsToCurrentContext(params)) {
-        applyHeaderIfChanged({ business_logo: params.business_logo });
-      }
-      if (params.owner_type != null && String(params.owner_type).trim() !== '') {
-        maybeApplyKind(params.owner_type, setOwnerType);
-      }
-      if (params.authContext) setAuthContext(params.authContext);
-      if (params.delivery_option || params.deliveryOption) {
-        setDeliveryOption(
-          String(params.delivery_option || params.deliveryOption).toUpperCase()
-        );
-      }
+      if (key) openTab(key, params);
+
       try {
         await SecureStore.setItemAsync(KEY_LAST_CTX, JSON.stringify(params));
-      } catch { }
+      } catch {}
+
       const bid = params.businessId || params.business_id || businessId;
       const kind = normalizeOwnerType(params.owner_type ?? ownerType);
       if (bid) {
@@ -989,31 +1174,24 @@ export default function GrabMerchantHomeScreen() {
         await fetchSalesToday(String(bid));
       }
     });
+
     const sub4 = DeviceEventEmitter.addListener('profile-updated', async (payload) => {
       try {
-        if (payload?.profile_image)
-          applyHeaderIfChanged({ profile_image: payload.profile_image });
+        if (payload?.profile_image) applyHeaderIfChanged({ profile_image: payload.profile_image });
         if (payload?.business_logo && belongsToCurrentContext(payload)) {
           applyHeaderIfChanged({ business_logo: payload.business_logo });
         }
-        if (payload?.business_name)
-          applyHeaderIfChanged({ business_name: payload.business_name });
-        if (
-          payload?.business_address ||
-          payload?.address ||
-          payload?.location
-        ) {
+        if (payload?.business_name) applyHeaderIfChanged({ business_name: payload.business_name });
+        if (payload?.business_address || payload?.address || payload?.location) {
           applyHeaderIfChanged({
-            business_address:
-              payload?.business_address ?? payload?.address ?? payload?.location,
+            business_address: payload?.business_address ?? payload?.address ?? payload?.location,
           });
         }
         if (payload?.delivery_option || payload?.deliveryOption) {
-          setDeliveryOption(
-            String(payload.delivery_option || payload.deliveryOption).toUpperCase()
-          );
+          setDeliveryOption(String(payload.delivery_option || payload.deliveryOption).toUpperCase());
         }
-      } catch { }
+      } catch {}
+
       const uid = route?.params?.user_id || userId;
       if (uid) await loadFromBackend(String(uid));
       if (businessId) {
@@ -1022,12 +1200,14 @@ export default function GrabMerchantHomeScreen() {
         await fetchSalesToday(String(businessId));
       }
     });
+
     const sub5 = DeviceEventEmitter.addListener('order-updated', async () => {
       if (businessId) {
         await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
         await fetchSalesToday(String(businessId));
       }
     });
+
     const sub6 = DeviceEventEmitter.addListener('order-placed', async () => {
       if (businessId) {
         await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
@@ -1056,6 +1236,7 @@ export default function GrabMerchantHomeScreen() {
     applyHeaderIfChanged,
     fetchKpis,
     fetchSalesToday,
+    openTab,
   ]);
 
   const onRefresh = useCallback(async () => {
@@ -1103,28 +1284,11 @@ export default function GrabMerchantHomeScreen() {
   useEffect(() => {
     const p = route?.params;
     if (!p?.openTab) return;
-    setActiveTab(String(p.openTab));
-    if (p.businessId || p.business_id)
-      setBusinessId(String(p.businessId || p.business_id));
-    if (p.business_name) setMerchantName(String(p.business_name));
-    if (p.business_logo && belongsToCurrentContext(p)) {
-      applyHeaderIfChanged({ business_logo: p.business_logo });
-    }
-    if (p.owner_type != null && String(p.owner_type).trim() !== '') {
-      maybeApplyKind(p.owner_type, setOwnerType);
-    }
-    if (p.authContext) setAuthContext(p.authContext);
-    if (p.delivery_option || p.deliveryOption) {
-      setDeliveryOption(
-        String(p.delivery_option || p.deliveryOption).toUpperCase()
-      );
-    }
+
+    openTab(String(p.openTab), p);
     navigation.setParams({ openTab: undefined, nonce: undefined });
   }, [
     route?.params?.nonce,
-    belongsToCurrentContext,
-    navigation,
-    applyHeaderIfChanged,
     route?.params?.openTab,
     route?.params?.businessId,
     route?.params?.business_id,
@@ -1134,145 +1298,108 @@ export default function GrabMerchantHomeScreen() {
     route?.params?.authContext,
     route?.params?.delivery_option,
     route?.params?.deliveryOption,
+    navigation,
+    openTab,
   ]);
 
-  const Header = () => {
-    const navigation = useNavigation();
-    const params = {
-      user_id: userId,
-      business_id: businessId,
-      business_name: merchantName,
-      business_logo: merchantLogo,
-      profile_image: profileAvatar,
-      business_address: businessAddress,
-      business_license: businessLicense,
-      owner_type: normalizeOwnerType(ownerType),
-      authContext,
-      auth_token: authToken,
-      serviceConfig,
-      delivery_option: deliveryOption,
-    };
-    const safeNav = (target, fallback) => {
-      try {
-        navigation.navigate(target, params);
-      } catch {
-        if (fallback)
-          try {
-            navigation.navigate(fallback, params);
-          } catch { }
-      }
-    };
-    const goToAccountSettings = () => safeNav('AccountSettings', 'ProfileBusinessDetails');
-    const goToProfileBusinessDetails = () => safeNav('ProfileBusinessDetails');
-
-    return (
-      <LinearGradient
-        colors={['#00b14f', '#4de6de']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={{
-          paddingTop: (isTablet ? 24 : 18) + (insets.top || 0),
-          paddingBottom: isTablet ? 16 : 12,
-          paddingHorizontal: isTablet ? 24 : 18,
-        }}
-      >
-        {showWelcome && activeTab === 'Home' && (
-          <Text style={styles.hi}>Welcome</Text>
-        )}
-
-        <View style={styles.headerRow}>
-          <View style={styles.inlineRow}>
-            <TouchableOpacity
-              onPress={goToProfileBusinessDetails}
-              activeOpacity={0.85}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={{ position: 'relative' }}
-            >
-              <Image
-                source={{ uri: addBuster(merchantLogo, logoVersion) || DEFAULT_AVATAR }}
-                style={[styles.avatar, { width: avatarSize, height: avatarSize }]}
-                onLoadStart={() => setLoadingAvatar(true)}
-                onLoadEnd={() => setLoadingAvatar(false)}
-                onError={() => setLoadingAvatar(false)}
-              />
-              {loadingAvatar && (
-                <ActivityIndicator
-                  style={{
-                    position: 'absolute',
-                    left: avatarSize / 2 - 12,
-                    top: avatarSize / 2 - 12,
-                  }}
-                  size="small"
-                  color="#00b14f"
-                />
-              )}
-            </TouchableOpacity>
-
-            <Text
-              style={[styles.merchantName, { marginLeft: 6 }]}
-              numberOfLines={1}
-              ellipsizeMode="tail"
-            >
-              {merchantName || DEFAULT_NAME}
-            </Text>
-          </View>
-
-          <View style={styles.inlineRow}>
-            <TouchableOpacity
-              onPress={goToAccountSettings}
-              activeOpacity={0.85}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Image
-                source={{ uri: profileAvatar || DEFAULT_AVATAR }}
-                style={[styles.profileCircle, { width: avatarSize, height: avatarSize }]}
-                onError={() => { }}
-              />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {!!businessAddress && (
-          <View style={{ marginTop: 10, alignItems: 'center', width: '100%' }}>
-            <View style={styles.addressChip}>
-              <Ionicons name="location-outline" size={16} color="#00b14f" />
-              <Text
-                style={styles.addressText}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {businessAddress}
-              </Text>
-            </View>
-          </View>
-        )}
-      </LinearGradient>
-    );
-  };
-
-  const NAV_ITEMS = [
-    { key: 'Home', label: 'Home', icon: 'home-outline' },
-    { key: 'Orders', label: 'Orders', icon: 'receipt-outline' },
-    { key: 'Add Menu', label: isFood ? 'Add Menu' : 'Add Item', icon: 'add' },
-    // renamed for UI only; key stays "Notifications" so existing logic still works
-    { key: 'Notifications', label: 'Activities', icon: 'time-outline' },
-    { key: "Sales", label: "Sales", icon: "stats-chart-outline" },
-  ];
+  const NAV_ITEMS = useMemo(
+    () => [
+      { key: 'Home', label: 'Home', icon: 'home-outline' },
+      { key: 'Orders', label: 'Orders', icon: 'receipt-outline' },
+      { key: 'Add Menu', label: isFood ? 'Add Menu' : 'Add Item', icon: 'add' },
+      { key: 'Notifications', label: 'Activities', icon: 'time-outline' },
+      { key: 'Sales', label: 'Sales', icon: 'stats-chart-outline' },
+    ],
+    [isFood]
+  );
 
   const AddTabComponent = isFood ? FoodAddMenuTab : MartAddItemTab;
+
+  // ✅ KPI redirect uses openTab + passes full context
+  const kpiCtxParams = useCallback(
+    () => ({
+      user_id: userId,
+      userId,
+      business_id: businessId,
+      businessId,
+      owner_type: ownerType,
+      ownerType,
+      business_name: merchantName,
+      business_logo: merchantLogo,
+      business_address: businessAddress,
+      business_license: businessLicense,
+      authContext,
+      auth_token: authToken,
+      delivery_option: deliveryOption,
+      deliveryOption,
+    }),
+    [
+      userId,
+      businessId,
+      ownerType,
+      merchantName,
+      merchantLogo,
+      businessAddress,
+      businessLicense,
+      authContext,
+      authToken,
+      deliveryOption,
+    ]
+  );
+
+  const onQuickAction = useCallback(
+    (key, extra = {}) => {
+      openTab(key, { ...kpiCtxParams(), ...(extra || {}) });
+    },
+    [openTab, kpiCtxParams]
+  );
+
+  const onPressSalesKpi = useCallback(() => {
+    openTab('Sales', kpiCtxParams());
+  }, [openTab, kpiCtxParams]);
+
+  const onPressOrdersKpi = useCallback(() => {
+    openTab('Orders', kpiCtxParams());
+  }, [openTab, kpiCtxParams]);
+
+  const contentPaddingBottom = bottomBarHeight + (activeTab === 'Home' ? 20 : 0);
 
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right']}>
       <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
 
-      {activeTab === 'Home' && (
-        <View style={[styles.tabWrap, { paddingBottom: bottomBarHeight + 20 }]}>
-          <Header />
+      {/* ✅ Header stays mounted across ALL tabs (prevents logo reloading on tab switches) */}
+      <View style={[styles.tabWrap, { paddingBottom: contentPaddingBottom }]}>
+        <HeaderBar
+          isTablet={isTablet}
+          insets={insets}
+          avatarSize={avatarSize}
+          showWelcome={showWelcome}
+          activeTab={activeTab}
+          userId={userId}
+          businessId={businessId}
+          merchantName={merchantName}
+          merchantLogo={merchantLogo}
+          profileAvatar={profileAvatar}
+          businessAddress={businessAddress}
+          businessLicense={businessLicense}
+          ownerType={ownerType}
+          authContext={authContext}
+          authToken={authToken}
+          serviceConfig={serviceConfig}
+          deliveryOption={deliveryOption}
+          logoVersion={logoVersion}
+          addBuster={addBuster}
+        />
+
+        {activeTab === 'Home' && (
           <HomeTab
             isTablet={isTablet}
             kpis={kpis}
             money={money}
-            onPressNav={setActiveTab}
+            onPressNav={openTab}
+            onPressSalesKpi={onPressSalesKpi}
+            onPressOrdersKpi={onPressOrdersKpi}
             businessId={businessId}
             menus={menus}
             context={authContext}
@@ -1286,13 +1413,11 @@ export default function GrabMerchantHomeScreen() {
             delivery_option={deliveryOption}
             onRefresh={onRefresh}
             refreshing={refreshing}
+            onQuickAction={onQuickAction}
           />
-        </View>
-      )}
+        )}
 
-      {activeTab === 'Promos' && (
-        <View style={[styles.tabWrap, { paddingBottom: bottomBarHeight }]}>
-          <Header />
+        {activeTab === 'Promos' && (
           <PromosTab
             isTablet={isTablet}
             businessId={businessId}
@@ -1301,12 +1426,9 @@ export default function GrabMerchantHomeScreen() {
             serviceConfig={serviceConfig}
             delivery_option={deliveryOption}
           />
-        </View>
-      )}
+        )}
 
-      {activeTab === 'Orders' && (
-        <View style={[styles.tabWrap, { paddingBottom: bottomBarHeight }]}>
-          <Header />
+        {activeTab === 'Orders' && (
           <OrdersTab
             key={`orders_${businessId}_${ownerType}`}
             isTablet={isTablet}
@@ -1316,12 +1438,9 @@ export default function GrabMerchantHomeScreen() {
             serviceConfig={serviceConfig}
             delivery_option={deliveryOption}
           />
-        </View>
-      )}
+        )}
 
-      {activeTab === 'Add Menu' && (
-        <View style={[styles.tabWrap, { paddingBottom: bottomBarHeight }]}>
-          <Header />
+        {activeTab === 'Add Menu' && (
           <AddTabComponent
             isTablet={isTablet}
             businessId={businessId}
@@ -1334,12 +1453,9 @@ export default function GrabMerchantHomeScreen() {
             serviceConfig={serviceConfig}
             delivery_option={deliveryOption}
           />
-        </View>
-      )}
+        )}
 
-      {activeTab === 'Notifications' && (
-        <View style={[styles.tabWrap, { paddingBottom: bottomBarHeight }]}>
-          <Header />
+        {activeTab === 'Notifications' && (
           <NotificationsTab
             isTablet={isTablet}
             businessId={businessId}
@@ -1348,50 +1464,37 @@ export default function GrabMerchantHomeScreen() {
             serviceConfig={serviceConfig}
             delivery_option={deliveryOption}
           />
-        </View>
-      )}
+        )}
 
-
-{activeTab === "Sales" && (
-  <View style={[styles.tabWrap, { paddingBottom: bottomBarHeight }]}>
-    <Header />
-    <SalesAnalyticsScreen
-      business_id={businessId}
-      businessId={businessId}
-      owner_type={ownerType}
-      user_id={userId}
-      authContext={authContext}
-      auth_token={authToken}
-    />
-  </View>
-)}
-
-      {/* {activeTab === 'Home' && (
-        <TouchableOpacity
-          style={[styles.fab, { bottom: fabBottom }]}
-          onPress={() =>
-            navigation.navigate('MessageScreen', {
-              business_id: businessId,
-              user_id: userId,
-              owner_type: ownerType,
-              authContext,
-              auth_token: authToken,
-            })
-          }
-          activeOpacity={0.9}
-        >
-          <Ionicons
-            name="chatbubble-ellipses-outline"
-            size={isTablet ? 24 : 22}
-            color="#fff"
+        {activeTab === 'PayoutTab' && (
+          <PayoutTab
+            isTablet={isTablet}
+            user_id={userId}
+            userId={userId}
+            businessId={businessId}
+            ownerType={ownerType}
+            context={authContext}
+            serviceConfig={serviceConfig}
+            delivery_option={deliveryOption}
           />
-        </TouchableOpacity>
-      )} */}
+        )}
+
+        {activeTab === 'Sales' && (
+          <SalesAnalyticsScreen
+            business_id={businessId}
+            businessId={businessId}
+            owner_type={ownerType}
+            user_id={userId}
+            authContext={authContext}
+            auth_token={authToken}
+          />
+        )}
+      </View>
 
       <MerchantBottomBar
         items={NAV_ITEMS}
         activeKey={activeTab}
-        onChange={setActiveTab}
+        onChange={openTab}
         isTablet={isTablet}
       />
     </SafeAreaView>

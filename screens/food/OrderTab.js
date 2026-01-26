@@ -5,6 +5,8 @@
 // - Counts per status respect date filter (except Upcoming).
 // ✅ FIX: If backend sends ON ROAD / ON_ROAD / ONROAD, UI auto-maps to OUT_FOR_DELIVERY everywhere.
 // ✅ UPDATE: Scheduled orders now show schedule time using scheduled_at_local / scheduled_at_utc from API.
+// ✅ UPDATE: Order "total" now matches OrderDetails display total (EXCLUDES platform_fee; includes delivery + merchant_delivery - discount).
+// ✅ FIX: Totals computed robustly from nested totals + item line totals (supports string prices like "Nu. 20")
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -164,6 +166,109 @@ const pickAddress = (o = {}) => {
   return '';
 };
 
+/* ===========================
+   ✅ money parsing + totals (match OrderDetails)
+   =========================== */
+const toMoneyNumber = (v) => {
+  if (v == null) return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const cleaned = s.replace(/[^0-9.-]/g, '');
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : null;
+};
+
+const pickMoney = (...vals) => {
+  for (const v of vals) {
+    const n = toMoneyNumber(v);
+    if (n != null) return n; // includes 0
+  }
+  return null;
+};
+
+const getItemQty = (it) => {
+  const q = Number(it?.qty ?? it?.quantity ?? it?.quantity_ordered ?? it?.order_qty ?? 1);
+  return Number.isFinite(q) && q > 0 ? q : 1;
+};
+
+const getItemUnitPrice = (it) => {
+  const p =
+    toMoneyNumber(it?.unit_price) ??
+    toMoneyNumber(it?.price) ??
+    toMoneyNumber(it?.item_price) ??
+    toMoneyNumber(it?.rate) ??
+    toMoneyNumber(it?.selling_price) ??
+    toMoneyNumber(it?.unitPrice) ??
+    null;
+
+  if (p != null) return p;
+  const n = Number(it?.price ?? it?.unit_price ?? it?.item_price ?? it?.rate ?? it?.selling_price ?? 0);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const getItemLineTotal = (it) => {
+  const direct = pickMoney(
+    it?.subtotal,
+    it?.sub_total,
+    it?.line_total,
+    it?.lineTotal,
+    it?.total,
+    it?.amount,
+    it?.final_amount
+  );
+  if (direct != null) return direct;
+  return getItemQty(it) * getItemUnitPrice(it);
+};
+
+const sumItemsTotal = (items = []) => {
+  return (items || []).reduce((sum, it) => sum + getItemLineTotal(it), 0);
+};
+
+const getTotalsSnapshot = (o = {}) => {
+  const t = o?.totals || o?.total_breakdown || o?.breakdown || o?.pricing || null;
+  const b =
+    o?.totals_for_business ||
+    o?.totalsForBusiness ||
+    o?.business_totals ||
+    o?.businessTotals ||
+    null;
+
+  const platform_fee = pickMoney(o?.platform_fee, o?.platformFee, t?.platform_fee, t?.platformFee, b?.platform_fee, b?.platformFee);
+  const discount_amount = pickMoney(o?.discount_amount, o?.discountAmount, o?.discount, t?.discount_amount, t?.discountAmount, t?.discount, b?.discount_amount, b?.discountAmount, b?.discount);
+  const delivery_fee = pickMoney(o?.delivery_fee, o?.deliveryFee, t?.delivery_fee, t?.deliveryFee, b?.delivery_fee, b?.deliveryFee);
+  const merchant_delivery_fee = pickMoney(o?.merchant_delivery_fee, o?.merchantDeliveryFee, t?.merchant_delivery_fee, t?.merchantDeliveryFee, b?.merchant_delivery_fee, b?.merchantDeliveryFee);
+
+  const total_amount = pickMoney(o?.total_amount, o?.totalAmount, o?.total, t?.total_amount, t?.totalAmount, t?.total, b?.total_amount, b?.totalAmount, b?.total);
+
+  return { platform_fee, discount_amount, delivery_fee, merchant_delivery_fee, total_amount };
+};
+
+const round2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+
+const computeDisplayTotal = ({ items, totals }) => {
+  const snap = totals || {};
+  const df = snap.delivery_fee ?? 0;
+  const mdf = snap.merchant_delivery_fee ?? 0;
+  const disc = snap.discount_amount ?? 0;
+  const pf = snap.platform_fee ?? null;
+  const grand = snap.total_amount ?? null;
+
+  const hasItems = Array.isArray(items) && items.length > 0;
+  const itemsTotal = hasItems ? sumItemsTotal(items) : null;
+
+  if (hasItems && itemsTotal != null) {
+    return round2(Number(itemsTotal || 0) + Number(df || 0) + Number(mdf || 0) - Number(disc || 0));
+  }
+
+  if (grand != null) {
+    // fallback when item totals are missing: subtract platform fee if known
+    return round2(Number(grand || 0) - Number(pf || 0));
+  }
+
+  return 0;
+};
+
 /* ---------------- small UI atoms ---------------- */
 const StatusPill = ({ status }) => {
   const key = normalizeStatusKey(status);
@@ -249,6 +354,7 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
           </View>
         </View>
 
+        {/* ✅ total now matches OrderDetails display total */}
         <Text style={[styles.orderTotal, { fontSize: isTablet ? 18 : 17 }]}>{moneyFmt(item.total, 'Nu')}</Text>
       </View>
 
@@ -309,24 +415,41 @@ const groupOrders = (rows = []) => {
         id,
         created_at: null,
         type: r.fulfillment_type || 'Pickup',
-        totals: [],
         itemsArr: [],
+        raw_items: [],
         business_name: r.business_name,
         payment_method: r.payment_method,
         status: normalizeStatusKey(r.status),
         note_for_restaurant: null,
         note_target: null,
-        raw_items: [],
         delivery_address: '',
+
+        // totals components
+        items_total: 0,
+        platform_fee: null,
+        discount_amount: null,
+        delivery_fee: null,
+        merchant_delivery_fee: null,
+        total_amount: null,
       };
 
     if (r.status) g.status = normalizeStatusKey(r.status);
 
-    g.totals.push(safeNum(r.total_amount));
-    const qty = safeNum(r.quantity) || 1;
+    const qty = getItemQty(r) || 1;
     const nm = r.item_name || 'Item';
     g.itemsArr.push(`${nm} ×${qty}`);
     g.raw_items.push({ item_name: nm, quantity: qty });
+
+    // items total
+    g.items_total += getItemLineTotal(r);
+
+    // fee/totals (first non-null wins)
+    const snap = getTotalsSnapshot(r);
+    if (g.platform_fee == null && snap.platform_fee != null) g.platform_fee = snap.platform_fee;
+    if (g.discount_amount == null && snap.discount_amount != null) g.discount_amount = snap.discount_amount;
+    if (g.delivery_fee == null && snap.delivery_fee != null) g.delivery_fee = snap.delivery_fee;
+    if (g.merchant_delivery_fee == null && snap.merchant_delivery_fee != null) g.merchant_delivery_fee = snap.merchant_delivery_fee;
+    if (g.total_amount == null && snap.total_amount != null) g.total_amount = snap.total_amount;
 
     const rowCreated = r.created_at || r.createdAt || r.placed_at || r.order_time || r.createdOn || null;
     const prev = g.created_at ? parseForSort(g.created_at) : 0;
@@ -350,8 +473,21 @@ const groupOrders = (rows = []) => {
   }
 
   const list = Array.from(byId.values()).map((g) => {
-    const total = g.totals.length > 0 ? g.totals.reduce((a, b) => a + b, 0) / g.totals.length : 0;
     const createdISO = g.created_at || null;
+
+    const totals = {
+      platform_fee: g.platform_fee,
+      discount_amount: g.discount_amount ?? 0,
+      delivery_fee: g.delivery_fee ?? 0,
+      merchant_delivery_fee: g.merchant_delivery_fee ?? 0,
+      total_amount: g.total_amount,
+    };
+
+    // ✅ total matches OrderDetails display total
+    const total = computeDisplayTotal({
+      items: [{ subtotal: g.items_total }], // provide itemsTotal without needing full items list
+      totals: { ...totals, total_amount: totals.total_amount ?? null },
+    });
 
     return {
       id: String(g.id),
@@ -372,7 +508,7 @@ const groupOrders = (rows = []) => {
       note_for_restaurant: g.note_for_restaurant || '',
       note_target: g.note_target || '',
       priority: 0,
-      discount_amount: 0,
+      discount_amount: Number(g.discount_amount ?? 0),
     };
   });
 
@@ -463,7 +599,8 @@ const normalizeOrdersFromApi = (payload) => {
           if (withNote) noteTarget = withNote.item_name || withNote.name || '';
         }
 
-        const itemsStr = (o.items || [])
+        const itemsArr = Array.isArray(o.items) ? o.items : [];
+        const itemsStr = itemsArr
           .map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`)
           .join(', ');
 
@@ -475,8 +612,10 @@ const normalizeOrdersFromApi = (payload) => {
 
         const deliveryAddr = pickAddress(o);
 
-        const totalAmount = o?.totals?.total_amount ?? o.total_amount ?? o.total ?? 0;
-        const discountAmount = o?.totals?.discount_amount ?? o.discount_amount ?? 0;
+        const snap = getTotalsSnapshot(o);
+
+        // ✅ total matches OrderDetails display total
+        const displayTotal = computeDisplayTotal({ items: itemsArr, totals: snap });
 
         list.push({
           id: String(o.order_id ?? o.id),
@@ -484,7 +623,7 @@ const normalizeOrdersFromApi = (payload) => {
           time: showAsGiven(createdISO),
           created_at: createdISO,
           items: itemsStr,
-          total: Number(totalAmount ?? 0),
+          total: displayTotal,
           status: normalizeStatusKey(o.status),
           payment_method: o.payment_method,
           business_name: businessName,
@@ -492,8 +631,8 @@ const normalizeOrdersFromApi = (payload) => {
           note_for_restaurant: o.note_for_restaurant || '',
           note_target: noteTarget,
           priority: Number(o.priority ?? 0),
-          discount_amount: Number(discountAmount ?? 0),
-          raw_items: Array.isArray(o.items) ? o.items : [],
+          discount_amount: Number(snap.discount_amount ?? 0),
+          raw_items: itemsArr,
           customer_id: u.user_id ?? null,
           customer_name: u.name || '',
           customer_email: u.email || '',
@@ -578,6 +717,9 @@ const normalizeScheduledForBiz = (payload, bizId) => {
         payloadOrder?.deliver_to ||
         '';
 
+      const snap = getTotalsSnapshot(payloadOrder);
+      const displayTotal = computeDisplayTotal({ items: itemsForBiz, totals: snap });
+
       list.push({
         id: String(job.job_id || job.id),
         type: payloadOrder.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
@@ -593,7 +735,7 @@ const normalizeScheduledForBiz = (payload, bizId) => {
         time: timeLabel,
 
         items: itemsStr,
-        total: Number(payloadOrder.total_amount ?? 0),
+        total: displayTotal,
         status: 'SCHEDULED',
         payment_method: payloadOrder.payment_method,
         business_name: businessName,
@@ -601,7 +743,7 @@ const normalizeScheduledForBiz = (payload, bizId) => {
         note_for_restaurant: payloadOrder.note_for_restaurant || '',
         note_target: noteTarget,
         priority: payloadOrder.priority ? 1 : 0,
-        discount_amount: Number(payloadOrder.discount_amount ?? 0),
+        discount_amount: Number(snap.discount_amount ?? payloadOrder.discount_amount ?? 0),
         raw_items: itemsForBiz,
         customer_id: job.user_id ?? payloadOrder.user_id ?? null,
         customer_name,
@@ -884,19 +1026,23 @@ export default function MartOrdersTab({
           if (withNote) liveNoteTarget = withNote.item_name || withNote.name || '';
         }
 
+        const itemsArr = Array.isArray(o.items) ? o.items : [];
+        const snap = getTotalsSnapshot(o);
+        const displayTotal = computeDisplayTotal({ items: itemsArr, totals: snap });
+
         const normalized = {
           id: String(o.order_id || o.id),
           type: o.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
           created_at: createdISO,
           time: showAsGiven(createdISO),
-          items: (o.items || [])
+          items: (itemsArr || [])
             .map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`)
             .join(', '),
-          total: safeNum(o?.totals?.total_amount ?? o.total_amount ?? o.total),
+          total: displayTotal,
           status: normalizeStatusKey(o.status || 'PENDING'),
           payment_method: o.payment_method || 'COD',
           business_name:
-            (o.items && o.items[0] && o.items[0].business_name) ||
+            (itemsArr && itemsArr[0] && itemsArr[0].business_name) ||
             o.business_name ||
             o.business?.business_name ||
             'Mart',
@@ -904,12 +1050,12 @@ export default function MartOrdersTab({
           customer_name: o.user?.name || '',
           customer_email: o.user?.email || '',
           customer_phone: o.user?.phone || '',
-          raw_items: Array.isArray(o.items) ? o.items : [],
+          raw_items: itemsArr,
           delivery_address: pickAddress(o) || '',
           note_for_restaurant: o.note_for_restaurant || '',
           note_target: liveNoteTarget,
           priority: Number(o.priority ?? 0),
-          discount_amount: Number(o?.totals?.discount_amount ?? o.discount_amount ?? 0),
+          discount_amount: Number(snap.discount_amount ?? 0),
         };
 
         setOrders((prev) => {

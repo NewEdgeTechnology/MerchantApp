@@ -73,7 +73,7 @@ import SendToFriendScreen from './screens/wallet/SendToFriendScreen';
 import MartOrdersTab from './screens/food/OrderTab';
 import MessageScreen from './screens/message/MessageScreen';
 import ChatDetailScreen from './screens/message/ChatDetailScreen';
-import PayoutsTab from './screens/food/PayoutTab';
+import PayoutTab from './screens/food/PayoutTab';
 import TPinScreen from './screens/wallet/TPinScreen';
 import CreateTPinScreen from './screens/wallet/CreateTPinScreen.js';
 import ForgotTPinScreen from './screens/wallet/ForgotTPinScreen.js';
@@ -188,7 +188,7 @@ export default function App() {
             <Stack.Screen name="MartOrdersTab" component={MartOrdersTab} />
             <Stack.Screen name="MessageScreen" component={MessageScreen} />
             <Stack.Screen name="ChatDetailScreen" component={ChatDetailScreen} />
-            <Stack.Screen name="PayoutsTab" component={PayoutsTab} />
+            <Stack.Screen name="PayoutTab" component={PayoutTab} />
             <Stack.Screen name="TPinScreen" component={TPinScreen} />
             <Stack.Screen name="CreateTPinScreen" component={CreateTPinScreen} />
             <Stack.Screen name="ForgotTPinScreen" component={ForgotTPinScreen} />

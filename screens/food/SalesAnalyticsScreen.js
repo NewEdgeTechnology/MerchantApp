@@ -482,7 +482,7 @@ export default function SalesAnalyticsScreen(props) {
         }
 
         const url = TOTAL_SALES_URL(business_id);
-        console.log("[sales] GET", url);
+        // console.log("[sales] GET", url);
 
         const token = await getAccessTokenFromSecureStore();
         const res = await fetch(url, {
@@ -624,7 +624,7 @@ export default function SalesAnalyticsScreen(props) {
   );
 
   return (
-    <View style={[styles.safe, { paddingTop: androidPad }]}>
+    <View style={[styles.safe, { paddingTop: 12 }]}>
       {/* Header */}
       <View style={styles.headerRow}>
         <Text style={styles.headerTitle}>Sales Analytics</Text>

@@ -9,6 +9,7 @@ import {
   TouchableOpacity,
   Alert,
   Modal,
+  ScrollView,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
@@ -175,7 +176,7 @@ async function buildHeaders(hasBody) {
   return h;
 }
 
-/* ---------- TIME HELPERS (no timezone change for absolute; local for “ago”) ---------- */
+/* ---------- TIME HELPERS ---------- */
 const showAsGiven = (s) => {
   if (!s) return '';
   const d = String(s);
@@ -224,7 +225,7 @@ const isTodayLocal = (s) => {
   );
 };
 
-/* ---------- type & order helpers ---------- */
+/* ---------- type helpers ---------- */
 const typeIcon = (type) => {
   switch (type) {
     case 'order':
@@ -238,7 +239,7 @@ const typeIcon = (type) => {
     case 'wallet':
       return 'card-outline';
     default:
-      return 'time-outline'; // generic activity icon
+      return 'time-outline';
   }
 };
 const typeTint = (type) => {
@@ -306,6 +307,11 @@ const inferStatusFromText = (title = '', body = '') => {
   return 'PENDING';
 };
 
+const isDeliveredLike = (status) => {
+  const s = String(status || '').toUpperCase();
+  return s === 'COMPLETED' || s === 'DELIVERED' || s === 'DELIVERED_SUCCESS' || s === 'SUCCESS';
+};
+
 /* ---------- filters/tabs ---------- */
 const FILTER_TABS = [
   { key: 'all', label: 'All' },
@@ -313,6 +319,17 @@ const FILTER_TABS = [
   { key: 'wallet', label: 'Wallet' },
   { key: 'system', label: 'System' },
 ];
+
+/* ---------- local helpers ---------- */
+function normalizeType(raw) {
+  const t = String(raw || '').toLowerCase();
+  if (t.includes('wallet')) return 'wallet';
+  if (t.startsWith('order')) return 'order';
+  if (t.includes('payout')) return 'payout';
+  if (t.includes('warn')) return 'warning';
+  if (t.includes('success')) return 'success';
+  return 'system';
+}
 
 /* ---------- map API → UI ---------- */
 const mapApiNotif = (n, readMap) => {
@@ -336,7 +353,6 @@ const mapApiNotif = (n, readMap) => {
     readServer == null ? Boolean(readMap[id]) : String(readServer) === '1' || readServer === true;
 
   const { orderCode, orderIdNumeric } = resolveOrderFromRecord(n);
-
   const orderId = orderIdNumeric ?? orderCode ?? null;
   const createdISO = created || null;
   const status = inferStatusFromText(title, body);
@@ -461,7 +477,7 @@ async function fetchOrderHydrated({ businessId, ownerType, orderId }) {
   }
 }
 
-/* ---------- API calls (PATCH only) ---------- */
+/* ---------- API calls ---------- */
 const ok = (r) => r && (r.status === 200 || r.status === 204 || r.ok);
 
 async function markOneReadServer(id) {
@@ -519,9 +535,14 @@ export default function NotificationsTab({
   const [list, setList] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [bizId, setBizId] = useState(null);
-  const [userId, setUserId] = useState(null); // for SYSTEM activities
+  const [userId, setUserId] = useState(null);
+
   const [activeTab, setActiveTab] = useState('all');
-  const [selectedSystemActivity, setSelectedSystemActivity] = useState(null); // overlay
+
+  // overlay for BOTH system + orders + others
+  const [selectedActivity, setSelectedActivity] = useState(null);
+  const [selectedOrderDetails, setSelectedOrderDetails] = useState(null);
+  const [orderLoading, setOrderLoading] = useState(false);
 
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -565,7 +586,6 @@ export default function NotificationsTab({
     try {
       const headers = await buildHeaders(false);
 
-      // ----- business activities (order / wallet / etc.) -----
       if (bizId) {
         const url = buildNotificationsUrl(bizId);
         if (url) {
@@ -595,7 +615,6 @@ export default function NotificationsTab({
         }
       }
 
-      // ----- system activities (admin → user_id) -----
       if (userId) {
         const sysUrl = buildSystemNotificationsUrl(userId);
         if (sysUrl) {
@@ -620,8 +639,8 @@ export default function NotificationsTab({
               .filter(Boolean)
               .map((n) => ({
                 ...n,
-                type: 'system', // force type=system for filters/icons
-                source: 'system', // mark origin
+                type: 'system',
+                source: 'system',
               }));
 
             mappedAll = mappedAll.concat(mappedSys);
@@ -631,7 +650,6 @@ export default function NotificationsTab({
 
       mappedAll.sort((a, b) => new Date(b._created_at) - new Date(a._created_at));
       setList(mappedAll);
-      // clear selection if list changed
       setSelectionMode(false);
       setSelectedIds(() => new Set());
     } catch {}
@@ -655,8 +673,6 @@ export default function NotificationsTab({
         return list.filter((n) => n.type === 'order');
       case 'wallet':
         return list.filter((n) => n.type === 'wallet' || n.type === 'payout');
-      case 'promo':
-        return list.filter((n) => n.type === 'promo');
       case 'system':
         return list.filter((n) => n.type === 'system');
       case 'all':
@@ -674,14 +690,9 @@ export default function NotificationsTab({
     if (!id) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      if (next.size === 0) {
-        setSelectionMode(false);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      if (next.size === 0) setSelectionMode(false);
       return next;
     });
   }, []);
@@ -704,18 +715,15 @@ export default function NotificationsTab({
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
-            // remove locally
             setList((cur) => cur.filter((n) => !ids.includes(n.id)));
             setSelectionMode(false);
             setSelectedIds(() => new Set());
 
-            // best-effort delete on server for each
             for (const id of ids) {
               // eslint-disable-next-line no-await-in-loop
               await deleteNotificationServer(id);
             }
 
-            // soft refresh (optional)
             onRefresh();
           },
         },
@@ -730,31 +738,22 @@ export default function NotificationsTab({
 
     const snapshot = list;
 
-    // local: mark read
-    setList((cur) =>
-      cur.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n))
-    );
+    setList((cur) => cur.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n)));
 
     const nextReadMap = { ...readMapRef.current };
-    ids.forEach((id) => {
-      nextReadMap[id] = true;
-    });
+    ids.forEach((id) => (nextReadMap[id] = true));
     await saveReadMap(nextReadMap);
 
-    // server: only for non-system
     for (const id of ids) {
       const item = snapshot.find((n) => n.id === id);
-      if (item && item.source !== 'system') {
+      if (item && item.source === 'business') {
         // eslint-disable-next-line no-await-in-loop
         await markOneReadServer(id);
       }
     }
 
-    // behave like delete: exit selection + clear selected
     setSelectionMode(false);
     setSelectedIds(() => new Set());
-
-    // optional soft refresh (keeps in sync with server)
     onRefresh();
   };
 
@@ -762,131 +761,97 @@ export default function NotificationsTab({
     const anyUnread = list.some((n) => !n.read);
     if (!anyUnread) return;
 
-    Alert.alert(
-      'Mark all as read',
-      'This will mark all activities as read.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Mark all',
-          style: 'default',
-          onPress: async () => {
-            const nextReadMap = { ...readMapRef.current };
-            for (const n of list) nextReadMap[n.id] = true;
-            await saveReadMap(nextReadMap);
-            setList((cur) => cur.map((n) => ({ ...n, read: true })));
-            if (bizId) {
-              const ok = await markAllReadServer(bizId);
-              if (!ok) onRefresh();
-            }
-            // system activities: local-only read; no server endpoint
-          },
+    Alert.alert('Mark all as read', 'This will mark all activities as read.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Mark all',
+        style: 'default',
+        onPress: async () => {
+          const nextReadMap = { ...readMapRef.current };
+          for (const n of list) nextReadMap[n.id] = true;
+          await saveReadMap(nextReadMap);
+
+          setList((cur) => cur.map((n) => ({ ...n, read: true })));
+
+          if (bizId) {
+            const okRes = await markAllReadServer(bizId);
+            if (!okRes) onRefresh();
+          }
         },
-      ],
-      { cancelable: true }
-    );
+      },
+    ]);
   };
 
-  const onPressItem = async (item) => {
-    const isSystem = item.source === 'system';
+  const markReadOnClick = useCallback(
+    async (item) => {
+      if (!item || item.read) return;
 
-    // in selection mode: toggle selection (non-system only)
+      setList((cur) => cur.map((n) => (n.id === item.id ? { ...n, read: true } : n)));
+      const nextReadMap = { ...readMapRef.current, [item.id]: true };
+      await saveReadMap(nextReadMap);
+
+      if (item.source === 'business') {
+        await markOneReadServer(item.id); // ✅ NOTIFICATION_READ_ENDPOINT
+      }
+    },
+    [saveReadMap]
+  );
+
+  const onPressItem = async (item) => {
     if (selectionMode) {
       if (item.source !== 'system') toggleSelect(item.id);
       return;
     }
 
-    if (isSystem) {
-      // show overlay with full details for system activities
-      setSelectedSystemActivity(item);
+    await markReadOnClick(item);
+
+    if (item.type === 'wallet' || item.type === 'payout') {
+      navigation.navigate('GrabMerchantHomeScreen', { activeTab: 'Payouts', from: 'Notifications' });
+      return;
     }
 
-    // Wallet / payout activities → GO TO HOME, Payouts tab
-    if (item.type === 'wallet' || item.type === 'payout') {
-      navigation.navigate('GrabMerchantHomeScreen', {
-        activeTab: 'Payouts',
-        from: 'Notifications',
-      });
-    } else if (!isSystem) {
-      // Orders & others from business activities → existing order details flow
-      const orderId =
-        item.orderIdNumeric ?? item.orderCode ?? item._order_like?.id ?? null;
-      if (orderId) {
+    setSelectedActivity(item);
+    setSelectedOrderDetails(null);
+
+    if (item.type === 'order') {
+      const orderId = item.orderIdNumeric ?? item.orderCode ?? item._order_like?.id ?? null;
+      if (!orderId || !bizId) return;
+
+      setOrderLoading(true);
+      try {
         const hydrated = await fetchOrderHydrated({
           businessId: bizId,
           ownerType,
           orderId: String(orderId),
         });
-
-        const groupedUrl = buildOrdersGroupedUrl(bizId, ownerType);
-
-        const fallbackOrder = {
-          id: String(orderId),
-          customer_name: item._order_like?.customer_name || '',
-        };
-
-        navigation.navigate(detailsRoute, {
-          orderId: String(orderId),
-          businessId: bizId,
-          ownerType,
-          ordersGroupedUrl: groupedUrl,
-          order: hydrated ? hydrated : fallbackOrder,
-        });
+        setSelectedOrderDetails(hydrated || null);
+      } catch {
+        setSelectedOrderDetails(null);
+      } finally {
+        setOrderLoading(false);
       }
-    }
-
-    // mark as read (common)
-    if (!item.read) {
-      setList((cur) =>
-        cur.map((n) => (n.id === item.id ? { ...n, read: true } : n))
-      );
-      const nextReadMap = { ...readMapRef.current, [item.id]: true };
-      await saveReadMap(nextReadMap);
-
-      if (item.source !== 'system') {
-        const ok = await markOneReadServer(item.id);
-        if (!ok) {
-          const rollback = { ...readMapRef.current, [item.id]: false };
-          await saveReadMap(rollback);
-          setList((cur) =>
-            cur.map((n) => (n.id === item.id ? { ...n, read: false } : n))
-          );
-        }
-      }
-      // system activities have no read API → local only
     }
   };
 
   const confirmDelete = (item) => {
-    if (item.source === 'system') {
-      // no delete for system activities (admin notices)
-      return;
-    }
+    if (item.source === 'system') return;
 
-    Alert.alert(
-      'Delete Activity',
-      'Are you sure you want to delete this activity?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setList((cur) => cur.filter((n) => n.id !== item.id));
-            const ok = await deleteNotificationServer(item.id);
-            if (!ok) onRefresh();
-          },
+    Alert.alert('Delete Activity', 'Are you sure you want to delete this activity?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          setList((cur) => cur.filter((n) => n.id !== item.id));
+          const okRes = await deleteNotificationServer(item.id);
+          if (!okRes) onRefresh();
         },
-      ],
-      { cancelable: true }
-    );
+      },
+    ]);
   };
 
   const renderRightActions = (item) => (
-    <TouchableOpacity
-      onPress={() => confirmDelete(item)}
-      style={styles.deleteAction}
-    >
+    <TouchableOpacity onPress={() => confirmDelete(item)} style={styles.deleteAction}>
       <Ionicons name="trash-outline" size={22} color="#fff" />
     </TouchableOpacity>
   );
@@ -899,27 +864,14 @@ export default function NotificationsTab({
         <TouchableOpacity
           onPress={() => onPressItem(item)}
           onLongPress={() => {
-            // allow selecting system activities too
             setSelectionMode(true);
             setSelectedIds(() => new Set([item.id]));
           }}
           activeOpacity={0.7}
-          style={[
-            styles.itemWrap,
-            isSelected && styles.itemWrapSelected,
-          ]}
+          style={[styles.itemWrap, isSelected && styles.itemWrapSelected]}
         >
-          <View
-            style={[
-              styles.iconWrap,
-              { backgroundColor: typeTint(item.type) + '22' },
-            ]}
-          >
-            <Ionicons
-              name={typeIcon(item.type)}
-              size={22}
-              color={typeTint(item.type)}
-            />
+          <View style={[styles.iconWrap, { backgroundColor: typeTint(item.type) + '22' }]}>
+            <Ionicons name={typeIcon(item.type)} size={22} color={typeTint(item.type)} />
             {!item.read && <View style={styles.unreadDot} />}
             {selectionMode && (
               <View style={styles.checkboxOverlay}>
@@ -931,12 +883,10 @@ export default function NotificationsTab({
               </View>
             )}
           </View>
+
           <View style={styles.itemTextWrap}>
             <View style={styles.itemTopRow}>
-              <Text
-                style={[styles.itemTitle, !item.read && styles.itemTitleUnread]}
-                numberOfLines={1}
-              >
+              <Text style={[styles.itemTitle, !item.read && styles.itemTitleUnread]} numberOfLines={1}>
                 {item.title}
               </Text>
               <Text style={styles.time}>{item.displayChip}</Text>
@@ -948,21 +898,12 @@ export default function NotificationsTab({
         </TouchableOpacity>
       );
 
-      // disable swipe/delete when in selection mode (single-item delete only) or system
-      if (selectionMode || item.source === 'system') {
-        return content;
-      }
-
-      return (
-        <Swipeable renderRightActions={() => renderRightActions(item)}>
-          {content}
-        </Swipeable>
-      );
+      if (selectionMode || item.source === 'system') return content;
+      return <Swipeable renderRightActions={() => renderRightActions(item)}>{content}</Swipeable>;
     },
     [selectionMode, selectedIds, onPressItem]
   );
 
-  // FlatList helpers (memoized, not hooks inside JSX)
   const keyExtractor = useCallback((it) => it.id, []);
   const renderSeparator = useCallback(() => <View style={styles.sep} />, []);
 
@@ -973,39 +914,26 @@ export default function NotificationsTab({
     if (selectionMode) {
       return (
         <View style={styles.headerTools}>
-          <View className="headerTitleRow" style={styles.headerTitleRow}>
+          <View style={styles.headerTitleRow}>
             <TouchableOpacity
               onPress={cancelSelection}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
               <Ionicons name="close-outline" size={22} color="#111827" />
             </TouchableOpacity>
-            <Text style={[styles.title, { fontSize: isTablet ? 20 : 16 }]}>
-              {selectedCount} selected
-            </Text>
+            <Text style={[styles.title, { fontSize: isTablet ? 20 : 16 }]}>{selectedCount} selected</Text>
             <View style={{ flex: 1 }} />
             {selectedCount > 0 && (
               <>
                 <TouchableOpacity
                   onPress={anySelectedUnread ? markSelectedRead : undefined}
-                  style={[
-                    styles.bulkReadBtn,
-                    { opacity: anySelectedUnread ? 1 : 0.4, marginRight: 8 },
-                  ]}
+                  style={[styles.bulkReadBtn, { opacity: anySelectedUnread ? 1 : 0.4, marginRight: 8 }]}
                   activeOpacity={anySelectedUnread ? 0.8 : 1}
                 >
-                  <Ionicons
-                    name="checkmark-done-outline"
-                    size={16}
-                    color="#fff"
-                  />
+                  <Ionicons name="checkmark-done-outline" size={16} color="#fff" />
                   <Text style={styles.bulkReadText}>Mark read</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={deleteSelected}
-                  style={styles.bulkDeleteBtn}
-                  activeOpacity={0.8}
-                >
+                <TouchableOpacity onPress={deleteSelected} style={styles.bulkDeleteBtn} activeOpacity={0.8}>
                   <Ionicons name="trash-outline" size={16} color="#fff" />
                   <Text style={styles.bulkDeleteText}>Delete</Text>
                 </TouchableOpacity>
@@ -1019,9 +947,7 @@ export default function NotificationsTab({
     return (
       <View style={styles.headerTools}>
         <View style={styles.headerTitleRow}>
-          <Text style={[styles.title, { fontSize: isTablet ? 22 : 18 }]}>
-            Activities
-          </Text>
+          <Text style={[styles.title, { fontSize: isTablet ? 22 : 18 }]}>Activities</Text>
           {unreadCount > 0 && (
             <View style={styles.badge}>
               <Text style={styles.badgeText}>{unreadCount}</Text>
@@ -1031,16 +957,11 @@ export default function NotificationsTab({
 
         <TouchableOpacity
           onPress={canMarkAll ? markAllRead : undefined}
-          style={[
-            styles.actionBtn,
-            { alignSelf: 'flex-start', opacity: canMarkAll ? 1 : 0.5 },
-          ]}
+          style={[styles.actionBtn, { alignSelf: 'flex-start', opacity: canMarkAll ? 1 : 0.5 }]}
           activeOpacity={canMarkAll ? 0.8 : 1}
         >
           <Ionicons name="checkmark-done-outline" size={16} color="#00b14f" />
-          <Text style={styles.actionText}>
-            {canMarkAll ? 'Mark all read' : 'All read'}
-          </Text>
+          <Text style={styles.actionText}>{canMarkAll ? 'Mark all read' : 'All read'}</Text>
         </TouchableOpacity>
 
         <View style={styles.tabsRow}>
@@ -1053,10 +974,7 @@ export default function NotificationsTab({
                 style={[styles.tabPill, active && styles.tabPillActive]}
                 activeOpacity={0.8}
               >
-                <Text
-                  style={[styles.tabLabel, active && styles.tabLabelActive]}
-                  numberOfLines={1}
-                >
+                <Text style={[styles.tabLabel, active && styles.tabLabelActive]} numberOfLines={1}>
                   {tab.label}
                 </Text>
               </TouchableOpacity>
@@ -1075,11 +993,45 @@ export default function NotificationsTab({
     </View>
   );
 
-  const closeSystemModal = () => setSelectedSystemActivity(null);
+  const closeActivityModal = () => {
+    setSelectedActivity(null);
+    setSelectedOrderDetails(null);
+    setOrderLoading(false);
+  };
+
+  const goToOrderDetailsFromModal = () => {
+    if (!selectedActivity || selectedActivity.type !== 'order') return;
+    const orderId = selectedActivity.orderIdNumeric ?? selectedActivity.orderCode ?? null;
+    if (!orderId || !bizId) return;
+
+    const groupedUrl = buildOrdersGroupedUrl(bizId, ownerType);
+    const fallbackOrder = {
+      id: String(orderId),
+      customer_name: selectedActivity?._order_like?.customer_name || '',
+    };
+
+    navigation.navigate(detailsRoute, {
+      orderId: String(orderId),
+      businessId: bizId,
+      ownerType,
+      ordersGroupedUrl: groupedUrl,
+      order: selectedOrderDetails ? selectedOrderDetails : fallbackOrder,
+    });
+
+    closeActivityModal();
+  };
+
+  const prettyStatus = (s) => String(s || '').replace(/_/g, ' ');
+
+  // ✅ delivered detection for hiding "Open details"
+  const deliveredNow =
+    selectedActivity?.type === 'order' &&
+    (isDeliveredLike(selectedOrderDetails?.status) ||
+      isDeliveredLike(selectedActivity?._order_like?.status) ||
+      isDeliveredLike(inferStatusFromText(selectedActivity?.title, selectedActivity?.body)));
 
   return (
     <View style={styles.wrap}>
-      {/* fixed header ONLY in selection mode (doesn't scroll) */}
       {selectionMode && <ListHeader />}
 
       <FlatList
@@ -1087,12 +1039,9 @@ export default function NotificationsTab({
         keyExtractor={keyExtractor}
         renderItem={renderItem}
         ItemSeparatorComponent={renderSeparator}
-        // header scrolls normally in non-selection mode
         ListHeaderComponent={!selectionMode ? ListHeader : null}
         ListEmptyComponent={Empty}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingBottom: 24 }}
         initialNumToRender={15}
         maxToRenderPerBatch={20}
@@ -1100,39 +1049,115 @@ export default function NotificationsTab({
         removeClippedSubviews
       />
 
-      {/* System activity details overlay */}
       <Modal
-        visible={!!selectedSystemActivity}
+        visible={!!selectedActivity}
         transparent
         animationType="fade"
-        onRequestClose={closeSystemModal}
+        onRequestClose={closeActivityModal}
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Ionicons
-                name="time-outline"
+                name={typeIcon(selectedActivity?.type)}
                 size={22}
                 color="#00b14f"
                 style={{ marginRight: 6 }}
               />
               <Text style={styles.modalTitle} numberOfLines={2}>
-                {selectedSystemActivity?.title}
+                {selectedActivity?.title}
               </Text>
             </View>
-            {!!selectedSystemActivity?._created_at && (
-              <Text style={styles.modalTime}>
-                {showAsGiven(selectedSystemActivity._created_at)}
-              </Text>
+
+            {!!selectedActivity?._created_at && (
+              <Text style={styles.modalTime}>{showAsGiven(selectedActivity._created_at)}</Text>
             )}
-            <Text style={styles.modalBody}>{selectedSystemActivity?.body}</Text>
-            <TouchableOpacity
-              style={styles.modalCloseBtn}
-              onPress={closeSystemModal}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.modalCloseText}>Close</Text>
-            </TouchableOpacity>
+
+            <Text style={styles.modalBody}>{selectedActivity?.body}</Text>
+
+            {selectedActivity?.type === 'order' && (
+              <View style={styles.orderBox}>
+                <View style={styles.orderRow}>
+                  <Text style={styles.orderLabel}>Order</Text>
+                  <Text style={styles.orderValue}>
+                    {selectedActivity?.orderCode ||
+                      (selectedActivity?.orderIdNumeric ? `ORD-${selectedActivity.orderIdNumeric}` : '—')}
+                  </Text>
+                </View>
+
+                {orderLoading ? (
+                  <View style={{ paddingVertical: 10 }}>
+                    <Text style={styles.orderMuted}>Loading order details…</Text>
+                  </View>
+                ) : selectedOrderDetails ? (
+                  <>
+                    <View style={styles.orderRow}>
+                      <Text style={styles.orderLabel}>Status</Text>
+                      <Text style={styles.orderValue}>{prettyStatus(selectedOrderDetails.status)}</Text>
+                    </View>
+
+                    {!!selectedOrderDetails.customer_name && (
+                      <View style={styles.orderRow}>
+                        <Text style={styles.orderLabel}>Customer</Text>
+                        <Text style={styles.orderValue}>{selectedOrderDetails.customer_name}</Text>
+                      </View>
+                    )}
+
+                    {Array.isArray(selectedOrderDetails.raw_items) &&
+                      selectedOrderDetails.raw_items.length > 0 && (
+                        <View style={{ marginTop: 8 }}>
+                          <Text style={styles.orderLabel}>Items</Text>
+                          <ScrollView style={{ maxHeight: 140, marginTop: 6 }}>
+                            {selectedOrderDetails.raw_items.slice(0, 30).map((it, idx) => (
+                              <View key={String(it.item_id ?? idx)} style={styles.itemLine}>
+                                <Text style={styles.itemLineText} numberOfLines={1}>
+                                  {it.quantity} × {it.item_name}
+                                </Text>
+                              </View>
+                            ))}
+                          </ScrollView>
+                        </View>
+                      )}
+                  </>
+                ) : (
+                  <View style={{ paddingVertical: 10 }}>
+                    <Text style={styles.orderMuted}>No extra order details found.</Text>
+                  </View>
+                )}
+
+                <View style={styles.modalButtonsRow}>
+                  {/* ✅ HIDE when delivered/completed */}
+                  {!deliveredNow && (
+                    <TouchableOpacity
+                      style={styles.modalGhostBtn}
+                      onPress={goToOrderDetailsFromModal}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="open-outline" size={16} color="#00b14f" />
+                      <Text style={styles.modalGhostText}>Open details</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <TouchableOpacity
+                    style={styles.modalCloseBtn}
+                    onPress={closeActivityModal}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.modalCloseText}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {selectedActivity?.type !== 'order' && (
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={closeActivityModal}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.modalCloseText}>Close</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>
@@ -1145,19 +1170,9 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#f6f7f8' },
 
   headerTools: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
-  headerTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 8,
-  },
+  headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   title: { fontWeight: '700', color: '#111827' },
-  badge: {
-    backgroundColor: '#00b14f',
-    borderRadius: 999,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
+  badge: { backgroundColor: '#00b14f', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
   badgeText: { color: '#fff', fontWeight: '700', fontSize: 12 },
 
   actionBtn: {
@@ -1173,12 +1188,7 @@ const styles = StyleSheet.create({
   },
   actionText: { color: '#00b14f', fontWeight: '600' },
 
-  tabsRow: {
-    flexDirection: 'row',
-    marginTop: 12,
-    gap: 8,
-    flexWrap: 'wrap',
-  },
+  tabsRow: { flexDirection: 'row', marginTop: 12, gap: 8, flexWrap: 'wrap' },
   tabPill: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -1187,31 +1197,14 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     backgroundColor: '#ffffff',
   },
-  tabPillActive: {
-    backgroundColor: '#00b14f11',
-    borderColor: '#00b14f',
-  },
-  tabLabel: {
-    fontSize: 13,
-    color: '#4b5563',
-    fontWeight: '500',
-  },
-  tabLabelActive: {
-    color: '#00b14f',
-    fontWeight: '700',
-  },
+  tabPillActive: { backgroundColor: '#00b14f11', borderColor: '#00b14f' },
+  tabLabel: { fontSize: 13, color: '#4b5563', fontWeight: '500' },
+  tabLabelActive: { color: '#00b14f', fontWeight: '700' },
 
   sep: { height: 1, backgroundColor: '#e5e7eb', marginLeft: 16 },
 
-  itemWrap: {
-    flexDirection: 'row',
-    backgroundColor: '#fff',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  itemWrapSelected: {
-    backgroundColor: '#dcfce7',
-  },
+  itemWrap: { flexDirection: 'row', backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 12 },
+  itemWrapSelected: { backgroundColor: '#dcfce7' },
   iconWrap: {
     width: 40,
     height: 40,
@@ -1232,17 +1225,9 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
-  checkboxOverlay: {
-    position: 'absolute',
-    bottom: -6,
-    right: -6,
-  },
+  checkboxOverlay: { position: 'absolute', bottom: -6, right: -6 },
   itemTextWrap: { flex: 1 },
-  itemTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
+  itemTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   itemTitle: { color: '#111827', fontWeight: '600' },
   itemTitleUnread: { fontWeight: '800' },
   itemBody: { color: '#4b5563', marginTop: 2 },
@@ -1266,11 +1251,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     gap: 4,
   },
-  bulkDeleteText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 13,
-  },
+  bulkDeleteText: { color: '#fff', fontWeight: '700', fontSize: 13 },
   bulkReadBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1280,17 +1261,12 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     gap: 4,
   },
-  bulkReadText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 13,
-  },
+  bulkReadText: { color: '#fff', fontWeight: '700', fontSize: 13 },
 
   emptyWrap: { alignItems: 'center', paddingVertical: 40, gap: 8 },
   emptyTitle: { color: '#111827', fontWeight: '700' },
   emptyBody: { color: '#6b7280' },
 
-  // modal styles
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.45)',
@@ -1300,55 +1276,47 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     width: '100%',
-    maxWidth: 420,
+    maxWidth: 460,
     backgroundColor: '#ffffff',
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 16,
   },
-  modalHeader: {
+  modalHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  modalTitle: { fontSize: 16, fontWeight: '700', color: '#111827', flex: 1 },
+  modalTime: { fontSize: 12, color: '#6b7280', marginBottom: 8 },
+  modalBody: { fontSize: 14, color: '#374151', marginBottom: 12 },
+
+  orderBox: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f9fafb',
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 6,
+  },
+  orderRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginTop: 6 },
+  orderLabel: { color: '#6b7280', fontSize: 12, fontWeight: '700' },
+  orderValue: { color: '#111827', fontSize: 13, fontWeight: '700', flexShrink: 1, textAlign: 'right' },
+  orderMuted: { color: '#6b7280', fontSize: 13 },
+
+  itemLine: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
+  itemLineText: { color: '#111827', fontSize: 13, fontWeight: '600' },
+
+  modalButtonsRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 12, alignItems: 'center' },
+  modalGhostBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#111827',
-    flex: 1,
-  },
-  modalTime: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginBottom: 8,
-  },
-  modalBody: {
-    fontSize: 14,
-    color: '#374151',
-    marginBottom: 16,
-  },
-  modalCloseBtn: {
-    alignSelf: 'flex-end',
-    paddingHorizontal: 14,
+    gap: 6,
+    paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: '#00b14f',
+    borderWidth: 1,
+    borderColor: '#00b14f',
+    backgroundColor: '#00b14f11',
   },
-  modalCloseText: {
-    color: '#ffffff',
-    fontWeight: '700',
-    fontSize: 13,
-  },
+  modalGhostText: { color: '#00b14f', fontWeight: '800', fontSize: 13 },
+
+  modalCloseBtn: { alignSelf: 'flex-end', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: '#00b14f' },
+  modalCloseText: { color: '#ffffff', fontWeight: '700', fontSize: 13 },
 });
-
-/* ---------- local helpers used above ---------- */
-function normalizeType(raw) {
-  const t = String(raw || '').toLowerCase();
-
-  if (t.includes('wallet')) return 'wallet';
-  if (t.startsWith('order')) return 'order';
-  if (t.includes('payout')) return 'payout';
-  if (t.includes('warn')) return 'warning';
-  if (t.includes('success')) return 'success';
-  return 'system';
-}
