@@ -63,7 +63,8 @@ const DEFAULT_DEV_ORIGIN = Platform.select({
   default: 'http://localhost:3000',
 });
 
-const HEADER_REFRESH_MS = 12000;
+// ✅ slower refresh to avoid rate limits
+const HEADER_REFRESH_MS = 45000;
 
 const normalizeOwnerType = (v) => {
   const s = String(v ?? '').trim().toLowerCase();
@@ -99,7 +100,7 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
     let json = null;
     try {
       json = text ? JSON.parse(text) : null;
-    } catch {}
+    } catch { }
     if (!res.ok) {
       const msg = (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
       throw new Error(msg);
@@ -115,7 +116,7 @@ const getBaseOrigin = () => {
     if (typeof globalThis.URL === 'function' && LOGIN_USERNAME_MERCHANT_ENDPOINT) {
       return new globalThis.URL(LOGIN_USERNAME_MERCHANT_ENDPOINT).origin;
     }
-  } catch {}
+  } catch { }
   return DEFAULT_DEV_ORIGIN;
 };
 const candidateProfileUrls = () => {
@@ -322,14 +323,17 @@ const HeaderBar = React.memo(function HeaderBar({
         if (fallback) {
           try {
             nav.navigate(fallback, params);
-          } catch {}
+          } catch { }
         }
       }
     },
     [nav, params]
   );
 
-  const goToAccountSettings = useCallback(() => safeNav('AccountSettings', 'ProfileBusinessDetails'), [safeNav]);
+  const goToAccountSettings = useCallback(
+    () => safeNav('AccountSettings', 'ProfileBusinessDetails'),
+    [safeNav]
+  );
   const goToProfileBusinessDetails = useCallback(() => safeNav('ProfileBusinessDetails'), [safeNav]);
 
   const logoUri = useMemo(() => {
@@ -398,7 +402,11 @@ const HeaderBar = React.memo(function HeaderBar({
             )}
           </TouchableOpacity>
 
-          <Text style={[styles.merchantName, { marginLeft: 6 }]} numberOfLines={1} ellipsizeMode="tail">
+          <Text
+            style={[styles.merchantName, { marginLeft: 6 }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
             {merchantName || DEFAULT_NAME}
           </Text>
         </View>
@@ -412,7 +420,7 @@ const HeaderBar = React.memo(function HeaderBar({
             <Image
               source={{ uri: profileAvatar || DEFAULT_AVATAR }}
               style={[styles.profileCircle, { width: avatarSize, height: avatarSize }]}
-              onError={() => {}}
+              onError={() => { }}
             />
           </TouchableOpacity>
         </View>
@@ -621,6 +629,25 @@ export default function GrabMerchantHomeScreen() {
     if (bumped) setLogoVersion((v) => v + 1);
   }, []);
 
+  /* ──────────────── ✅ Profile request limiter (prevents 429) ──────────────── */
+  const profileReqRef = useRef({
+    inFlight: false,
+    lastAt: 0,
+    timer: null,
+    lastUid: null,
+    backoffUntil: 0,
+  });
+
+  const PROFILE_COOLDOWN_MS = 25000;
+  const PROFILE_DEBOUNCE_MS = 700;
+
+  useEffect(() => {
+    return () => {
+      if (profileReqRef.current.timer) clearTimeout(profileReqRef.current.timer);
+      profileReqRef.current.timer = null;
+    };
+  }, []);
+
   const loadFromStore = useCallback(async () => {
     try {
       const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
@@ -628,7 +655,7 @@ export default function GrabMerchantHomeScreen() {
       let blob = {};
       try {
         blob = JSON.parse(raw);
-      } catch {}
+      } catch { }
       const user = blob?.user ?? blob;
 
       const idCandidates = [
@@ -682,72 +709,116 @@ export default function GrabMerchantHomeScreen() {
         (await SecureStore.getItemAsync(KEY_AUTH_TOKEN)) ||
         null;
       if (tokenCandidate && !authToken) setAuthToken(String(tokenCandidate));
-    } catch {}
+    } catch { }
   }, [userId, applyHeaderIfChanged, deliveryOption, authToken]);
 
+  // ✅ rate-safe loadFromBackend(uid, {force})
   const loadFromBackend = useCallback(
-    async (uid) => {
-      const url = buildProfileUrl(uid);
-      if (!url) return;
-      try {
-        const data = await fetchJSON(url, { method: 'GET' });
-        applyHeaderIfChanged(data);
-        maybeApplyKind(data?.owner_type, setOwnerType);
+    async (uid, { force = false } = {}) => {
+      const _uid = String(uid || '').trim();
+      if (!_uid) return;
 
-        const bid = data?.business_id ?? data?.id ?? null;
-        if (bid) setBusinessId(String(bid));
+      const now = Date.now();
+      const r = profileReqRef.current;
 
-        const license = data?.business_license || data?.business_license_number || '';
-        if (license) setBusinessLicense(String(license));
+      if (!force) {
+        if (r.inFlight) return;
+        if (r.backoffUntil && now < r.backoffUntil) return;
+        if (r.lastUid === _uid && now - r.lastAt < PROFILE_COOLDOWN_MS) return;
+      }
 
-        if (data?.delivery_option && !deliveryOption) {
-          setDeliveryOption(String(data.delivery_option).toUpperCase());
+      if (r.timer) clearTimeout(r.timer);
+      r.timer = setTimeout(async () => {
+        const rr = profileReqRef.current;
+        const now2 = Date.now();
+
+        if (!force) {
+          if (rr.inFlight) return;
+          if (rr.backoffUntil && now2 < rr.backoffUntil) return;
+          if (rr.lastUid === _uid && now2 - rr.lastAt < PROFILE_COOLDOWN_MS) return;
+        }
+
+        rr.inFlight = true;
+        rr.lastUid = _uid;
+
+        const url = buildProfileUrl(_uid);
+        if (!url) {
+          rr.inFlight = false;
+          return;
         }
 
         try {
-          const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
-          let blob = {};
-          try {
-            blob = raw ? JSON.parse(raw) : {};
-          } catch {}
-          const providedKind =
-            data?.owner_type != null && String(data.owner_type).trim() !== ''
-              ? normalizeOwnerType(data.owner_type)
-              : null;
+          const data = await fetchJSON(url, { method: 'GET' });
+          applyHeaderIfChanged(data);
+          maybeApplyKind(data?.owner_type, setOwnerType);
 
-          const merged = {
-            ...blob,
-            business_license: license || blob?.business_license,
-            business_name: data?.business_name ?? blob?.business_name,
-            business_address:
-              (data?.business_address ?? data?.address ?? data?.location) ?? blob?.business_address,
-            business_logo: data?.business_logo ?? blob?.business_logo,
-            owner_type: providedKind ?? (blob?.owner_type ?? ownerType),
-            business_id: (data?.business_id ?? data?.id) ?? blob?.business_id,
-            user_id: data?.user_id ?? blob?.user_id,
-            delivery_option: (data?.delivery_option || blob?.delivery_option || '').toString().toUpperCase(),
-            user: {
-              ...(blob.user || {}),
-              business_license: license || blob?.user?.business_license,
-              business_name: data?.business_name ?? blob?.user?.business_name,
+          const bid = data?.business_id ?? data?.id ?? null;
+          if (bid) setBusinessId(String(bid));
+
+          const license = data?.business_license || data?.business_license_number || '';
+          if (license) setBusinessLicense(String(license));
+
+          if (data?.delivery_option && !deliveryOption) {
+            setDeliveryOption(String(data.delivery_option).toUpperCase());
+          }
+
+          try {
+            const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
+            let blob = {};
+            try {
+              blob = raw ? JSON.parse(raw) : {};
+            } catch { }
+            const providedKind =
+              data?.owner_type != null && String(data.owner_type).trim() !== ''
+                ? normalizeOwnerType(data.owner_type)
+                : null;
+
+            const merged = {
+              ...blob,
+              business_license: license || blob?.business_license,
+              business_name: data?.business_name ?? blob?.business_name,
               business_address:
-                (data?.business_address ?? data?.address ?? data?.location) ??
-                blob?.user?.business_address,
-              business_logo: data?.business_logo ?? blob?.user?.business_logo,
-              owner_type: providedKind ?? (blob?.user?.owner_type ?? ownerType),
-              business_id: (data?.business_id ?? data?.id) ?? blob?.user?.business_id,
-              user_id: data?.user_id ?? blob?.user?.user_id,
-              delivery_option: (data?.delivery_option || blob?.user?.delivery_option || '')
+                (data?.business_address ?? data?.address ?? data?.location) ?? blob?.business_address,
+              business_logo: data?.business_logo ?? blob?.business_logo,
+              owner_type: providedKind ?? (blob?.owner_type ?? ownerType),
+              business_id: (data?.business_id ?? data?.id) ?? blob?.business_id,
+              user_id: data?.user_id ?? blob?.user_id,
+              delivery_option: (data?.delivery_option || blob?.delivery_option || '')
                 .toString()
                 .toUpperCase(),
-            },
-          };
-          await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
-        } catch {}
-      } catch (e) {
-        if (e?.name === 'AbortError' || e?.message === 'Aborted') return;
-        if (__DEV__) console.log('[Home] profile fetch failed:', e?.message);
-      }
+              user: {
+                ...(blob.user || {}),
+                business_license: license || blob?.user?.business_license,
+                business_name: data?.business_name ?? blob?.user?.business_name,
+                business_address:
+                  (data?.business_address ?? data?.address ?? data?.location) ??
+                  blob?.user?.business_address,
+                business_logo: data?.business_logo ?? blob?.user?.business_logo,
+                owner_type: providedKind ?? (blob?.user?.owner_type ?? ownerType),
+                business_id: (data?.business_id ?? data?.id) ?? blob?.user?.business_id,
+                user_id: data?.user_id ?? blob?.user?.user_id,
+                delivery_option: (data?.delivery_option || blob?.user?.delivery_option || '')
+                  .toString()
+                  .toUpperCase(),
+              },
+            };
+            await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
+          } catch { }
+
+          rr.lastAt = Date.now(); // ✅ only on success
+          rr.backoffUntil = 0;
+        } catch (e) {
+          const msg = String(e?.message || '');
+          if (msg.toLowerCase().includes('too many')) {
+            // ✅ extra backoff if 429 message
+            rr.backoffUntil = Date.now() + 60000;
+          }
+          if (e?.name === 'AbortError' || e?.message === 'Aborted') return;
+          if (__DEV__) console.log('[Home] profile fetch failed:', e?.message);
+        } finally {
+          profileReqRef.current.inFlight = false;
+        }
+      }, PROFILE_DEBOUNCE_MS);
     },
     [buildProfileUrl, ownerType, applyHeaderIfChanged, deliveryOption]
   );
@@ -786,7 +857,7 @@ export default function GrabMerchantHomeScreen() {
             },
           };
           await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
-        } catch {}
+        } catch { }
       } catch (e) {
         if (e?.name === 'AbortError' || e?.message === 'Aborted') return;
         if (__DEV__) console.log('[Home] loadBusinessFromBackend failed:', e?.message);
@@ -918,16 +989,25 @@ export default function GrabMerchantHomeScreen() {
     }
   }, []);
 
+  // ✅ prevent initial effect from double-running (strict mode / dependency shifts)
+  const bootRef = useRef(false);
+
   useEffect(() => {
+    if (bootRef.current) return;
+    bootRef.current = true;
+
     (async () => {
       await loadFromStore();
       if (route?.params?.user_id && !userId) setUserId(String(route.params.user_id));
       const uid = route?.params?.user_id || userId;
+
       if (uid) {
-        await loadFromBackend(String(uid));
+        // ✅ force only once on boot
+        await loadFromBackend(String(uid), { force: true });
       } else {
         await refreshFromServerMe();
       }
+
       if (businessId) {
         await loadBusinessFromBackend(String(businessId));
         await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
@@ -936,31 +1016,19 @@ export default function GrabMerchantHomeScreen() {
       if (route?.params?.authContext) setAuthContext(route.params.authContext);
 
       if ((route?.params?.delivery_option || route?.params?.deliveryOption) && !deliveryOption) {
-        setDeliveryOption(String(route.params.delivery_option || route.params.deliveryOption).toUpperCase());
+        setDeliveryOption(
+          String(route.params.delivery_option || route.params.deliveryOption).toUpperCase()
+        );
       }
     })();
-  }, [
-    route?.params?.user_id,
-    loadFromStore,
-    userId,
-    loadFromBackend,
-    refreshFromServerMe,
-    businessId,
-    ownerType,
-    loadBusinessFromBackend,
-    fetchKpis,
-    fetchSalesToday,
-    deliveryOption,
-    route?.params?.delivery_option,
-    route?.params?.deliveryOption,
-    route?.params?.authContext,
-  ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const unsub = navigation.addListener('focus', async () => {
       await loadFromStore();
       const uid = route?.params?.user_id || userId;
-      if (uid) await loadFromBackend(String(uid));
+      if (uid) await loadFromBackend(String(uid)); // ✅ guarded
       if (businessId) {
         await loadBusinessFromBackend(String(businessId));
         await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
@@ -986,7 +1054,7 @@ export default function GrabMerchantHomeScreen() {
       if (s === 'active') {
         await loadFromStore();
         const uid = route?.params?.user_id || userId;
-        if (uid) await loadFromBackend(String(uid));
+        if (uid) await loadFromBackend(String(uid)); // ✅ guarded
         if (businessId) {
           await loadBusinessFromBackend(String(businessId));
           await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
@@ -1021,7 +1089,7 @@ export default function GrabMerchantHomeScreen() {
           await fetchSalesToday(String(businessId));
         }
         const uid = route?.params?.user_id || userId;
-        if (uid) await loadFromBackend(String(uid));
+        if (uid) await loadFromBackend(String(uid)); // ✅ guarded
       }, HEADER_REFRESH_MS);
     };
 
@@ -1124,7 +1192,8 @@ export default function GrabMerchantHomeScreen() {
         setUserId(String(params.user_id || params.userId));
       }
 
-      if (params.businessId || params.business_id) setBusinessId(String(params.businessId || params.business_id));
+      if (params.businessId || params.business_id)
+        setBusinessId(String(params.businessId || params.business_id));
       if (params.business_name) setMerchantName(String(params.business_name));
       if (params.business_logo && belongsToCurrentContext(params)) {
         applyHeaderIfChanged({ business_logo: params.business_logo });
@@ -1144,7 +1213,7 @@ export default function GrabMerchantHomeScreen() {
     const sub1 = DeviceEventEmitter.addListener('merchant-updated', async () => {
       await loadFromStore();
       const uid = route?.params?.user_id || userId;
-      if (uid) await loadFromBackend(String(uid));
+      if (uid) await loadFromBackend(String(uid)); // ✅ guarded
       if (businessId) {
         await loadBusinessFromBackend(String(businessId));
         await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
@@ -1165,7 +1234,7 @@ export default function GrabMerchantHomeScreen() {
 
       try {
         await SecureStore.setItemAsync(KEY_LAST_CTX, JSON.stringify(params));
-      } catch {}
+      } catch { }
 
       const bid = params.businessId || params.business_id || businessId;
       const kind = normalizeOwnerType(params.owner_type ?? ownerType);
@@ -1190,10 +1259,10 @@ export default function GrabMerchantHomeScreen() {
         if (payload?.delivery_option || payload?.deliveryOption) {
           setDeliveryOption(String(payload.delivery_option || payload.deliveryOption).toUpperCase());
         }
-      } catch {}
+      } catch { }
 
       const uid = route?.params?.user_id || userId;
-      if (uid) await loadFromBackend(String(uid));
+      if (uid) await loadFromBackend(String(uid)); // ✅ guarded
       if (businessId) {
         await loadBusinessFromBackend(String(businessId));
         await fetchKpis(String(businessId), normalizeOwnerType(ownerType));
@@ -1243,7 +1312,7 @@ export default function GrabMerchantHomeScreen() {
     setRefreshing(true);
     await loadFromStore();
     const uid = route?.params?.user_id || userId;
-    if (uid) await loadFromBackend(String(uid));
+    if (uid) await loadFromBackend(String(uid)); // ✅ guarded
     if (businessId) await loadMenusFromStorage(businessId, ownerType);
     if (businessId) await loadBusinessFromBackend(String(businessId));
     if (businessId) {
@@ -1362,7 +1431,24 @@ export default function GrabMerchantHomeScreen() {
     openTab('Orders', kpiCtxParams());
   }, [openTab, kpiCtxParams]);
 
+  const onPressMessages = useCallback(() => {
+    const ctx = kpiCtxParams();
+
+    navigation.navigate("MessageScreen", {
+      ...ctx,
+
+      // ✅ force pass business id
+      business_id: ctx?.business_id ?? businessId,
+      businessId: ctx?.businessId ?? businessId,
+
+      serviceConfig,
+    });
+  }, [navigation, kpiCtxParams, serviceConfig, businessId]);
+
   const contentPaddingBottom = bottomBarHeight + (activeTab === 'Home' ? 20 : 0);
+
+  // ✅ HIDE message FAB on OrdersTab and SalesAnalyticsScreen
+  const showMessageFab = activeTab !== 'Orders' && activeTab !== 'Sales';
 
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right']}>
@@ -1491,6 +1577,23 @@ export default function GrabMerchantHomeScreen() {
         )}
       </View>
 
+      {/* ✅ Floating Message Button (HIDDEN on Orders + Sales) */}
+      {showMessageFab && (
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={onPressMessages}
+          style={[
+            styles.messageFab,
+            {
+              bottom: bottomBarHeight + 16,
+              right: 16,
+            },
+          ]}
+        >
+          <Ionicons name="chatbubble-ellipses" size={22} color="#fff" />
+        </TouchableOpacity>
+      )}
+
       <MerchantBottomBar
         items={NAV_ITEMS}
         activeKey={activeTab}
@@ -1555,5 +1658,22 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 },
     elevation: 2,
+  },
+
+  // ✅ Floating message bubble
+  messageFab: {
+    position: 'absolute',
+    width: 54,
+    height: 54,
+    borderRadius: 999,
+    backgroundColor: '#00b14f',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+    zIndex: 999,
   },
 });
