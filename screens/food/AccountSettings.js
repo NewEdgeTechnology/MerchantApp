@@ -490,8 +490,8 @@ const AccountSettings = () => {
     });
   };
 
-  // ✅ Use route param first, then fall back to local state
-  const goToFeedback = useCallback(() => {
+  // ✅ Use route param first, then authContext, then SecureStore fallback
+  const goToFeedback = useCallback(async () => {
     const rawBid = route?.params?.business_id ?? businessId;
     const bidStr = String(rawBid ?? '').trim();
     const bidNum = /^\d+$/.test(bidStr) ? parseInt(bidStr, 10) : NaN;
@@ -501,13 +501,43 @@ const AccountSettings = () => {
       return;
     }
 
+    // ✅ resolve owner_type
+    let ownerType =
+      route?.params?.owner_type ||
+      authContext?.owner_type ||
+      authContext?.user?.owner_type ||
+      authContext?.raw?.owner_type ||
+      null;
+
+    // fallback: read from stored merchant_login if still missing
+    if (!ownerType) {
+      try {
+        const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
+        const blob = raw ? JSON.parse(raw) : null;
+        ownerType =
+          blob?.owner_type ||
+          blob?.user?.owner_type ||
+          blob?.merchant?.owner_type ||
+          null;
+      } catch { }
+    }
+
     navigation.navigate('FeedbackScreen', {
       business_id: bidNum,
       business_name: biz?.business_name || name || '',
-      authContext,                  // existing context
-      auth_token: authContext?.token || null, // ✅ explicit token param for Feedback & Rating
+      owner_type: ownerType,          // ✅ ADDED
+      authContext,
+      auth_token: authContext?.token || null,
     });
-  }, [navigation, route?.params?.business_id, businessId, biz?.business_name, name, authContext]);
+  }, [
+    navigation,
+    route?.params?.business_id,
+    route?.params?.owner_type,
+    businessId,
+    biz?.business_name,
+    name,
+    authContext,
+  ]);
 
   const handleLogoutNow = useCallback(async () => {
     try {

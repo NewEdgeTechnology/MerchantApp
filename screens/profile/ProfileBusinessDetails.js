@@ -1,6 +1,7 @@
 // screens/profile/ProfileBusinessDetails.js
 // ✅ Keeps all details displayed (Basic + Location + Operations + Promotions + Documents)
 // ✅ Adds Edit button -> navigates to "EditBusinessDetails"
+// ✅ UI refreshed to match PersonalInformation style (header + typography + cards) — logic untouched
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -19,7 +20,7 @@ import {
   Pressable,
   Dimensions,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRoute, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
@@ -148,13 +149,13 @@ const pct = (v) => {
   return `${n}%`;
 };
 
-/* ---------------- UI atoms ---------------- */
+/* ---------------- UI atoms (style-only changes) ---------------- */
 
 const Section = ({ title, icon, children }) => (
   <View style={styles.card}>
     <View style={styles.sectionHeader}>
       <View style={styles.sectionIcon}>
-        <Ionicons name={icon} size={16} color="#111" />
+        <Ionicons name={icon} size={16} color="#0f172a" />
       </View>
       <Text style={styles.sectionTitle}>{title}</Text>
     </View>
@@ -171,7 +172,7 @@ const Row = ({ label, value, icon, onPress }) => (
   >
     <View style={styles.rowLeft}>
       <View style={styles.rowIcon}>
-        <Ionicons name={icon} size={16} color="#111" />
+        <Ionicons name={icon} size={16} color="#0f172a" />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.rowLabel}>{label}</Text>
@@ -180,7 +181,7 @@ const Row = ({ label, value, icon, onPress }) => (
         </Text>
       </View>
     </View>
-    {onPress ? <Ionicons name="chevron-forward" size={18} color="#888" /> : null}
+    {onPress ? <Ionicons name="chevron-forward" size={18} color="#94a3b8" /> : null}
   </TouchableOpacity>
 );
 
@@ -194,7 +195,7 @@ const Badge = ({ text, icon, tone = "neutral" }) => {
 
   return (
     <View style={[styles.badge, toneStyle]}>
-      <Ionicons name={icon} size={14} color="#111" />
+      <Ionicons name={icon} size={14} color="#0f172a" />
       <Text style={styles.badgeText} numberOfLines={1}>
         {text}
       </Text>
@@ -207,6 +208,7 @@ const Badge = ({ text, icon, tone = "neutral" }) => {
 export default function ProfileBusinessDetails() {
   const route = useRoute();
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
 
   const businessIdParam =
     route?.params?.business_id ?? route?.params?.businessId ?? null;
@@ -271,7 +273,6 @@ export default function ProfileBusinessDetails() {
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          
         });
 
         const json = await res.json().catch(() => null);
@@ -338,14 +339,14 @@ export default function ProfileBusinessDetails() {
     });
   }, [navigation, details, businessIdParam]);
 
+  const headerTopPad = Math.max(insets.top, 8) + 18;
+
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <View style={styles.center}>
-          <ActivityIndicator size="large" />
-          <Text style={styles.muted}>Loading…</Text>
-        </View>
-      </SafeAreaView>
+      <View style={styles.centerWrap}>
+        <ActivityIndicator size="large" color="#16a34a" />
+        <Text style={styles.muted}>Loading…</Text>
+      </View>
     );
   }
 
@@ -367,7 +368,7 @@ export default function ProfileBusinessDetails() {
   const hasLogo = !!imageUrls.logoUrl;
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
       {/* Image popup */}
       <Modal
         visible={imgModalOpen}
@@ -384,8 +385,9 @@ export default function ProfileBusinessDetails() {
               <TouchableOpacity
                 onPress={closeImageModal}
                 style={styles.modalCloseBtn}
+                activeOpacity={0.8}
               >
-                <Ionicons name="close" size={20} color="#111" />
+                <Ionicons name="close" size={20} color="#0f172a" />
               </TouchableOpacity>
             </View>
 
@@ -397,7 +399,7 @@ export default function ProfileBusinessDetails() {
               />
             ) : (
               <View style={styles.modalEmpty}>
-                <Ionicons name="image-outline" size={22} color="#666" />
+                <Ionicons name="image-outline" size={22} color="#64748b" />
                 <Text style={styles.modalEmptyText}>No image</Text>
               </View>
             )}
@@ -405,55 +407,49 @@ export default function ProfileBusinessDetails() {
         </Pressable>
       </Modal>
 
-      {/* Top bar */}
-      <View style={styles.topBar}>
+      {/* Header (matches PersonalInformation style) */}
+      <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
-          style={styles.topBtn}
+          style={styles.backBtn}
+          activeOpacity={0.7}
         >
-          <Ionicons name="arrow-back" size={22} color="#111" />
+          <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
 
-        <View style={{ flex: 1 }}>
-          <Text style={styles.topTitle}>Business Details</Text>
-          <Text style={styles.topSub} numberOfLines={1}>
-            {name}
-          </Text>
+        <Text style={styles.headerTitle}>Business Details</Text>
+
+        <View style={styles.headerRight}>
+          <TouchableOpacity onPress={goEdit} style={styles.iconBtn} activeOpacity={0.7}>
+            <Ionicons name="create-outline" size={20} color="#0f172a" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onRefresh} style={styles.iconBtn} activeOpacity={0.7}>
+            <Ionicons name="refresh" size={20} color="#0f172a" />
+          </TouchableOpacity>
         </View>
-
-        {/* ✅ Edit */}
-        <TouchableOpacity onPress={goEdit} style={styles.topBtn}>
-          <Ionicons name="create-outline" size={22} color="#111" />
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={onRefresh} style={styles.topBtn}>
-          <Ionicons name="refresh" size={22} color="#111" />
-        </TouchableOpacity>
       </View>
 
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={styles.scrollInner}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
         {errorMsg ? (
           <View style={styles.errorCard}>
-            <View style={styles.errorRow}>
-              <Ionicons name="alert-circle" size={18} color="#B00020" />
-              <Text style={styles.errorTitle}>Couldn’t load details</Text>
-            </View>
+            <Text style={styles.errorTitle}>Couldn’t load details</Text>
             <Text style={styles.errorText}>{errorMsg}</Text>
             <TouchableOpacity
-              style={styles.retryBtn}
+              style={[styles.saveButton, { marginTop: 12 }]}
               onPress={() => fetchDetails()}
+              activeOpacity={0.9}
             >
-              <Text style={styles.retryText}>Try again</Text>
+              <Text style={styles.saveButtonText}>Retry</Text>
             </TouchableOpacity>
           </View>
         ) : null}
 
-        {/* Hero */}
+        {/* Hero (restyled only) */}
         <View style={styles.hero}>
           <View style={styles.heroTop}>
             <View style={styles.heroLogoWrap}>
@@ -465,7 +461,7 @@ export default function ProfileBusinessDetails() {
                 />
               ) : (
                 <View style={styles.heroLogoPlaceholder}>
-                  <Ionicons name="storefront-outline" size={26} color="#555" />
+                  <Ionicons name="storefront-outline" size={26} color="#64748b" />
                 </View>
               )}
             </View>
@@ -474,6 +470,7 @@ export default function ProfileBusinessDetails() {
               <Text style={styles.heroName} numberOfLines={2}>
                 {name}
               </Text>
+
               <View style={styles.badgeRow}>
                 <Badge text={typeLabel} icon="business-outline" />
                 <Badge
@@ -491,51 +488,34 @@ export default function ProfileBusinessDetails() {
 
           <View style={styles.heroBottom}>
             <View style={styles.miniCard}>
-              <Ionicons name="time-outline" size={18} color="#111" />
+              <View style={styles.miniIcon}>
+                <Ionicons name="time-outline" size={16} color="#0f172a" />
+              </View>
               <Text style={styles.miniLabel}>Hours</Text>
               <Text style={styles.miniValue}>{hoursLabel}</Text>
             </View>
 
             <View style={styles.miniCard}>
-              <Ionicons name="cash-outline" size={18} color="#111" />
+              <View style={styles.miniIcon}>
+                <Ionicons name="cash-outline" size={16} color="#0f172a" />
+              </View>
               <Text style={styles.miniLabel}>Min FD</Text>
               <Text style={styles.miniValue}>{fdMin}</Text>
             </View>
           </View>
         </View>
 
-        {/* ✅ Basic Info (restored) */}
+        {/* ✅ Basic Info */}
         <Section title="Basic Info" icon="information-circle-outline">
           <Row
             label="Business Name"
             value={safeText(details?.business_name)}
             icon="storefront-outline"
           />
-          {/* <Row
-            label="License Number"
-            value={safeText(details?.business_license_number)}
-            icon="document-text-outline"
-          /> */}
-          <Row
-            label="Delivery Option"
-            value={deliveryOpt}
-            icon="car-outline"
-          />
-          <Row
-            label="Opening Time"
-            value={openT}
-            icon="time-outline"
-          />
-          <Row
-            label="Closing Time"
-            value={closeT}
-            icon="time-outline"
-          />
-          <Row
-            label="Min Amount For FD"
-            value={fdMin}
-            icon="cash-outline"
-          />
+          <Row label="Delivery Option" value={deliveryOpt} icon="car-outline" />
+          <Row label="Opening Time" value={openT} icon="time-outline" />
+          <Row label="Closing Time" value={closeT} icon="time-outline" />
+          <Row label="Min Amount For FD" value={fdMin} icon="cash-outline" />
         </Section>
 
         {/* Location */}
@@ -559,7 +539,7 @@ export default function ProfileBusinessDetails() {
           <Text style={styles.hint}>Tap address to open in Maps</Text>
         </Section>
 
-        {/* ✅ Operations (restored) */}
+        {/* ✅ Operations */}
         <Section title="Operations" icon="settings-outline">
           <Row
             label="Holidays"
@@ -568,7 +548,7 @@ export default function ProfileBusinessDetails() {
           />
         </Section>
 
-        {/* ✅ Promotions (restored) */}
+        {/* ✅ Promotions */}
         <Section title="Promotions" icon="sparkles-outline">
           <Row
             label="Special Celebration"
@@ -578,7 +558,7 @@ export default function ProfileBusinessDetails() {
           <Row
             label="Discount"
             value={pct(details?.special_celebration_discount_percentage)}
-            icon="percent-outline"
+            icon="pricetag-outline"
           />
           <Row
             label="Complementary"
@@ -605,11 +585,10 @@ export default function ProfileBusinessDetails() {
             {hasLicense ? (
               <TouchableOpacity
                 style={styles.viewBtn}
-                onPress={() =>
-                  openImageModal("License Image", imageUrls.licenseUrl)
-                }
+                onPress={() => openImageModal("License Image", imageUrls.licenseUrl)}
+                activeOpacity={0.9}
               >
-                <Ionicons name="eye-outline" size={18} color="#111" />
+                <Ionicons name="eye-outline" size={18} color="#0f172a" />
                 <Text style={styles.viewBtnText}>View</Text>
               </TouchableOpacity>
             ) : null}
@@ -618,9 +597,7 @@ export default function ProfileBusinessDetails() {
           {hasLicense ? (
             <TouchableOpacity
               activeOpacity={0.9}
-              onPress={() =>
-                openImageModal("License Image", imageUrls.licenseUrl)
-              }
+              onPress={() => openImageModal("License Image", imageUrls.licenseUrl)}
               style={{ marginTop: 12 }}
             >
               <Image
@@ -631,101 +608,123 @@ export default function ProfileBusinessDetails() {
             </TouchableOpacity>
           ) : (
             <View style={styles.emptyDoc}>
-              <Ionicons name="document-outline" size={22} color="#666" />
+              <Ionicons name="document-outline" size={22} color="#64748b" />
               <Text style={styles.emptyDocText}>No license image uploaded.</Text>
             </View>
           )}
         </Section>
 
-        <View style={{ height: 18 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-/* ---------------- styles (same as your existing) ---------------- */
+/* ---------------- styles (updated to match PersonalInformation) ---------------- */
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#F6F7FB" },
+  safe: { flex: 1, backgroundColor: "#fff" },
 
-  topBar: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+  headerBar: {
+    minHeight: 52,
+    paddingHorizontal: 12,
+    paddingBottom: 8,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    borderBottomColor: "#e5e7eb",
+    borderBottomWidth: 1,
+    backgroundColor: "#fff",
   },
-  topBtn: {
-    width: 40,
+  backBtn: {
     height: 40,
-    borderRadius: 14,
-    backgroundColor: "#FFF",
+    width: 40,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
-    ...Platform.select({
-      android: { elevation: 2 },
-      ios: {
-        shadowColor: "#000",
-        shadowOpacity: 0.06,
-        shadowRadius: 10,
-        shadowOffset: { width: 0, height: 4 },
-      },
-    }),
   },
-  topTitle: { fontSize: 15, fontWeight: "900", color: "#111" },
-  topSub: { marginTop: 2, fontSize: 12, color: "#666" },
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  headerRight: { width: 90, flexDirection: "row", justifyContent: "flex-end", gap: 8 },
+  iconBtn: {
+    height: 40,
+    width: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
-  content: { padding: 14, paddingBottom: 28, gap: 12 },
+  scrollInner: { padding: 18 },
 
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  muted: { marginTop: 10, fontSize: 12, color: "#666" },
+  centerWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    backgroundColor: "#fff",
+  },
+  muted: { marginTop: 10, color: "#475569" },
 
   errorCard: {
-    backgroundColor: "#FFF5F5",
-    borderRadius: 18,
-    padding: 14,
     borderWidth: 1,
-    borderColor: "#FFD6D6",
+    borderColor: "#fecaca",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
   },
-  errorRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6 },
-  errorTitle: { fontSize: 13, fontWeight: "900", color: "#B00020" },
-  errorText: { fontSize: 12, color: "#7A1B1B" },
-  retryBtn: {
-    marginTop: 12,
-    alignSelf: "flex-start",
-    backgroundColor: "#B00020",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 14,
+  errorTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#b91c1c",
+    marginBottom: 6,
   },
-  retryText: { color: "#FFF", fontWeight: "900", fontSize: 12 },
+  errorText: { color: "#7f1d1d" },
+
+  saveButton: {
+    backgroundColor: "#16a34a",
+    padding: 15,
+    borderRadius: 10,
+    alignItems: "center",
+    elevation: 1,
+  },
+  saveButtonText: {
+    color: "#fff",
+    fontSize: SCREEN_W > 400 ? 18 : 16,
+    fontWeight: "700",
+  },
 
   hero: {
-    backgroundColor: "#FFF",
-    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 12,
     padding: 14,
-    ...Platform.select({
-      android: { elevation: 2 },
-      ios: {
-        shadowColor: "#000",
-        shadowOpacity: 0.06,
-        shadowRadius: 12,
-        shadowOffset: { width: 0, height: 5 },
-      },
-    }),
+    backgroundColor: "#fff",
+    marginBottom: 16,
   },
   heroTop: { flexDirection: "row", gap: 12, alignItems: "center" },
   heroLogoWrap: {
-    width: 64,
-    height: 64,
-    borderRadius: 18,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     overflow: "hidden",
-    backgroundColor: "#F1F3F7",
+    backgroundColor: "#f1f5f9",
+    borderWidth: 2,
+    borderColor: "#e2e8f0",
   },
   heroLogo: { width: "100%", height: "100%" },
   heroLogoPlaceholder: { flex: 1, alignItems: "center", justifyContent: "center" },
+  heroName: {
+    fontSize: SCREEN_W > 400 ? 18 : 16,
+    fontWeight: "800",
+    color: "#0f172a",
+    marginBottom: 8,
+  },
 
-  heroName: { fontSize: 18, fontWeight: "950", color: "#111", marginBottom: 8 },
   badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
 
   badge: {
@@ -737,48 +736,59 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     borderWidth: 1,
   },
-  badgeText: { fontSize: 12, fontWeight: "800", color: "#111" },
-  badgeNeutral: { backgroundColor: "#F6F7FB", borderColor: "#E7E9F0" },
-  badgeGood: { backgroundColor: "#F1FFF3", borderColor: "#D6F5DB" },
-  badgeWarn: { backgroundColor: "#FFF9E8", borderColor: "#F5E3B5" },
+  badgeText: { fontSize: 12, fontWeight: "700", color: "#0f172a" },
+  badgeNeutral: { backgroundColor: "#f8fafc", borderColor: "#e2e8f0" },
+  badgeGood: { backgroundColor: "#ecfdf5", borderColor: "#bbf7d0" },
+  badgeWarn: { backgroundColor: "#fffbeb", borderColor: "#fde68a" },
 
   heroBottom: { flexDirection: "row", gap: 10, marginTop: 14 },
   miniCard: {
     flex: 1,
-    backgroundColor: "#F6F7FB",
-    borderRadius: 18,
-    padding: 12,
     borderWidth: 1,
-    borderColor: "#E7E9F0",
+    borderColor: "#e2e8f0",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 12,
     gap: 4,
   },
-  miniLabel: { fontSize: 12, color: "#666", fontWeight: "700" },
-  miniValue: { fontSize: 13, color: "#111", fontWeight: "900" },
+  miniIcon: {
+    height: 28,
+    width: 28,
+    borderRadius: 8,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 2,
+  },
+  miniLabel: { fontSize: 12, color: "#64748b", fontWeight: "700" },
+  miniValue: { fontSize: 13, color: "#0f172a", fontWeight: "800" },
 
   card: {
-    backgroundColor: "#FFF",
-    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    backgroundColor: "#fff",
+    borderRadius: 12,
     padding: 14,
-    ...Platform.select({
-      android: { elevation: 2 },
-      ios: {
-        shadowColor: "#000",
-        shadowOpacity: 0.06,
-        shadowRadius: 12,
-        shadowOffset: { width: 0, height: 5 },
-      },
-    }),
+    marginBottom: 16,
   },
   sectionHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   sectionIcon: {
     width: 30,
     height: 30,
-    borderRadius: 12,
-    backgroundColor: "#F1F3F7",
+    borderRadius: 10,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
     alignItems: "center",
     justifyContent: "center",
   },
-  sectionTitle: { fontSize: 14, fontWeight: "950", color: "#111" },
+  sectionTitle: {
+    fontSize: SCREEN_W > 400 ? 16 : 15,
+    fontWeight: "800",
+    color: "#0f172a",
+  },
 
   row: {
     flexDirection: "row",
@@ -786,28 +796,28 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#EEE",
+    borderBottomColor: "#e5e7eb",
     gap: 12,
   },
   rowLeft: { flexDirection: "row", gap: 10, alignItems: "center", flex: 1 },
   rowIcon: {
     width: 30,
     height: 30,
-    borderRadius: 12,
-    backgroundColor: "#F6F7FB",
+    borderRadius: 10,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#E7E9F0",
   },
-  rowLabel: { fontSize: 12, color: "#666", fontWeight: "800" },
-  rowValue: { marginTop: 2, fontSize: 13, color: "#111", fontWeight: "900" },
+  rowLabel: { fontSize: 12, color: "#64748b", fontWeight: "700" },
+  rowValue: { marginTop: 2, fontSize: 13, color: "#0f172a", fontWeight: "700" },
 
-  hint: { marginTop: 8, fontSize: 12, color: "#777" },
+  hint: { marginTop: 8, fontSize: 12, color: "#64748b" },
 
   docRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  docTitle: { fontSize: 13, fontWeight: "950", color: "#111" },
-  docSub: { marginTop: 4, fontSize: 12, color: "#666", fontWeight: "700" },
+  docTitle: { fontSize: 13, fontWeight: "800", color: "#0f172a" },
+  docSub: { marginTop: 4, fontSize: 12, color: "#64748b", fontWeight: "700" },
 
   viewBtn: {
     flexDirection: "row",
@@ -815,31 +825,33 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 9,
-    borderRadius: 14,
-    backgroundColor: "#F6F7FB",
+    borderRadius: 10,
+    backgroundColor: "#f8fafc",
     borderWidth: 1,
-    borderColor: "#E7E9F0",
+    borderColor: "#e2e8f0",
   },
-  viewBtnText: { fontSize: 12, fontWeight: "900", color: "#111" },
+  viewBtnText: { fontSize: 12, fontWeight: "800", color: "#0f172a" },
 
   licensePreview: {
     width: "100%",
     height: 180,
-    borderRadius: 18,
-    backgroundColor: "#EEE",
+    borderRadius: 12,
+    backgroundColor: "#e2e8f0",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
   },
   emptyDoc: {
     marginTop: 12,
     height: 150,
-    borderRadius: 18,
-    backgroundColor: "#F6F7FB",
+    borderRadius: 12,
+    backgroundColor: "#f8fafc",
     borderWidth: 1,
-    borderColor: "#E7E9F0",
+    borderColor: "#e2e8f0",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
   },
-  emptyDocText: { fontSize: 12, color: "#666", fontWeight: "800" },
+  emptyDocText: { fontSize: 12, color: "#64748b", fontWeight: "800" },
 
   modalBackdrop: {
     flex: 1,
@@ -851,9 +863,11 @@ const styles = StyleSheet.create({
   modalCard: {
     width: Math.min(SCREEN_W - 32, 420),
     maxHeight: SCREEN_H * 0.78,
-    backgroundColor: "#FFF",
-    borderRadius: 18,
+    backgroundColor: "#fff",
+    borderRadius: 12,
     overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
   },
   modalHeader: {
     paddingHorizontal: 12,
@@ -862,20 +876,27 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#EEE",
+    borderBottomColor: "#e5e7eb",
+    backgroundColor: "#fff",
   },
-  modalTitle: { fontSize: 13, fontWeight: "950", color: "#111", flex: 1, marginRight: 10 },
+  modalTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0f172a",
+    flex: 1,
+    marginRight: 10,
+  },
   modalCloseBtn: {
     width: 34,
     height: 34,
-    borderRadius: 12,
-    backgroundColor: "#F6F7FB",
+    borderRadius: 10,
+    backgroundColor: "#f8fafc",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#E7E9F0",
+    borderColor: "#e2e8f0",
   },
-  modalImage: { width: "100%", height: SCREEN_H * 0.55, backgroundColor: "#111" },
+  modalImage: { width: "100%", height: SCREEN_H * 0.55, backgroundColor: "#0f172a" },
   modalEmpty: { height: 260, alignItems: "center", justifyContent: "center", gap: 8 },
-  modalEmptyText: { fontSize: 12, color: "#666", fontWeight: "800" },
+  modalEmptyText: { fontSize: 12, color: "#64748b", fontWeight: "800" },
 });

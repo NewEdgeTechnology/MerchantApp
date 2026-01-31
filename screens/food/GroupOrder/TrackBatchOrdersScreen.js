@@ -7,6 +7,7 @@
 // ✅ NEW: Tap customer marker -> in-app modal lists ALL order IDs at that location (and status)
 // ✅ UPDATE: Driver marker callout shows Driver Name + Phone
 // ✅ UPDATE: Removed bottom legend (route/delivered legend) from maps
+// ✅ NEW: Fetch driver details using apiDRIVER_DETAILS_ENDPOINT=http://192.168.131.194:4000/api/driver_id?driverId={driverId}
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -34,6 +35,7 @@ import {
   BUSINESS_DETAILS as ENV_BUSINESS_DETAILS,
   RIDE_SOCKET_ENDPOINT as ENV_RIDE_SOCKET,
   DELIVERY_RIDE_ID_ENDPOINT as ENV_DELIVERY_RIDE_ID_ENDPOINT,
+  DRIVER_DETAILS_ENDPOINT as ENV_DRIVER_DETAILS_ENDPOINT, // ✅ NEW
 } from "@env";
 
 /* ---------------- helpers ---------------- */
@@ -225,6 +227,21 @@ const buildDeliveryRideUrl = (batchId) => {
   return `${base}${join}delivery_batch_id=${encodeURIComponent(String(batchId))}`;
 };
 
+// ✅ NEW: driver details endpoint builder
+const buildDriverDetailsUrl = (driverId) => {
+  const id = safeStr(driverId);
+  if (!id) return null;
+  const tmpl = String(ENV_DRIVER_DETAILS_ENDPOINT || "").trim();
+  if (!tmpl) return null;
+
+  if (tmpl.includes("{driverId}")) return tmpl.replace("{driverId}", encodeURIComponent(id));
+  if (tmpl.includes(":driverId")) return tmpl.replace(":driverId", encodeURIComponent(id));
+
+  const base = tmpl.replace(/\/+$/, "");
+  const join = base.includes("?") ? "&" : "?";
+  return `${base}${join}driverId=${encodeURIComponent(id)}`;
+};
+
 const isDelivered = (status) => {
   const s = String(status || "").toUpperCase().trim();
   return s === "DELIVERED" || s === "COMPLETED" || s === "COMPLETE";
@@ -384,6 +401,26 @@ const extractDriverInfoFromPayload = (p) => {
   return Object.keys(out).length ? out : null;
 };
 
+// ✅ NEW: extract driverId from payload/params/driverInfo
+const extractDriverId = (p) => {
+  if (!p) return "";
+  const cand = [
+    p?.driverId,
+    p?.driver_id,
+    p?.driver?.id,
+    p?.driver?.driver_id,
+    p?.driver?.user_id,
+    p?.driver_user_id,
+    p?.user_id,
+    p?.id,
+  ];
+  for (const v of cand) {
+    const s = safeStr(v);
+    if (s) return s;
+  }
+  return "";
+};
+
 /* ---------------- Location grouping ---------------- */
 
 const groupDropsByDistance = (orders = [], distanceMeters = 12) => {
@@ -456,8 +493,14 @@ export default function TrackBatchOrdersScreen() {
   const [driverInfo, setDriverInfo] = useState(driverDetailsFromParams || null);
   const [driverRating, setDriverRating] = useState(driverRatingFromParams || null);
 
+  // ✅ NEW: driverId state + throttling for details fetch
+  const [driverId, setDriverId] = useState(() => extractDriverId(driverDetailsFromParams) || extractDriverId(params) || "");
+  const lastDriverDetailsFetchMsRef = useRef(0);
+
   useEffect(() => {
     if (driverDetailsFromParams) setDriverInfo(driverDetailsFromParams);
+    const id = extractDriverId(driverDetailsFromParams);
+    if (id) setDriverId(id);
   }, [driverDetailsFromParams]);
 
   useEffect(() => {
@@ -512,7 +555,11 @@ export default function TrackBatchOrdersScreen() {
         if (!driverInfo && savedDriverJson) {
           try {
             const parsed = JSON.parse(savedDriverJson);
-            if (parsed && typeof parsed === "object") setDriverInfo(parsed);
+            if (parsed && typeof parsed === "object") {
+              setDriverInfo(parsed);
+              const id = extractDriverId(parsed);
+              if (id) setDriverId(id);
+            }
           } catch {}
         }
         if (!driverRating && savedDriverRatingJson) {
@@ -851,10 +898,80 @@ export default function TrackBatchOrdersScreen() {
     } catch {}
   }, [businessId]);
 
+  // ✅ NEW: fetch driver details by driverId
+  const fetchDriverDetailsById = useCallback(
+    async (id, opts = { force: false }) => {
+      const driverIdClean = safeStr(id);
+      if (!driverIdClean) return;
+
+      const url = buildDriverDetailsUrl(driverIdClean);
+      if (!url) {
+        console.log("[MERCHANT][DRIVER] ❌ DRIVER_DETAILS_ENDPOINT missing in .env");
+        return;
+      }
+
+      const now = Date.now();
+      const minGap = 10_000;
+      if (!opts?.force && now - lastDriverDetailsFetchMsRef.current < minGap) return;
+      lastDriverDetailsFetchMsRef.current = now;
+
+      try {
+        const token = await SecureStore.getItemAsync("auth_token");
+        const headers = { Accept: "application/json" };
+        if (token) headers.Authorization = `Bearer ${token}`;
+
+        console.log("[MERCHANT][DRIVER] ▶️ fetching driver details:", url);
+        const res = await fetch(url, { headers });
+        const text = await res.text();
+
+        let json = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          json = null;
+        }
+
+        if (!res.ok) {
+          console.log("[MERCHANT][DRIVER] ❌ fetch failed:", res.status, text);
+          return;
+        }
+
+        const details = json?.details || json?.data?.details || json?.data || json || null;
+        if (!details || typeof details !== "object") {
+          console.log("[MERCHANT][DRIVER] ⚠️ details missing:", json);
+          return;
+        }
+
+        setDriverInfo((prev) => {
+          const next = { ...(prev || {}) };
+          // normalize fields based on your response payload
+          if (details.user_id != null) next.user_id = details.user_id;
+          if (details.user_name) next.user_name = details.user_name;
+          if (details.phone) next.phone = details.phone;
+          if (details.email) next.email = details.email;
+          if (details.profile_image) next.profile_image = details.profile_image;
+          if (details.role) next.role = details.role;
+          return next;
+        });
+
+        const extracted = extractDriverId(details);
+        if (extracted) setDriverId(extracted);
+      } catch (e) {
+        console.log("[MERCHANT][DRIVER] ❌ error:", e?.message || e);
+      }
+    },
+    [setDriverInfo]
+  );
+
   useEffect(() => {
     fetchGroupedStatusesItems();
     fetchBusinessLocation();
   }, [fetchGroupedStatusesItems, fetchBusinessLocation]);
+
+  useEffect(() => {
+    if (!restoredIds) return;
+    if (driverId) fetchDriverDetailsById(driverId);
+  }, [restoredIds, driverId, fetchDriverDetailsById]);
 
   useFocusEffect(
     useCallback(() => {
@@ -862,19 +979,31 @@ export default function TrackBatchOrdersScreen() {
       fetchBusinessLocation();
       if (restoredIds) fetchDeliveryRideId();
       loadBatchOrders();
-    }, [fetchGroupedStatusesItems, fetchBusinessLocation, restoredIds, fetchDeliveryRideId, loadBatchOrders])
+
+      // ✅ refresh driver details on focus (lightly throttled)
+      if (driverId) fetchDriverDetailsById(driverId);
+    }, [
+      fetchGroupedStatusesItems,
+      fetchBusinessLocation,
+      restoredIds,
+      fetchDeliveryRideId,
+      loadBatchOrders,
+      driverId,
+      fetchDriverDetailsById,
+    ])
   );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await Promise.all([fetchGroupedStatusesItems(), fetchBusinessLocation(), fetchDeliveryRideId()]);
+      if (driverId) await fetchDriverDetailsById(driverId, { force: true });
       setBatchOrders([]);
       await loadBatchOrders();
     } finally {
       setRefreshing(false);
     }
-  }, [fetchGroupedStatusesItems, fetchBusinessLocation, fetchDeliveryRideId, loadBatchOrders]);
+  }, [fetchGroupedStatusesItems, fetchBusinessLocation, fetchDeliveryRideId, loadBatchOrders, driverId, fetchDriverDetailsById]);
 
   /* ---------------- SOCKET ---------------- */
 
@@ -928,6 +1057,15 @@ export default function TrackBatchOrdersScreen() {
       const ridFromPayload = pickRideIdFromPayload(p);
       const rid = String(ridFromPayload || effectiveRideIds[0] || "driver").trim();
 
+      // ✅ NEW: capture driverId & fetch details
+      const pid = extractDriverId(p) || extractDriverId(p?.driver) || "";
+      if (pid) {
+        setDriverId(pid);
+        // fetch on first sight or if missing name/phone (throttled)
+        const missingBasics = !safeStr(driverInfo?.user_name) && !safeStr(driverInfo?.name) && !safeStr(driverInfo?.phone);
+        fetchDriverDetailsById(pid, { force: missingBasics });
+      }
+
       const maybeDriver = extractDriverInfoFromPayload(p);
       if (maybeDriver) {
         setDriverInfo((prev) => ({ ...(prev || {}), ...maybeDriver }));
@@ -957,7 +1095,7 @@ export default function TrackBatchOrdersScreen() {
       socketRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socketEndpoint, restoredIds, effectiveRideIds.join("|"), batchId]);
+  }, [socketEndpoint, restoredIds, effectiveRideIds.join("|"), batchId, fetchDriverDetailsById, driverInfo]);
 
   /* ---------------- UI derived ---------------- */
 
@@ -990,8 +1128,9 @@ export default function TrackBatchOrdersScreen() {
     const count = driverRating?.count;
     const ratingPart = avg != null ? ` · ${Number(avg).toFixed(1)}${count != null ? ` (${count})` : ""}` : "";
     const phonePart = driverPhoneText ? ` · ${driverPhoneText}` : "";
-    return `${driverName}${phonePart}${ratingPart}`.trim();
-  }, [driverName, driverPhoneText, driverRating]);
+    const idPart = driverId ? ` · ID: ${driverId}` : "";
+    return `${driverName}${phonePart}${ratingPart}${idPart}`.trim();
+  }, [driverName, driverPhoneText, driverRating, driverId]);
 
   const onCallDriver = useCallback(async () => {
     if (!driverPhoneText) return Alert.alert("No phone", "Driver phone number not available yet.");
@@ -1192,12 +1331,7 @@ export default function TrackBatchOrdersScreen() {
         anchor={{ x: 0.5, y: 0.5 }}
         zIndex={60}
       >
-        <View
-          style={styles.driverMarkerOuter}
-          collapsable={false}
-          renderToHardwareTextureAndroid
-          needsOffscreenAlphaCompositing
-        >
+        <View style={styles.driverMarkerOuter} collapsable={false} renderToHardwareTextureAndroid needsOffscreenAlphaCompositing>
           <Ionicons name="car" size={16} color="#ffffff" />
         </View>
       </Marker>
@@ -1227,12 +1361,7 @@ export default function TrackBatchOrdersScreen() {
         zIndex={50}
       >
         {deliveredAll ? (
-          <View
-            style={styles.tickMarkerOuter}
-            collapsable={false}
-            renderToHardwareTextureAndroid
-            needsOffscreenAlphaCompositing
-          >
+          <View style={styles.tickMarkerOuter} collapsable={false} renderToHardwareTextureAndroid needsOffscreenAlphaCompositing>
             <View style={styles.tickMarkerInner}>
               <Ionicons name="checkmark" size={16} color="#ffffff" />
             </View>
@@ -1243,12 +1372,7 @@ export default function TrackBatchOrdersScreen() {
             )}
           </View>
         ) : (
-          <View
-            style={styles.customerMarkerOuter}
-            collapsable={false}
-            renderToHardwareTextureAndroid
-            needsOffscreenAlphaCompositing
-          >
+          <View style={styles.customerMarkerOuter} collapsable={false} renderToHardwareTextureAndroid needsOffscreenAlphaCompositing>
             <View style={styles.customerMarkerInner} />
             {count > 1 && (
               <View style={styles.countBadge}>
@@ -1281,7 +1405,10 @@ export default function TrackBatchOrdersScreen() {
 
     return (
       <View style={styles.orderRow}>
-        <Pressable onPress={() => toggleExpanded(id)} style={({ pressed }) => [styles.orderPress, pressed ? { opacity: 0.85 } : null]}>
+        <Pressable
+          onPress={() => toggleExpanded(id)}
+          style={({ pressed }) => [styles.orderPress, pressed ? { opacity: 0.85 } : null]}
+        >
           <View style={styles.orderTop}>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <Text style={styles.orderId}>#{id}</Text>
@@ -1447,7 +1574,6 @@ export default function TrackBatchOrdersScreen() {
                       coordinate={{ latitude: businessCoords.lat, longitude: businessCoords.lng }}
                       title="Business"
                       description={`Business ID: ${businessId ?? "—"}`}
-                      // keep overlay markers stable too
                       tracksViewChanges={true}
                       onPress={() => (lastMarkerPressTsRef.current = Date.now())}
                       zIndex={40}

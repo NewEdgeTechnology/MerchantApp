@@ -65,20 +65,10 @@ import HelpScreen from './screens/general/HelpScreen';
 import SetNewPasswordScreen from './screens/general/SetNewPasswordScreen';
 import ForgotOTPVerify from './screens/general/ForgotOTPVerify';
 import OrderNotifyOverlay from './components/OrderNotifyOverlay';
-import WalletScreen from './screens/wallet/WalletScreen';
-import CreateWalletScreen from './screens/wallet/CreateWalletScreen';
-import AddMoneyScreen from './screens/wallet/AddMoneyScreen';
-import WithdrawScreen from './screens/wallet/WithdrawScreen';
-import SendToFriendScreen from './screens/wallet/SendToFriendScreen';
 import MartOrdersTab from './screens/food/OrderTab';
 import MessageScreen from './screens/message/MessageScreen';
 import ChatDetailScreen from './screens/message/ChatDetailScreen';
 import PayoutTab from './screens/food/PayoutTab';
-import TPinScreen from './screens/wallet/TPinScreen';
-import CreateTPinScreen from './screens/wallet/CreateTPinScreen.js';
-import ForgotTPinScreen from './screens/wallet/ForgotTPinScreen.js';
-import ChangeTPinScreen from './screens/wallet/ChangeTPinScreen.js';
-import VerifyTPinOtpScreen from './screens/wallet/VerifyTPinOtpScreen.js';
 import NearbyOrdersScreen from './screens/food/GroupOrder/NearbyOrdersScreen.js';
 import NearbyClusterOrdersScreen from './screens/food/GroupOrder/NearbyClusterOrdersScreen.js';
 import ClusterDeliveryOptionsScreen from './screens/food/GroupOrder/ClusterDeliveryOptionsScreen.js';
@@ -92,7 +82,19 @@ import PasswordSentScreen from './screens/general/PasswordSentScreen.js';
 import BatchRidesScreen from './screens/food/GroupOrder/BatchRidesScreen.js';
 import SalesAnalyticsScreen from './screens/food/SalesAnalyticsScreen.js';
 import EditBusinessDetails from './screens/profile/component/EditBusinessDetails.js';
-
+import WalletScreen from './screens/wallet/Wallet.js';
+import ScanQRScreen from './screens/wallet/ScanQR.js';
+import TopUpScreen from './screens/wallet/TopUp.js';
+import TopUpBankScreen from './screens/wallet/TopUpBank.js';
+import TopUpOtpScreen from './screens/wallet/TopUpOtp.js';
+import WalletMyQRScreen from './screens/wallet/WalletMyQR.js';
+import WalletSetMPIN from './screens/wallet/WalletSetMPIN.js';
+import WalletSettingsScreen from './screens/wallet/WalletSettings.js';
+import WalletSetTPIN from './screens/wallet/WalletSetTPIN.js';
+import WalletTransferScreen from './screens/wallet/WalletTransfer.js';
+import WalletTransferSuccess from './screens/wallet/WalletTransferSuccess.js';
+import WithdrawalScreen from './screens/wallet/WithdrawalScreen.js';
+import Chat from './screens/message/Chat.js';
 const Stack = createStackNavigator();
 
 export default function App() {
@@ -170,10 +172,8 @@ export default function App() {
             <Stack.Screen name="NotificationSettings" component={NotificationSettings} />
             <Stack.Screen name="ProfileBusinessDetails" component={ProfileBusinessDetails} />
             <Stack.Screen name="EditBusinessDetails" component={EditBusinessDetails} />
-
             <Stack.Screen name="ManageQuickActions" component={ManageQuickActionsScreen} options={{ headerShown: false }} />
             <Stack.Screen name="OrderDetails" component={OrderDetails} />
-            <Stack.Screen name="WalletScreen" component={WalletScreen} />
             <Stack.Screen name="FeedbackScreen" component={FeedbackScreen} />
             <Stack.Screen name="TwoFactorPromptScreen" component={TwoFactorPromptScreen} />
             <Stack.Screen name="TermsOfService" component={TermsOfService} />
@@ -181,38 +181,20 @@ export default function App() {
             <Stack.Screen name="HelpScreen" component={HelpScreen} />
             <Stack.Screen name="SetNewPasswordScreen" component={SetNewPasswordScreen} />
             <Stack.Screen name="ForgotOTPVerify" component={ForgotOTPVerify} />
-            <Stack.Screen name="CreateWalletScreen" component={CreateWalletScreen} />
-            <Stack.Screen name="AddMoneyScreen" component={AddMoneyScreen} />
-            <Stack.Screen name="WithdrawScreen" component={WithdrawScreen} />
-            <Stack.Screen name="SendToFriendScreen" component={SendToFriendScreen} />
             <Stack.Screen name="MartOrdersTab" component={MartOrdersTab} />
             <Stack.Screen name="MessageScreen" component={MessageScreen} />
             <Stack.Screen name="ChatDetailScreen" component={ChatDetailScreen} />
             <Stack.Screen name="PayoutTab" component={PayoutTab} />
-            <Stack.Screen name="TPinScreen" component={TPinScreen} />
-            <Stack.Screen name="CreateTPinScreen" component={CreateTPinScreen} />
-            <Stack.Screen name="ForgotTPinScreen" component={ForgotTPinScreen} />
-            <Stack.Screen name="ChangeTPinScreen" component={ChangeTPinScreen} />
-            <Stack.Screen name="VerifyTPinOtpScreen" component={VerifyTPinOtpScreen} />
-            <Stack.Screen name="SalesAnalyticsScreen" component={SalesAnalyticsScreen} />
-            {/* ---------------- FOOD GROUP ORDER ROUTES ---------------- */}
+           <Stack.Screen name="SalesAnalyticsScreen" component={SalesAnalyticsScreen} />
             <Stack.Screen name="NearbyOrdersScreen" component={NearbyOrdersScreen} />
-
-            {/* ✅ ADD UNIQUE ROUTE NAME (fix MART vs FOOD collision) */}
             <Stack.Screen
               name="FoodNearbyClusterOrdersScreen"
               component={NearbyClusterOrdersScreen}
             />
-
-            {/* (Optional) keep old name for backward compatibility:
-               If you have older navigation calls using NearbyClusterOrdersScreen name,
-               keep it but redirect internally from OrderDetails by preferring FoodNearbyClusterOrdersScreen.
-            */}
             <Stack.Screen
               name="NearbyClusterOrdersScreen"
               component={NearbyClusterOrdersScreen}
             />
-
             <Stack.Screen name="ClusterDeliveryOptionsScreen" component={ClusterDeliveryOptionsScreen} />
             <Stack.Screen name="SimilarItemCatalog" component={SimilarItemCatalog} />
             <Stack.Screen name="TrackBatchOrdersScreen" component={TrackBatchOrdersScreen} />
@@ -226,6 +208,19 @@ export default function App() {
             <Stack.Screen name="PrivacyPolicyScreen" component={PrivacyPolicyScreen} />
             <Stack.Screen name="PasswordSentScreen" component={PasswordSentScreen} />
             <Stack.Screen name="BatchRidesScreen" component={BatchRidesScreen} />
+            <Stack.Screen name="WalletScreen" component={WalletScreen} />
+            <Stack.Screen name="ScanQRScreen" component={ScanQRScreen} />
+            <Stack.Screen name="TopUpScreen" component={TopUpScreen} />
+            <Stack.Screen name="TopUpBankScreen" component={TopUpBankScreen} />
+            <Stack.Screen name="TopUpOtpScreen" component={TopUpOtpScreen} />
+            <Stack.Screen name="WalletMyQRScreen" component={WalletMyQRScreen} />
+            <Stack.Screen name="WalletSetMPIN" component={WalletSetMPIN} />
+            <Stack.Screen name="WalletSettingsScreen" component={WalletSettingsScreen} />
+            <Stack.Screen name="WalletSetTPIN" component={WalletSetTPIN} />
+            <Stack.Screen name="WalletTransferScreen" component={WalletTransferScreen} />
+            <Stack.Screen name="WalletTransferSuccess" component={WalletTransferSuccess} />
+            <Stack.Screen name="Chat" component={Chat} />
+            <Stack.Screen name="WithdrawalScreen" component={WithdrawalScreen} />
           </Stack.Navigator>
         </AppLockGate>
       </NavigationContainer>
