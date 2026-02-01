@@ -7,6 +7,9 @@
 // ✅ FIX: "tight" clustering (complete-linkage) + grid pre-bucketing (prevents far merge)
 // ✅ FIX: unique cluster label per card (no duplicate place names on same screen)
 // ✅ Default thresholdKm = 2
+// ✅ NEW: ONE global "Track orders" button (ready-for-delivery pill style)
+// ✅ FIX: If no IN-PROGRESS trackable orders -> Track button is unclickable (disabled + dimmed)
+// ✅ FIX: Remove orders from this screen if status is DECLINED/REJECTED/DENIED OR fulfillment_type is PICKUP
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -25,13 +28,13 @@ import * as SecureStore from "expo-secure-store";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { ORDER_ENDPOINT as ENV_ORDER_ENDPOINT, BUSINESS_DETAILS } from "@env";
 
-/* ---------------- status normalizer (for cluster filtering) ---------------- */
+/* ---------------- status normalizer ---------------- */
 const normalizeStatusForCluster = (v) => {
   const s = String(v || "").trim().toUpperCase();
   if (!s) return "PENDING";
   if (s === "ON ROAD" || s === "ON_ROAD" || s === "ONROAD") return "OUT_FOR_DELIVERY";
   if (s === "OUT FOR DELIVERY") return "OUT_FOR_DELIVERY";
-  if (s === "DELIVERED") return "COMPLETED";
+  if (s === "DELIVERED") return "COMPLETED"; // legacy mapping
   return s;
 };
 
@@ -46,11 +49,59 @@ const shouldIncludeInCluster = (statusRaw) => {
   return true;
 };
 
+/** ✅ Track list should include only IN-PROGRESS statuses (so 0 disables button) */
+const isTrackableStatus = (statusRaw) => {
+  const s = normalizeStatusForCluster(statusRaw);
+  return (
+    s === "ASSIGNED" ||
+    s === "RIDER_ASSIGNED" ||
+    s === "DRIVER_ASSIGNED" ||
+    s === "OUT_FOR_DELIVERY"
+  );
+};
+
+/* ✅ status/fulfillment filters for this screen */
+const isDeclinedStatus = (statusRaw) => {
+  const s = String(statusRaw || "").trim().toUpperCase();
+  return (
+    s === "DECLINED" ||
+    s === "REJECTED" ||
+    s === "DENIED" ||
+    s === "ORDER_DECLINED" ||
+    s === "MERCHANT_DECLINED"
+  );
+};
+
+const isPickupFulfillment = (fulfillmentTypeRaw) => {
+  const t = String(fulfillmentTypeRaw || "").trim().toUpperCase();
+  return (
+    t === "PICKUP" ||
+    t === "SELF_PICKUP" ||
+    t === "SELF PICKUP" ||
+    t === "TAKEAWAY" ||
+    t === "TAKE AWAY"
+  );
+};
+
+/** ✅ EXCLUDE from this screen if (declined OR pickup) */
+const shouldExcludeFromScreen = (rawOrder) => {
+  if (!rawOrder || typeof rawOrder !== "object") return false;
+
+  const rawStatus = rawOrder.status || rawOrder.order_status || "";
+  const fulfillmentType =
+    rawOrder.fulfillment_type ??
+    rawOrder.fulfillmentType ??
+    rawOrder.fulfillment ??
+    rawOrder.fulfillment_type_name ??
+    "";
+
+  return isDeclinedStatus(rawStatus) || isPickupFulfillment(fulfillmentType);
+};
+
 /* ---------------- coords helpers ---------------- */
 const extractCoords = (order = {}) => {
   const base = order?.raw && typeof order.raw === "object" ? order.raw : order;
 
-  // ✅ your payload: deliver_to: { address, lat, lng }
   const deliverTo =
     base?.deliver_to && typeof base.deliver_to === "object" ? base.deliver_to : null;
 
@@ -71,8 +122,6 @@ const extractCoords = (order = {}) => {
       lat: deliverTo2.lat ?? deliverTo2.latitude,
       lng: deliverTo2.lng ?? deliverTo2.longitude ?? deliverTo2.lon,
     },
-
-    // legacy patterns
     addrObj && {
       lat: addrObj.lat ?? addrObj.latitude,
       lng: addrObj.lng ?? addrObj.longitude ?? addrObj.lon,
@@ -121,7 +170,6 @@ const normalizeAddressField = (v) => {
 const isNumericish = (s) => /^[0-9\s-]+$/.test(s);
 const isPlusCodeish = (s) => /^[A-Z0-9+ ]+$/.test(s || "") && String(s).includes("+");
 
-/** Pick 2nd place name if available else 1st; from "a, b, c" -> prefer b */
 const pick2ndOr1stPlace = (addressLike) => {
   const raw = normalizeAddressField(addressLike) || "";
   const line = raw.split("\n")[0] || "";
@@ -138,14 +186,19 @@ const pick2ndOr1stPlace = (addressLike) => {
 
 /* ---------------- decoration helper ---------------- */
 const decorateOrdersFromApiPayload = (apiJson) => {
-  // your endpoint returns:
-  // { success:true, data:[ { user:{...}, orders:[...] } ] }
   const list = [];
   const groups = Array.isArray(apiJson?.data) ? apiJson.data : [];
 
   for (const g of groups) {
     const orders = Array.isArray(g?.orders) ? g.orders : [];
     for (const o of orders) {
+      // ✅ EXCLUDE: status declined OR fulfillment pickup
+      if (shouldExcludeFromScreen(o)) continue;
+
+      const rawStatus = o.status || o.order_status || "";
+      const fulfillmentType =
+        o.fulfillment_type ?? o.fulfillmentType ?? o.fulfillment ?? o.fulfillment_type_name ?? "";
+
       const addr =
         normalizeAddressField(o?.deliver_to?.address) ||
         normalizeAddressField(o?.deliverTo?.address) ||
@@ -156,8 +209,6 @@ const decorateOrdersFromApiPayload = (apiJson) => {
         "";
 
       const coords = extractCoords(o);
-
-      const rawStatus = o.status || o.order_status || "";
       const statusNorm = normalizeStatusForCluster(rawStatus);
 
       list.push({
@@ -167,6 +218,7 @@ const decorateOrdersFromApiPayload = (apiJson) => {
         delivery_address: addr,
         status: rawStatus,
         statusNorm,
+        fulfillment_type: fulfillmentType,
       });
     }
   }
@@ -235,7 +287,6 @@ const clusterOrdersByRadius = (ordersList, radiusKm) => {
     else coordsOnly.push({ o, c });
   }
 
-  // pre-bucket to prevent long-chain merge
   const kmPerDegLat = 111;
   const latStep = Math.max(radiusKm / kmPerDegLat, 0.00001);
 
@@ -283,13 +334,12 @@ const clusterOrdersByRadius = (ordersList, radiusKm) => {
   };
 
   for (const [, bucket] of buckets) {
-    const clusters = []; // { members: [{o,c}] }
+    const clusters = [];
 
     for (const item of bucket) {
       let placed = false;
 
       for (const cl of clusters) {
-        // complete-linkage: must be within radius of EVERY member
         let ok = true;
         for (const m of cl.members) {
           if (distanceKm(item.c, m.c) > radiusKm) {
@@ -335,7 +385,7 @@ const labelForCluster = (cluster) => {
 };
 
 const applyUniqueLabels = (clusters) => {
-  const used = new Map(); // base -> count
+  const used = new Map();
   return (clusters || []).map((c) => {
     const base = c.isNoCoords ? "Orders without location" : labelForCluster(c);
     const prev = used.get(base) || 0;
@@ -361,6 +411,9 @@ function NearbyOrdersScreen() {
   const orderEndpointFromParams = route?.params?.orderEndpoint;
   const detailsRoute = route?.params?.detailsRoute || "OrderDetails";
   const thresholdKm = Number(route?.params?.thresholdKm ?? 2);
+
+  // ✅ which screen shows batch/track list
+  const batchListScreen = route?.params?.batchListScreen || "BatchRidesScreen";
 
   const [deliveryOption, setDeliveryOption] = useState(null);
   const [bizId, setBizId] = useState(businessIdFromParams || null);
@@ -479,11 +532,6 @@ function NearbyOrdersScreen() {
 
       const decorated = decorateOrdersFromApiPayload(json);
       setOrders(decorated);
-
-      console.log(
-        "[NearbyOrders] fetch coords sample:",
-        decorated.map((x) => ({ id: x.id, coords: x.coords })).slice(0, 20)
-      );
     } catch (e) {
       console.warn("[NearbyOrders][FOOD] fetch error", e?.message || e);
     } finally {
@@ -513,7 +561,10 @@ function NearbyOrdersScreen() {
   }, [bizId, fetchBusinessDetailsFromApi, fetchOrders]);
 
   const clusterEligibleOrders = useMemo(
-    () => (orders || []).filter((o) => shouldIncludeInCluster(o.statusNorm || o.status)),
+    () =>
+      (orders || [])
+        .filter((o) => !shouldExcludeFromScreen(o?.raw))
+        .filter((o) => shouldIncludeInCluster(o.statusNorm || o.status)),
     [orders]
   );
 
@@ -527,7 +578,36 @@ function NearbyOrdersScreen() {
     return labeled;
   }, [clusterEligibleOrders, thresholdKm]);
 
+  /* ✅ ONE global track list (IN-PROGRESS only) */
+  const trackableAll = useMemo(() => {
+    const src = Array.isArray(orders) ? orders : [];
+    return src
+      .filter((o) => !shouldExcludeFromScreen(o?.raw))
+      .filter((o) => isTrackableStatus(o?.statusNorm || o?.status));
+  }, [orders]);
+
+  const trackCount = trackableAll.length;
+  const trackDisabled = trackCount === 0;
+
+  const onTrackAllPress = useCallback(() => {
+    if (trackDisabled) return;
+
+    navigation.navigate(batchListScreen, {
+      businessId: bizId,
+      bizId: bizId,
+      merchant_id: bizId,
+
+      label: "Track orders",
+      orders: trackableAll,
+
+      ownerType,
+      delivery_option: deliveryOption,
+      deliveryOption: deliveryOption,
+    });
+  }, [trackDisabled, navigation, batchListScreen, bizId, trackableAll, ownerType, deliveryOption]);
+
   const headerTopPad = Math.max(insets.top, 8) + 18;
+  const bottomFabPad = Math.max(insets.bottom, 0) + 18;
 
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
@@ -555,15 +635,15 @@ function NearbyOrdersScreen() {
         <FlatList
           data={clusters}
           keyExtractor={(c) => c.id}
-          contentContainerStyle={{ padding: 16 }}
+          contentContainerStyle={{
+            padding: 16,
+            paddingBottom: 90 + bottomFabPad,
+          }}
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           renderItem={({ item }) => {
             const { label, orders: clusterOrders, centerCoords } = item;
             const order_ids = (clusterOrders || []).map((o) => o?.id).filter(Boolean);
-
-            const showLat = centerCoords?.lat != null ? Number(centerCoords.lat).toFixed(6) : "—";
-            const showLng = centerCoords?.lng != null ? Number(centerCoords.lng).toFixed(6) : "—";
 
             const firstAddr =
               clusterOrders?.[0]?.raw?.deliver_to?.address ||
@@ -574,6 +654,7 @@ function NearbyOrdersScreen() {
             return (
               <TouchableOpacity
                 style={styles.clusterCard}
+                activeOpacity={0.9}
                 onPress={() => {
                   navigation.navigate("FoodNearbyClusterOrdersScreen", {
                     label,
@@ -617,6 +698,26 @@ function NearbyOrdersScreen() {
           }}
         />
       )}
+
+      {/* ✅ ONE global Track button */}
+      <View style={[styles.fabWrapper, { paddingBottom: bottomFabPad }]}>
+        <TouchableOpacity
+          style={[styles.fab, trackDisabled && { opacity: 0.4 }]}
+          activeOpacity={trackDisabled ? 1 : 0.85}
+          onPress={onTrackAllPress}
+          disabled={trackDisabled}
+        >
+          <Ionicons name="bicycle" size={18} color="#fff" />
+          <Text
+            style={styles.fabText}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.85}
+          >
+            Track orders{trackCount ? ` (${trackCount})` : ""}
+          </Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
@@ -688,6 +789,37 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
     color: "#16a34a",
+  },
+
+  fabWrapper: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 16,
+    backgroundColor: "transparent",
+  },
+  fab: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 15,
+    borderRadius: 999,
+    backgroundColor: "#16a34a",
+    shadowColor: "#000",
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
+  },
+  fabText: {
+    marginLeft: 8,
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
+    flexShrink: 1,
   },
 });
 
