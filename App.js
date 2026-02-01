@@ -95,6 +95,8 @@ import WalletTransferScreen from './screens/wallet/WalletTransfer.js';
 import WalletTransferSuccess from './screens/wallet/WalletTransferSuccess.js';
 import WithdrawalScreen from './screens/wallet/WithdrawalScreen.js';
 import Chat from './screens/message/Chat.js';
+import ChatRoomScreen from "./screens/message/ChatRoomScreen"; // your perfect one
+
 const Stack = createStackNavigator();
 
 export default function App() {
@@ -221,6 +223,8 @@ export default function App() {
             <Stack.Screen name="WalletTransferSuccess" component={WalletTransferSuccess} />
             <Stack.Screen name="Chat" component={Chat} />
             <Stack.Screen name="WithdrawalScreen" component={WithdrawalScreen} />
+            <Stack.Screen name="MerchantChatRoomScreen" component={ChatRoomScreen} />
+
           </Stack.Navigator>
         </AppLockGate>
       </NavigationContainer>

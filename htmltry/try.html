@@ -1,0 +1,817 @@
+<!-- File: chat_live_prod_socket_fix.html -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Chat (LIVE • PROD • Socket Fix)</title>
+
+    <!-- ✅ Load socket.io client from CDN (server path is 404 right now) -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+        background: #0b1220;
+        color: #e7eeff;
+      }
+      header {
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .wrap { padding: 14px 16px; max-width: 1400px; margin: 0 auto; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      @media (max-width: 1100px) { .grid { grid-template-columns: 1fr; } }
+
+      .panel {
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 14px;
+        overflow: hidden;
+        background: rgba(15, 26, 51, 0.75);
+      }
+      .top {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .badge {
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        font-size: 12px;
+      }
+      .pill {
+        margin-left: auto;
+        font-size: 12px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        color: #9fb0d0;
+      }
+      .pill.ok { color: #24d18f; border-color: rgba(36, 209, 143, 0.35); }
+      .pill.err { color: #ff5b6b; border-color: rgba(255, 91, 107, 0.35); }
+
+      .cfg {
+        padding: 12px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .cfg .full { grid-column: 1/-1; }
+
+      label { font-size: 12px; color: #9fb0d0; }
+      input, textarea {
+        width: 100%;
+        padding: 10px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(8, 14, 28, 0.7);
+        color: #e7eeff;
+        outline: none;
+      }
+      textarea { height: 46px; resize: none; }
+
+      button {
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.08);
+        color: #e7eeff;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button.primary {
+        background: rgba(36, 209, 143, 0.14);
+        border-color: rgba(36, 209, 143, 0.35);
+      }
+
+      .log {
+        padding: 8px 12px;
+        font-size: 12px;
+        color: #9fb0d0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        min-height: 34px;
+      }
+
+      .split { display: grid; grid-template-columns: 340px 1fr; height: 600px; }
+      @media (max-width: 700px) { .split { grid-template-columns: 1fr; height: 720px; } }
+
+      .inbox {
+        border-right: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(8, 14, 28, 0.35);
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+      .inboxHead {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex: none;
+      }
+      .inboxHead .title { font-weight: 800; }
+      .list { flex: 1; overflow-y: auto; overflow-x: hidden; }
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        padding: 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        cursor: pointer;
+      }
+      .row:hover { background: rgba(255, 255, 255, 0.04); }
+      .row.active { background: rgba(36, 209, 143, 0.08); }
+      .avatar {
+        width: 44px; height: 44px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+        flex: none;
+        display: grid;
+        place-items: center;
+      }
+      .avatar img { width: 100%; height: 100%; object-fit: cover; }
+      .mid { min-width: 0; flex: 1; }
+      .name { font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .preview {
+        font-size: 12px;
+        color: #9fb0d0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin-top: 3px;
+      }
+
+      .room { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+      .roomHead {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex: none;
+      }
+      .hAvatar {
+        width: 38px; height: 38px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+      .hAvatar img { width: 100%; height: 100%; object-fit: cover; }
+      .hTitle { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+      .hTitle .who { font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .hTitle .sub { font-size: 12px; color: #9fb0d0; }
+
+      .chat {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 12px;
+        background: rgba(8, 14, 28, 0.55);
+      }
+      .msg { display: flex; margin: 8px 0; }
+      .msg.me { justify-content: flex-end; }
+      .bubble {
+        max-width: 78%;
+        padding: 10px;
+        border-radius: 14px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .msg.me .bubble {
+        background: rgba(36, 209, 143, 0.1);
+        border-color: rgba(36, 209, 143, 0.22);
+      }
+      .meta { font-size: 11px; color: #9fb0d0; margin-bottom: 6px; }
+      .chat img.msgimg {
+        width: 240px;
+        max-width: 100%;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        display: block;
+        margin-top: 8px;
+        cursor: pointer;
+      }
+
+      .composer {
+        flex: none;
+        padding: 12px;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(15, 26, 51, 0.75);
+      }
+      .small {
+        font-size: 11px;
+        color: #9fb0d0;
+        margin-top: 6px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .file { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .muted { font-size: 12px; color: #9fb0d0; padding: 12px; }
+    </style>
+  </head>
+
+  <body>
+    <header>
+      <div>Chat (LIVE • PROD • Socket Fix)</div>
+      <div style="margin-left:auto;font-size:12px;color:#9fb0d0">
+        Images base: https://grab.newedge.bt/chat
+      </div>
+    </header>
+
+    <div class="wrap">
+      <div class="grid">
+        <!-- CUSTOMER -->
+        <section class="panel">
+          <div class="top">
+            <span class="badge"><b>CUSTOMER</b></span>
+            <span class="pill" id="custSock">socket: off</span>
+            <span class="pill" id="custConv">conv: -</span>
+          </div>
+
+          <div class="cfg">
+            <div class="full">
+              <label>Origin</label><input id="custOrigin" value="https://grab.newedge.bt" />
+            </div>
+            <div>
+              <label>Customer user_id</label><input id="custId" value="59" />
+            </div>
+            <div>
+              <label>Merchant user_id (optional)</label><input id="custMerchantUserId" value="58" />
+            </div>
+            <div>
+              <label>Business id</label><input id="custBusinessId" value="19" />
+            </div>
+            <div class="full">
+              <label>Order ID</label><input id="custOrderId" value="ORD-1001" />
+            </div>
+            <div class="full">
+              <button class="primary" id="custRefresh">Refresh Inbox</button>
+              <button class="primary" id="custStart">Start Chat (Order)</button>
+            </div>
+          </div>
+
+          <div class="log" id="custLog">Ready.</div>
+
+          <div class="split">
+            <div class="inbox">
+              <div class="inboxHead">
+                <div class="title">Chats</div>
+                <button id="custReload">Reload</button>
+              </div>
+              <div class="list" id="custList"><div class="muted">No chats loaded.</div></div>
+            </div>
+
+            <div class="room">
+              <div class="roomHead">
+                <div class="hAvatar" id="custHeaderAvatar">🏪</div>
+                <div class="hTitle">
+                  <div class="who" id="custHeaderWho">Select a chat</div>
+                  <div class="sub" id="custHeaderSub">-</div>
+                </div>
+              </div>
+
+              <div class="chat" id="custChat"></div>
+
+              <div class="composer">
+                <div>
+                  <textarea id="custText" placeholder="Type message (optional caption if image selected)"></textarea>
+                  <div class="small">
+                    <input type="file" id="custFile" accept="image/*" />
+                    <span class="file" id="custFileName"></span>
+                    <button id="custClearFile">Clear</button>
+                  </div>
+                </div>
+                <div><button class="primary" id="custSend">Send</button></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- MERCHANT -->
+        <section class="panel">
+          <div class="top">
+            <span class="badge"><b>MERCHANT</b></span>
+            <span class="pill" id="merchSock">socket: off</span>
+            <span class="pill" id="merchConv">conv: -</span>
+          </div>
+
+          <div class="cfg">
+            <div class="full">
+              <label>Origin</label><input id="merchOrigin" value="https://grab.newedge.bt" />
+            </div>
+            <div>
+              <label>Merchant user_id</label><input id="merchId" value="58" />
+            </div>
+            <div>
+              <label>Customer user_id (membership)</label><input id="merchCustomerUserId" value="59" />
+            </div>
+            <div>
+              <label>Business id</label><input id="merchBusinessId" value="19" />
+            </div>
+            <div class="full">
+              <label>Order ID</label><input id="merchOrderId" value="ORD-1001" />
+            </div>
+            <div class="full">
+              <button class="primary" id="merchRefresh">Refresh Inbox</button>
+              <button class="primary" id="merchStart">Start Chat (Order)</button>
+            </div>
+          </div>
+
+          <div class="log" id="merchLog">Ready.</div>
+
+          <div class="split">
+            <div class="inbox">
+              <div class="inboxHead">
+                <div class="title">Chats</div>
+                <button id="merchReload">Reload</button>
+              </div>
+              <div class="list" id="merchList"><div class="muted">No chats loaded.</div></div>
+            </div>
+
+            <div class="room">
+              <div class="roomHead">
+                <div class="hAvatar" id="merchHeaderAvatar">🙂</div>
+                <div class="hTitle">
+                  <div class="who" id="merchHeaderWho">Select a chat</div>
+                  <div class="sub" id="merchHeaderSub">-</div>
+                </div>
+              </div>
+
+              <div class="chat" id="merchChat"></div>
+
+              <div class="composer">
+                <div>
+                  <textarea id="merchText" placeholder="Type message (optional caption if image selected)"></textarea>
+                  <div class="small">
+                    <input type="file" id="merchFile" accept="image/*" />
+                    <span class="file" id="merchFileName"></span>
+                    <button id="merchClearFile">Clear</button>
+                  </div>
+                </div>
+                <div><button class="primary" id="merchSend">Send</button></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      // Avatar prefixes (same as your old file)
+      const USER_PREFIX = "https://grab.newedge.bt/driver/";
+      const MERCH_PREFIX = "https://grab.newedge.bt/merchant/";
+
+      // For displaying message images (your requirement)
+      const CHAT_PUBLIC_BASE = "https://grab.newedge.bt/chat";
+
+      const $ = (id) => document.getElementById(id);
+
+      function cleanOrigin(v) {
+        return String(v || "").trim().replace(/\/+$/, "");
+      }
+
+      function withPrefix(prefix, v) {
+        if (!v) return "";
+        const s = String(v).trim();
+        if (!s) return "";
+        if (s.startsWith("http://") || s.startsWith("https://")) return s;
+        if (s.startsWith("/")) return prefix.replace(/\/+$/, "") + s;
+        return prefix.endsWith("/") ? prefix + s : prefix + s;
+      }
+      const userImg = (v) => withPrefix(USER_PREFIX, v);
+      const merchImg = (v) => withPrefix(MERCH_PREFIX, v);
+
+      function makeAvatar(el, url, fallback) {
+        el.innerHTML = "";
+        if (!url) { el.textContent = fallback; return; }
+        const img = document.createElement("img");
+        img.src = url;
+        img.onerror = () => {
+          el.innerHTML = "";
+          el.textContent = fallback;
+          console.warn("avatar fail:", url);
+        };
+        el.appendChild(img);
+      }
+
+      function apiUrl(origin, apiPrefix, path) {
+        const o = cleanOrigin(origin);
+        const p = path.startsWith("/") ? path : `/${path}`;
+        return o + (apiPrefix || "") + p;
+      }
+
+      async function detectApiPrefix(origin, headers) {
+        const candidates = ["/chat", "/chat/chat", ""];
+        for (const pref of candidates) {
+          const url = apiUrl(origin, pref, "/conversations");
+          try {
+            const r = await fetch(url, { headers });
+            const t = await r.text();
+            if (t.trim().startsWith("{") || t.trim().startsWith("[")) return pref;
+          } catch {}
+        }
+        return null;
+      }
+
+      // ✅ Chat media URL (force /chat base)
+      function chatMediaUrl(mediaUrl) {
+        if (!mediaUrl) return "";
+        const s = String(mediaUrl).trim();
+        if (!s) return "";
+        if (s.startsWith("http://") || s.startsWith("https://")) return s;
+        const path = s.startsWith("/") ? s : `/${s}`;
+        return `${CHAT_PUBLIC_BASE}${path}`;
+      }
+
+      function fmtTime(ms) {
+        if (!ms) return "";
+        return new Date(Number(ms)).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+
+      function clearEl(el) { while (el.firstChild) el.removeChild(el.firstChild); }
+
+      function renderMsg(chatEl, myRole, myId, msg) {
+        const isMe = msg.sender_type === myRole && String(msg.sender_id) === String(myId);
+
+        const wrap = document.createElement("div");
+        wrap.className = "msg" + (isMe ? " me" : "");
+
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+
+        const meta = document.createElement("div");
+        meta.className = "meta";
+        meta.textContent = `${isMe ? "You" : "Other"} • ${fmtTime(msg.ts || Date.now())}`;
+        bubble.appendChild(meta);
+
+        if (msg.message_type === "IMAGE" && msg.media_url) {
+          const img = document.createElement("img");
+          img.className = "msgimg";
+          img.src = chatMediaUrl(msg.media_url);
+
+          // fallback to host without /chat if needed
+          img.onerror = () => {
+            const raw = String(msg.media_url || "").trim();
+            if (!raw || raw.startsWith("http")) return;
+            img.onerror = null;
+            const p = raw.startsWith("/") ? raw : `/${raw}`;
+            img.src = `https://grab.newedge.bt${p}`;
+          };
+
+          img.onclick = () => window.open(img.src, "_blank");
+          bubble.appendChild(img);
+        }
+
+        if (msg.body) {
+          const t = document.createElement("div");
+          t.textContent = msg.body;
+          bubble.appendChild(t);
+        }
+
+        wrap.appendChild(bubble);
+        chatEl.appendChild(wrap);
+        chatEl.scrollTop = chatEl.scrollHeight + 9999;
+      }
+
+      function renderRow(listEl, row, title, avatarUrl, active, onClick) {
+        const el = document.createElement("div");
+        el.className = "row" + (active ? " active" : "");
+
+        const av = document.createElement("div");
+        av.className = "avatar";
+        makeAvatar(av, avatarUrl, "🙂");
+
+        const mid = document.createElement("div");
+        mid.className = "mid";
+
+        const nm = document.createElement("div");
+        nm.className = "name";
+        nm.textContent = title || "-";
+
+        const pv = document.createElement("div");
+        pv.className = "preview";
+        pv.textContent =
+          row.last_message_type === "IMAGE"
+            ? row.last_message_body
+              ? `📷 ${row.last_message_body}`
+              : "📷 Photo"
+            : row.last_message_body || "";
+
+        mid.appendChild(nm);
+        mid.appendChild(pv);
+
+        el.appendChild(av);
+        el.appendChild(mid);
+        el.onclick = onClick;
+        listEl.appendChild(el);
+      }
+
+      function setPill(el, text, ok = null) {
+        el.textContent = text;
+        el.classList.remove("ok", "err");
+        if (ok === true) el.classList.add("ok");
+        if (ok === false) el.classList.add("err");
+      }
+
+      function setHeader(side, meta, orderId) {
+        meta = meta || {};
+        if (side === "CUSTOMER") {
+          $("custHeaderWho").textContent = meta.merchantBusinessName || "Merchant";
+          $("custHeaderSub").textContent = `Order: ${orderId || "-"}`;
+          makeAvatar($("custHeaderAvatar"), merchImg(meta.merchant_business_logo || ""), "🏪");
+        } else {
+          $("merchHeaderWho").textContent = meta.customerName || "Customer";
+          $("merchHeaderSub").textContent = `Order: ${orderId || "-"}`;
+          makeAvatar($("merchHeaderAvatar"), userImg(meta.customer_profile_image || ""), "🙂");
+        }
+      }
+
+      // ✅ Socket path auto-detect (works if ingress rewrites /chat)
+      async function connectSocketAuto(origin, sockPill, onNewMessage) {
+        const paths = ["/chat/socket.io", "/socket.io", "/chat/chat/socket.io"];
+        let lastErr = null;
+
+        for (const p of paths) {
+          try {
+            const s = io(origin, { path: p, transports: ["websocket", "polling"], timeout: 6000 });
+
+            await new Promise((resolve, reject) => {
+              const t = setTimeout(() => reject(new Error("timeout")), 6500);
+              s.once("connect", () => { clearTimeout(t); resolve(); });
+              s.once("connect_error", (e) => { clearTimeout(t); reject(e); });
+            });
+
+            // connected
+            setPill(sockPill, `socket: on (${p})`, true);
+            s.on("disconnect", () => setPill(sockPill, "socket: off", false));
+            s.on("connect_error", (e) => setPill(sockPill, `socket: error`, false));
+
+            s.on("chat:new_message", onNewMessage);
+            return { socket: s, path: p };
+          } catch (e) {
+            lastErr = e;
+          }
+        }
+
+        setPill(sockPill, "socket: error", false);
+        throw lastErr || new Error("socket connect failed");
+      }
+
+      function createClient(side) {
+        const isCustomer = side === "CUSTOMER";
+
+        const originEl = isCustomer ? $("custOrigin") : $("merchOrigin");
+        const myIdEl = isCustomer ? $("custId") : $("merchId");
+        const otherIdEl = isCustomer ? $("custMerchantUserId") : $("merchCustomerUserId");
+        const businessEl = isCustomer ? $("custBusinessId") : $("merchBusinessId");
+        const orderEl = isCustomer ? $("custOrderId") : $("merchOrderId");
+
+        const listEl = isCustomer ? $("custList") : $("merchList");
+        const chatEl = isCustomer ? $("custChat") : $("merchChat");
+        const logEl = isCustomer ? $("custLog") : $("merchLog");
+        const convPill = isCustomer ? $("custConv") : $("merchConv");
+        const sockPill = isCustomer ? $("custSock") : $("merchSock");
+
+        const refreshBtn = isCustomer ? $("custRefresh") : $("merchRefresh");
+        const startBtn = isCustomer ? $("custStart") : $("merchStart");
+        const reloadBtn = isCustomer ? $("custReload") : $("merchReload");
+
+        const textEl = isCustomer ? $("custText") : $("merchText");
+        const fileEl = isCustomer ? $("custFile") : $("merchFile");
+        const fileNameEl = isCustomer ? $("custFileName") : $("merchFileName");
+        const clearFileBtn = isCustomer ? $("custClearFile") : $("merchClearFile");
+        const sendBtn = isCustomer ? $("custSend") : $("merchSend");
+
+        let origin = "";
+        let apiPrefix = null;
+        let myId = 0;
+        let activeConv = null;
+        let activeOrder = null;
+
+        let socket = null;
+
+        function logMsg(m) { logEl.textContent = m; }
+
+        function headers(extra = {}) {
+          const h = { "x-user-type": side, "x-user-id": String(myId), ...extra };
+          if (side === "MERCHANT") {
+            const bid = Number(businessEl.value || 0);
+            if (bid) h["x-business-id"] = String(bid);
+          }
+          return h;
+        }
+
+        async function ensureSetup() {
+          origin = cleanOrigin(originEl.value);
+          myId = Number(myIdEl.value || 0);
+          if (!origin || !myId) throw new Error("Missing origin or id");
+
+          if (!apiPrefix) {
+            apiPrefix = await detectApiPrefix(origin, headers());
+            if (apiPrefix == null) throw new Error("API path not detected (all returned HTML/failed)");
+            logMsg(`API path detected: ${apiPrefix || "/"} (conversations)`);
+          }
+
+          if (!socket) {
+            const connected = await connectSocketAuto(origin, sockPill, ({ conversationId, message }) => {
+              if (!activeConv || String(conversationId) !== String(activeConv)) return;
+              renderMsg(chatEl, side, myId, message);
+            });
+            socket = connected.socket;
+          }
+        }
+
+        async function loadInbox() {
+          try {
+            await ensureSetup();
+
+            listEl.innerHTML = `<div class="muted">Loading...</div>`;
+            const r = await fetch(apiUrl(origin, apiPrefix, "/conversations"), { headers: headers() });
+            const j = await r.json();
+
+            if (!j.success) {
+              listEl.innerHTML = `<div class="muted">Error: ${j.message || "failed"}</div>`;
+              return;
+            }
+
+            const rows = j.rows || [];
+            if (!rows.length) {
+              listEl.innerHTML = `<div class="muted">No conversations.</div>`;
+              return;
+            }
+
+            clearEl(listEl);
+            rows.forEach((row) => {
+              const title = isCustomer ? (row.merchant_business_name || "Merchant") : (row.customer_name || "Customer");
+              const avatar = isCustomer
+                ? merchImg(row.merchant_business_logo || "")
+                : userImg(row.customer_profile_image || "");
+              const active = activeConv && String(activeConv) === String(row.conversation_id);
+
+              renderRow(listEl, row, title, avatar, active, async () => {
+                activeConv = row.conversation_id;
+                activeOrder = row.order_id;
+                convPill.textContent = "conv: " + activeConv;
+
+                if (socket && socket.connected) socket.emit("chat:join", { conversationId: activeConv });
+
+                await loadRoom(activeConv, activeOrder);
+                await loadInbox();
+              });
+            });
+
+            logMsg(`Inbox loaded (${rows.length})`);
+          } catch (e) {
+            logMsg(e.message || String(e));
+          }
+        }
+
+        async function startChat() {
+          try {
+            await ensureSetup();
+
+            const otherId = Number(otherIdEl.value || 0);
+            const bid = Number(businessEl.value || 0) || null;
+            const orderId = String(orderEl.value || "").trim();
+            if (!orderId) return logMsg("Order ID required");
+
+            // ✅ backend prefers customer_id + business_id; keep merchant_id as fallback
+            const body = {
+              customer_id: isCustomer ? myId : otherId,
+              business_id: bid,
+              merchant_id: isCustomer ? otherId : myId,
+            };
+
+            const r = await fetch(
+              apiUrl(origin, apiPrefix, `/conversations/order/${encodeURIComponent(orderId)}`),
+              {
+                method: "POST",
+                headers: { ...headers(), "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+              }
+            );
+
+            const j = await r.json();
+            if (!j.success) return logMsg(j.message || "start failed");
+
+            activeConv = j.conversation_id;
+            activeOrder = orderId;
+            convPill.textContent = "conv: " + activeConv;
+
+            setHeader(side, j.meta, orderId);
+            if (socket && socket.connected) socket.emit("chat:join", { conversationId: activeConv });
+
+            await loadRoom(activeConv, activeOrder);
+            await loadInbox();
+          } catch (e) {
+            logMsg(e.message || String(e));
+          }
+        }
+
+        async function loadRoom(conversationId, orderId) {
+          clearEl(chatEl);
+
+          const r = await fetch(
+            apiUrl(origin, apiPrefix, `/messages/${encodeURIComponent(conversationId)}?limit=80`),
+            { headers: headers() }
+          );
+
+          const j = await r.json();
+          if (!j.success) return logMsg(j.message || "load room failed");
+
+          setHeader(side, j.meta, orderId);
+
+          const rows = (j.rows || []).slice().reverse();
+          rows.forEach((m) => renderMsg(chatEl, side, myId, m));
+          logMsg(`Room loaded (${rows.length})`);
+        }
+
+        async function sendOne() {
+          try {
+            await ensureSetup();
+            if (!activeConv) return logMsg("Select a chat first");
+
+            const text = textEl.value.trim();
+            const file = fileEl.files && fileEl.files[0];
+
+            if (file) {
+              const fd = new FormData();
+              if (text) fd.append("body", text);
+              fd.append("chat_image", file);
+
+              const r = await fetch(apiUrl(origin, apiPrefix, `/messages/${encodeURIComponent(activeConv)}`), {
+                method: "POST",
+                headers: headers(),
+                body: fd,
+              });
+
+              const j = await r.json();
+              if (!j.success) return logMsg(j.message || "send image failed");
+
+              fileEl.value = "";
+              fileNameEl.textContent = "";
+              textEl.value = "";
+              return logMsg("Sent image");
+            }
+
+            if (!text) return logMsg("Type text or select image");
+
+            const r = await fetch(apiUrl(origin, apiPrefix, `/messages/${encodeURIComponent(activeConv)}`), {
+              method: "POST",
+              headers: { ...headers(), "Content-Type": "application/json" },
+              body: JSON.stringify({ body: text }),
+            });
+
+            const j = await r.json();
+            if (!j.success) return logMsg(j.message || "send text failed");
+
+            textEl.value = "";
+            logMsg("Sent text");
+          } catch (e) {
+            logMsg(e.message || String(e));
+          }
+        }
+
+        refreshBtn.onclick = loadInbox;
+        reloadBtn.onclick = loadInbox;
+        startBtn.onclick = startChat;
+        sendBtn.onclick = sendOne;
+
+        clearFileBtn.onclick = () => {
+          fileEl.value = "";
+          fileNameEl.textContent = "";
+          logMsg("Cleared image");
+        };
+        fileEl.onchange = () => {
+          const f = fileEl.files && fileEl.files[0];
+          fileNameEl.textContent = f ? f.name : "";
+        };
+
+        loadInbox();
+      }
+
+      createClient("CUSTOMER");
+      createClient("MERCHANT");
+    </script>
+  </body>
+</html>

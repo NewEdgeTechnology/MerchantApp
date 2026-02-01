@@ -9,6 +9,7 @@
 //    2) If business coords are missing -> DO NOT calculate distance (prevents 0.00 for all)
 //    3) Validate coords (range check) before calculating
 // - ✅ NEW: DO NOT show DECLINED (and REJECTED) orders in the list/tabs
+// - ✅ UPDATE: Removed "Track orders" button from this screen
 
 import React, { useCallback, useMemo, useEffect, useState } from "react";
 import {
@@ -328,19 +329,6 @@ const getLatestStatusNorm = (order, statusMap) => {
   return normalizeStatus(raw);
 };
 
-const isTrackableStatus = (statusNorm) => {
-  const s = String(statusNorm || "").toUpperCase().trim();
-  return (
-    s === "ASSIGNED" ||
-    s === "RIDER_ASSIGNED" ||
-    s === "DRIVER_ASSIGNED" ||
-    s === "OUT_FOR_DELIVERY" ||
-    s === "DELIVERED" ||
-    s === "COMPLETED" ||
-    s === "COMPLETE"
-  );
-};
-
 const STATUS_COLORS = {
   PENDING: "#64748b",
   CONFIRMED: "#7c3aed",
@@ -412,7 +400,6 @@ export default function NearbyClusterOrdersScreen() {
     nextTrackScreen = "TrackBatchOrdersScreen",
     focusOrderId,
     ordersGroupedUrl,
-    batchListScreen = "BatchRidesScreen",
   } = route.params || {};
 
   const [clusterOrders, setClusterOrders] = useState(Array.isArray(orders) ? orders : []);
@@ -421,7 +408,6 @@ export default function NearbyClusterOrdersScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   const [selectedStatus, setSelectedStatus] = useState("ALL");
-  const [lastBatch, setLastBatch] = useState(null);
 
   // ✅ business coords from BUSINESS_DETAILS endpoint
   const [businessCoords, setBusinessCoords] = useState(null); // {lat,lng}
@@ -889,11 +875,6 @@ export default function NearbyClusterOrdersScreen() {
       const batchId = pickBatchId(json);
       const batchOrderIds = pickBatchOrderIds(json);
 
-      setLastBatch({
-        batch_id: batchId,
-        order_ids: batchOrderIds.length ? batchOrderIds : orderCodes,
-      });
-
       clearSelectedReady();
 
       navigation.navigate("ClusterDeliveryOptionsScreen", {
@@ -947,52 +928,6 @@ export default function NearbyClusterOrdersScreen() {
       { cancelable: true }
     );
   }, [readyOrders.length, selectedReadyOrders.length, createBatchForSelectedReadyOrders]);
-
-  /* ---------------- Track (redirect to batch list) ---------------- */
-
-  const clusterTrackableOrders = useMemo(() => {
-    return allOrders.filter((o) => isTrackableStatus(getLatestStatusNorm(o, statusMap)));
-  }, [allOrders, statusMap]);
-
-  const ordersToTrack = useMemo(() => clusterTrackableOrders, [clusterTrackableOrders]);
-
-  const trackDisabled = creatingBatch || ordersToTrack.length === 0;
-
-  const onTrackOrdersPress = useCallback(() => {
-    if (ordersToTrack.length === 0) {
-      Alert.alert("Nothing to track", "No orders are Assigned / Out for delivery / Delivered yet.");
-      return;
-    }
-
-    navigation.navigate(batchListScreen, {
-      businessId,
-      bizId: businessId,
-      merchant_id: businessId,
-
-      label,
-      orders: ordersToTrack,
-      batch_id: lastBatch?.batch_id,
-      batch_order_ids: lastBatch?.order_ids,
-      selectedMethod: "GRAB",
-      centerCoords: distanceCenter,
-
-      ownerType,
-      delivery_option,
-      clusterOrders: allOrders,
-      lastBatch,
-    });
-  }, [
-    navigation,
-    batchListScreen,
-    businessId,
-    label,
-    ordersToTrack,
-    lastBatch,
-    distanceCenter,
-    ownerType,
-    delivery_option,
-    allOrders,
-  ]);
 
   /* ---------------- UI ---------------- */
 
@@ -1127,8 +1062,8 @@ export default function NearbyClusterOrdersScreen() {
     ? "Creating..."
     : `Ready for delivery (${selectedReadyCount}/${readyCount})`;
 
-  const selectionSubtitle = readyCount > 0 ? `Selected READY: ${selectedReadyCount}/${readyCount}` : null;
-  const trackSubtitle = ordersToTrack.length ? `Trackable: ${ordersToTrack.length}` : null;
+  const selectionSubtitle =
+    readyCount > 0 ? `Selected READY: ${selectedReadyCount}/${readyCount}` : null;
 
   const businessLine =
     businessName || businessCoords ? `${businessName ? businessName : "Business"}` : null;
@@ -1174,12 +1109,6 @@ export default function NearbyClusterOrdersScreen() {
           </Text>
         )}
 
-        {!!trackSubtitle && (
-          <Text style={styles.headerSubtitle} numberOfLines={1}>
-            {trackSubtitle}
-          </Text>
-        )}
-
         {!!selectionSubtitle && (
           <Text style={styles.headerSubtitle} numberOfLines={1}>
             {selectionSubtitle}
@@ -1216,32 +1145,19 @@ export default function NearbyClusterOrdersScreen() {
         }
       />
 
+      {/* ✅ Only ONE button now */}
       <View style={styles.fabWrapper}>
-        <View style={styles.fabRow}>
-          <TouchableOpacity
-            style={[styles.fab, styles.fabHalf, fabDisabled && { opacity: 0.4 }]}
-            activeOpacity={fabDisabled ? 1 : 0.8}
-            onPress={onReadyForDeliveryPress}
-            disabled={fabDisabled}
-          >
-            <Ionicons name="bicycle" size={18} color="#fff" />
-            <Text style={styles.fabText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
-              {fabLabel}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.fab, styles.fabHalf, styles.trackFabBg, trackDisabled && { opacity: 0.4 }]}
-            activeOpacity={trackDisabled ? 1 : 0.8}
-            onPress={onTrackOrdersPress}
-            disabled={trackDisabled}
-          >
-            <Ionicons name="navigate" size={18} color="#fff" />
-            <Text style={styles.fabText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
-              Track orders
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          style={[styles.fab, fabDisabled && { opacity: 0.4 }]}
+          activeOpacity={fabDisabled ? 1 : 0.8}
+          onPress={onReadyForDeliveryPress}
+          disabled={fabDisabled}
+        >
+          <Ionicons name="bicycle" size={18} color="#fff" />
+          <Text style={styles.fabText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+            {fabLabel}
+          </Text>
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -1411,8 +1327,6 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
     paddingHorizontal: 16,
   },
-  fabRow: { flexDirection: "row", alignItems: "center", gap: 12, width: "100%" },
-  fabHalf: { flex: 1, justifyContent: "center" },
 
   fab: {
     flexDirection: "row",
@@ -1435,5 +1349,4 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     flexShrink: 1,
   },
-  trackFabBg: { backgroundColor: "#0ea5e9" },
 });
