@@ -1,4 +1,7 @@
 // screens/general/LoginScreen.js
+// ✅ Updated: Fingerprint/Biometrics removed (no LocalAuthentication import, no biometric state/helpers/UI)
+// ✅ Keeps everything else as-is (push token, remember me, save tokens, business_id/user_id storage, sockets, navigation)
+
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   View,
@@ -28,7 +31,6 @@ import {
   useFocusEffect,
 } from "@react-navigation/native";
 import * as SecureStore from "expo-secure-store";
-import * as LocalAuthentication from "expo-local-authentication";
 import {
   LOGIN_USERNAME_MERCHANT_ENDPOINT as ENV_LOGIN_USERNAME_MERCHANT_ENDPOINT,
   PROFILE_ENDPOINT,
@@ -36,12 +38,13 @@ import {
 
 // Shared socket connector
 import { connectMerchantSocket } from "../realtime/merchantSocket";
-
+import { getExpoPushTokenAsync } from "../../utils/getExpoPushTokenAsync";
+import { getStableDeviceId } from "../../utils/deviceId";
 /* ===== Safe emitter (no-op if unavailable) ===== */
 const SafeDeviceEventEmitter =
   RNDeviceEventEmitter && typeof RNDeviceEventEmitter.emit === "function"
     ? RNDeviceEventEmitter
-    : { emit: () => {} }; // avoids “DeviceEventEmitter doesn’t exist” at runtime
+    : { emit: () => { } }; // avoids “DeviceEventEmitter doesn’t exist” at runtime
 
 /* ===== Keys (email-first, with backward compatibility) ===== */
 const KEY_SAVED_EMAIL = "saved_email_v2";
@@ -51,12 +54,13 @@ const KEY_SAVED_PASSWORD = "saved_password";
 const KEY_LAST_LOGIN_USERNAME = "last_login_username"; // legacy (only for migration)
 const KEY_AUTH_TOKEN = "auth_token";
 const KEY_MERCHANT_LOGIN = "merchant_login";
-const KEY_BIOMETRIC_ENABLED = "security_biometric_login";
-const KEY_BIOMETRIC_ENABLED_LEGACY = "biometric_enabled_v1";
+const KEY_BIOMETRIC_ENABLED = "security_biometric_login"; // kept for compatibility (not used)
+const KEY_BIOMETRIC_ENABLED_LEGACY = "biometric_enabled_v1"; // kept for compatibility (not used)
 const KEY_REFRESH_TOKEN = "refresh_token_v1";
 
 // ✅ NEW: store user_id separately
 const KEY_USER_ID = "user_id_v1";
+const KEY_BUSINESS_ID = "business_id_v1"; // ✅ stable key for business id
 
 const endpoint = (ENV_LOGIN_USERNAME_MERCHANT_ENDPOINT ?? "").trim();
 
@@ -98,7 +102,7 @@ const goToWelcome = (navigation) => {
   try {
     navigation.dispatch(StackActions.replace(WELCOME_ROUTE));
     return;
-  } catch {}
+  } catch { }
   navigation.navigate(WELCOME_ROUTE);
 };
 /* ────────────────────────────────────── */
@@ -138,7 +142,7 @@ const getImageBaseOrigin = () => {
   for (const c of candidates) {
     try {
       return androidLoopback(new URL(c).origin);
-    } catch {}
+    } catch { }
   }
   return DEFAULT_DEV_ORIGIN;
 };
@@ -189,36 +193,6 @@ function useKeyboardGap(minGap = 8) {
   return gap;
 }
 
-/* ===== Biometrics helpers ===== */
-async function deviceSupportsBiometrics() {
-  try {
-    const has = await LocalAuthentication.hasHardwareAsync();
-    const enrolled = await LocalAuthentication.isEnrolledAsync();
-    const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
-    return { ok: !!(has && enrolled && types?.length), types: types || [] };
-  } catch {
-    return { ok: false, types: [] };
-  }
-}
-function labelForTypes(types = []) {
-  const map = { 1: "Fingerprint", 2: "Face ID", 3: "Iris" };
-  const names = [...new Set(types.map((t) => map[t] || "Biometric"))];
-  return names.length ? names.join(" / ") : "Biometric";
-}
-async function biometricPrompt(reason = "Authenticate") {
-  try {
-    const res = await LocalAuthentication.authenticateAsync({
-      promptMessage: reason,
-      cancelLabel: "Cancel",
-      fallbackEnabled: true,
-      disableDeviceFallback: false,
-    });
-    return { success: !!res.success, error: res.error };
-  } catch (e) {
-    return { success: false, error: e?.message || "ERROR" };
-  }
-}
-
 const LoginScreen = () => {
   const navigation = useNavigation();
 
@@ -230,42 +204,49 @@ const LoginScreen = () => {
   const [isPwFocused, setIsPwFocused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorText, setErrorText] = useState("");
+  const [pushToken, setPushToken] = useState(null);
+  const [deviceId, setDeviceId] = useState("");
 
-  // Biometrics state
-  const [bioAvail, setBioAvail] = useState(false);
-  const [bioEnabled, setBioEnabled] = useState(false);
-  const [bioLabel, setBioLabel] = useState("Biometric");
+  // ✅ kept because it was used by remember-me logic
   const [hasSavedSecret, setHasSavedSecret] = useState(false);
 
-  const canSubmit = email.length > 0 && password.length > 0 && !loading;
+  const canSubmit =
+    email.length > 0 && password.length > 0 && !!deviceId && !loading;
   const bottomGap = useKeyboardGap(8);
 
   const emailRef = useRef(null);
   const pwdRef = useRef(null);
   const [pwdSelection, setPwdSelection] = useState({ start: 0, end: 0 });
 
-  /** Load saved creds + biometric flags (email-first; fallback to legacy username) */
-  const loadBiometricAndSavedState = async () => {
+  useEffect(() => {
+    const fetchPushToken = async () => {
+      const token = await getExpoPushTokenAsync();
+      setPushToken(token);
+      console.log("Push token on login screen:", token);
+    };
+    fetchPushToken();
+  }, []);
+  useEffect(() => {
+    (async () => {
+      const id = await getStableDeviceId();
+      setDeviceId(id);
+      console.log("Stable device_id:", id);
+    })();
+  }, []);
+  /** Load saved creds (email-first; fallback to legacy username) */
+  const loadSavedState = async () => {
     try {
-      const [savedEmail, savedPwd, enabledFlagResolved, refreshTok] =
-        await Promise.all([
-          (async () => {
-            const e = await SecureStore.getItemAsync(KEY_SAVED_EMAIL);
-            if (e) return e;
-            // fallback once for legacy
-            const legacyU = await SecureStore.getItemAsync(KEY_SAVED_USERNAME);
-            return legacyU || "";
-          })(),
-          SecureStore.getItemAsync(KEY_SAVED_PASSWORD),
-          (async () => {
-            const v = await SecureStore.getItemAsync(KEY_BIOMETRIC_ENABLED);
-            const legacy = await SecureStore.getItemAsync(
-              KEY_BIOMETRIC_ENABLED_LEGACY
-            );
-            return v ?? legacy ?? "0";
-          })(),
-          SecureStore.getItemAsync(KEY_REFRESH_TOKEN),
-        ]);
+      const [savedEmail, savedPwd, refreshTok] = await Promise.all([
+        (async () => {
+          const e = await SecureStore.getItemAsync(KEY_SAVED_EMAIL);
+          if (e) return e;
+          // fallback once for legacy
+          const legacyU = await SecureStore.getItemAsync(KEY_SAVED_USERNAME);
+          return legacyU || "";
+        })(),
+        SecureStore.getItemAsync(KEY_SAVED_PASSWORD),
+        SecureStore.getItemAsync(KEY_REFRESH_TOKEN),
+      ]);
 
       if (savedEmail || savedPwd) {
         setEmail(String(savedEmail || "").trim().toLowerCase());
@@ -280,28 +261,24 @@ const LoginScreen = () => {
         if (lastE) setEmail(String(lastE).trim().toLowerCase());
       }
 
-      const sup = await deviceSupportsBiometrics();
-      setBioAvail(!!sup.ok);
-      setBioLabel(labelForTypes(sup.types));
-      setBioEnabled(enabledFlagResolved === "1");
       setHasSavedSecret(!!(savedPwd || refreshTok));
-    } catch {}
+    } catch { }
   };
 
   useEffect(() => {
-    loadBiometricAndSavedState();
+    loadSavedState();
   }, []);
 
   useFocusEffect(
     React.useCallback(() => {
-      loadBiometricAndSavedState();
-      return () => {};
+      loadSavedState();
+      return () => { };
     }, [])
   );
 
   useEffect(() => {
     const sub = AppState.addEventListener("change", (s) => {
-      if (s === "active") loadBiometricAndSavedState();
+      if (s === "active") loadSavedState();
     });
     return () => sub.remove();
   }, []);
@@ -312,7 +289,7 @@ const LoginScreen = () => {
         try {
           const v = p();
           if (v !== undefined && v !== null && v !== "") return v;
-        } catch {}
+        } catch { }
       }
       return "";
     };
@@ -375,7 +352,8 @@ const LoginScreen = () => {
 
       // ✅ handle your real response shape:
       // { data: { token: { access_token, refresh_token, ... }, message, user }, usedEmail }
-      const tokenObj = data?.data?.token || data?.token || data?.data?.data?.token || null;
+      const tokenObj =
+        data?.data?.token || data?.token || data?.data?.data?.token || null;
 
       const access =
         (typeof data?.token === "string" && data.token) ||
@@ -458,181 +436,157 @@ const LoginScreen = () => {
     );
   };
 
- // ✅ Full handleLogin() function (only) — saves business_id + user_id to SecureStore
-// Assumes you already have these constants defined in your file:
-// KEY_AUTH_TOKEN, KEY_REFRESH_TOKEN, KEY_MERCHANT_LOGIN, KEY_USER_ID
-// and you have `endpoint`, `email`, `password`, `savePassword`, `navigateHome` etc.
-// Also assumes you imported SecureStore + Alert and have setLoading, setErrorText, setHasSavedSecret
-
-const KEY_BUSINESS_ID = "business_id_v1"; // ✅ NEW stable key for business id
-
-const handleLogin = async () => {
-  if (!endpoint) {
-    Alert.alert(
-      "Configuration error",
-      "LOGIN_USERNAME_MERCHANT_ENDPOINT is not set in your .env file."
-    );
-    return;
-  }
-  if (!(email && password)) return;
-
-  setErrorText("");
-  setLoading(true);
-
-  try {
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        email: String(email || "").trim().toLowerCase(),
-        password: String(password || ""),
-      }),
-    });
-
-    const txt = await res.text();
-    let data = {};
-    try {
-      data = txt ? JSON.parse(txt) : {};
-    } catch {
-      data = {};
-    }
-
-    if (!res.ok) {
-      throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
-    }
-
-    // ✅ your response shape:
-    // { message, token:{access_token,refresh_token,...}, user:{user_id,business_id,...} }
-    const tokenObj = data?.token || {};
-    const userObj = data?.user || {};
-
-    const accessToken =
-      tokenObj?.access_token ||
-      tokenObj?.accessToken ||
-      data?.access_token ||
-      data?.accessToken ||
-      "";
-
-    const refreshToken =
-      tokenObj?.refresh_token ||
-      tokenObj?.refreshToken ||
-      data?.refresh_token ||
-      data?.refreshToken ||
-      "";
-
-    const user_id =
-      userObj?.user_id ??
-      data?.user_id ??
-      data?.id ??
-      null;
-
-    const business_id =
-      userObj?.business_id ??
-      data?.business_id ??
-      null;
-
-    if (!accessToken) {
-      throw new Error("Login succeeded but access_token missing.");
-    }
-
-    // ✅ Save tokens
-    await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
-    if (refreshToken) {
-      await SecureStore.setItemAsync(KEY_REFRESH_TOKEN, String(refreshToken));
-    }
-
-    // ✅ Save user_id separately (your existing key)
-    if (user_id != null && String(user_id).trim()) {
-      await SecureStore.setItemAsync(KEY_USER_ID, String(user_id));
-    } else {
-      await SecureStore.deleteItemAsync(KEY_USER_ID);
-    }
-
-    // ✅ NEW: Save business_id separately (this fixes your chat list)
-    if (business_id != null && String(business_id).trim()) {
-      const bid = String(business_id);
-      await SecureStore.setItemAsync(KEY_BUSINESS_ID, bid);
-
-      // optional compatibility keys (so other code can read easily)
-      await SecureStore.setItemAsync("business_id", bid);
-      await SecureStore.setItemAsync("businessId", bid);
-    } else {
-      await SecureStore.deleteItemAsync(KEY_BUSINESS_ID);
-      await SecureStore.deleteItemAsync("business_id");
-      await SecureStore.deleteItemAsync("businessId");
-    }
-
-    // ✅ Save merchant_login JSON (contains user + business info)
-    await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(data));
-
-    // Remember-me behavior (keep your existing logic or simple version here)
-    // If you want to keep your previous remember-me code, you can replace this block.
-    if (savePassword) {
-      // keep saved password if you already do it elsewhere
-      setHasSavedSecret(true);
-    }
-
-    // ✅ Optional: connect merchant socket using ids
-    try {
-      connectMerchantSocket?.({ user_id, business_id });
-    } catch {}
-
-    // ✅ Navigate home with business details
-    navigateHome({
-      business_id: business_id != null ? String(business_id) : "",
-      business_name: String(userObj?.business_name || ""),
-      business_logo: String(userObj?.business_logo || ""),
-      owner_type: String(userObj?.owner_type || ""),
-      auth_token: String(accessToken),
-      user_id: user_id != null ? String(user_id) : "",
-    });
-  } catch (err) {
-    Alert.alert("Login failed", String(err?.message || err));
-  } finally {
-    setLoading(false);
-  }
-};
-
-
-  const canShowBiometricUnlock = useMemo(
-    () => bioAvail && bioEnabled && hasSavedSecret && !loading,
-    [bioAvail, bioEnabled, hasSavedSecret, loading]
-  );
-
-  const onBiometricUnlock = async () => {
-    const res = await biometricPrompt(`Unlock with ${bioLabel}`);
-    if (!res.success) {
-      Alert.alert("Failed", "Authentication failed or cancelled.");
+  const handleLogin = async () => {
+    if (!endpoint) {
+      Alert.alert(
+        "Configuration error",
+        "LOGIN_USERNAME_MERCHANT_ENDPOINT is not set in your .env file."
+      );
       return;
     }
+    if (!(email && password && deviceId)) return;
 
-    const [savedE, savedP, refreshTok] = await Promise.all([
-      (async () => {
-        const e =
-          (await SecureStore.getItemAsync(KEY_SAVED_EMAIL)) ||
-          (await SecureStore.getItemAsync(KEY_SAVED_USERNAME)) ||
-          "";
-        return e;
-      })(),
-      SecureStore.getItemAsync(KEY_SAVED_PASSWORD),
-      SecureStore.getItemAsync(KEY_REFRESH_TOKEN),
-    ]);
+    setErrorText("");
+    setLoading(true);
+    console.log("Logging in with email:", email, "and push token:", pushToken);
 
     try {
-      setLoading(true);
-      if (refreshTok) {
-        // Optional: implement refresh token auth
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          email: String(email || "").trim().toLowerCase(),
+          password: String(password || ""),
+          device_id: String(deviceId || ""),      // ✅ stable ID for login
+          push_token: String(pushToken || ""),    // ✅ keep push token separate (optional)
+        }),
+      });
+
+      const txt = await res.text();
+      let data = {};
+      try {
+        data = txt ? JSON.parse(txt) : {};
+      } catch {
+        data = {};
       }
-      if (savedE && savedP) {
-        setEmail(String(savedE).trim().toLowerCase());
-        setPassword(savedP);
-        await handleLogin();
+
+      if (!res.ok) {
+        throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+      }
+
+      // ✅ your response shape:
+      // { message, token:{access_token,refresh_token,...}, user:{user_id,business_id,...} }
+      const tokenObj = data?.token || {};
+      const userObj = data?.user || {};
+
+      const accessToken =
+        tokenObj?.access_token ||
+        tokenObj?.accessToken ||
+        data?.access_token ||
+        data?.accessToken ||
+        "";
+
+      const refreshToken =
+        tokenObj?.refresh_token ||
+        tokenObj?.refreshToken ||
+        data?.refresh_token ||
+        data?.refreshToken ||
+        "";
+
+      const user_id = userObj?.user_id ?? data?.user_id ?? data?.id ?? null;
+
+      const business_id = userObj?.business_id ?? data?.business_id ?? null;
+
+      if (!accessToken) {
+        throw new Error("Login succeeded but access_token missing.");
+      }
+
+      // ✅ Save tokens
+      await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
+      if (refreshToken) {
+        await SecureStore.setItemAsync(KEY_REFRESH_TOKEN, String(refreshToken));
+      }
+
+      // ✅ Always store last used email (so it pre-fills even without saving password)
+      const normalizedEmail = String(email || "").trim().toLowerCase();
+      await SecureStore.setItemAsync(KEY_LAST_LOGIN_EMAIL, normalizedEmail);
+
+      // ✅ Save / Clear "remember me" credentials
+      if (savePassword) {
+        await SecureStore.setItemAsync(KEY_SAVED_EMAIL, normalizedEmail);
+        await SecureStore.setItemAsync(KEY_SAVED_PASSWORD, String(password || ""));
+        setHasSavedSecret(true);
       } else {
-        Alert.alert(
-          "Setup required",
-          'Saved credentials are missing. Please log in once with password and enable “Save password”, or implement a refresh token login.'
-        );
+        await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
+        await SecureStore.deleteItemAsync(KEY_SAVED_EMAIL);
+        const refreshTok = await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
+        setHasSavedSecret(!!refreshTok);
       }
+
+      // ✅ Save user_id separately
+      if (user_id != null && String(user_id).trim()) {
+        await SecureStore.setItemAsync(KEY_USER_ID, String(user_id));
+      } else {
+        await SecureStore.deleteItemAsync(KEY_USER_ID);
+      }
+
+      // ✅ Save business_id separately (fixes chat list etc.)
+      if (business_id != null && String(business_id).trim()) {
+        const bid = String(business_id);
+        await SecureStore.setItemAsync(KEY_BUSINESS_ID, bid);
+
+        // optional compatibility keys
+        await SecureStore.setItemAsync("business_id", bid);
+        await SecureStore.setItemAsync("businessId", bid);
+      } else {
+        await SecureStore.deleteItemAsync(KEY_BUSINESS_ID);
+        await SecureStore.deleteItemAsync("business_id");
+        await SecureStore.deleteItemAsync("businessId");
+      }
+
+      // ✅ Save merchant_login JSON (contains user + business info)
+      await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(data));
+
+      // ✅ Optional: emit profile update if business info exists
+      try {
+        const business_name =
+          userObj?.business_name ??
+          userObj?.businessName ??
+          data?.business_name ??
+          "";
+        const rawLogo =
+          userObj?.business_logo ??
+          userObj?.businessLogo ??
+          userObj?.logo ??
+          data?.business_logo ??
+          "";
+        const business_logo = toAbsoluteUrl(rawLogo) || rawLogo || "";
+
+        SafeDeviceEventEmitter.emit("profile-updated", {
+          business_name,
+          business_logo,
+        });
+      } catch { }
+
+      // ✅ Optional: connect merchant socket using ids
+      try {
+        connectMerchantSocket?.({ user_id, business_id });
+      } catch { }
+
+      // ✅ Navigate home with business details
+      navigateHome({
+        business_id: business_id != null ? String(business_id) : "",
+        business_name: String(userObj?.business_name || ""),
+        business_logo: String(userObj?.business_logo || ""),
+        owner_type: String(userObj?.owner_type || ""),
+        auth_token: String(accessToken),
+        user_id: user_id != null ? String(user_id) : "",
+      });
+    } catch (err) {
+      Alert.alert("Login failed", String(err?.message || err));
     } finally {
       setLoading(false);
     }
@@ -670,23 +624,6 @@ const handleLogin = async () => {
           </TouchableOpacity>
         </View>
 
-        {/* Biometric quick unlock CTA */}
-        {canShowBiometricUnlock && (
-          <TouchableOpacity
-            onPress={onBiometricUnlock}
-            activeOpacity={0.9}
-            style={styles.bioUnlockBtn}
-          >
-            <Icon
-              name="finger-print-outline"
-              size={18}
-              color="#0f172a"
-              style={{ marginRight: 8 }}
-            />
-            <Text style={styles.bioUnlockText}>Unlock with {bioLabel}</Text>
-          </TouchableOpacity>
-        )}
-
         {/* Form */}
         <ScrollView
           contentContainerStyle={{ paddingBottom: 24 }}
@@ -694,7 +631,9 @@ const handleLogin = async () => {
         >
           <View style={styles.form}>
             <Text style={styles.label}>Email</Text>
-            <Text style={styles.tip}>Use the email address you used during signup.</Text>
+            <Text style={styles.tip}>
+              Use the email address you used during signup.
+            </Text>
             <View
               style={[
                 styles.inputWrapper,
@@ -807,7 +746,11 @@ const handleLogin = async () => {
                 onValueChange={async (v) => {
                   setSavePassword(v);
                   if (!v) {
-                    const refreshTok = await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
+                    await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
+                    await SecureStore.deleteItemAsync(KEY_SAVED_EMAIL);
+                    const refreshTok = await SecureStore.getItemAsync(
+                      KEY_REFRESH_TOKEN
+                    );
                     setHasSavedSecret(!!refreshTok);
                   }
                 }}
@@ -839,7 +782,9 @@ const handleLogin = async () => {
             activeOpacity={0.85}
           >
             <Text
-              style={canSubmit ? styles.loginButtonText : styles.loginButtonTextDisabled}
+              style={
+                canSubmit ? styles.loginButtonText : styles.loginButtonTextDisabled
+              }
             >
               Log In
             </Text>
@@ -871,21 +816,12 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   iconButton: { padding: 8 },
-  headerTitle: { fontSize: 22, fontWeight: "600", color: "#1A1D1F", marginRight: 180 },
-
-  bioUnlockBtn: {
-    marginHorizontal: 8,
-    marginBottom: 12,
-    paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    backgroundColor: "#f8fafc",
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: "600",
+    color: "#1A1D1F",
+    marginRight: 180,
   },
-  bioUnlockText: { fontWeight: "700", color: "#0f172a" },
 
   form: { flexGrow: 1, padding: 8 },
   label: { marginBottom: 6, fontSize: 14, color: "#333" },

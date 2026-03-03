@@ -471,7 +471,7 @@ export default function PromosTab({
     }
 
     const days = daysInclusive(startYMD, endYMD);
-       if (days <= 0) throw new Error('Invalid date range');
+    if (days <= 0) throw new Error('Invalid date range');
     if (Number.isFinite(basePrice) && basePrice > 0) {
       return Number((days * basePrice).toFixed(2));
     }
@@ -717,9 +717,6 @@ export default function PromosTab({
       showErrorAlert(e?.message || e);
     }
   };
-
-
-  /* ------------- image picking ------------- */
   const pickImage = async () => {
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -727,14 +724,19 @@ export default function PromosTab({
         showErrorAlert('Please allow photo library access to upload an image.', 'Permission needed');
         return;
       }
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
+        aspect: [16, 12],      // ✅ force landscape crop UI
         quality: 0.9,
       });
+
       if (result.canceled) return;
+
       const asset = result.assets?.[0];
       if (!asset?.uri) return;
+
       setForm((s) => ({ ...s, _localImage: asset, banner_image: '' }));
     } catch (e) {
       console.error(e);
@@ -1250,8 +1252,13 @@ const styles = StyleSheet.create({
   card: { backgroundColor: '#fff', borderRadius: 14, padding: 12, marginTop: 12, borderWidth: 1, borderColor: '#e2e8f0' },
   cardHeader: { flexDirection: 'row', alignItems: 'center' },
   cardTitle: { fontWeight: '800', color: '#0f172a', fontSize: 15 },
-
-  thumb: { width: 56, height: 56, borderRadius: 10, backgroundColor: '#f1f5f9' },
+  thumb: {
+    width: 88,
+    aspectRatio: 16 / 10,     // ✅ landscape in list too
+    borderRadius: 10,
+    backgroundColor: '#f1f5f9',
+    resizeMode: 'cover',
+  },
   badge: { paddingHorizontal: 8, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   badgeText: { fontSize: 11, fontWeight: '800' },
 
@@ -1300,14 +1307,34 @@ const styles = StyleSheet.create({
   },
   previewTitle: { fontSize: 16, fontWeight: '900', color: '#0f172a' },
   previewDesc: { fontSize: 12, color: '#475569', marginTop: 4 },
-  previewImageWrap: { width: 120, height: 90, borderRadius: 10, overflow: 'hidden', backgroundColor: '#dcfce7', position: 'relative' },
-  previewImage: { width: '100%', height: '100%' },
+  previewImageWrap: {
+    width: 140,
+    aspectRatio: 16 / 9,     // ✅ fixed landscape frame
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#dcfce7',
+  },
+  previewImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',     // ✅ fills frame, stays landscape
+  },
   previewImagePlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   // Inline "Image + Select" field
   imageRow: { flexDirection: 'row', alignItems: 'center' },
-  imageThumbBox: { width: 64, height: 64, borderRadius: 10, overflow: 'hidden', backgroundColor: '#dcfce7' },
-  imageThumb: { width: '100%', height: '100%' },
+  imageThumbBox: {
+    width: 120,
+    aspectRatio: 16 / 9,     // ✅ fixed landscape
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: '#dcfce7',
+  },
+  imageThumb: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',     // ✅ keep landscape fill
+  },
   imageThumbEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   pickBtn: {
@@ -1346,4 +1373,3 @@ const styles = StyleSheet.create({
   },
   saveText: { color: '#fff', fontWeight: '800', fontSize: 12 },
 });
- 

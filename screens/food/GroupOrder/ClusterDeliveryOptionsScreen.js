@@ -1,28 +1,39 @@
 // services/food/GroupOrder/ClusterDeliveryOptionsScreen.js
 // ✅ Added: socket.on("delivery:driver_arrived") + UI banner + alert
 // ✅ Added: socket.on("deliveryDriverLocation") -> live driver coords stored + logged
-// ✅ Added: "Track live map" button (after driver accepted) -> navigates to TrackBatchOrdersScreen
+// ✅ Added: "Track live map" button (after ride accepted) -> navigates to BatchRidesScreen
 // ✅ FIX: prevent 400 "At least one valid drop with lat/lng is required"
 // ✅ FIX: buildBatchPayload pulls lat/lng + totals from grouped API via orderLookup map
 // ✅ FIX: removed duplicate state declarations + stale closure safe refs
 // ✅ NEW: joinOrder() ONLY for orders inside this cluster/batch + filter deliveryDriverLocation to this cluster only
 // ✅ NEW: LOGS to confirm merchant actually joined order rooms (emit + ack + socket.id + joinedOrderIdsRef)
-// ✅ UPDATE: accept live payloads that don't include orderId/batchId AFTER driverAccepted (to avoid ignoring valid pings)
-// ✅ NEW: TrackBatchOrdersScreen params include batch_id + ride_id
+// ✅ UPDATE: accept live payloads that don't include orderId/batchId AFTER ride accepted (to avoid ignoring valid pings)
 // ✅ NEW: Save batch_id + ride_id in SecureStore (restore on reopen)
 //
-// ✅ NEW (your request):
+// ✅ NEW:
 // - If driver updates status to "ON ROAD", treat it as "OUT_FOR_DELIVERY"
 // - Immediately reflect UI: status pills + list title + bulkPhase -> OUT_FOR_DELIVERY
-// - This is UI marking (does NOT call update API automatically)
+// - UI marking only (does NOT call update API automatically)
 //
-// ✅ FIX (your current issue):
-// - passenger_id was missing because grouped API stores customer user_id under block.user (saved into orderLookup[id].__user)
-// - buildBatchPayload now derives passenger_id from orderLookup.__user first, then falls back to order fields
+// ✅ FIX:
+// - passenger_id derives from grouped API block.user saved into orderLookup[id].__user
 //
-// ✅ UPDATE (your request now):
-// - Hide "Mark all as Out for delivery" and "Mark all as delivered" buttons when selected delivery option is GRAB
-//   (SELF-only bulk buttons)
+// ✅ UPDATE:
+// - Hide SELF bulk buttons when selected delivery option is GRAB
+//
+// ✅ UPDATE NOW (NAV):
+// - Track live map redirects to BatchRidesScreen
+//
+// ✅ UPDATE NOW (SOCKET ACCEPT):
+// - Uses event "deliveryDriverAccepted" to mark ride accepted and update banner immediately
+// - Joins business/batch/order/ride rooms immediately on connect to avoid missing accept event
+//
+// ✅ UPDATE NOW (BUSINESS NAME):
+// - Read business_name from BUSINESS_DETAILS response (supports {success,data} and other shapes)
+// - Use businessName for pickup_place (fallback to firstbusiness_name, then "Merchant shop") in batch request payload
+//
+// ✅ UPDATE NOW (ALERT FLICKER FIX):
+// - Deduplicate accept events so Alert.alert doesn't flicker (multi-event + reconnection duplicates)
 
 import React, { useMemo, useEffect, useState, useCallback, useRef } from 'react';
 import {
@@ -39,17 +50,18 @@ import {
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import io from 'socket.io-client';
+import io from 'socket.io-client/dist/socket.io.js';
 import * as SecureStore from 'expo-secure-store';
 import {
   BUSINESS_DETAILS,
-  BATCH_ORDER_BROADCAST_ENDPOINT as ENV_SEND_REQUEST_DRIVER,
+  ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
+  UPDATE_ORDER_STATUS_ENDPOINT as ENV_UPDATE_ORDER,
+  BATCH_ORDER_BROADCAST_ENDPOINT as ENV_BROADCAST,
   RIDE_SOCKET_ENDPOINT as ENV_RIDE_SOCKET,
   DRIVER_DETAILS_ENDPOINT as ENV_DRIVER_DETAILS,
-  DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING, // (keeping your env name)
-  UPDATE_ORDER_STATUS_ENDPOINT as ENV_UPDATE_ORDER,
-  ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
+  DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING,
 } from '@env';
+
 import { normalizeOrderCode, updateStatusApi } from '../../../screens/food/OrderDetails/orderDetailsUtils';
 
 /* ---------------- helpers ---------------- */
@@ -97,10 +109,12 @@ const safePhone = (v) => {
   return s;
 };
 
-/* ✅ ON ROAD => OUT_FOR_DELIVERY normalizer */
+/* ✅ ON ROAD => OUT_FOR_DELIVERY normalizer + ASSIGNED treated as assigned */
 const normalizeStatus = (raw) => {
   if (!raw) return null;
   const s = String(raw).toUpperCase().trim();
+
+  if (s === 'ASSIGNED' || s === 'DRIVER_ASSIGNED') return 'ASSIGNED';
 
   if (
     s === 'ON ROAD' ||
@@ -123,6 +137,11 @@ const statusLabel = (raw) => {
   const s = normalizeStatus(raw);
   if (!s) return '';
   return String(s).replace(/_/g, ' ');
+};
+
+const isRideAssignedStatus = (raw) => {
+  const s = normalizeStatus(raw);
+  return s === 'ASSIGNED' || s === 'OUT_FOR_DELIVERY';
 };
 
 const toRad = (deg) => (deg * Math.PI) / 180;
@@ -154,6 +173,7 @@ const buildGroupedOrdersUrl = (businessId) => {
   if (!tmpl) return null;
 
   if (tmpl.includes('{businessId}')) return tmpl.replace('{businessId}', encodeURIComponent(businessId));
+  if (tmpl.includes('{business_id}')) return tmpl.replace('{business_id}', encodeURIComponent(businessId));
   if (tmpl.includes(':businessId')) return tmpl.replace(':businessId', encodeURIComponent(businessId));
   if (tmpl.includes(':business_id')) return tmpl.replace(':business_id', encodeURIComponent(businessId));
 
@@ -297,7 +317,6 @@ const extractDriverCoords = (payload) => {
   return null;
 };
 
-/* ✅ UPDATED: extract more possible order id fields + nested payloads */
 const extractOrderIdFromLoc = (payload) => {
   if (!payload) return null;
 
@@ -344,7 +363,6 @@ const extractOrderIdFromLoc = (payload) => {
   return null;
 };
 
-/* ✅ UPDATED: extract more possible batch id fields + nested payloads */
 const extractBatchIdFromLoc = (payload) => {
   if (!payload) return null;
 
@@ -380,7 +398,6 @@ const extractBatchIdFromLoc = (payload) => {
   return null;
 };
 
-/* ✅ NEW: extract ride id fields (accept many shapes) */
 const pickRideId = (payload) =>
   payload?.ride_id ??
   payload?.rideId ??
@@ -398,11 +415,9 @@ const pickRideId = (payload) =>
   payload?.message?.rideId ??
   null;
 
-/* ✅ SecureStore keys (scoped by businessId) */
-const keyBatchId = (businessId) => `cluster:last_batch_id:${String(businessId || '0')}`;
-const keyRideId = (businessId) => `cluster:last_ride_id:${String(businessId || '0')}`;
+const keyBatchId = (businessId) => `cluster_last_batch_id_${String(businessId || '0')}`;
+const keyRideId = (businessId) => `cluster_last_ride_id_${String(businessId || '0')}`;
 
-/* ✅ NEW: extract status from any socket payload (driver update) */
 const extractStatusFromPayload = (payload) => {
   if (!payload) return null;
 
@@ -418,6 +433,119 @@ const extractStatusFromPayload = (payload) => {
   }
 
   return null;
+};
+
+const extractDriverFromPayload = (payload) => {
+  if (!payload) return null;
+
+  const d =
+    payload.driver ||
+    payload.driver_details ||
+    payload.driverDetails ||
+    payload.data?.driver ||
+    payload.data?.driver_details ||
+    payload.payload?.driver ||
+    payload.payload?.driver_details ||
+    payload.message?.driver ||
+    null;
+
+  if (!d || typeof d !== 'object') return null;
+
+  return {
+    id: d.id ?? d.driver_id ?? d.driverId ?? d.user_id ?? d.userId ?? null,
+    driver_id: d.driver_id ?? d.driverId ?? d.id ?? null,
+    driverId: d.driverId ?? d.driver_id ?? d.id ?? null,
+
+    user_id: d.user_id ?? d.userId ?? d.id ?? null,
+    userId: d.userId ?? d.user_id ?? d.id ?? null,
+
+    user_name: d.user_name ?? d.name ?? d.full_name ?? d.fullName ?? '',
+    name: d.name ?? d.user_name ?? d.full_name ?? '',
+    full_name: d.full_name ?? d.fullName ?? d.name ?? '',
+
+    phone: d.phone ?? d.mobile ?? d.contact ?? '',
+    mobile: d.mobile ?? d.phone ?? '',
+  };
+};
+
+const extractDriverRatingFromPayload = (payload) => {
+  if (!payload) return null;
+
+  const s =
+    payload.summary ||
+    payload.data?.summary ||
+    payload.payload?.summary ||
+    payload.details?.summary ||
+    payload?.rating_summary ||
+    null;
+
+  const avgRaw =
+    s?.avg ??
+    s?.average ??
+    s?.average_rating ??
+    payload.driver_rating ??
+    payload.driverRating ??
+    payload.driver?.rating ??
+    payload.driver?.avg_rating ??
+    payload.driver?.average_rating ??
+    payload.data?.driver_rating ??
+    payload.data?.driverRating ??
+    null;
+
+  const countRaw =
+    s?.count ??
+    s?.total ??
+    s?.total_ratings ??
+    payload.driver_rating_count ??
+    payload.driverRatingCount ??
+    payload.driver?.rating_count ??
+    payload.driver?.total_ratings ??
+    payload.data?.driver_rating_count ??
+    payload.data?.driverRatingCount ??
+    null;
+
+  const avg = avgRaw != null ? Number(avgRaw) : null;
+  const count = countRaw != null ? Number(countRaw) : null;
+
+  if (!Number.isFinite(avg) && !Number.isFinite(count)) return null;
+
+  return {
+    average: Number.isFinite(avg) ? avg : avgRaw,
+    count: Number.isFinite(count) ? count : countRaw,
+  };
+};
+
+const normalizeDriverDetailsResponse = (json) => {
+  const d = json?.details || json?.data || json?.driver || json?.user || json;
+  if (!d || typeof d !== 'object') return null;
+
+  return {
+    id: d.user_id ?? d.id ?? d.driver_id ?? d.driverId ?? null,
+    user_id: d.user_id ?? d.id ?? null,
+    driver_id: d.driver_id ?? d.driverId ?? d.user_id ?? d.id ?? null,
+    user_name: d.user_name ?? d.name ?? d.full_name ?? '',
+    name: d.name ?? d.user_name ?? d.full_name ?? '',
+    full_name: d.full_name ?? d.fullName ?? d.user_name ?? d.name ?? '',
+    phone: d.phone ?? d.mobile ?? d.contact ?? '',
+    email: d.email ?? '',
+    profile_image: d.profile_image ?? d.avatar ?? '',
+  };
+};
+
+const resolveSocketConfig = () => {
+  const raw = String(ENV_RIDE_SOCKET || '').trim();
+
+  if (!raw) return { origin: 'https://grab.newedge.bt', path: '/grablike/socket.io' };
+
+  try {
+    const u = new URL(raw);
+    const origin = `${u.protocol}//${u.host}`;
+    const path = u.pathname && u.pathname !== '/' ? u.pathname : '/socket.io';
+    return { origin, path };
+  } catch (e) {
+    const path = raw.startsWith('/') ? raw : `/${raw}`;
+    return { origin: 'https://grab.newedge.bt', path };
+  }
 };
 
 export default function ClusterDeliveryOptionsScreen() {
@@ -475,7 +603,7 @@ export default function ClusterDeliveryOptionsScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [selectedMethod, setSelectedMethod] = useState(null);
-  const [bulkPhase, setBulkPhase] = useState('READY'); // READY -> OUT_FOR_DELIVERY -> COMPLETED
+  const [bulkPhase, setBulkPhase] = useState('READY');
   const bulkPhaseRef = useRef('READY');
   useEffect(() => {
     bulkPhaseRef.current = bulkPhase;
@@ -486,6 +614,9 @@ export default function ClusterDeliveryOptionsScreen() {
   const [storeDeliveryOption, setStoreDeliveryOption] = useState(null);
   const [businessCoords, setBusinessCoords] = useState(null);
 
+  // ✅ NEW: business name from BUSINESS_DETAILS
+  const [businessName, setBusinessName] = useState('');
+  const [merchantUserId, setMerchantUserId] = useState(null);
   const [statusMap, setStatusMap] = useState({});
   const [statusesLoaded, setStatusesLoaded] = useState(false);
   const [itemsMap, setItemsMap] = useState({});
@@ -510,7 +641,13 @@ export default function ClusterDeliveryOptionsScreen() {
   const [driverDetails, setDriverDetails] = useState(null);
   const [driverRating, setDriverRating] = useState(null);
   const [rideMessage, setRideMessage] = useState('');
-  const [driverAccepted, setDriverAccepted] = useState(false);
+
+  const [rideAccepted, setRideAccepted] = useState(false);
+  const rideAcceptedRef = useRef(false);
+
+  // ✅ NEW: accept dedupe refs (fix Alert flicker)
+  const acceptNotifiedRef = useRef(false);
+  const lastAcceptKeyRef = useRef(null);
 
   const [driverLiveCoords, setDriverLiveCoords] = useState(null);
   const [lastDriverPing, setLastDriverPing] = useState(null);
@@ -525,16 +662,13 @@ export default function ClusterDeliveryOptionsScreen() {
   const resendTimerRef = useRef(null);
 
   const socketRef = useRef(null);
-  const driverAcceptedRef = useRef(false);
 
-  /* ✅ NEW: ride id state + ref */
   const [rideId, setRideId] = useState(null);
   const rideIdRef = useRef(null);
   useEffect(() => {
     rideIdRef.current = rideId;
   }, [rideId]);
 
-  /* ✅ NEW: stable batch id we pass/save */
   const resolvedBatchId = useMemo(() => {
     const first = ordersOnScreen?.[0]?.raw || ordersOnScreen?.[0] || null;
     const id = pickBatchId(batchResponse, routeBatchId, first);
@@ -552,11 +686,10 @@ export default function ClusterDeliveryOptionsScreen() {
     clearResendTimer();
     setCanResendGrab(false);
     resendTimerRef.current = setTimeout(() => {
-      if (!driverAcceptedRef.current) setCanResendGrab(true);
+      if (!rideAcceptedRef.current) setCanResendGrab(true);
     }, 60000);
   }, [clearResendTimer]);
 
-  // ✅ cluster-only join/filter refs
   const batchOrderIdsRef = useRef(new Set());
   const joinedOrderIdsRef = useRef(new Set());
   const joinedBatchRoomRef = useRef(null);
@@ -568,21 +701,55 @@ export default function ClusterDeliveryOptionsScreen() {
     batchOrderIdsRef.current = new Set(ids);
   }, [ordersOnScreen]);
 
-  /* ✅ NEW: if any order becomes OUT_FOR_DELIVERY (including ON ROAD), move bulkPhase to OUT_FOR_DELIVERY */
   const bumpPhaseIfOnRoad = useCallback((statusNorm) => {
-    if (statusNorm !== 'OUT_FOR_DELIVERY') return;
+    if (normalizeStatus(statusNorm) !== 'OUT_FOR_DELIVERY') return;
     if (bulkPhaseRef.current === 'READY') {
       setBulkPhase('OUT_FOR_DELIVERY');
     }
   }, []);
 
-  /* ✅ NEW: apply a status update into UI for a single orderId (no API call) */
+  const markRideAcceptedUi = useCallback(
+    (msg) => {
+      if (rideAcceptedRef.current) return;
+
+      rideAcceptedRef.current = true;
+      setRideAccepted(true);
+      clearResendTimer();
+      setCanResendGrab(false);
+
+      if (msg) setRideMessage(msg);
+      else {
+        setRideMessage((prev) => {
+          const p = prev == null ? '' : String(prev);
+          if (!p) return 'Driver accepted the ride.';
+          if (p.toLowerCase().includes('waiting for acceptance')) return 'Driver accepted the ride.';
+          if (p.toLowerCase().includes('waiting for a driver')) return 'Driver accepted the ride.';
+          if (p.toLowerCase().includes('batch request sent')) return 'Driver accepted the ride.';
+          return prev;
+        });
+      }
+    },
+    [clearResendTimer]
+  );
+
+  const maybeAcceptFromStatus = useCallback(
+    (statusRaw) => {
+      if (!statusRaw) return;
+      if (isRideAssignedStatus(statusRaw)) {
+        markRideAcceptedUi('Driver accepted the ride. Orders are assigned for delivery.');
+        bumpPhaseIfOnRoad(statusRaw);
+      }
+    },
+    [markRideAcceptedUi, bumpPhaseIfOnRoad]
+  );
+
   const applyStatusToUi = useCallback(
     (orderId, newStatusRaw) => {
       const norm = normalizeStatus(newStatusRaw);
       if (!orderId || !norm) return;
 
       bumpPhaseIfOnRoad(norm);
+      maybeAcceptFromStatus(norm);
 
       setStatusMap((prev) => ({ ...prev, [String(orderId)]: norm }));
 
@@ -611,17 +778,15 @@ export default function ClusterDeliveryOptionsScreen() {
         })
       );
     },
-    [bumpPhaseIfOnRoad]
+    [bumpPhaseIfOnRoad, maybeAcceptFromStatus]
   );
 
-  /* ✅ NEW: listen for global order-updated events (driver status updates coming from other screens/sockets) */
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('order-updated', ({ id, patch }) => {
       if (!id) return;
 
       const orderId = String(id);
       if (batchOrderIdsRef.current?.size && !batchOrderIdsRef.current.has(orderId)) {
-        // ignore updates not for this batch
         return;
       }
 
@@ -630,14 +795,12 @@ export default function ClusterDeliveryOptionsScreen() {
 
       if (!newStatus) return;
 
-      // ✅ ON ROAD => OUT_FOR_DELIVERY + reflect immediately
       applyStatusToUi(orderId, newStatus);
     });
 
     return () => sub?.remove?.();
   }, [applyStatusToUi]);
 
-  /* ✅ NEW: restore saved batch_id / ride_id when screen opens */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -653,9 +816,6 @@ export default function ClusterDeliveryOptionsScreen() {
 
         if (resolvedBatchId) {
           await SecureStore.setItemAsync(keyBatchId(businessId), String(resolvedBatchId));
-        } else {
-          const savedBatch = await SecureStore.getItemAsync(keyBatchId(businessId));
-          logText('[SecureStore] saved batch id:', savedBatch);
         }
       } catch (e) {
         console.log('[SecureStore] restore error:', e?.message || e);
@@ -699,7 +859,21 @@ export default function ClusterDeliveryOptionsScreen() {
     if (resolvedBatchId) saveBatchId(resolvedBatchId);
   }, [resolvedBatchId, saveBatchId]);
 
-  /* ---------- fetch BUSINESS_DETAILS ---------- */
+  useEffect(() => {
+    const socket = socketRef.current;
+    const rid = rideIdRef.current || rideId;
+    if (!socket || !socket.connected) return;
+    if (!rid) return;
+
+    try {
+      socket.emit('joinRideRoom', { ride_id: String(rid) }, (ack) => console.log('[SOCKET] joinRideRoom ack', ack));
+      socket.emit('joinRide', { rideId: String(rid) }, (ack) => console.log('[SOCKET] joinRide ack', ack));
+    } catch (e) {
+      console.log('[SOCKET] joinRide error', e?.message || e);
+    }
+  }, [rideId]);
+
+  // ✅ UPDATED: fetch business_name + coords + delivery_option (supports {success,data} response)
   const fetchBusinessDetails = useCallback(async () => {
     if (!businessId) return;
     try {
@@ -710,15 +884,30 @@ export default function ClusterDeliveryOptionsScreen() {
       if (!res.ok) return;
 
       const data = await res.json();
-      logJson('[BIZ] BUSINESS_DETAILS json:', data);
 
-      const biz = data?.business || data;
+      // Accept common shapes:
+      // 1) { success:true, data:{...} }
+      // 2) { data:{...} }
+      // 3) { business:{...} }
+      // 4) { business:{ data:{...} } }
+      // 5) plain object
+      const fromBusiness = data?.business || null;
+      const payload =
+        data?.data ||
+        fromBusiness?.data ||
+        fromBusiness ||
+        data;
 
-      const optRaw = biz?.delivery_option;
+      const optRaw = payload?.delivery_option;
       if (optRaw) setStoreDeliveryOption(String(optRaw).toUpperCase());
 
-      const latRaw = biz?.latitude ?? biz?.lat ?? biz?.business_latitude ?? biz?.business_lat ?? null;
-      const lngRaw = biz?.longitude ?? biz?.lng ?? biz?.business_longitude ?? biz?.business_lng ?? null;
+      const bn = payload?.business_name ?? payload?.name ?? '';
+      if (bn != null) setBusinessName(String(bn));
+      const uidRaw = payload?.user_id ?? payload?.userId ?? payload?.merchant_user_id ?? payload?.merchantUserId ?? null;
+const uidNum = uidRaw != null ? Number(uidRaw) : NaN;
+if (Number.isFinite(uidNum)) setMerchantUserId(uidNum);
+      const latRaw = payload?.latitude ?? payload?.lat ?? payload?.business_latitude ?? payload?.business_lat ?? null;
+      const lngRaw = payload?.longitude ?? payload?.lng ?? payload?.business_longitude ?? payload?.business_lng ?? null;
 
       const latNum = latRaw != null ? Number(latRaw) : NaN;
       const lngNum = lngRaw != null ? Number(lngRaw) : NaN;
@@ -735,7 +924,6 @@ export default function ClusterDeliveryOptionsScreen() {
     fetchBusinessDetails();
   }, [fetchBusinessDetails]);
 
-  /* ---------- fetch grouped statuses + items + lookup (FILTER to batch orders only) ---------- */
   const fetchGroupedStatusesAndItems = useCallback(async () => {
     const url = buildGroupedOrdersUrl(businessId);
     if (!url) {
@@ -752,8 +940,6 @@ export default function ClusterDeliveryOptionsScreen() {
       }
 
       const json = await res.json();
-      logJson('[ORDERS] grouped json:', json);
-
       if (!json) {
         setStatusesLoaded(true);
         return;
@@ -769,52 +955,36 @@ export default function ClusterDeliveryOptionsScreen() {
         for (const block of rawData) {
           const blockUser = block?.user || null;
 
-          if (block && Array.isArray(block.orders)) {
-            for (const o of block.orders) {
-              const id = getOrderId(o);
-              if (!id) continue;
+          const addOrder = (o) => {
+            const id = getOrderId(o);
+            if (!id) return;
+            if (batchOrderIdSet.size && !batchOrderIdSet.has(String(id))) return;
 
-              if (batchOrderIdSet.size && !batchOrderIdSet.has(String(id))) continue;
+            const st = o.status || o.order_status || o.current_status || o.orderStatus;
+            const statusNorm = normalizeStatus(st);
+            if (statusNorm) nextStatusMap[id] = statusNorm;
 
-              const st = o.status || o.order_status || o.current_status || o.orderStatus;
-              const statusNorm = normalizeStatus(st);
-              if (statusNorm) nextStatusMap[id] = statusNorm;
+            if (Array.isArray(o.items)) nextItemsMap[id] = o.items;
+            nextLookup[id] = { ...o, __user: blockUser };
+          };
 
-              if (Array.isArray(o.items)) nextItemsMap[id] = o.items;
-
-              nextLookup[id] = { ...o, __user: blockUser };
-            }
-          }
-
-          if (block && Array.isArray(block?.data?.orders)) {
-            for (const o of block.data.orders) {
-              const id = getOrderId(o);
-              if (!id) continue;
-              if (batchOrderIdSet.size && !batchOrderIdSet.has(String(id))) continue;
-
-              const st = o.status || o.order_status || o.current_status || o.orderStatus;
-              const statusNorm = normalizeStatus(st);
-              if (statusNorm) nextStatusMap[id] = statusNorm;
-
-              if (Array.isArray(o.items)) nextItemsMap[id] = o.items;
-
-              nextLookup[id] = { ...o, __user: blockUser };
-            }
-          }
+          if (block && Array.isArray(block.orders)) block.orders.forEach(addOrder);
+          if (block && Array.isArray(block?.data?.orders)) block.data.orders.forEach(addOrder);
         }
       }
-
-      // ✅ If backend already says ON ROAD, flip UI phase + pills
-      const anyOutForDelivery = Object.values(nextStatusMap).some((s) => normalizeStatus(s) === 'OUT_FOR_DELIVERY');
-      if (anyOutForDelivery) bumpPhaseIfOnRoad('OUT_FOR_DELIVERY');
 
       setStatusMap(nextStatusMap);
       setItemsMap(nextItemsMap);
       setOrderLookup(nextLookup);
       setStatusesLoaded(true);
 
-      // ✅ patch local orders array too (so render doesn't depend only on map)
-      if (anyOutForDelivery) {
+      const anyAssignedOrOut = Object.values(nextStatusMap).some((s) => isRideAssignedStatus(s));
+      const anyOutForDelivery = Object.values(nextStatusMap).some((s) => normalizeStatus(s) === 'OUT_FOR_DELIVERY');
+
+      if (anyOutForDelivery) bumpPhaseIfOnRoad('OUT_FOR_DELIVERY');
+      if (anyAssignedOrOut) markRideAcceptedUi('Driver accepted the ride. Orders are assigned for delivery.');
+
+      if (anyOutForDelivery || anyAssignedOrOut) {
         setOrdersOnScreen((prev) =>
           prev.map((order) => {
             const base = order.raw || order || {};
@@ -828,10 +998,9 @@ export default function ClusterDeliveryOptionsScreen() {
         );
       }
     } catch (err) {
-      console.log('[ORDERS] grouped fetch error:', err?.message || err);
       setStatusesLoaded(true);
     }
-  }, [businessId, batchOrderIdSet, bumpPhaseIfOnRoad]);
+  }, [businessId, batchOrderIdSet, bumpPhaseIfOnRoad, markRideAcceptedUi]);
 
   useEffect(() => {
     let cancelled = false;
@@ -861,7 +1030,6 @@ export default function ClusterDeliveryOptionsScreen() {
     }
   }, [bulkUpdating, fetchBusinessDetails, fetchGroupedStatusesAndItems]);
 
-  /* ---------- delivery option resolution ---------- */
   const orderDeliveryHint = useMemo(() => {
     if (!ordersOnScreen?.length) return '';
     const base = ordersOnScreen[0]?.raw || ordersOnScreen[0] || {};
@@ -929,14 +1097,12 @@ export default function ClusterDeliveryOptionsScreen() {
 
     for (const id of ids) {
       const info =
-        m[id] ||
-        (ordersOnScreen.find((x) => String(getOrderId(x?.raw || x) || x?.id || '') === id)?.raw || {});
+        m[id] || (ordersOnScreen.find((x) => String(getOrderId(x?.raw || x) || x?.id || '') === id)?.raw || {});
       const c = extractDropCoords(info);
       if (c) points.push(c);
     }
 
-    const center = computeClusterCenter(points);
-    return center;
+    return computeClusterCenter(points);
   }, [ordersOnScreen, orderLookup]);
 
   const [routeInfo, setRouteInfo] = useState(null);
@@ -950,12 +1116,7 @@ export default function ClusterDeliveryOptionsScreen() {
     const from = businessCoords;
     const to = { lat: refCoords.lat, lng: refCoords.lng };
 
-    if (
-      !Number.isFinite(from.lat) ||
-      !Number.isFinite(from.lng) ||
-      !Number.isFinite(to.lat) ||
-      !Number.isFinite(to.lng)
-    ) {
+    if (!Number.isFinite(from.lat) || !Number.isFinite(from.lng) || !Number.isFinite(to.lat) || !Number.isFinite(to.lng)) {
       setRouteInfo(null);
       return;
     }
@@ -976,15 +1137,21 @@ export default function ClusterDeliveryOptionsScreen() {
     try {
       if (!ENV_DRIVER_RATING) return;
 
-      let base = (ENV_DRIVER_RATING || '').trim();
+      const base = String(ENV_DRIVER_RATING || '').trim();
       if (!base) return;
 
       let finalUrl = base;
+
       if (base.includes('{driver_id}')) {
         finalUrl = base.replace('{driver_id}', encodeURIComponent(String(driverId)));
+      } else if (base.includes('{driverId}')) {
+        finalUrl = base.replace('{driverId}', encodeURIComponent(String(driverId)));
       } else {
-        const sep = base.includes('?') ? '&' : '?';
-        finalUrl = `${base}${sep}driver_id=${encodeURIComponent(String(driverId))}`;
+        const u = new URL(base);
+        u.searchParams.set('driver_id', String(driverId));
+        if (!u.searchParams.get('limit')) u.searchParams.set('limit', '20');
+        if (!u.searchParams.get('offset')) u.searchParams.set('offset', '0');
+        finalUrl = u.toString();
       }
 
       const res = await fetch(finalUrl, { method: 'GET', headers: { Accept: 'application/json' } });
@@ -994,22 +1161,17 @@ export default function ClusterDeliveryOptionsScreen() {
       try {
         json = text ? JSON.parse(text) : null;
       } catch {}
+
       if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
-      let avg = null;
-      let count = null;
-      const d = json?.summary || json?.details || json?.data || json;
+      const summary = json?.summary || json?.data?.summary || null;
+      const avg = summary?.avg ?? summary?.average ?? null;
+      const count = summary?.count ?? summary?.total ?? null;
 
-      if (Array.isArray(d) && d.length > 0) {
-        const first = d[0];
-        avg = first.avg_rating ?? first.average_rating ?? first.rating ?? null;
-        count = first.total_ratings ?? first.count ?? first.rating_count ?? null;
-      } else if (d && typeof d === 'object') {
-        avg = d.avg_rating ?? d.average_rating ?? d.rating ?? null;
-        count = d.total_ratings ?? d.count ?? d.rating_count ?? null;
-      }
-
-      setDriverRating({ average: avg, count });
+      setDriverRating({
+        average: avg != null ? Number(avg) : null,
+        count: count != null ? Number(count) : null,
+      });
     } catch (err) {
       console.log('[Cluster] Failed to fetch driver rating:', err?.message || err);
     }
@@ -1020,12 +1182,15 @@ export default function ClusterDeliveryOptionsScreen() {
       try {
         if (!ENV_DRIVER_DETAILS) return;
 
-        let base = (ENV_DRIVER_DETAILS || '').trim();
+        const base = String(ENV_DRIVER_DETAILS || '').trim();
         if (!base) return;
 
         let finalUrl = base;
+
         if (base.includes('{driverId}')) {
           finalUrl = base.replace('{driverId}', encodeURIComponent(String(driverId)));
+        } else if (base.includes('{driver_id}')) {
+          finalUrl = base.replace('{driver_id}', encodeURIComponent(String(driverId)));
         } else {
           const sep = base.includes('?') ? '&' : '?';
           finalUrl = `${base}${sep}driverId=${encodeURIComponent(String(driverId))}`;
@@ -1038,10 +1203,11 @@ export default function ClusterDeliveryOptionsScreen() {
         try {
           json = text ? JSON.parse(text) : null;
         } catch {}
+
         if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
-        const drv = json?.details || json?.data || json?.driver || json;
-        setDriverDetails(drv);
+        const drv = normalizeDriverDetailsResponse(json);
+        if (drv) setDriverDetails(drv);
 
         await fetchDriverRating(driverId);
       } catch (err) {
@@ -1142,7 +1308,6 @@ export default function ClusterDeliveryOptionsScreen() {
     const firstOrder = ordersOnScreen[0] || {};
     const first = firstOrder?.raw || firstOrder || {};
 
-    // ✅ FIX: passenger_id must come from grouped user (block.user) saved into orderLookup[id].__user
     const firstRawId = getOrderId(first) || getOrderId(firstOrder) || first.order_code || first.id || '';
     const firstNormId = normalizeOrderCode(firstRawId);
     const firstId =
@@ -1150,20 +1315,7 @@ export default function ClusterDeliveryOptionsScreen() {
 
     const firstLookup = (orderLookupRef.current || {})[firstId] || null;
 
-    const passengerId =
-      firstLookup?.__user?.user_id ??
-      firstLookup?.__user?.id ??
-      firstLookup?.__user?.userId ??
-      firstLookup?.user_id ??
-      firstLookup?.customer_id ??
-      firstLookup?.userId ??
-      firstLookup?.customerId ??
-      first?.user_id ??
-      first?.customer_id ??
-      first?.userId ??
-      first?.customerId ??
-      null;
-
+    const passengerId = merchantUserId != null ? Number(merchantUserId) : null;
     const pickupLat = businessCoords?.lat ?? 27.4728;
     const pickupLng = businessCoords?.lng ?? 89.639;
 
@@ -1204,6 +1356,7 @@ export default function ClusterDeliveryOptionsScreen() {
         totals?.total_amount ?? info.total_amount ?? base.total_amount ?? info.amount ?? base.amount ?? 0,
         0
       );
+
       const deliveryFee = safeNum(
         totals?.delivery_fee ??
           info.delivery_fee ??
@@ -1213,7 +1366,7 @@ export default function ClusterDeliveryOptionsScreen() {
           0,
         0
       );
-      const platformFee = safeNum(totals?.platform_fee ?? info.platform_fee ?? base.platform_fee ?? 0, 0);
+
       const merchantDeliveryFee = safeNum(
         totals?.merchant_delivery_fee ?? info.merchant_delivery_fee ?? base.merchant_delivery_fee ?? 0,
         0
@@ -1257,7 +1410,6 @@ export default function ClusterDeliveryOptionsScreen() {
           null,
         amount: Number(amount.toFixed(2)),
         delivery_fee: Number(deliveryFee.toFixed(2)),
-        platform_fee: Number(platformFee.toFixed(2)),
         merchant_delivery_fee: Number(merchantDeliveryFee.toFixed(2)),
         payment_method: paymentRaw || 'WALLET',
         cash_to_collect: isCOD ? Number(amount.toFixed(2)) : 0,
@@ -1271,30 +1423,50 @@ export default function ClusterDeliveryOptionsScreen() {
       throw new Error('At least one valid drop with lat/lng is required');
     }
 
-    const validDropsForFare = drops.filter((d) => d && Number.isFinite(Number(d.delivery_fee)));
-    const sumDeliveryFee = validDropsForFare.reduce((acc, d) => acc + safeNum(d.delivery_fee, 0), 0);
-    const avgDeliveryFee =
-      validDropsForFare.length > 0 ? sumDeliveryFee / validDropsForFare.length : safeNum(first.delivery_fee ?? 0, 0);
+    const farePerDrop = drops.map((d) => {
+      const df = safeNum(d?.delivery_fee, 0);
+      if (df > 0) return df;
+      const mdf = safeNum(d?.merchant_delivery_fee, 0);
+      return mdf > 0 ? mdf : 0;
+    });
+
+    const sumFare = farePerDrop.reduce((acc, n) => acc + safeNum(n, 0), 0);
+
+    const fareToSend =
+      farePerDrop.length > 0
+        ? sumFare / farePerDrop.length
+        : safeNum(first?.merchant_delivery_fee ?? first?.delivery_fee ?? 0, 0);
 
     const batchId = pickBatchId(batchResponse, routeBatchId, first);
     if (batchId != null) saveBatchId(batchId);
+
+    // ✅ businessName-based pickup place
+    console.log('[BATCH] BUSINESS_DETAILS businessName =', businessName);
+    console.log('[BATCH] first.business_name =', first?.business_name);
+
+    const pickupPlaceChosen =
+      (businessName && String(businessName).trim()) ||
+      first?.business_name ||
+      'Merchant shop';
+
+    console.log('[BATCH] pickup_place CHOSEN =', pickupPlaceChosen);
 
     const payload = {
       passenger_id: passengerId,
       merchant_id: Number(businessId),
       cityId: refCoords.cityId || 'thimphu',
-      serviceType: 'delivery',
+      serviceType: 'Delivery',
       service_code: 'D',
 
       pickup: [pickupLat, pickupLng],
-      pickup_place: first.business_name ?? first.store_name ?? first.restaurant?.name ?? 'Merchant shop',
+      pickup_place: pickupPlaceChosen,
       dropoff_place: 'Multiple customers',
 
       distance_m: distanceM,
       duration_s: durationS,
-      fare: Number(avgDeliveryFee.toFixed(2)),
+      fare: Number(safeNum(fareToSend, 0).toFixed(2)),
       currency: 'BTN',
-      payment_method: { type: 'MIXED' },
+      payment_method: 'In-App Wallet',
       offer_code: null,
 
       job_type: 'BATCH',
@@ -1304,7 +1476,6 @@ export default function ClusterDeliveryOptionsScreen() {
       owner_type: ownerType || undefined,
     };
 
-    logJson('[BATCH] build payload:', payload);
     return payload;
   }, [
     ordersOnScreen,
@@ -1316,12 +1487,15 @@ export default function ClusterDeliveryOptionsScreen() {
     batchResponse,
     routeBatchId,
     saveBatchId,
+    businessName,
+    merchantUserId,
   ]);
 
   const sendGrabDeliveryRequest = useCallback(async () => {
     try {
-      if (!ENV_SEND_REQUEST_DRIVER) {
-        Alert.alert('Grab delivery not configured', 'BATCH_ORDER_BROADCAST_ENDPOINT is missing.');
+      const broadcastUrl = String(ENV_BROADCAST || '').trim();
+      if (!broadcastUrl) {
+        Alert.alert('Grab delivery not configured', 'BATCH_ORDER_BROADCAST_ENDPOINT is missing in .env');
         return;
       }
       if (!businessId) {
@@ -1341,14 +1515,14 @@ export default function ClusterDeliveryOptionsScreen() {
       setDriverArrivedMsg('');
 
       const payload = await buildBatchPayload();
-
+      console.log('[BROADCAST] payload obj:', payload);
       if (!payload?.passenger_id) {
         setRideMessage('');
         Alert.alert('Missing passenger id', 'passenger_id (customer user_id) not found in the order payload.');
         return;
       }
 
-      const res = await fetch(ENV_SEND_REQUEST_DRIVER, {
+      const res = await fetch(broadcastUrl, {
         method: 'POST',
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -1368,7 +1542,18 @@ export default function ClusterDeliveryOptionsScreen() {
       const respBatchId = pickBatchId(json, routeBatchId, ordersOnScreen?.[0]?.raw || ordersOnScreen?.[0]);
       if (respBatchId != null) saveBatchId(respBatchId);
 
-      setRideMessage('Batch request sent. Waiting for a driver to accept…');
+      const rid = pickRideId(json);
+      if (rid != null) {
+        await saveRideId(rid);
+
+        const socket = socketRef.current;
+        if (socket && socket.connected) {
+          socket.emit('joinRideRoom', { ride_id: String(rid) });
+          socket.emit('joinRide', { rideId: String(rid) });
+        }
+      }
+
+      setRideMessage('Batch request sent. Waiting for acceptance…');
       armResendAfterOneMinute();
     } catch (e) {
       setRideMessage('');
@@ -1376,64 +1561,160 @@ export default function ClusterDeliveryOptionsScreen() {
     } finally {
       setSendingGrab(false);
     }
-  }, [businessId, ordersOnScreen, buildBatchPayload, armResendAfterOneMinute, routeBatchId, saveBatchId]);
+  }, [ENV_BROADCAST, businessId, ordersOnScreen, buildBatchPayload, armResendAfterOneMinute, routeBatchId, saveBatchId, saveRideId]);
 
-  /* ---------- SOCKET: CONNECT + LISTEN (cluster-only filter) ---------- */
+  /* ---------- SOCKET: CONNECT + LISTEN ---------- */
   useEffect(() => {
-    if (!ENV_RIDE_SOCKET) return;
     if (!businessId) return;
 
-    const socket = io(ENV_RIDE_SOCKET, {
-      transports: ['websocket'],
-      query: { merchantId: String(businessId), role: 'merchant' },
+    const { origin, path } = resolveSocketConfig();
+
+    const socket = io(origin, {
+      path,
+      withCredentials: true,
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 800,
+      reconnectionDelayMax: 7000,
+      timeout: 15000,
+      auth: {
+        devUserId: Number(businessId),
+        devRole: 'merchant',
+        merchant_id: String(businessId),
+        merchantId: String(businessId),
+        role: 'merchant',
+      },
     });
 
     socketRef.current = socket;
 
     socket.on('connect', () => {
       console.log('[SOCKET] connected. socket.id:', socket.id);
+
+      // ✅ join rooms immediately on connect so we don't miss accept event
+      try {
+        socket.emit('joinBusinessRoom', { business_id: businessId }, (ack) =>
+          console.log('[SOCKET] joinBusinessRoom ack', ack)
+        );
+      } catch {}
+
+      const myBatchId =
+        resolvedBatchId != null ? String(resolvedBatchId) : routeBatchId != null ? String(routeBatchId) : null;
+
+      if (myBatchId) {
+        try {
+          socket.emit('joinBatchRoom', { batch_id: myBatchId }, (ack) =>
+            console.log('[SOCKET] joinBatchRoom ack', ack)
+          );
+          joinedBatchRoomRef.current = myBatchId;
+        } catch {}
+      }
+
+      try {
+        const ids = Array.from(batchOrderIdsRef.current || []);
+        ids.forEach((orderId) => {
+          if (!orderId) return;
+          console.log('[SOCKET] emit joinOrder', { orderId, socketId: socket.id });
+          socket.emit('joinOrder', { orderId }, (ack) => console.log('[SOCKET] joinOrder ack', { orderId, ack }));
+          joinedOrderIdsRef.current.add(orderId);
+        });
+      } catch {}
+
+      const rid = rideIdRef.current;
+      if (rid) {
+        try {
+          socket.emit('joinRideRoom', { ride_id: String(rid) }, (ack) => console.log('[SOCKET] joinRideRoom ack', ack));
+          socket.emit('joinRide', { rideId: String(rid) }, (ack) => console.log('[SOCKET] joinRide ack', ack));
+        } catch {}
+      }
     });
 
     socket.on('connect_error', (err) => {
       console.log('[SOCKET] connect_error:', err?.message || err);
     });
 
+    // ✅ ACCEPT HANDLER (deduped - fixes Alert flicker)
     const acceptHandler = (payload) => {
-      logJson('[SOCKET] deliveryAccepted payload:', payload);
+      const ridFromPayload = pickRideId(payload);
+      const bidFromPayload = extractBatchIdFromLoc(payload) ?? pickBatchId(payload, routeBatchId, null);
 
-      driverAcceptedRef.current = true;
-      setDriverAccepted(true);
-      clearResendTimer();
-      setCanResendGrab(false);
+      const rid =
+        ridFromPayload != null
+          ? String(ridFromPayload)
+          : rideIdRef.current || rideId
+            ? String(rideIdRef.current || rideId)
+            : null;
+
+      const bid =
+        bidFromPayload != null
+          ? String(bidFromPayload)
+          : resolvedBatchId != null
+            ? String(resolvedBatchId)
+            : routeBatchId != null
+              ? String(routeBatchId)
+              : null;
+
+      const acceptKey = `${bid || 'no_batch'}::${rid || 'no_ride'}`;
+
+      if (rideAcceptedRef.current) return;
+      if (lastAcceptKeyRef.current === acceptKey) return;
+      lastAcceptKeyRef.current = acceptKey;
+
+      console.log('[SOCKET] deliveryDriverAccepted payload:', payload);
+
+      markRideAcceptedUi('Driver accepted the ride.');
+
+      if (ridFromPayload != null) saveRideId(ridFromPayload);
+      if (bidFromPayload != null) saveBatchId(bidFromPayload);
+
+      const drvFromPayload = extractDriverFromPayload(payload);
+      const ratingFromPayload = extractDriverRatingFromPayload(payload);
+
+      if (drvFromPayload) {
+        setDriverDetails(drvFromPayload);
+        if (ratingFromPayload) setDriverRating(ratingFromPayload);
+      }
 
       const driverId =
-        payload?.driver_id ?? payload?.driverId ?? payload?.driver?.id ?? payload?.driver?.driver_id ?? null;
+        payload?.driver_id ??
+        payload?.driverId ??
+        payload?.driver?.id ??
+        payload?.driver?.driver_id ??
+        drvFromPayload?.id ??
+        drvFromPayload?.driver_id ??
+        drvFromPayload?.user_id ??
+        null;
 
-      if (driverId != null) fetchDriverDetails(driverId);
+      if (driverId != null) {
+        if (!drvFromPayload) fetchDriverDetails(driverId);
+        else fetchDriverRating(driverId);
+      }
 
-      const rid = pickRideId(payload);
-      if (rid != null) saveRideId(rid);
-
-      const bid = extractBatchIdFromLoc(payload) ?? pickBatchId(payload, routeBatchId, null);
-      if (bid != null) saveBatchId(bid);
-
-      setRideMessage('Driver accepted the batch delivery request.');
-      Alert.alert('Driver accepted', 'Driver accepted the batch delivery request.');
+      if (!acceptNotifiedRef.current) {
+        acceptNotifiedRef.current = true;
+        Alert.alert('Accepted', 'Driver has accepted the ride for this batch.');
+      }
     };
 
     const arrivedHandler = (payload) => {
-      logJson('[SOCKET] delivery:driver_arrived payload:', payload);
-
       setDriverArrived(true);
 
       const msg = payload?.message || payload?.status_message || payload?.note || 'Driver has arrived at the venue.';
       setDriverArrivedMsg(msg);
       setRideMessage(msg);
 
-      const driverId =
-        payload?.driver_id ?? payload?.driverId ?? payload?.driver?.id ?? payload?.driver?.driver_id ?? null;
+      const drvFromPayload = extractDriverFromPayload(payload);
+      const ratingFromPayload = extractDriverRatingFromPayload(payload);
 
-      if (driverId != null && !driverDetailsRef.current) fetchDriverDetails(driverId);
+      if (drvFromPayload) {
+        setDriverDetails(drvFromPayload);
+        if (ratingFromPayload) setDriverRating(ratingFromPayload);
+      } else {
+        const driverId =
+          payload?.driver_id ?? payload?.driverId ?? payload?.driver?.id ?? payload?.driver?.driver_id ?? null;
+        if (driverId != null && !driverDetailsRef.current) fetchDriverDetails(driverId);
+      }
 
       Alert.alert('Driver arrived', msg);
     };
@@ -1445,32 +1726,26 @@ export default function ClusterDeliveryOptionsScreen() {
       const myBatchId =
         resolvedBatchId != null ? String(resolvedBatchId) : routeBatchId != null ? String(routeBatchId) : null;
 
-      if (locBatchId && myBatchId && String(locBatchId) !== String(myBatchId)) {
-        return;
-      }
+      if (locBatchId && myBatchId && String(locBatchId) !== String(myBatchId)) return;
 
       const rid = pickRideId(payload);
       if (rid != null && !rideIdRef.current) saveRideId(rid);
 
-      // ✅ NEW: if driver sends status updates here, apply to UI
       const st = extractStatusFromPayload(payload);
       const stNorm = normalizeStatus(st);
+      if (stNorm) maybeAcceptFromStatus(stNorm);
 
       if (locOrderId) {
         const setIds = batchOrderIdsRef.current;
         if (setIds?.size && !setIds.has(String(locOrderId))) return;
-
-        if (stNorm) {
-          applyStatusToUi(String(locOrderId), stNorm); // ON ROAD -> OUT_FOR_DELIVERY
-        }
+        if (stNorm) applyStatusToUi(String(locOrderId), stNorm);
       } else {
         const hasCoords = !!extractDriverCoords(payload);
-        const allowNoIds = !!driverAcceptedRef.current && hasCoords;
+        const allowNoIds = !!rideAcceptedRef.current && hasCoords;
 
         if (!locBatchId && !allowNoIds) return;
 
-        // If no order id but has batch id + status, apply status to all cluster orders
-        if (stNorm && (locBatchId || driverAcceptedRef.current)) {
+        if (stNorm && (locBatchId || rideAcceptedRef.current)) {
           const ids = Array.from(batchOrderIdsRef.current || []);
           ids.forEach((oid) => applyStatusToUi(String(oid), stNorm));
         }
@@ -1483,20 +1758,50 @@ export default function ClusterDeliveryOptionsScreen() {
       setLastDriverPing(new Date().toISOString());
     };
 
-    socket.on('deliveryAccepted', acceptHandler);
+    // ✅ DEBUG: see all events (keep until confirmed)
+    socket.onAny((event, payload) => {
+      console.log(
+        '[SOCKET][ANY]',
+        event,
+        payload?.batch_id ?? payload?.batchId ?? '',
+        payload?.rideId ?? payload?.ride_id ?? ''
+      );
+    });
+
+    const ACCEPT_EVENTS = [
+      'deliveryDriverAccepted', // ✅ REQUIRED
+      'rideAccepted',
+      'ride:accepted',
+      'deliveryAccepted',
+      'delivery:accepted',
+      'driverAccepted',
+      'driver_accepted',
+      'batchAccepted',
+      'batch:accepted',
+    ];
+    ACCEPT_EVENTS.forEach((ev) => socket.on(ev, acceptHandler));
+
     socket.on('delivery:driver_arrived', arrivedHandler);
     socket.on('deliveryDriverLocation', liveHandler);
 
     return () => {
       try {
-        socket.off('deliveryAccepted', acceptHandler);
+        ACCEPT_EVENTS.forEach((ev) => socket.off(ev, acceptHandler));
+        socket.offAny();
+
         socket.off('delivery:driver_arrived', arrivedHandler);
         socket.off('deliveryDriverLocation', liveHandler);
         socket.disconnect();
       } catch {}
 
       clearResendTimer();
-      driverAcceptedRef.current = false;
+
+      rideAcceptedRef.current = false;
+      setRideAccepted(false);
+
+      // ✅ reset accept guards
+      acceptNotifiedRef.current = false;
+      lastAcceptKeyRef.current = null;
 
       joinedOrderIdsRef.current = new Set();
       joinedBatchRoomRef.current = null;
@@ -1504,73 +1809,32 @@ export default function ClusterDeliveryOptionsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     businessId,
-    clearResendTimer,
-    fetchDriverDetails,
-    ENV_RIDE_SOCKET,
     routeBatchId,
     resolvedBatchId,
+    clearResendTimer,
+    markRideAcceptedUi,
     saveRideId,
     saveBatchId,
+    fetchDriverDetails,
+    fetchDriverRating,
     applyStatusToUi,
+    maybeAcceptFromStatus,
+    rideId,
   ]);
-
-  /* ---------- JOIN rooms: joinOrder per cluster orderId ---------- */
-  useEffect(() => {
-    const socket = socketRef.current;
-    if (!socket) return;
-
-    try {
-      socket.emit('joinBusinessRoom', { business_id: businessId }, (ack) => {});
-    } catch {}
-
-    const myBatchId =
-      resolvedBatchId != null ? String(resolvedBatchId) : routeBatchId != null ? String(routeBatchId) : null;
-
-    if (myBatchId && joinedBatchRoomRef.current !== myBatchId) {
-      try {
-        socket.emit('joinBatchRoom', { batch_id: myBatchId }, (ack) => {});
-        joinedBatchRoomRef.current = myBatchId;
-      } catch {}
-    }
-
-    const ids = Array.from(batchOrderIdsRef.current || []);
-    ids.forEach((orderId) => {
-      if (!orderId) return;
-      if (joinedOrderIdsRef.current.has(orderId)) return;
-
-      socket.emit('joinOrder', { orderId }, (ack) => {});
-      joinedOrderIdsRef.current.add(orderId);
-    });
-  }, [businessId, routeBatchId, resolvedBatchId, ordersOnScreen]);
-
-  /* ---------- driver summary ---------- */
-  const driverSummaryText = useMemo(() => {
-    if (!driverDetails) return '';
-
-    const name = driverDetails.user_name ?? driverDetails.name ?? driverDetails.full_name ?? '';
-    const phone = driverDetails.phone ?? driverDetails.mobile ?? '';
-
-    const avg = driverRating?.average;
-    const count = driverRating?.count;
-
-    const ratingPart =
-      avg != null ? `Rating: ${Number(avg).toFixed(1)}${count != null ? ` (${count})` : ''}` : null;
-
-    const parts = [];
-    if (name) parts.push(name);
-    if (phone) parts.push(safePhone(phone));
-    if (ratingPart) parts.push(ratingPart);
-
-    return parts.join(' · ');
-  }, [driverDetails, driverRating]);
 
   const onSelectSelf = () => {
     setSelectedMethod('SELF');
     setRideMessage('');
     setDriverDetails(null);
     setDriverRating(null);
-    setDriverAccepted(false);
-    driverAcceptedRef.current = false;
+
+    setRideAccepted(false);
+    rideAcceptedRef.current = false;
+
+    // ✅ reset accept guards
+    acceptNotifiedRef.current = false;
+    lastAcceptKeyRef.current = null;
+
     clearResendTimer();
     setCanResendGrab(false);
 
@@ -1585,8 +1849,13 @@ export default function ClusterDeliveryOptionsScreen() {
     setSelectedMethod('GRAB');
     setDriverDetails(null);
     setDriverRating(null);
-    setDriverAccepted(false);
-    driverAcceptedRef.current = false;
+
+    setRideAccepted(false);
+    rideAcceptedRef.current = false;
+
+    // ✅ reset accept guards BEFORE sending request
+    acceptNotifiedRef.current = false;
+    lastAcceptKeyRef.current = null;
 
     setDriverArrived(false);
     setDriverArrivedMsg('');
@@ -1601,11 +1870,8 @@ export default function ClusterDeliveryOptionsScreen() {
       Alert.alert('Choose delivery method', 'Please select Self delivery or Grab delivery first.');
       return;
     }
-    if (selectedMethod === 'GRAB' && bulkPhase === 'READY' && !driverAccepted) {
-      Alert.alert(
-        'Driver not assigned yet',
-        'Please wait until a driver accepts the batch request before marking orders Out for delivery.'
-      );
+    if (selectedMethod === 'GRAB' && bulkPhase === 'READY' && !rideAccepted) {
+      Alert.alert('Not accepted yet', 'Please wait until the ride is accepted before marking orders Out for delivery.');
       return;
     }
 
@@ -1630,6 +1896,70 @@ export default function ClusterDeliveryOptionsScreen() {
     if (ok) setBulkPhase(targetStatus);
   };
 
+  const driverSummaryText = useMemo(() => {
+    if (!driverDetails) return '';
+
+    const name = driverDetails.user_name ?? driverDetails.name ?? driverDetails.full_name ?? '';
+    const phone = driverDetails.phone ?? driverDetails.mobile ?? '';
+
+    const avg = driverRating?.average;
+    const count = driverRating?.count;
+
+    const hasAvg = avg != null && Number.isFinite(Number(avg));
+    const hasCount = count != null && Number.isFinite(Number(count));
+
+    const ratingPart = hasAvg
+      ? `Rating: ${Number(avg).toFixed(1)}${hasCount ? ` (${Number(count)})` : ''}`
+      : hasCount
+        ? `Rating: — (${Number(count)})`
+        : null;
+
+    const parts = [];
+    if (name) parts.push(name);
+    if (phone) parts.push(safePhone(phone));
+    if (ratingPart) parts.push(ratingPart);
+
+    return parts.join(' · ');
+  }, [driverDetails, driverRating]);
+
+  const openDriverChat = useCallback(async () => {
+    const rid = rideIdRef.current || rideId;
+    if (!rid) {
+      Alert.alert('Chat', 'Ride ID is not available yet.');
+      return;
+    }
+
+    const driverId =
+      driverDetails?.user_id ??
+      driverDetails?.driver_id ??
+      driverDetails?.driverId ??
+      driverDetails?.id ??
+      null;
+
+    if (!driverId) {
+      Alert.alert('Chat', 'Driver ID is missing.');
+      return;
+    }
+
+    const merchantId = String(businessId || '').trim();
+    if (!merchantId) {
+      Alert.alert('Chat', 'Merchant id is missing.');
+      return;
+    }
+
+    const driverName = driverDetails?.user_name ?? driverDetails?.name ?? driverDetails?.full_name ?? 'Driver';
+
+    navigation.navigate('Chat', {
+      requestId: String(rid),
+      rideId: String(rid),
+      driverUserId: String(driverId),
+      driverName: String(driverName),
+      me: { role: 'merchant', id: String(merchantId) },
+      type: 'driver',
+      name: String(driverName),
+    });
+  }, [navigation, driverDetails, rideId, businessId]);
+
   const onTrackLiveMap = useCallback(() => {
     if (!businessId) return Alert.alert('Missing merchant', 'businessId is missing.');
     if (!ordersOnScreen?.length) return Alert.alert('No orders', 'No orders found for this batch.');
@@ -1639,7 +1969,7 @@ export default function ClusterDeliveryOptionsScreen() {
       (routeBatchId != null ? String(routeBatchId) : null) ??
       pickBatchId(batchResponse, routeBatchId, ordersOnScreen?.[0]?.raw || ordersOnScreen?.[0]);
 
-    navigation.navigate('TrackBatchOrdersScreen', {
+    navigation.navigate('BatchRidesScreen', {
       businessId,
       label,
       orders: ordersOnScreen,
@@ -1655,10 +1985,11 @@ export default function ClusterDeliveryOptionsScreen() {
 
       driverDetails,
       driverRating,
-      rideMessage: rideMessage || (driverAccepted ? 'Driver accepted.' : ''),
+      rideMessage: rideMessage || (rideAccepted ? 'Driver accepted the ride.' : ''),
       centerCoords: clusterCenter ? { lat: clusterCenter.lat, lng: clusterCenter.lng } : null,
       driverLiveCoords: driverLiveCoords ? { lat: driverLiveCoords.lat, lng: driverLiveCoords.lng } : null,
       businessCoords: businessCoords ? { lat: businessCoords.lat, lng: businessCoords.lng } : null,
+      businessName: businessName || null,
     });
   }, [
     navigation,
@@ -1674,29 +2005,22 @@ export default function ClusterDeliveryOptionsScreen() {
     clusterCenter,
     driverLiveCoords,
     businessCoords,
-    driverAccepted,
+    rideAccepted,
     rideId,
+    businessName,
   ]);
 
   const renderOrder = ({ item }) => {
     const base = item.raw || item || {};
-    const id = getOrderId(item) || item.id;
+    const id = getOrderId(item) || item.id || base.order_code || base.order_id;
 
     const name = base.customer_name ?? item.customer_name ?? base.user_name ?? base.full_name ?? '';
 
-    // ✅ prefer statusMap (already normalized), fallback to base fields
     const fromMap = statusesLoaded && id ? statusMap[String(id)] : undefined;
-    const raw =
-      fromMap ??
-      base.status ??
-      base.order_status ??
-      base.current_status ??
-      base.orderStatus ??
-      null;
+    const raw = fromMap ?? base.status ?? base.order_status ?? base.current_status ?? base.orderStatus ?? null;
 
     const norm = normalizeStatus(raw);
 
-    // ✅ final label + "..." when not loaded
     const finalLabel = statusesLoaded
       ? statusLabel(norm || (bulkPhase === 'OUT_FOR_DELIVERY' ? 'OUT_FOR_DELIVERY' : bulkPhase))
       : '...';
@@ -1718,7 +2042,7 @@ export default function ClusterDeliveryOptionsScreen() {
     return (
       <View style={styles.orderRow}>
         <View style={styles.orderRowTop}>
-          <Text style={styles.orderId}>#{id}</Text>
+          <Text style={styles.orderId}>#{String(id || '')}</Text>
           {!!finalLabel && (
             <View style={styles.statusPill}>
               <Text style={styles.statusPillText}>{finalLabel}</Text>
@@ -1752,7 +2076,7 @@ export default function ClusterDeliveryOptionsScreen() {
                   const qty = it.quantity ?? 1;
 
                   return (
-                    <View key={index} style={styles.itemRow}>
+                    <View key={`${String(id)}_${index}`} style={styles.itemRow}>
                       <Text style={styles.itemName} numberOfLines={2}>
                         {itemName}
                       </Text>
@@ -1773,7 +2097,7 @@ export default function ClusterDeliveryOptionsScreen() {
   const showSelf = !opt || opt === 'BOTH' || opt === 'SELF';
   const showGrab = !opt || opt === 'BOTH' || opt === 'GRAB';
 
-  const showTrackBtn = selectedMethod === 'GRAB' && driverAccepted;
+  const showTrackBtn = selectedMethod === 'GRAB' && rideAccepted;
 
   return (
     <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
@@ -1797,6 +2121,8 @@ export default function ClusterDeliveryOptionsScreen() {
                 : `${readyCount === 1 ? '1 order' : `${readyCount} orders`} delivered`}
         </Text>
 
+        {!!businessName && <Text style={styles.summarySub}>Business: {businessName}</Text>}
+
         {!!label && (
           <Text style={styles.summarySub} numberOfLines={2}>
             Deliver To: {label}
@@ -1805,7 +2131,9 @@ export default function ClusterDeliveryOptionsScreen() {
 
         {!!opt && opt !== storeOpt && <Text style={styles.summarySub}>Resolved delivery option: {opt}</Text>}
 
-        {!!initialBatchOrderIds.length && <Text style={styles.summarySub}>Batch orders: {initialBatchOrderIds.length}</Text>}
+        {!!initialBatchOrderIds.length && (
+          <Text style={styles.summarySub}>Batch orders: {initialBatchOrderIds.length}</Text>
+        )}
 
         {!!resolvedBatchId && <Text style={styles.summarySub}>Batch ID: {resolvedBatchId}</Text>}
         {!!(rideIdRef.current || rideId) && <Text style={styles.summarySub}>Ride ID: {rideIdRef.current || rideId}</Text>}
@@ -1848,15 +2176,19 @@ export default function ClusterDeliveryOptionsScreen() {
               </View>
             )}
 
-            {!sendingGrab && selectedMethod === 'GRAB' && !driverAccepted && canResendGrab && (
-              <TouchableOpacity style={styles.resendBtn} activeOpacity={0.85} onPress={sendGrabDeliveryRequest}>
-                <Text style={styles.resendBtnText}>Send request again</Text>
-              </TouchableOpacity>
-            )}
+            {!sendingGrab &&
+              selectedMethod === 'GRAB' &&
+              !rideAccepted &&
+              canResendGrab &&
+              bulkPhase !== 'OUT_FOR_DELIVERY' && (
+                <TouchableOpacity style={styles.resendBtn} activeOpacity={0.85} onPress={sendGrabDeliveryRequest}>
+                  <Text style={styles.resendBtnText}>Send request again</Text>
+                </TouchableOpacity>
+              )}
           </TouchableOpacity>
         )}
       </View>
-{/* 
+
       {showTrackBtn && (
         <View style={styles.actionsRow}>
           <TouchableOpacity style={styles.trackBtn} activeOpacity={0.85} onPress={onTrackLiveMap}>
@@ -1864,9 +2196,8 @@ export default function ClusterDeliveryOptionsScreen() {
             <Text style={styles.trackBtnText}>Track live map</Text>
           </TouchableOpacity>
         </View>
-      )} */}
+      )}
 
-      {/* ✅ SELF ONLY: bulk buttons hidden when selectedMethod === 'GRAB' */}
       {readyCount > 0 && bulkPhase === 'READY' && selectedMethod === 'SELF' && (
         <View style={styles.actionsRow}>
           <TouchableOpacity
@@ -1907,6 +2238,14 @@ export default function ClusterDeliveryOptionsScreen() {
           <View style={styles.messageCard}>
             {!!rideMessage && <Text style={styles.messageText}>{rideMessage}</Text>}
             {!!driverSummaryText && <Text style={styles.driverText}>{driverSummaryText}</Text>}
+            {!!driverSummaryText && (
+              <View style={{ marginTop: 8 }}>
+                <TouchableOpacity style={styles.chatBtn} activeOpacity={0.85} onPress={openDriverChat}>
+                  <Ionicons name="chatbubbles-outline" size={16} color="#ffffff" />
+                  <Text style={styles.chatBtnText}>Chat with driver</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
       )}
@@ -1923,15 +2262,15 @@ export default function ClusterDeliveryOptionsScreen() {
 
       <FlatList
         data={ordersOnScreen}
-        keyExtractor={(item) => String(getOrderId(item) || item.id)}
+        keyExtractor={(item, idx) => String(getOrderId(item) || item.id || item?.raw?.order_code || `row_${idx}`)}
         renderItem={renderOrder}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListEmptyComponent={
           <View style={{ paddingHorizontal: 16, paddingVertical: 20 }}>
             <Text style={{ color: '#64748b' }}>
-              No batch orders found to show here. Make sure your batch create API returns order_ids (or pass batch_order_ids
-              in navigation).
+              No batch orders found to show here. Make sure your batch create API returns order_ids (or pass
+              batch_order_ids in navigation).
             </Text>
           </View>
         }
@@ -2042,6 +2381,16 @@ const styles = StyleSheet.create({
   },
   messageText: { fontSize: 12, color: '#4b5563' },
   driverText: { marginTop: 4, fontSize: 13, fontWeight: '600', color: '#111827' },
+  chatBtn: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#16a34a',
+    borderRadius: 999,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  chatBtnText: { marginLeft: 6, color: '#ffffff', fontSize: 12, fontWeight: '700' },
 
   listHeader: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
   listHeaderText: { fontSize: 13, fontWeight: '600', color: '#0f172a' },

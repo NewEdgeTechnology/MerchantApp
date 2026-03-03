@@ -1,13 +1,20 @@
 // services/food/GroupOrder/TrackBatchOrdersScreen.js
-// ✅ FULL UPDATED
-// ✅ FIX: Overlay (expanded map) markers no longer disappear (tracksViewChanges kept ON for overlay markers)
+// ✅ FULL UPDATED (MULTI-DELIVERY ROUTES)
+// ✅ FIX: Overlay markers no longer disappear (tracksViewChanges kept ON for overlay markers)
 // ✅ FIX: Main markers still optimized (tracksViewChanges briefly true then off)
 // ✅ FIX: Tapping map DOES NOT open Chrome
 // ✅ NEW: Customer markers grouped by same location (distance-based) with count badge
 // ✅ NEW: Tap customer marker -> in-app modal lists ALL order IDs at that location (and status)
-// ✅ UPDATE: Driver marker callout shows Driver Name + Phone
+// ✅ UPDATE: Driver marker callout shows: Delivered by <Name> (<ID>)
+// ✅ UPDATE: Driver card shows ONLY: Delivered by <Name> (<ID>)
 // ✅ UPDATE: Removed bottom legend (route/delivered legend) from maps
-// ✅ NEW: Fetch driver details using apiDRIVER_DETAILS_ENDPOINT=http://192.168.131.194:4000/api/driver_id?driverId={driverId}
+// ✅ NEW: Fetch driver details using DRIVER_DETAILS_ENDPOINT=.../api/driver_id?driverId={driverId}
+// ✅ FIX: NO default driver id (no "18"). DriverId must come from params/socket/driverDetails/securestore.
+// ✅ NEW: Chat driver button beside Call driver
+// ✅ FIX (THIS REQUEST): ROUTES NOW SHOW FOR ALL DELIVERY LOCATIONS (MULTIPLE DROPS)
+//    - driver -> business (1 polyline)
+//    - business -> ALL customer groups (multiple polylines)
+//    - skips routes for groups where ALL orders are delivered (easy to change)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -33,9 +40,9 @@ import * as SecureStore from "expo-secure-store";
 import {
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
   BUSINESS_DETAILS as ENV_BUSINESS_DETAILS,
-  RIDE_SOCKET_ENDPOINT as ENV_RIDE_SOCKET,
+  RIDE_LOCAL_ENDPOINT as ENV_RIDE_SOCKET,
   DELIVERY_RIDE_ID_ENDPOINT as ENV_DELIVERY_RIDE_ID_ENDPOINT,
-  DRIVER_DETAILS_ENDPOINT as ENV_DRIVER_DETAILS_ENDPOINT, // ✅ NEW
+  DRIVER_DETAILS_ENDPOINT as ENV_DRIVER_DETAILS_ENDPOINT,
 } from "@env";
 
 /* ---------------- helpers ---------------- */
@@ -227,7 +234,7 @@ const buildDeliveryRideUrl = (batchId) => {
   return `${base}${join}delivery_batch_id=${encodeURIComponent(String(batchId))}`;
 };
 
-// ✅ NEW: driver details endpoint builder
+// ✅ driver details endpoint builder
 const buildDriverDetailsUrl = (driverId) => {
   const id = safeStr(driverId);
   if (!id) return null;
@@ -355,14 +362,7 @@ const pickItemName = (it) =>
 
 const pickItemQty = (it) => {
   const n = Number(
-    it?.qty ??
-      it?.quantity ??
-      it?.count ??
-      it?.item_qty ??
-      it?.itemQuantity ??
-      it?.order_qty ??
-      it?.cart_qty ??
-      it?.units
+    it?.qty ?? it?.quantity ?? it?.count ?? it?.item_qty ?? it?.itemQuantity ?? it?.order_qty ?? it?.cart_qty ?? it?.units
   );
   return Number.isFinite(n) && n > 0 ? n : 1;
 };
@@ -401,7 +401,7 @@ const extractDriverInfoFromPayload = (p) => {
   return Object.keys(out).length ? out : null;
 };
 
-// ✅ NEW: extract driverId from payload/params/driverInfo
+// ✅ extract driverId from payload/params/driverInfo
 const extractDriverId = (p) => {
   if (!p) return "";
   const cand = [
@@ -478,6 +478,11 @@ export default function TrackBatchOrdersScreen() {
     socketEndpoint,
     rideIds = [],
     batch_order_ids: batchOrderIdsFromParams,
+
+    // ✅ accept from previous screen (BatchRidesScreen / OrderDetails)
+    driver_id,
+    driverId: driverIdParam,
+    driverName: driverNameFromParams,
   } = params;
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
@@ -493,19 +498,49 @@ export default function TrackBatchOrdersScreen() {
   const [driverInfo, setDriverInfo] = useState(driverDetailsFromParams || null);
   const [driverRating, setDriverRating] = useState(driverRatingFromParams || null);
 
-  // ✅ NEW: driverId state + throttling for details fetch
-  const [driverId, setDriverId] = useState(() => extractDriverId(driverDetailsFromParams) || extractDriverId(params) || "");
-  const lastDriverDetailsFetchMsRef = useRef(0);
+  // ✅ NO DEFAULTS: compute initial driverId from params first, then driverDetails, then other params
+  const initialDriverId = useMemo(() => {
+    const p = safeStr(driver_id || driverIdParam);
+    if (p) return p;
 
-  useEffect(() => {
-    if (driverDetailsFromParams) setDriverInfo(driverDetailsFromParams);
-    const id = extractDriverId(driverDetailsFromParams);
-    if (id) setDriverId(id);
-  }, [driverDetailsFromParams]);
+    const fromDetails = extractDriverId(driverDetailsFromParams);
+    if (fromDetails) return fromDetails;
+
+    const fromParams = extractDriverId(params);
+    return safeStr(fromParams);
+  }, [driver_id, driverIdParam, driverDetailsFromParams, params]);
+
+  const [driverId, setDriverId] = useState(initialDriverId);
+  const lastDriverDetailsFetchMsRef = useRef(0);
 
   useEffect(() => {
     if (driverRatingFromParams) setDriverRating(driverRatingFromParams);
   }, [driverRatingFromParams]);
+
+  // ✅ prefer incoming param driver id ALWAYS
+  useEffect(() => {
+    const pid = safeStr(driver_id || driverIdParam);
+    if (pid) setDriverId(pid);
+  }, [driver_id, driverIdParam]);
+
+  // ✅ seed name instantly (so card shows name before fetch)
+  useEffect(() => {
+    const dn = safeStr(driverNameFromParams);
+    if (!dn) return;
+    setDriverInfo((prev) => ({
+      ...(prev || {}),
+      user_name: safeStr(prev?.user_name ?? prev?.name) || dn,
+    }));
+  }, [driverNameFromParams]);
+
+  // keep driverInfo from params (but do not force driverId unless we don't have one)
+  useEffect(() => {
+    if (driverDetailsFromParams) {
+      setDriverInfo((prev) => ({ ...(prev || {}), ...(driverDetailsFromParams || {}) }));
+      const extracted = extractDriverId(driverDetailsFromParams);
+      if (!safeStr(driver_id || driverIdParam) && extracted) setDriverId(extracted);
+    }
+  }, [driverDetailsFromParams, driver_id, driverIdParam]);
 
   /* ---------------- batch order ids ---------------- */
 
@@ -552,16 +587,21 @@ export default function TrackBatchOrdersScreen() {
         if (!batchId && savedBatch && String(savedBatch).trim()) setBatchId(String(savedBatch).trim());
         if (!deliveryRideId && savedRide && String(savedRide).trim()) setDeliveryRideId(String(savedRide).trim());
 
+        // ✅ do not override explicit driver id passed from previous screen
+        const hasExplicitDriverParam = Boolean(safeStr(driver_id || driverIdParam));
+
         if (!driverInfo && savedDriverJson) {
           try {
             const parsed = JSON.parse(savedDriverJson);
             if (parsed && typeof parsed === "object") {
               setDriverInfo(parsed);
+
               const id = extractDriverId(parsed);
-              if (id) setDriverId(id);
+              if (!hasExplicitDriverParam && !safeStr(driverId) && id) setDriverId(id);
             }
           } catch {}
         }
+
         if (!driverRating && savedDriverRatingJson) {
           try {
             const parsed = JSON.parse(savedDriverRatingJson);
@@ -625,8 +665,6 @@ export default function TrackBatchOrdersScreen() {
       return;
     }
 
-    console.log("[MERCHANT][RIDE_ID] ▶️ fetching delivery ride id:", url);
-
     try {
       const res = await fetch(url);
       const text = await res.text();
@@ -638,18 +676,10 @@ export default function TrackBatchOrdersScreen() {
         json = null;
       }
 
-      if (!res.ok) {
-        console.log("[MERCHANT][RIDE_ID] ❌ fetch failed:", res.status, text);
-        return;
-      }
+      if (!res.ok) return;
 
       const rid = pickRideIdFromResponse(json);
-      if (rid) {
-        console.log("[MERCHANT][RIDE_ID] ✅ delivery_ride_id:", rid);
-        setDeliveryRideId(rid);
-      } else {
-        console.log("[MERCHANT][RIDE_ID] ⚠️ ride id not found in response:", json);
-      }
+      if (rid) setDeliveryRideId(rid);
     } catch (e) {
       console.log("[MERCHANT][RIDE_ID] ❌ error:", e?.message || e);
     }
@@ -683,8 +713,10 @@ export default function TrackBatchOrdersScreen() {
   const [businessCoords, setBusinessCoords] = useState(null);
 
   const [driversByRideId, setDriversByRideId] = useState({});
+
+  // ✅ routes
   const [routeDriverToBiz, setRouteDriverToBiz] = useState([]);
-  const [routeBizToCustomer, setRouteBizToCustomer] = useState([]);
+  const [routeBizToCustomers, setRouteBizToCustomers] = useState([]); // [{ key, coords }]
 
   const lastRouteKeyRef = useRef("");
   const lastRouteAtMsRef = useRef(0);
@@ -898,7 +930,7 @@ export default function TrackBatchOrdersScreen() {
     } catch {}
   }, [businessId]);
 
-  // ✅ NEW: fetch driver details by driverId
+  // ✅ fetch driver details by driverId (throttled)
   const fetchDriverDetailsById = useCallback(
     async (id, opts = { force: false }) => {
       const driverIdClean = safeStr(id);
@@ -920,7 +952,6 @@ export default function TrackBatchOrdersScreen() {
         const headers = { Accept: "application/json" };
         if (token) headers.Authorization = `Bearer ${token}`;
 
-        console.log("[MERCHANT][DRIVER] ▶️ fetching driver details:", url);
         const res = await fetch(url, { headers });
         const text = await res.text();
 
@@ -931,20 +962,13 @@ export default function TrackBatchOrdersScreen() {
           json = null;
         }
 
-        if (!res.ok) {
-          console.log("[MERCHANT][DRIVER] ❌ fetch failed:", res.status, text);
-          return;
-        }
+        if (!res.ok) return;
 
         const details = json?.details || json?.data?.details || json?.data || json || null;
-        if (!details || typeof details !== "object") {
-          console.log("[MERCHANT][DRIVER] ⚠️ details missing:", json);
-          return;
-        }
+        if (!details || typeof details !== "object") return;
 
         setDriverInfo((prev) => {
           const next = { ...(prev || {}) };
-          // normalize fields based on your response payload
           if (details.user_id != null) next.user_id = details.user_id;
           if (details.user_name) next.user_name = details.user_name;
           if (details.phone) next.phone = details.phone;
@@ -980,7 +1004,6 @@ export default function TrackBatchOrdersScreen() {
       if (restoredIds) fetchDeliveryRideId();
       loadBatchOrders();
 
-      // ✅ refresh driver details on focus (lightly throttled)
       if (driverId) fetchDriverDetailsById(driverId);
     }, [
       fetchGroupedStatusesItems,
@@ -1032,19 +1055,13 @@ export default function TrackBatchOrdersScreen() {
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      console.log("[MERCHANT][SOCKET] ✅ connected:", socket.id);
-
       for (const rid of effectiveRideIds) {
-        console.log("[MERCHANT][JOIN] ▶️ emitting joinRide:", { rideId: String(rid) });
-
-        socket.emit("joinRide", { rideId: String(rid) }, (ack) => {
-          console.log("[MERCHANT][JOIN] ✅ joinRide ack:", rid, ack);
-        });
+        socket.emit("joinRide", { rideId: String(rid) }, () => {});
       }
     });
 
-    socket.on("disconnect", (reason) => console.log("[MERCHANT][SOCKET] 🔌 disconnected:", reason));
-    socket.on("connect_error", (e) => console.log("[MERCHANT][SOCKET] ❌ connect_error:", e?.message || e));
+    socket.on("disconnect", () => {});
+    socket.on("connect_error", () => {});
 
     const onDriverLocation = (p) => {
       const now = Date.now();
@@ -1057,13 +1074,13 @@ export default function TrackBatchOrdersScreen() {
       const ridFromPayload = pickRideIdFromPayload(p);
       const rid = String(ridFromPayload || effectiveRideIds[0] || "driver").trim();
 
-      // ✅ NEW: capture driverId & fetch details
+      // capture driverId & fetch details (throttled)
       const pid = extractDriverId(p) || extractDriverId(p?.driver) || "";
       if (pid) {
         setDriverId(pid);
-        // fetch on first sight or if missing name/phone (throttled)
-        const missingBasics = !safeStr(driverInfo?.user_name) && !safeStr(driverInfo?.name) && !safeStr(driverInfo?.phone);
-        fetchDriverDetailsById(pid, { force: missingBasics });
+
+        const missingName = !safeStr(driverInfo?.user_name) && !safeStr(driverInfo?.name);
+        fetchDriverDetailsById(pid, { force: missingName });
       }
 
       const maybeDriver = extractDriverInfoFromPayload(p);
@@ -1080,7 +1097,6 @@ export default function TrackBatchOrdersScreen() {
         return next;
       });
 
-      // retrigger main marker tracking (overlay markers are always tracking)
       setTrackMarkerViewsMain(true);
       setTimeout(() => setTrackMarkerViewsMain(false), 1400);
     };
@@ -1115,22 +1131,20 @@ export default function TrackBatchOrdersScreen() {
 
   const driverName = useMemo(() => {
     const d = driverInfo || {};
-    return safeStr(d?.user_name ?? d?.name ?? d?.full_name ?? d?.fullName ?? "") || "Driver";
-  }, [driverInfo]);
+    return safeStr(d?.user_name ?? d?.name ?? d?.full_name ?? d?.fullName ?? driverNameFromParams ?? "") || "Driver";
+  }, [driverInfo, driverNameFromParams]);
 
   const driverPhoneText = useMemo(() => {
     const p = driverInfo?.phone ?? driverInfo?.mobile ?? driverInfo?.contact ?? "";
     return safePhone(p);
   }, [driverInfo]);
 
-  const driverSummaryText = useMemo(() => {
-    const avg = driverRating?.average;
-    const count = driverRating?.count;
-    const ratingPart = avg != null ? ` · ${Number(avg).toFixed(1)}${count != null ? ` (${count})` : ""}` : "";
-    const phonePart = driverPhoneText ? ` · ${driverPhoneText}` : "";
-    const idPart = driverId ? ` · ID: ${driverId}` : "";
-    return `${driverName}${phonePart}${ratingPart}${idPart}`.trim();
-  }, [driverName, driverPhoneText, driverRating, driverId]);
+  // ✅ ONLY what you asked: Delivered by Name (ID)
+  const deliveredByText = useMemo(() => {
+    const idPart = safeStr(driverId);
+    const namePart = safeStr(driverName) || "Driver";
+    return idPart ? `Delivered by ${namePart} (${idPart})` : `Delivered by ${namePart}`;
+  }, [driverName, driverId]);
 
   const onCallDriver = useCallback(async () => {
     if (!driverPhoneText) return Alert.alert("No phone", "Driver phone number not available yet.");
@@ -1140,6 +1154,30 @@ export default function TrackBatchOrdersScreen() {
       Alert.alert("Cannot call", "Your device cannot place calls.");
     }
   }, [driverPhoneText]);
+
+  // ✅ NEW: chat driver
+  const onChatDriver = useCallback(() => {
+    const rid = safeStr(deliveryRideId || effectiveRideIds?.[0] || "");
+    if (!rid) return Alert.alert("Chat", "Ride ID is not available yet.");
+
+    const did = safeStr(driverId);
+    if (!did) return Alert.alert("Chat", "Driver ID is not available yet.");
+
+    const mid = safeStr(businessId);
+    if (!mid) return Alert.alert("Chat", "Merchant ID is missing.");
+
+    const dname = safeStr(driverName) || "Driver";
+
+    navigation.navigate("Chat", {
+      requestId: String(rid),
+      rideId: String(rid),
+      driverUserId: String(did),
+      driverName: String(dname),
+      me: { role: "merchant", id: String(mid) },
+      type: "driver",
+      name: String(dname),
+    });
+  }, [navigation, deliveryRideId, effectiveRideIds, driverId, businessId, driverName]);
 
   const mapInitialRegion = useMemo(() => {
     const anyDriver = Object.values(driversByRideId || {})[0]?.coords || null;
@@ -1204,34 +1242,25 @@ export default function TrackBatchOrdersScreen() {
     setOverlayOpen(true);
   }, [mapInitialRegion]);
 
-  /* ---------------- ROUTES: driver->business and business->customer ---------------- */
+  /* ---------------- ROUTES: driver->business and business->ALL customers ---------------- */
 
-  const pickCustomerGroupForRoute = useMemo(() => {
-    if (!groupedDropPoints.length) return null;
-    for (const g of groupedDropPoints) {
-      let anyUndelivered = false;
-      for (const oid of g.orderIds) {
-        const st = statusMap?.[oid];
-        if (!isDelivered(st)) {
-          anyUndelivered = true;
-          break;
-        }
-      }
-      if (anyUndelivered) return g;
-    }
-    return groupedDropPoints[0];
-  }, [groupedDropPoints, statusMap]);
-
-  const computeTwoLegRoute = useCallback(async () => {
+  const computeMultiRoutes = useCallback(async () => {
     const firstDriverKey = Object.keys(driversByRideId || {})[0];
     const driver = firstDriverKey ? driversByRideId?.[firstDriverKey]?.coords : null;
     const biz = businessCoords;
-    const customer = pickCustomerGroupForRoute ? { lat: pickCustomerGroupForRoute.lat, lng: pickCustomerGroupForRoute.lng } : null;
+
+    // ✅ build routes ONLY for groups that are NOT fully delivered
+    // (remove this filter if you want routes for delivered too)
+    const targets = (groupedDropPoints || []).filter((g) => {
+      const allDelivered =
+        Array.isArray(g?.orderIds) && g.orderIds.length > 0 && g.orderIds.every((oid) => isDelivered(statusMap?.[oid]));
+      return !allDelivered;
+    });
 
     const key = [
       driver ? `${driver.lat.toFixed(5)},${driver.lng.toFixed(5)}` : "no-driver",
       biz ? `${biz.lat.toFixed(5)},${biz.lng.toFixed(5)}` : "no-biz",
-      customer ? `${customer.lat.toFixed(5)},${customer.lng.toFixed(5)}` : "no-customer",
+      targets.map((t) => `${t.lat.toFixed(5)},${t.lng.toFixed(5)}`).join(";") || "no-targets",
     ].join("|");
 
     const now = Date.now();
@@ -1242,8 +1271,9 @@ export default function TrackBatchOrdersScreen() {
     lastRouteAtMsRef.current = now;
 
     if (!driver || !biz) setRouteDriverToBiz([]);
-    if (!biz || !customer) setRouteBizToCustomer([]);
+    if (!biz || !targets.length) setRouteBizToCustomers([]);
 
+    // driver -> business (single)
     if (driver && biz) {
       try {
         const coords = await fetchOsrmRoute2(driver, biz);
@@ -1256,22 +1286,32 @@ export default function TrackBatchOrdersScreen() {
       }
     }
 
-    if (biz && customer) {
-      try {
-        const coords = await fetchOsrmRoute2(biz, customer);
-        setRouteBizToCustomer(coords);
-      } catch {
-        setRouteBizToCustomer([
-          { latitude: biz.lat, longitude: biz.lng },
-          { latitude: customer.lat, longitude: customer.lng },
-        ]);
-      }
+    // business -> each customer group (multiple)
+    if (biz && targets.length) {
+      const out = await Promise.all(
+        targets.map(async (t) => {
+          try {
+            const coords = await fetchOsrmRoute2(biz, { lat: t.lat, lng: t.lng });
+            return { key: t.key, coords };
+          } catch {
+            return {
+              key: t.key,
+              coords: [
+                { latitude: biz.lat, longitude: biz.lng },
+                { latitude: t.lat, longitude: t.lng },
+              ],
+            };
+          }
+        })
+      );
+
+      setRouteBizToCustomers(out.filter((x) => Array.isArray(x?.coords) && x.coords.length >= 2));
     }
-  }, [driversByRideId, businessCoords, pickCustomerGroupForRoute]);
+  }, [driversByRideId, businessCoords, groupedDropPoints, statusMap]);
 
   useEffect(() => {
-    computeTwoLegRoute();
-  }, [computeTwoLegRoute]);
+    computeMultiRoutes();
+  }, [computeMultiRoutes]);
 
   /* ---------------- Expandable items dropdown ---------------- */
 
@@ -1303,7 +1343,7 @@ export default function TrackBatchOrdersScreen() {
     const g = selectedGroup;
     if (!g?.orderIds?.length) return [];
     return g.orderIds.map((oid) => {
-      const st = statusMap?.[oid] || "";
+      const st = statusMap?.[oid];
       const label = st ? String(st).toUpperCase().replace(/_/g, " ") : "—";
       return { orderId: oid, status: label, delivered: isDelivered(st) };
     });
@@ -1314,10 +1354,9 @@ export default function TrackBatchOrdersScreen() {
   const DriverMarker = ({ rid, entry, overlay }) => {
     if (!entry?.coords) return null;
 
-    const titleText = `${driverName} (Live)`;
-    const descText = driverPhoneText ? `${driverPhoneText}` : "Phone not available";
+    const titleText = deliveredByText;
+    const descText = "";
 
-    // ✅ Overlay markers: keep tracksViewChanges ON so they won't disappear in Modal on Android
     const tvc = overlay ? true : trackMarkerViewsMain;
 
     return (
@@ -1340,13 +1379,9 @@ export default function TrackBatchOrdersScreen() {
 
   const CustomerGroupMarker = ({ g, overlay }) => {
     const deliveredAll =
-      Array.isArray(g?.orderIds) &&
-      g.orderIds.length > 0 &&
-      g.orderIds.every((oid) => isDelivered(statusMap?.[oid]));
+      Array.isArray(g?.orderIds) && g.orderIds.length > 0 && g.orderIds.every((oid) => isDelivered(statusMap?.[oid]));
 
     const count = g?.count || 1;
-
-    // ✅ Overlay markers: keep tracksViewChanges ON so they won't disappear in Modal on Android
     const tvc = overlay ? true : trackMarkerViewsMain;
 
     return (
@@ -1405,10 +1440,7 @@ export default function TrackBatchOrdersScreen() {
 
     return (
       <View style={styles.orderRow}>
-        <Pressable
-          onPress={() => toggleExpanded(id)}
-          style={({ pressed }) => [styles.orderPress, pressed ? { opacity: 0.85 } : null]}
-        >
+        <Pressable onPress={() => toggleExpanded(id)} style={({ pressed }) => [styles.orderPress, pressed ? { opacity: 0.85 } : null]}>
           <View style={styles.orderTop}>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
               <Text style={styles.orderId}>#{id}</Text>
@@ -1471,7 +1503,7 @@ export default function TrackBatchOrdersScreen() {
     );
   };
 
-  const driverCardText = driverSummaryText || "Driver details not available yet.";
+  const chatDisabled = !safeStr(driverId) || !safeStr(deliveryRideId || effectiveRideIds?.[0]);
 
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
@@ -1561,12 +1593,23 @@ export default function TrackBatchOrdersScreen() {
                   <UrlTile urlTemplate={tileTemplate} maximumZ={20} tileSize={256} shouldReplaceMapContent zIndex={0} />
 
                   {!!routeDriverToBiz?.length && routeDriverToBiz.length >= 2 && (
-                    <Polyline coordinates={routeDriverToBiz} strokeWidth={4} strokeColor="#2563eb" lineCap="round" lineJoin="round" />
+                    <Polyline coordinates={routeDriverToBiz} strokeWidth={7} strokeColor="#0066FF" lineCap="round" lineJoin="round" zIndex={10} />
                   )}
 
-                  {!!routeBizToCustomer?.length && routeBizToCustomer.length >= 2 && (
-                    <Polyline coordinates={routeBizToCustomer} strokeWidth={4} strokeColor="#60a5fa" lineCap="round" lineJoin="round" />
-                  )}
+                  {Array.isArray(routeBizToCustomers) &&
+                    routeBizToCustomers.map((r) =>
+                      r?.coords?.length >= 2 ? (
+                        <Polyline
+                          key={`ov-biz2cust-${r.key}`}
+                          coordinates={r.coords}
+                          strokeWidth={7}
+                          strokeColor="#0091FF"
+                          lineCap="round"
+                          lineJoin="round"
+                          zIndex={10}
+                        />
+                      ) : null
+                    )}
 
                   {!!businessCoords && (
                     <Marker
@@ -1580,13 +1623,11 @@ export default function TrackBatchOrdersScreen() {
                     />
                   )}
 
-                  {/* ✅ Driver marker (overlay - never disappears) */}
                   {Object.keys(driversByRideId || {}).map((rid) => {
                     const entry = driversByRideId?.[rid];
                     return <DriverMarker key={`ov-d-${rid}`} rid={rid} entry={entry} overlay />;
                   })}
 
-                  {/* ✅ Grouped customer markers (overlay - never disappears) */}
                   {groupedDropPoints.map((g) => (
                     <CustomerGroupMarker key={`ov-g-${g.key}`} g={g} overlay />
                   ))}
@@ -1644,7 +1685,7 @@ export default function TrackBatchOrdersScreen() {
         )}
       </View>
 
-      {/* MAP SHOWN DIRECTLY + BUTTON OPENS OVERLAY */}
+      {/* MAP */}
       <View style={styles.mapCard}>
         {showMap ? (
           <View style={styles.mapWrap}>
@@ -1684,9 +1725,20 @@ export default function TrackBatchOrdersScreen() {
               {!!routeDriverToBiz?.length && routeDriverToBiz.length >= 2 && (
                 <Polyline coordinates={routeDriverToBiz} strokeWidth={4} strokeColor="#2563eb" lineCap="round" lineJoin="round" />
               )}
-              {!!routeBizToCustomer?.length && routeBizToCustomer.length >= 2 && (
-                <Polyline coordinates={routeBizToCustomer} strokeWidth={4} strokeColor="#60a5fa" lineCap="round" lineJoin="round" />
-              )}
+
+              {Array.isArray(routeBizToCustomers) &&
+                routeBizToCustomers.map((r) =>
+                  r?.coords?.length >= 2 ? (
+                    <Polyline
+                      key={`biz2cust-${r.key}`}
+                      coordinates={r.coords}
+                      strokeWidth={4}
+                      strokeColor="#60a5fa"
+                      lineCap="round"
+                      lineJoin="round"
+                    />
+                  ) : null
+                )}
 
               {!!businessCoords && (
                 <Marker
@@ -1700,13 +1752,11 @@ export default function TrackBatchOrdersScreen() {
                 />
               )}
 
-              {/* ✅ Driver marker */}
               {Object.keys(driversByRideId || {}).map((rid) => {
                 const entry = driversByRideId?.[rid];
                 return <DriverMarker key={`main-d-${rid}`} rid={rid} entry={entry} overlay={false} />;
               })}
 
-              {/* ✅ Grouped customer markers */}
               {groupedDropPoints.map((g) => (
                 <CustomerGroupMarker key={`main-g-${g.key}`} g={g} overlay={false} />
               ))}
@@ -1748,7 +1798,8 @@ export default function TrackBatchOrdersScreen() {
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.driverText}>{driverCardText}</Text>
+          {/* ✅ ONLY THIS */}
+          <Text style={styles.driverText}>{deliveredByText}</Text>
 
           <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10 }}>
             <TouchableOpacity
@@ -1759,6 +1810,18 @@ export default function TrackBatchOrdersScreen() {
             >
               <Ionicons name="call-outline" size={16} color="#ffffff" />
               <Text style={styles.callBtnText}>Call driver</Text>
+            </TouchableOpacity>
+
+            <View style={{ width: 10 }} />
+
+            <TouchableOpacity
+              style={[styles.chatBtn, chatDisabled ? styles.chatBtnDisabled : null]}
+              activeOpacity={0.85}
+              onPress={onChatDriver}
+              disabled={chatDisabled}
+            >
+              <Ionicons name="chatbubbles-outline" size={16} color="#ffffff" />
+              <Text style={styles.chatBtnText}>Chat driver</Text>
             </TouchableOpacity>
 
             <View style={{ flex: 1 }} />
@@ -1783,9 +1846,7 @@ export default function TrackBatchOrdersScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         ListEmptyComponent={
           <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
-            <Text style={{ color: "#6b7280", fontWeight: "700" }}>
-              {batchOrdersLoading ? "Loading orders…" : "No orders found for this batch."}
-            </Text>
+            <Text style={{ color: "#6b7280", fontWeight: "700" }}>{batchOrdersLoading ? "Loading orders…" : "No orders found for this batch."}</Text>
           </View>
         }
       />
@@ -1917,7 +1978,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e5e7eb",
   },
-  driverText: { marginTop: 6, fontSize: 12, color: "#374151", fontWeight: "600" },
+  driverText: { marginTop: 6, fontSize: 12, color: "#374151", fontWeight: "700" },
 
   callBtn: {
     alignSelf: "flex-start",
@@ -1930,6 +1991,19 @@ const styles = StyleSheet.create({
   },
   callBtnDisabled: { backgroundColor: "#9ca3af" },
   callBtnText: { marginLeft: 6, color: "#fff", fontSize: 12, fontWeight: "800" },
+
+  chatBtn: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#2563eb",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+  },
+  chatBtnDisabled: { backgroundColor: "#9ca3af" },
+  chatBtnText: { marginLeft: 6, color: "#fff", fontSize: 12, fontWeight: "800" },
+
   moreBtn: {
     height: 34,
     width: 34,
@@ -2034,7 +2108,6 @@ const styles = StyleSheet.create({
   overlayActions: { position: "absolute", right: 14, top: 70 },
   noMapFull: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#fff" },
 
-  // Orders-at-location modal
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",

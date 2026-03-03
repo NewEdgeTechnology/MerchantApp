@@ -3,23 +3,18 @@
 // ✅ FIX: Fees preserved using robust extraction
 // ✅ FIX: Item totals parse "Nu. 20" etc.
 // ✅ UPDATED: TotalsBlock shows GRAND TOTAL
-// ✅ UPDATED: Grab request uses BATCH_ORDER_BROADCAST_ENDPOINT
 // ✅ UPDATED: Status updates use ClusterDeliveryOptionsScreen-style payload acceptance (allow missing ids AFTER driverAccepted)
-// ✅ NEW: When selecting GRAB in DeliveryMethodChooser (READY only), create batch (GROUP_NEARBY_ORDER_ENDPOINT) then send request immediately
-// ✅ NEW: buildBatchPayload() same pattern as ClusterDeliveryOptionsScreen (validate drops lat/lng, passenger_id from grouped user)
-// ✅ NEW: Save/restore batch_id + ride_id in SecureStore (scoped by businessId) like ClusterDeliveryOptionsScreen
 // ✅ FIX: useFocusEffect async usage (do not return Promise)
-// ✅ FIX: driver accept/status updates now show + update like ClusterDeliveryOptionsScreen (BATCH-safe matching + onAny fallback)
+// ✅ FIX: driver accept/status updates now show + update like ClusterDeliveryOptionsScreen (NO batch matching)
 // ✅ FIX: SecureStore key sanitizer (NO ":" and only [A-Za-z0-9._-])
-// ✅ FIX: Join batch room after batchId is created (even if socket already connected)
-// ✅ NEW: Console logs whether batch was created or reused + logs create response
-// ✅ NEW: Prevent duplicate batch creation (reuse batchId even if batchOrderIds empty)
-// ✅ NEW: Single idempotent grab flow used by both onSetDeliveryChoice + startGrabLoop (prevents double-trigger)
-// ✅ NEW: When driver accepts, show alert + status label; after accept, merchant cannot update status
-// ✅ FIX (IMPORTANT): Grab broadcast now sends Authorization header (if your API is protected)
-// ✅ FIX: If grab flow fails, searchingGrabRef is reset (no stuck “busy” state)
 // ✅ Keeps: status normalization, grouped hydrate protection, socket fast-status apply, deliver-in-group route fix, pull-to-refresh
-// ✅ NEW (RESPONSIVE): padding/sizing now scales with device width (no hardcoded 16/18/24)
+// ✅ CHANGE (REQUESTED):
+// - ALL batch code removed: GROUP_NEARBY_ORDER_ENDPOINT, batchId/batchOrderIds, saveBatchId/keyBatchId,
+//   createBatchForThisOrder/ensureBatchForGrab, joinBatchRoom, batch matching, any batch_id usage.
+// ✅ CHANGE (REQUESTED NOW):
+// - Remove Deliver in group completely.
+// - When user selects GRAB, directly redirect to NearbyOrdersScreen (cluster list).
+// - No alert popup. No "Use Deliver in group" message.
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import {
@@ -40,24 +35,19 @@ import {
   useFocusEffect,
   CommonActions,
 } from "@react-navigation/native";
-// ✅ ADD imports
-import { createOrGetOrderConversationFromOrderDetails } from "../../utils/chatApi"; // adjust path if needed
+
+// ✅ Chat helper (adjust path if needed)
+import { createOrGetOrderConversationFromOrderDetails } from "../../utils/chatApi";
 
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import * as SecureStore from "expo-secure-store";
 import io from "socket.io-client";
+
 import {
   UPDATE_ORDER_STATUS_ENDPOINT as ENV_UPDATE_ORDER,
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
-
-  // ✅ create batch (same as NearbyClusterOrdersScreen)
-  GROUP_NEARBY_ORDER_ENDPOINT as ENV_GROUP_NEARBY_ORDER_ENDPOINT,
-
-  // ✅ Grab broadcast endpoint (same as ClusterDeliveryOptionsScreen)
-  BATCH_ORDER_BROADCAST_ENDPOINT as ENV_SEND_REQUEST_DRIVER,
-
-  RIDE_SOCKET_ENDPOINT as ENV_RIDE_SOCKET,
+  RIDE_LOCAL_ENDPOINT as ENV_RIDE_SOCKET,
   DRIVER_DETAILS_ENDPOINT as ENV_DRIVER_DETAILS,
   DIVER_RATING_ENDPOINT as ENV_DRIVER_RATING,
 } from "@env";
@@ -107,6 +97,8 @@ const makeScaler = (screenWidth) => {
   return s;
 };
 
+const hit = (n) => ({ top: n, bottom: n, left: n, right: n });
+
 /* ---------------- debug helpers ---------------- */
 const logJson = (label, obj) => {
   try {
@@ -136,9 +128,7 @@ const toSafeKeyPart = (v, fallback = "0") => {
   return s.replace(/[^A-Za-z0-9._-]/g, "_") || fallback;
 };
 
-/* ✅ SecureStore keys (scoped by businessId) */
-const keyBatchId = (businessId) =>
-  `orderdetails_last_batch_id_${toSafeKeyPart(businessId)}`;
+/* ✅ SecureStore keys (scoped by businessId) — ride only (batch removed) */
 const keyRideId = (businessId) =>
   `orderdetails_last_ride_id_${toSafeKeyPart(businessId)}`;
 
@@ -159,8 +149,7 @@ const normalizeStatus = (v) => {
     return "OUT_FOR_DELIVERY";
   if (s === "OUT FOR DELIVERY" || s === "OUT_FOR_DELIVERY")
     return "OUT_FOR_DELIVERY";
-  if (s === "OUT_FOR_DEL" || s === "OUT FOR DEL")
-    return "OUT_FOR_DELIVERY";
+  if (s === "OUT_FOR_DEL" || s === "OUT FOR DEL") return "OUT_FOR_DELIVERY";
   if (s === "DELIVERING") return "OUT_FOR_DELIVERY";
 
   // delivered variants
@@ -196,7 +185,12 @@ const normalizeDeliveryAddress = (v) => {
   if (typeof v === "object") {
     return {
       address: String(
-        v.address ?? v.full_address ?? v.location ?? v.formatted ?? v.label ?? ""
+        v.address ??
+        v.full_address ??
+        v.location ??
+        v.formatted ??
+        v.label ??
+        ""
       ).trim(),
       lat: v.lat ?? v.latitude ?? null,
       lng: v.lng ?? v.lon ?? v.longitude ?? null,
@@ -205,101 +199,6 @@ const normalizeDeliveryAddress = (v) => {
   }
 
   return { address: String(v).trim(), lat: null, lng: null, city: null };
-};
-
-/* ===========================
-   resolve cluster context (safe)
-   =========================== */
-const resolveClusterContext = (params = {}, order = {}, routeOrderId) => {
-  const orderIdKey =
-    order?.id ?? order?.order_id ?? order?.order_code ?? routeOrderId;
-
-  const direct =
-    params.clusterParams ||
-    params.cluster_context ||
-    params.clusterContext ||
-    params.cluster ||
-    null;
-
-  if (direct && typeof direct === "object") {
-    return {
-      screenName:
-        direct.screenName ||
-        params.clusterScreenName ||
-        "FoodNearbyClusterOrdersScreen",
-      ...direct,
-
-      orderId: direct.orderId ?? orderIdKey,
-      orderCode: direct.orderCode ?? order?.order_code ?? orderIdKey,
-
-      businessId:
-        direct.businessId ??
-        params.businessId ??
-        params.business_id ??
-        order?.business_id ??
-        order?.merchant_id ??
-        null,
-
-      ownerType:
-        direct.ownerType ?? params.ownerType ?? params.owner_type ?? null,
-
-      ordersGroupedUrl:
-        direct.ordersGroupedUrl ??
-        params.ordersGroupedUrl ??
-        params.groupedUrl ??
-        params.ordersGroupedURL ??
-        null,
-
-      cluster_id:
-        direct.cluster_id ??
-        direct.clusterId ??
-        params.cluster_id ??
-        params.clusterId ??
-        params.group_id ??
-        params.groupId ??
-        null,
-
-      orders:
-        (direct.orders ??
-          direct.clusterOrders ??
-          params.clusterOrders ??
-          params.ordersInCluster ??
-          params.orders) ??
-        null,
-
-      group:
-        direct.group ??
-        params.group ??
-        params.clusterGroup ??
-        params.groupData ??
-        null,
-    };
-  }
-
-  const maybeOrders =
-    params.clusterOrders || params.ordersInCluster || params.orders || null;
-  const maybeClusterId =
-    params.cluster_id || params.clusterId || params.group_id || params.groupId || null;
-
-  if (maybeOrders || maybeClusterId) {
-    return {
-      screenName: params.clusterScreenName || "FoodNearbyClusterOrdersScreen",
-      businessId:
-        params.businessId ??
-        params.business_id ??
-        order?.business_id ??
-        order?.merchant_id ??
-        null,
-      ownerType: params.ownerType ?? params.owner_type ?? null,
-      ordersGroupedUrl: params.ordersGroupedUrl ?? params.groupedUrl ?? null,
-      cluster_id: maybeClusterId,
-      orders: maybeOrders,
-      orderId: orderIdKey,
-      orderCode: order?.order_code ?? orderIdKey,
-    };
-  }
-
-  return null;
 };
 
 /* ===========================
@@ -502,12 +401,7 @@ const getItemName = (it) =>
   "";
 
 const getItemImage = (it) =>
-  it?.item_image ??
-  it?.image ??
-  it?.image_url ??
-  it?.photo ??
-  it?.thumbnail ??
-  null;
+  it?.item_image ?? it?.image ?? it?.image_url ?? it?.photo ?? it?.thumbnail ?? null;
 
 const getItemQty = (it) => {
   const q = Number(it?.qty ?? it?.quantity ?? it?.quantity_ordered ?? it?.order_qty ?? 1);
@@ -527,12 +421,7 @@ const getItemUnitPrice = (it) => {
   if (p != null) return p;
 
   const n = Number(
-    it?.price ??
-    it?.unit_price ??
-    it?.item_price ??
-    it?.rate ??
-    it?.selling_price ??
-    0
+    it?.price ?? it?.unit_price ?? it?.item_price ?? it?.rate ?? it?.selling_price ?? 0
   );
   return Number.isFinite(n) ? n : 0;
 };
@@ -630,7 +519,7 @@ const buildUnavailableChanges = ({
 };
 
 /* ===========================
-   socket payload helpers (BATCH-safe)
+   socket payload helpers (NO batch)
    =========================== */
 const extractStatusFromPayload = (payload) => {
   if (!payload) return null;
@@ -680,41 +569,6 @@ const extractStatusFromPayload = (payload) => {
   return null;
 };
 
-const extractBatchIdFromPayload = (payload) => {
-  if (!payload) return null;
-
-  let v =
-    payload.batch_id ??
-    payload.batchId ??
-    payload.delivery_batch_id ??
-    payload.deliveryBatchId ??
-    payload.group_batch_id ??
-    payload.groupBatchId ??
-    payload.batch ??
-    payload?.batch?.id ??
-    null;
-
-  if (v != null) return String(v);
-
-  const containers = [payload.data, payload.payload, payload.message, payload.meta, payload.batch];
-  for (const c of containers) {
-    if (!c) continue;
-    v =
-      c.batch_id ??
-      c.batchId ??
-      c.delivery_batch_id ??
-      c.deliveryBatchId ??
-      c.group_batch_id ??
-      c.groupBatchId ??
-      c.batch ??
-      c?.batch?.id ??
-      null;
-    if (v != null) return String(v);
-  }
-
-  return null;
-};
-
 const extractOrderIdFromPayload = (payload) => {
   if (!payload) return null;
 
@@ -743,8 +597,7 @@ const extractOrderIdFromPayload = (payload) => {
     null;
   if (Array.isArray(drops) && drops.length) {
     const first = drops[0];
-    const ov =
-      first?.order_id ?? first?.orderId ?? first?.order_code ?? first?.orderCode ?? null;
+    const ov = first?.order_id ?? first?.orderId ?? first?.order_code ?? first?.orderCode ?? null;
     if (ov != null) return String(ov);
   }
 
@@ -780,8 +633,7 @@ const extractOrderIdFromPayload = (payload) => {
     const cdrops = c.drops ?? null;
     if (Array.isArray(cdrops) && cdrops.length) {
       const first = cdrops[0];
-      const ov =
-        first?.order_id ?? first?.orderId ?? first?.order_code ?? first?.orderCode ?? null;
+      const ov = first?.order_id ?? first?.orderId ?? first?.order_code ?? first?.orderCode ?? null;
       if (ov != null) return String(ov);
     }
   }
@@ -829,118 +681,11 @@ const pickRideId = (payload) =>
   payload?.message?.rideId ??
   null;
 
-/* ===========================
-   batch payload helpers
-   =========================== */
-const safeNum = (v, fallback = 0) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-};
-
-const pickAddressText = (o) => {
-  if (!o) return "";
-  const da = o.delivery_address ?? o.address ?? o.deliver_to ?? o.dropoff_address ?? null;
-
-  if (typeof da === "string") return da.trim();
-  if (da && typeof da === "object") {
-    if (da.address) return String(da.address).trim();
-    if (da.full_address) return String(da.full_address).trim();
-    if (da.location) return String(da.location).trim();
-    if (da.formatted) return String(da.formatted).trim();
-    if (da.label) return String(da.label).trim();
-  }
-
-  if (typeof o.address === "string" && o.address.trim()) return o.address.trim();
-  if (typeof o.general_place === "string" && o.general_place.trim()) return o.general_place.trim();
-  if (typeof o.deliver_to?.address === "string" && o.deliver_to.address.trim())
-    return o.deliver_to.address.trim();
-
-  return "";
-};
-
-const extractDropCoords = (o) => {
-  const base = o || {};
-  const da = base.delivery_address && typeof base.delivery_address === "object" ? base.delivery_address : null;
-  const dt = base.deliver_to && typeof base.deliver_to === "object" ? base.deliver_to : null;
-
-  const candidates = [
-    dt && { lat: dt.lat ?? dt.latitude, lng: dt.lng ?? dt.lon ?? dt.longitude },
-    da && { lat: da.lat ?? da.latitude, lng: da.lng ?? da.lon ?? da.longitude },
-    {
-      lat:
-        base.delivery_lat ??
-        base.deliveryLatitude ??
-        base.delivery_latitude ??
-        base.lat ??
-        base.latitude,
-      lng:
-        base.delivery_lng ??
-        base.deliveryLongitude ??
-        base.delivery_longitude ??
-        base.delivery_lon ??
-        base.lng ??
-        base.lon ??
-        base.longitude ??
-        base.long,
-    },
-    base.destination && {
-      lat: base.destination.lat ?? base.destination.latitude,
-      lng: base.destination.lng ?? base.destination.longitude,
-    },
-    base.geo && { lat: base.geo.lat ?? base.geo.latitude, lng: base.geo.lng ?? base.geo.longitude },
-  ];
-
-  for (const c of candidates) {
-    if (!c) continue;
-    const lat = Number(c.lat);
-    const lng = Number(c.lng);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
-  }
-  return null;
-};
-
-const pickBatchId = (json) =>
-  json?.batch_id ?? json?.data?.batch_id ?? json?.batchId ?? json?.data?.batchId ?? null;
-
-const pickBatchOrderIds = (json) => {
-  const arr =
-    json?.order_ids ??
-    json?.data?.order_ids ??
-    json?.orderIds ??
-    json?.data?.orderIds ??
-    json?.orders ??
-    json?.data?.orders ??
-    null;
-
-  if (!Array.isArray(arr)) return [];
-  return arr.map((x) => String(x)).filter(Boolean);
-};
-
-const getNumericOrderId = (o = {}) => {
-  const base = o?.raw || o || {};
-  const candidates = [
-    base.order_db_id,
-    base.db_id,
-    base.order_table_id,
-    base.numeric_order_id,
-    base.order_numeric_id,
-    base.orderIdNumeric,
-    base.order_id_numeric,
-    base.id,
-  ];
-  for (const c of candidates) {
-    const n = Number(c);
-    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
-  }
-  return null;
-};
-
 export default function OrderDetails() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
-
-
   const route = useRoute();
+
   const { width: screenW } = useWindowDimensions();
   const S = useMemo(() => makeScaler(screenW), [screenW]);
 
@@ -973,20 +718,26 @@ export default function OrderDetails() {
       order_id: o?.order_id ?? (idRaw != null ? String(idRaw) : undefined),
       order_code: codeRaw != null ? normalizeOrderCode(codeRaw) : undefined,
       status: normalizeStatus(o?.status),
-      delivery_address: normalizeDeliveryAddress(o?.delivery_address ?? o?.address ?? o?.deliver_to),
+      delivery_address: normalizeDeliveryAddress(
+        o?.delivery_address ?? o?.address ?? o?.deliver_to
+      ),
 
       __user: o?.__user ?? o?.user ?? null,
 
       platform_fee: feeSnap.platform_fee ?? toMoneyNumber(o?.platform_fee) ?? 0,
       discount_amount: feeSnap.discount_amount ?? toMoneyNumber(o?.discount_amount) ?? 0,
       delivery_fee: feeSnap.delivery_fee ?? toMoneyNumber(o?.delivery_fee) ?? null,
-      merchant_delivery_fee: feeSnap.merchant_delivery_fee ?? toMoneyNumber(o?.merchant_delivery_fee) ?? null,
+      merchant_delivery_fee:
+        feeSnap.merchant_delivery_fee ?? toMoneyNumber(o?.merchant_delivery_fee) ?? null,
     };
   });
+
   /* ---------- Merchant delivery option & location ---------- */
   const [merchantDeliveryOpt, setMerchantDeliveryOpt] = useState("UNKNOWN");
   const [businessId, setBusinessId] = useState(paramBusinessId);
   const [businessCoords, setBusinessCoords] = useState(null);
+
+  // ✅ open chat from order
   const openChatFromOrder = useCallback(async () => {
     try {
       const token = await SecureStore.getItemAsync("auth_token");
@@ -1050,7 +801,6 @@ export default function OrderDetails() {
 
       if (!conversationId) throw new Error("No conversation_id returned");
 
-      // ✅ use the navigation from this component scope
       navigation.navigate("MerchantChatRoomScreen", {
         conversationId: String(conversationId),
         orderId: String(orderIdForChat),
@@ -1076,17 +826,11 @@ export default function OrderDetails() {
         },
         source: "order-details",
       });
-
     } catch (e) {
       Alert.alert("Chat", e?.message || "Failed to open chat");
     }
-  }, [
-    navigation,           // ✅ must be in deps
-    order,
-    routeOrderId,
-    businessId,
-    paramBusinessId,
-  ]);
+  }, [navigation, order, routeOrderId, businessId, paramBusinessId]);
+
   const [refreshing, setRefreshing] = useState(false);
   const [updating, setUpdating] = useState(false);
 
@@ -1112,57 +856,47 @@ export default function OrderDetails() {
 
   const LIVE_REFRESH_MS = 4000;
 
-  // ✅ batch state (for Grab)
-  const [batchId, setBatchId] = useState(null);
-  const [batchOrderIds, setBatchOrderIds] = useState([]);
-
-  // ✅ ride_id state
+  // ✅ ride_id state (batch removed)
   const [rideId, setRideId] = useState(null);
   const rideIdRef = useRef(null);
   useEffect(() => {
     rideIdRef.current = rideId;
   }, [rideId]);
 
-  // loop state
-  const [sendingGrab, setSendingGrab] = useState(false);
-  const searchingGrabRef = useRef(false);
-  const retryPromptTimeoutRef = useRef(null);
-  const retryCountdownIntervalRef = useRef(null);
-  const [retryInSec, setRetryInSec] = useState(0);
   const driverAcceptedRef = useRef(false);
-
-  // ✅ keep ref in sync
   useEffect(() => {
     driverAcceptedRef.current = !!driverAccepted;
   }, [driverAccepted]);
 
-  // ✅ prevent double-trigger of grab flow
-  const grabFlowInFlightRef = useRef(false);
-  const creatingBatchRef = useRef(false);
-
-  // cluster context
-  const clusterCtx = useMemo(
-    () => resolveClusterContext(params, order, routeOrderId),
-    [params, order, routeOrderId]
-  );
-
-  const CLUSTER_ROUTE_CANDIDATES = useMemo(
+  // ✅ Nearby list route candidates (GRAB redirects HERE)
+  const NEARBY_LIST_ROUTE_CANDIDATES = useMemo(
     () => [
-      "FoodNearbyClusterOrdersScreen",
-      "NearbyClusterOrdersScreen",
-      "NearbyClusterOrders",
-      "NearbyOrdersCluster",
+      "NearbyOrdersScreen",
+      "FoodNearbyOrdersScreen",
+      "NearbyOrders",
+      "FoodNearbyOrders",
+      "NearbyOrdersList",
     ],
     []
   );
 
-  const resolvedClusterRouteName = useMemo(() => {
-    const preferred = clusterCtx?.screenName || params.clusterScreenName;
+  const resolvedNearbyListRouteName = useMemo(() => {
+    const preferred =
+      params.nearbyOrdersRoute ||
+      params.nearbyOrdersScreen ||
+      params.nearbyListRoute ||
+      null;
+
     return (
-      pickExistingRouteName(navigation, [preferred, ...CLUSTER_ROUTE_CANDIDATES]) ||
-      null
+      pickExistingRouteName(navigation, [preferred, ...NEARBY_LIST_ROUTE_CANDIDATES]) || null
     );
-  }, [navigation, clusterCtx?.screenName, params.clusterScreenName, CLUSTER_ROUTE_CANDIDATES]);
+  }, [
+    navigation,
+    params.nearbyOrdersRoute,
+    params.nearbyOrdersScreen,
+    params.nearbyListRoute,
+    NEARBY_LIST_ROUTE_CANDIDATES,
+  ]);
 
   useEffect(() => {
     setItemUnavailableMap({});
@@ -1207,8 +941,6 @@ export default function OrderDetails() {
     }, [goBackToOrders])
   );
 
-
-
   const saveRideId = useCallback(
     async (rid, bizOverride = null) => {
       try {
@@ -1228,25 +960,7 @@ export default function OrderDetails() {
     [businessId]
   );
 
-  const saveBatchId = useCallback(
-    async (bid, bizOverride = null) => {
-      try {
-        const biz = bizOverride ?? businessId;
-        const safeBiz = toSafeKeyPart(biz);
-        if (!safeBiz) return;
-
-        const v = bid != null ? String(bid).trim() : "";
-        if (!v) return;
-
-        await SecureStore.setItemAsync(keyBatchId(safeBiz), v);
-      } catch (e) {
-        console.log("[OrderDetails] saveBatchId error:", e?.message || e);
-      }
-    },
-    [businessId]
-  );
-
-  // ✅ restore saved batch_id / ride_id
+  // ✅ restore saved ride_id (batch removed)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -1258,19 +972,14 @@ export default function OrderDetails() {
         if (!cancelled && savedRide && String(savedRide).trim() && !rideIdRef.current) {
           setRideId(String(savedRide).trim());
         }
-
-        const savedBatch = await SecureStore.getItemAsync(keyBatchId(safeBiz));
-        if (!cancelled && savedBatch && String(savedBatch).trim() && !batchId) {
-          setBatchId(String(savedBatch).trim());
-        }
       } catch (e) {
-        console.log("[OrderDetails] restore saved batch/ride error:", e?.message || e);
+        console.log("[OrderDetails] restore saved ride error:", e?.message || e);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [businessId, batchId]);
+  }, [businessId]);
 
   const loadBusinessDetails = useCallback(async () => {
     try {
@@ -1318,13 +1027,18 @@ export default function OrderDetails() {
 
   useEffect(() => {
     loadBusinessDetails();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadBusinessDetails]);
 
   /* ---------- Normalize fulfillment ---------- */
   const fulfillment = useMemo(() => resolveFulfillmentType({ ...order, params }), [order, params]);
-  const isPickupFulfillment = useMemo(() => (fulfillment || "").toLowerCase() === "pickup", [fulfillment]);
-  const orderDeliveryHint = useMemo(() => resolveDeliveryOptionFromOrder({ ...order, params }), [order, params]);
+  const isPickupFulfillment = useMemo(
+    () => (fulfillment || "").toLowerCase() === "pickup",
+    [fulfillment]
+  );
+  const orderDeliveryHint = useMemo(
+    () => resolveDeliveryOptionFromOrder({ ...order, params }),
+    [order, params]
+  );
 
   const deliveryOptionInitial = useMemo(() => {
     if (deliveryOptionFromParamsRaw) return String(deliveryOptionFromParamsRaw).toUpperCase();
@@ -1350,18 +1064,6 @@ export default function OrderDetails() {
     return deliveryOptionInitial === "GRAB";
   }, [isBothOption, isGrabSelected, deliveryOptionInitial]);
 
-  const deliveryOptionDisplay = useMemo(() => {
-    if (isBothOption) {
-      if (status === "READY") {
-        if (isSelfSelected) return "BOTH (SELF chosen)";
-        if (isGrabSelected) return "BOTH (GRAB chosen)";
-        return "BOTH (choose at READY)";
-      }
-      return "BOTH";
-    }
-    return deliveryOptionInitial || "";
-  }, [isBothOption, isSelfSelected, isGrabSelected, deliveryOptionInitial, status]);
-
   /* ---------- Sequence ---------- */
   const STATUS_SEQUENCE = useMemo(
     () =>
@@ -1372,7 +1074,8 @@ export default function OrderDetails() {
   );
 
   const isTerminalNegative = TERMINAL_NEGATIVE.has(status);
-  const isTerminalSuccess = TERMINAL_SUCCESS.has(status) || (isPickupFulfillment && status === "READY");
+  const isTerminalSuccess =
+    TERMINAL_SUCCESS.has(status) || (isPickupFulfillment && status === "READY");
 
   // ✅ LOCK merchant updates AFTER driver accepts (Grab / platform delivery)
   const isDriverAssigned = useMemo(() => {
@@ -1381,7 +1084,9 @@ export default function OrderDetails() {
   }, [driverAccepted, isPlatformDelivery, isBothOption, isGrabSelected]);
 
   const shouldBlockAtReady =
-    status === "READY" && (isPlatformDelivery || (isBothOption && isGrabSelected)) && !driverAccepted;
+    status === "READY" &&
+    (isPlatformDelivery || (isBothOption && isGrabSelected)) &&
+    !driverAccepted;
 
   const nextFor = useCallback(
     (curr) => {
@@ -1475,7 +1180,11 @@ export default function OrderDetails() {
       }
 
       let groupedUrlFinal = baseRaw;
-      if (bizId) groupedUrlFinal = groupedUrlFinal.replace(/\{businessId\}/gi, encodeURIComponent(String(bizId)));
+      if (bizId)
+        groupedUrlFinal = groupedUrlFinal.replace(
+          /\{businessId\}/gi,
+          encodeURIComponent(String(bizId))
+        );
 
       const token = await SecureStore.getItemAsync("auth_token");
       const res = await fetch(groupedUrlFinal, {
@@ -1501,7 +1210,12 @@ export default function OrderDetails() {
         if (Array.isArray(g?.orders)) {
           const blockUser = g.user || g.customer || g.user_details || null;
           const userName =
-            g.customer_name ?? g.name ?? blockUser?.name ?? blockUser?.user_name ?? blockUser?.full_name ?? "";
+            g.customer_name ??
+            g.name ??
+            blockUser?.name ??
+            blockUser?.user_name ??
+            blockUser?.full_name ??
+            "";
           const userPhone =
             g.phone ?? blockUser?.phone ?? blockUser?.phone_number ?? blockUser?.mobile ?? "";
 
@@ -1520,7 +1234,9 @@ export default function OrderDetails() {
         }
       }
 
-      const match = allOrders.find((o) => sameOrder(o?.id ?? o?.order_id ?? o?.order_code, routeOrderId));
+      const match = allOrders.find((o) =>
+        sameOrder(o?.id ?? o?.order_id ?? o?.order_code, routeOrderId)
+      );
       if (!match) return;
 
       const matchStatus = normalizeStatus(match?.status ?? "PENDING");
@@ -1543,13 +1259,11 @@ export default function OrderDetails() {
           match?.user?.user_name ??
           match?.user?.name ??
           "",
-        customer_phone:
-          match?.customer_phone ??
-          match?.phone ??
-          match?.user?.phone ??
-          "",
+        customer_phone: match?.customer_phone ?? match?.phone ?? match?.user?.phone ?? "",
         payment_method: match?.payment_method ?? match?.payment ?? "",
-        delivery_address: normalizeDeliveryAddress(match?.delivery_address ?? match?.address ?? match?.deliver_to),
+        delivery_address: normalizeDeliveryAddress(
+          match?.delivery_address ?? match?.address ?? match?.deliver_to
+        ),
         raw_items: Array.isArray(match?.raw_items)
           ? match.raw_items
           : Array.isArray(match?.items)
@@ -1939,7 +1653,14 @@ export default function OrderDetails() {
         setUpdating(false);
       }
     },
-    [order?.order_code, order?.id, routeOrderId, DEFAULT_REASON, debounceHydrateFromGrouped, hydrateFromGrouped]
+    [
+      order?.order_code,
+      order?.id,
+      routeOrderId,
+      DEFAULT_REASON,
+      debounceHydrateFromGrouped,
+      hydrateFromGrouped,
+    ]
   );
 
   /* ===========================
@@ -1967,7 +1688,10 @@ export default function OrderDetails() {
         const r = String(opts?.reason ?? "").trim();
         if (r.length < 3) {
           setDeclineOpen(true);
-          Alert.alert("Reason required", "Please provide at least 3 characters explaining why the order is declined.");
+          Alert.alert(
+            "Reason required",
+            "Please provide at least 3 characters explaining why the order is declined."
+          );
           return;
         }
 
@@ -1998,7 +1722,10 @@ export default function OrderDetails() {
 
         const prepVal = Number(manualPrepMin);
         if (!Number.isFinite(prepVal) || prepVal <= 0) {
-          Alert.alert("Time required", "Please enter the time to prepare (in minutes) before accepting the order.");
+          Alert.alert(
+            "Time required",
+            "Please enter the time to prepare (in minutes) before accepting the order."
+          );
           return;
         }
 
@@ -2121,14 +1848,14 @@ export default function OrderDetails() {
   );
 
   const next = nextFor(status);
-  const primaryLabel = status === "PENDING" ? "Accept" : next ? STATUS_META[next]?.label || "Next" : null;
+  const primaryLabel =
+    status === "PENDING" ? "Accept" : next ? STATUS_META[next]?.label || "Next" : null;
 
   const onPrimaryAction = useCallback(() => {
     if (!next || updating) return;
     doUpdate(next);
   }, [next, updating, doUpdate]);
 
-  const onDecline = useCallback(() => setDeclineOpen(true), []);
   const canDecline = useMemo(() => String(declineReason).trim().length >= 3, [declineReason]);
 
   const confirmDecline = useCallback(() => {
@@ -2281,472 +2008,6 @@ export default function OrderDetails() {
     [fetchDriverRating]
   );
 
-  /* ===========================
-     Grab loop helpers
-     =========================== */
-  const stopGrabLoop = useCallback(() => {
-    searchingGrabRef.current = false;
-    driverAcceptedRef.current = false;
-    setRetryInSec(0);
-
-    if (retryPromptTimeoutRef.current) {
-      clearTimeout(retryPromptTimeoutRef.current);
-      retryPromptTimeoutRef.current = null;
-    }
-    if (retryCountdownIntervalRef.current) {
-      clearInterval(retryCountdownIntervalRef.current);
-      retryCountdownIntervalRef.current = null;
-    }
-  }, []);
-
-  const scheduleRetryAsk = useCallback((sendAgainFn) => {
-    if (retryPromptTimeoutRef.current) {
-      clearTimeout(retryPromptTimeoutRef.current);
-      retryPromptTimeoutRef.current = null;
-    }
-    if (retryCountdownIntervalRef.current) {
-      clearInterval(retryCountdownIntervalRef.current);
-      retryCountdownIntervalRef.current = null;
-    }
-
-    setRetryInSec(60);
-    retryCountdownIntervalRef.current = setInterval(() => {
-      setRetryInSec((prev) => {
-        const nextVal = (Number.isFinite(prev) ? prev : 0) - 1;
-        if (nextVal <= 0) {
-          if (retryCountdownIntervalRef.current) {
-            clearInterval(retryCountdownIntervalRef.current);
-            retryCountdownIntervalRef.current = null;
-          }
-          return 0;
-        }
-        return nextVal;
-      });
-    }, 1000);
-
-    retryPromptTimeoutRef.current = setTimeout(() => {
-      retryPromptTimeoutRef.current = null;
-
-      if (!searchingGrabRef.current) return;
-      if (driverAcceptedRef.current) return;
-
-      Alert.alert("No driver yet", "Do you want to send the delivery request again?", [
-        { text: "Not now", style: "cancel", onPress: () => setRideMessage("Waiting for a driver… (you can send again anytime)") },
-        {
-          text: "Send again",
-          onPress: async () => {
-            if (!searchingGrabRef.current || driverAcceptedRef.current) return;
-            await sendAgainFn();
-            scheduleRetryAsk(sendAgainFn);
-          },
-        },
-      ]);
-    }, 60000);
-  }, []);
-
-  const getOrderForFare = useCallback(async () => order, [order]);
-
-  /* ===========================
-     ✅ ClusterDeliveryOptionsScreen-style buildBatchPayload (SINGLE ORDER)
-     =========================== */
-  const buildBatchPayload = useCallback(
-    async ({ batch_id } = {}) => {
-      const ord = await getOrderForFare();
-      if (!ord) throw new Error("Order not found");
-
-      // ✅ passenger_id from grouped user first (same fix as cluster)
-      const passengerId =
-        ord?.__user?.user_id ??
-        ord?.__user?.id ??
-        ord?.__user?.userId ??
-        ord?.user?.user_id ??
-        ord?.user?.id ??
-        ord?.user_id ??
-        ord?.customer_id ??
-        ord?.userId ??
-        ord?.customerId ??
-        null;
-
-      if (!passengerId) {
-        throw new Error("passenger_id missing (customer user_id not found on grouped user / order)");
-      }
-
-      const pickupLat = businessCoords?.lat ?? 27.4728;
-      const pickupLng = businessCoords?.lng ?? 89.639;
-
-      const distanceM =
-        routeInfo?.distanceKm != null && Number.isFinite(routeInfo.distanceKm)
-          ? Math.max(0, Math.round(routeInfo.distanceKm * 1000))
-          : 5000;
-
-      const durationS =
-        routeInfo?.etaMin != null && Number.isFinite(routeInfo.etaMin)
-          ? Math.max(0, Math.round(routeInfo.etaMin * 60))
-          : 1200;
-
-      const rawCode = ord?.order_code || ord?.order_id || ord?.id || routeOrderId;
-      const orderCode = normalizeOrderCode(rawCode);
-      const id =
-        orderCode && String(orderCode).trim().length
-          ? String(orderCode).trim()
-          : String(rawCode || "").trim();
-
-      const coord = extractDropCoords(ord);
-      const feeSnap = getOrderTotalsSnapshot(ord, null);
-
-      const amount = safeNum(ord?.totals?.total_amount ?? ord?.total_amount ?? ord?.total ?? ord?.amount ?? 0, 0);
-      const delivery_fee = safeNum(ord?.totals?.delivery_fee ?? ord?.delivery_fee ?? feeSnap?.delivery_fee ?? 0, 0);
-      const platform_fee = safeNum(ord?.totals?.platform_fee ?? ord?.platform_fee ?? feeSnap?.platform_fee ?? 0, 0);
-      const merchant_delivery_fee = safeNum(
-        ord?.totals?.merchant_delivery_fee ?? ord?.merchant_delivery_fee ?? feeSnap?.merchant_delivery_fee ?? 0,
-        0
-      );
-
-      const pay = String(ord?.payment_method ?? ord?.payment ?? "").toUpperCase();
-      const isCOD = pay === "COD" || pay.includes("CASH");
-
-      const dropsAll = [
-        {
-          order_id: id,
-          user_id: passengerId,
-          address: pickAddressText(ord),
-          lat: coord?.lat ?? null,
-          lng: coord?.lng ?? null,
-
-          customer_name:
-            ord?.customer_name ??
-            ord?.user_name ??
-            ord?.full_name ??
-            ord?.user?.name ??
-            ord?.__user?.name ??
-            ord?.__user?.user_name ??
-            ord?.__user?.full_name ??
-            "",
-
-          customer_phone:
-            ord?.customer_phone ??
-            ord?.phone ??
-            ord?.mobile ??
-            ord?.user?.phone ??
-            ord?.__user?.phone ??
-            ord?.__user?.mobile ??
-            null,
-
-          amount: Number(amount.toFixed(2)),
-          delivery_fee: Number(delivery_fee.toFixed(2)),
-          platform_fee: Number(platform_fee.toFixed(2)),
-          merchant_delivery_fee: Number(merchant_delivery_fee.toFixed(2)),
-
-          payment_method: pay || "WALLET",
-          cash_to_collect: isCOD ? Number(amount.toFixed(2)) : 0,
-        },
-      ];
-
-      // ✅ FIX: prevent 400 "At least one valid drop with lat/lng is required"
-      const drops = (dropsAll || []).filter(
-        (d) => d && Number.isFinite(Number(d.lat)) && Number.isFinite(Number(d.lng))
-      );
-      if (!drops.length) {
-        logJson("[OrderDetails] drops (NO valid coords):", dropsAll);
-        throw new Error("At least one valid drop with lat/lng is required");
-      }
-
-      const fare = Number((delivery_fee || merchant_delivery_fee || 0).toFixed(2));
-
-      const merchantIdNum = Number(businessId);
-      const merchant_id = Number.isFinite(merchantIdNum) ? merchantIdNum : businessId;
-
-      const payload = {
-        passenger_id: passengerId,
-        merchant_id: Number(merchant_id),
-        cityId: refCoords.cityId || "thimphu",
-        serviceType: "delivery",
-        service_code: "D",
-
-        pickup: [pickupLat, pickupLng],
-        pickup_place: ord?.business_name ?? ord?.store_name ?? "Merchant shop",
-        dropoff_place: "Multiple customers",
-
-        distance_m: distanceM,
-        duration_s: durationS,
-        fare,
-        currency: "BTN",
-        payment_method: { type: "MIXED" },
-        offer_code: null,
-
-        job_type: "BATCH",
-        batch_id:
-          batch_id != null
-            ? Number.isFinite(Number(batch_id))
-              ? Number(batch_id)
-              : String(batch_id)
-            : undefined,
-
-        drops,
-        owner_type: ownerType || undefined,
-      };
-
-      logJson("[OrderDetails] buildBatchPayload:", payload);
-      return payload;
-    },
-    [getOrderForFare, businessCoords, routeInfo, businessId, refCoords.cityId, routeOrderId, ownerType]
-  );
-
-  /* ===========================
-     Create batch for THIS order
-     =========================== */
-  const createBatchForThisOrder = useCallback(async () => {
-    if (!ENV_GROUP_NEARBY_ORDER_ENDPOINT) throw new Error("GROUP_NEARBY_ORDER_ENDPOINT is missing in env.");
-
-    // resolve business
-    let bizId = businessId || paramBusinessId || order?.business_id || order?.merchant_id || order?.store_id || null;
-
-    if (!bizId) {
-      try {
-        const saved = await SecureStore.getItemAsync("merchant_login");
-        if (saved) {
-          const j = JSON.parse(saved);
-          bizId = j?.business_id || j?.user?.business_id || j?.user?.businessId || j?.id || j?.user?.id || bizId;
-        }
-      } catch { }
-    }
-    if (!bizId) throw new Error("Missing businessId for batch create.");
-
-    const rawCode = order?.order_code || order?.order_id || order?.id || routeOrderId;
-    const orderCode = normalizeOrderCode(rawCode);
-    if (!orderCode) throw new Error("Missing order code for batch create.");
-
-    const numericId = getNumericOrderId(order);
-
-    const payload = {
-      merchant_id: Number.isFinite(Number(bizId)) ? Number(bizId) : bizId,
-      business_id: Number.isFinite(Number(bizId)) ? Number(bizId) : bizId,
-
-      order_codes: [String(orderCode)],
-      order_ids: [String(orderCode)], // backend sometimes expects order code here
-      ...(numericId != null ? { order_ids_numeric: [numericId] } : {}),
-
-      owner_type: ownerType || undefined,
-      delivery_option: "GRAB",
-    };
-
-    const token = await SecureStore.getItemAsync("auth_token");
-    const headers = { Accept: "application/json", "Content-Type": "application/json" };
-    if (token) headers.Authorization = `Bearer ${token}`;
-
-    console.log("[OrderDetails] Creating batch with payload:", payload);
-
-    const res = await fetch(ENV_GROUP_NEARBY_ORDER_ENDPOINT, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
-
-    const text = await res.text();
-    let json = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch { }
-
-    if (!res.ok) {
-      const msg = json?.message || json?.error || text || `HTTP ${res.status}`;
-      throw new Error(msg);
-    }
-
-    console.log("[OrderDetails] Batch create response:");
-    logJson("[OrderDetails] batchCreateResponse", json);
-
-    const bid = pickBatchId(json);
-    const ids = pickBatchOrderIds(json);
-    const finalIds = ids.length ? ids : [String(orderCode)];
-
-    setBatchId(bid != null ? String(bid) : null);
-    setBatchOrderIds(finalIds);
-
-    // ✅ save using resolved bizId (works even if state businessId not ready yet)
-    if (bid != null) saveBatchId(bid, bizId);
-
-    return { batch_id: bid != null ? bid : null, batch_order_ids: finalIds, batchResponse: json };
-  }, [businessId, paramBusinessId, order, routeOrderId, ownerType, saveBatchId]);
-
-  const ensureBatchForGrab = useCallback(async () => {
-    const rawCode = order?.order_code || order?.order_id || order?.id || routeOrderId;
-    const orderCode = normalizeOrderCode(rawCode);
-
-    // ✅ NEW: reuse batchId even if batchOrderIds empty
-    if (batchId) {
-      console.log("[OrderDetails] Reusing existing batchId:", batchId);
-      const safeIds =
-        Array.isArray(batchOrderIds) && batchOrderIds.length
-          ? batchOrderIds
-          : orderCode
-            ? [String(orderCode)]
-            : [];
-      return { batch_id: String(batchId), batch_order_ids: safeIds };
-    }
-
-    if (creatingBatchRef.current) {
-      // prevent duplicate creation spam
-      console.log("[OrderDetails] Batch creation already in progress, waiting...");
-      // small wait loop (max ~2s)
-      for (let i = 0; i < 10; i++) {
-        await new Promise((r) => setTimeout(r, 200));
-        if (batchId) {
-          console.log("[OrderDetails] Batch became available during wait:", batchId);
-          const safeIds =
-            Array.isArray(batchOrderIds) && batchOrderIds.length
-              ? batchOrderIds
-              : orderCode
-                ? [String(orderCode)]
-                : [];
-          return { batch_id: String(batchId), batch_order_ids: safeIds };
-        }
-      }
-    }
-
-    creatingBatchRef.current = true;
-    try {
-      console.log("[OrderDetails] No batchId -> creating new batch now");
-      const created = await createBatchForThisOrder();
-      return {
-        batch_id: created.batch_id != null ? String(created.batch_id) : null,
-        batch_order_ids: created.batch_order_ids || [],
-      };
-    } finally {
-      creatingBatchRef.current = false;
-    }
-  }, [batchId, batchOrderIds, order, routeOrderId, createBatchForThisOrder]);
-
-  /* ===========================
-     sendGrabDeliveryRequest (Cluster-style: buildBatchPayload + post)
-     =========================== */
-  const sendGrabDeliveryRequest = useCallback(
-    async ({ batch_id } = {}) => {
-      try {
-        if (!ENV_SEND_REQUEST_DRIVER) {
-          Alert.alert("Grab delivery not configured", "BATCH_ORDER_BROADCAST_ENDPOINT is missing in environment variables.");
-          return null;
-        }
-        if (!businessId) {
-          Alert.alert("Missing merchant", "businessId is missing.");
-          return null;
-        }
-
-        setSendingGrab(true);
-        setRideMessage("Sending batch request to nearby drivers…");
-
-        const payload = await buildBatchPayload({ batch_id });
-
-        const token = await SecureStore.getItemAsync("auth_token");
-        const headers = { Accept: "application/json", "Content-Type": "application/json" };
-        if (token) headers.Authorization = `Bearer ${token}`; // ✅ FIX: auth header if protected
-
-        const res = await fetch(ENV_SEND_REQUEST_DRIVER, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(payload),
-        });
-
-        const text = await res.text();
-        let json = null;
-        try {
-          json = text ? JSON.parse(text) : null;
-        } catch { }
-
-        if (!res.ok) throw new Error(json?.message || json?.error || text || `HTTP ${res.status}`);
-
-        // ✅ save ride_id + batch_id from response like cluster
-        const rid = pickRideId(json);
-        if (rid != null) saveRideId(rid);
-
-        const respBatchId = extractBatchIdFromPayload(json) ?? pickBatchId(json);
-        if (respBatchId != null) {
-          setBatchId(String(respBatchId));
-          saveBatchId(respBatchId);
-        }
-
-        setRideMessage("Batch request sent. Waiting for a driver to accept…");
-        return json;
-      } catch (e) {
-        console.log("[OrderDetails] sendGrabDeliveryRequest ERROR:", e?.message || e);
-        setRideMessage("");
-        Alert.alert("Grab delivery failed", String(e?.message || e));
-        return null;
-      } finally {
-        setSendingGrab(false);
-      }
-    },
-    [businessId, buildBatchPayload, saveRideId, saveBatchId]
-  );
-
-  /* ===========================
-     Single idempotent grab flow
-     - used by BOTH onSetDeliveryChoice + startGrabLoop
-     =========================== */
-  const runGrabFlow = useCallback(
-    async ({ source = "unknown" } = {}) => {
-      if (grabFlowInFlightRef.current) {
-        console.log(`[OrderDetails] runGrabFlow blocked (already running). source=${source}`);
-        return;
-      }
-
-      grabFlowInFlightRef.current = true;
-
-      try {
-        if (status !== "READY") {
-          Alert.alert("Not ready", "Please mark the order READY before requesting Grab delivery.");
-          return;
-        }
-        if (isScheduledOrder) {
-          Alert.alert("Scheduled order", "Scheduled orders cannot be broadcast for Grab delivery here.");
-          return;
-        }
-        if (isTerminalNegative || isTerminalSuccess) return;
-
-        // reset accept state on new search
-        searchingGrabRef.current = true;
-        driverAcceptedRef.current = false;
-        setDriverAccepted(false);
-        setDriverArrived(false);
-
-        setRideMessage("Preparing Grab delivery…");
-
-        const { batch_id } = await ensureBatchForGrab();
-        if (!batch_id) throw new Error("batch_id missing after ensureBatchForGrab");
-
-        setRideMessage("Sending request to drivers…");
-        await sendGrabDeliveryRequest({ batch_id });
-
-        scheduleRetryAsk(() => sendGrabDeliveryRequest({ batch_id }));
-      } catch (e) {
-        console.log("[OrderDetails] runGrabFlow error:", e?.message || e);
-        setRideMessage("");
-        searchingGrabRef.current = false; // ✅ FIX: no stuck busy
-        Alert.alert("Grab failed", String(e?.message || e));
-      } finally {
-        grabFlowInFlightRef.current = false;
-      }
-    },
-    [
-      status,
-      isScheduledOrder,
-      isTerminalNegative,
-      isTerminalSuccess,
-      ensureBatchForGrab,
-      sendGrabDeliveryRequest,
-      scheduleRetryAsk,
-    ]
-  );
-
-  // used by DeliveryMethodChooser "Start"/"Send again" action
-  const startGrabLoop = useCallback(async () => {
-    await runGrabFlow({ source: "startGrabLoop" });
-  }, [runGrabFlow]);
-
-  useEffect(() => {
-    if (status !== "READY" || isTerminalNegative || isTerminalSuccess) stopGrabLoop();
-  }, [status, isTerminalNegative, isTerminalSuccess, stopGrabLoop]);
-
   const driverSummaryText = useMemo(() => {
     if (!driverDetails) return "";
 
@@ -2768,7 +2029,65 @@ export default function OrderDetails() {
   }, [driverDetails, driverRating]);
 
   /* ===========================
-     SOCKET: accept + arrived + status updates (Cluster-style acceptance)
+     ✅ CHANGE: GRAB selection navigates immediately to NearbyOrdersScreen
+     - No deliver in group
+     - No popup/alert
+     =========================== */
+  const redirectToNearbyOrders = useCallback(async () => {
+    const biz =
+      businessId ?? paramBusinessId ?? order?.business_id ?? order?.merchant_id ?? null;
+
+    if (!biz) return;
+
+    const targetRoute = resolvedNearbyListRouteName;
+    if (!targetRoute) return;
+
+    const focusOrderId = normalizeOrderCode(order?.order_code || order?.id || routeOrderId);
+
+    const payload = {
+      businessId: biz,
+      business_id: biz,
+      merchant_id: biz,
+      bizId: biz,
+
+      ownerType: ownerType ?? "food",
+
+      orderEndpoint: ordersGroupedUrl ?? ENV_ORDER_ENDPOINT ?? null,
+      ordersGroupedUrl: ordersGroupedUrl ?? ENV_ORDER_ENDPOINT ?? null,
+
+      detailsRoute: "OrderDetails",
+      thresholdKm: params.thresholdKm ?? 2,
+
+      fromOrderDetails: true,
+      focusOrderId,
+      delivery_option: "GRAB",
+      deliveryOption: "GRAB",
+    };
+
+    const ownerNav = findNavigatorOwningRoute(navigation, targetRoute);
+    if (ownerNav && ownerNav !== navigation) {
+      ownerNav.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+      return;
+    }
+    navigation.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+  }, [
+    businessId,
+    paramBusinessId,
+    order?.business_id,
+    order?.merchant_id,
+    order?.order_code,
+    order?.id,
+    routeOrderId,
+    ownerType,
+    ordersGroupedUrl,
+    params.thresholdKm,
+    ENV_ORDER_ENDPOINT,
+    resolvedNearbyListRouteName,
+    navigation,
+  ]);
+
+  /* ===========================
+     SOCKET: accept + arrived + status updates (NO batch matching)
      =========================== */
   useEffect(() => {
     if (!ENV_RIDE_SOCKET) return;
@@ -2778,23 +2097,23 @@ export default function OrderDetails() {
 
     const normalizeKey = (x) => normalizeOrderCode(x ?? "");
 
-    const payloadMatchesThisOrderOrBatch = (payload) => {
+    const payloadMatchesThisOrder = (payload) => {
       try {
         const thisOrderCode = normalizeKey(order?.order_code || order?.id || routeOrderId);
-        const myBatch = batchId != null ? String(batchId) : null;
 
-        // match by batch
-        const payloadBatch = extractBatchIdFromPayload(payload);
-        if (myBatch && payloadBatch && String(payloadBatch) === String(myBatch)) return true;
-
-        // match by order
+        // match by order id/code
         if (!thisOrderCode) return true;
+
         const extracted = extractOrderIdFromPayload(payload);
         if (extracted && sameOrder(String(extracted), thisOrderCode)) return true;
 
         // scan drops[] for matching order
         const drops =
-          payload?.drops ?? payload?.data?.drops ?? payload?.payload?.drops ?? payload?.message?.drops ?? null;
+          payload?.drops ??
+          payload?.data?.drops ??
+          payload?.payload?.drops ??
+          payload?.message?.drops ??
+          null;
         if (Array.isArray(drops)) {
           for (const d of drops) {
             const oid = d?.order_id ?? d?.orderId ?? d?.order_code ?? d?.orderCode ?? null;
@@ -2828,17 +2147,10 @@ export default function OrderDetails() {
     const handleAccepted = async (payload) => {
       driverAcceptedRef.current = true;
       setDriverAccepted(true);
-      stopGrabLoop();
 
-      // save ride_id + batch_id (cluster behavior)
+      // save ride_id (batch removed)
       const rid = pickRideId(payload);
       if (rid != null) saveRideId(rid);
-
-      const bid = extractBatchIdFromPayload(payload);
-      if (bid != null) {
-        setBatchId(String(bid));
-        saveBatchId(bid);
-      }
 
       const driverId = extractDriverId(payload);
       if (driverId != null) fetchDriverDetails(driverId);
@@ -2926,23 +2238,18 @@ export default function OrderDetails() {
           const oid = normalizeKey(order?.order_code || order?.id || routeOrderId);
           if (oid) socket.emit("joinOrder", { orderId: String(oid) }, () => { });
         } catch { }
-
-        // join batch room if we have batch at connect time
-        try {
-          if (batchId) socket.emit("joinBatchRoom", { batch_id: String(batchId) }, () => { });
-        } catch { }
       });
 
       const safe = (fn) => (payload) => {
-        if (!payloadMatchesThisOrderOrBatch(payload)) return;
+        if (!payloadMatchesThisOrder(payload)) return;
         fn(payload);
       };
 
-      ["deliveryAccepted", "delivery:accepted", "delivery_accept", "batch:accepted"].forEach((ev) =>
+      ["deliveryAccepted", "delivery:accepted", "delivery_accept", "accepted"].forEach((ev) =>
         socket.on(ev, safe(handleAccepted))
       );
 
-      ["delivery:driver_arrived", "deliveryDriverArrived", "delivery:arrived"].forEach((ev) =>
+      ["delivery:driver_arrived", "deliveryDriverArrived", "delivery:arrived", "arrived"].forEach((ev) =>
         socket.on(ev, safe(handleArrived))
       );
 
@@ -2957,9 +2264,9 @@ export default function OrderDetails() {
         "deliveryDriverLocation",
       ].forEach((ev) => socket.on(ev, safe(handleStatus)));
 
-      // fallback: catch-all (cluster style)
+      // fallback: catch-all
       socket.onAny((eventName, payload) => {
-        if (!payloadMatchesThisOrderOrBatch(payload)) return;
+        if (!payloadMatchesThisOrder(payload)) return;
 
         const en = String(eventName || "").toLowerCase();
         const driverId = extractDriverId(payload);
@@ -2984,9 +2291,7 @@ export default function OrderDetails() {
         socket.removeAllListeners();
         socket.disconnect();
       }
-      stopGrabLoop();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     ENV_RIDE_SOCKET,
     order?.order_code,
@@ -2994,24 +2299,11 @@ export default function OrderDetails() {
     routeOrderId,
     businessId,
     paramBusinessId,
-    batchId,
     driverDetails,
     fetchDriverDetails,
     applySocketStatusToUi,
-    stopGrabLoop,
     saveRideId,
-    saveBatchId,
   ]);
-
-  // ✅ FIX: if batchId is created AFTER socket connect, join batch room immediately
-  useEffect(() => {
-    const s = socketRef.current;
-    if (!s) return;
-    if (!batchId) return;
-    try {
-      s.emit("joinBatchRoom", { batch_id: String(batchId) }, () => { });
-    } catch { }
-  }, [batchId]);
 
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener("order-updated", ({ id, patch }) => {
@@ -3024,90 +2316,8 @@ export default function OrderDetails() {
   }, [routeOrderId, order?.id]);
 
   /* ===========================
-     Deliver-in-group navigation (kept)
-     =========================== */
-  const goToCluster = useCallback(async () => {
-    const focusOrderId = normalizeOrderCode(order?.order_code || order?.id || routeOrderId);
-    const resolvedUserId =
-      order?.user_id ??
-      order?.__user?.user_id ??
-      order?.user?.user_id ??
-      order?.user?.id ??
-      order?.customer_id ??
-      order?.customer?.id ??
-      order?.userId ??
-      params.user_id ??
-      params.userId ??
-      null;
-
-    const fallbackParams = {
-      businessId: businessId ?? paramBusinessId ?? order?.business_id ?? order?.merchant_id ?? null,
-      ownerType: ownerType ?? null,
-      ordersGroupedUrl: ordersGroupedUrl ?? ENV_ORDER_ENDPOINT ?? null,
-      delivery_option: params.delivery_option ?? params.deliveryOption ?? order?.delivery_option ?? null,
-      focusOrderId,
-      user_id: resolvedUserId,
-    };
-
-    const targetRoute = resolvedClusterRouteName;
-
-    if (!targetRoute) {
-      Alert.alert(
-        "Route not registered",
-        "FoodNearbyClusterOrdersScreen is not in this navigator chain. Add it to your Stack.Screen route names."
-      );
-      return;
-    }
-
-    const ownerNav = findNavigatorOwningRoute(navigation, targetRoute);
-    const navTo = (payload) => {
-      if (ownerNav && ownerNav !== navigation) {
-        ownerNav.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
-        return;
-      }
-      navigation.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
-    };
-
-    if (clusterCtx?.orders && Array.isArray(clusterCtx.orders) && clusterCtx.orders.length) {
-      navTo({
-        ...clusterCtx,
-        businessId: clusterCtx.businessId ?? fallbackParams.businessId,
-        ownerType: clusterCtx.ownerType ?? fallbackParams.ownerType,
-        ordersGroupedUrl: clusterCtx.ordersGroupedUrl ?? fallbackParams.ordersGroupedUrl,
-        delivery_option: clusterCtx.delivery_option ?? fallbackParams.delivery_option,
-        focusOrderId,
-        user_id: clusterCtx.user_id ?? clusterCtx.userId ?? resolvedUserId,
-        label: clusterCtx.label || clusterCtx.addrPreview || "Nearby cluster",
-        addrPreview: clusterCtx.addrPreview || clusterCtx.label || "",
-      });
-      return;
-    }
-
-    navTo({
-      ...fallbackParams,
-      label: "Nearby cluster",
-      addrPreview: "",
-      orders: [],
-      thresholdKm: 5,
-      centerCoords: null,
-      nextTrackScreen: "TrackBatchOrdersScreen",
-    });
-  }, [
-    navigation,
-    resolvedClusterRouteName,
-    clusterCtx,
-    order?.order_code,
-    order?.id,
-    routeOrderId,
-    businessId,
-    paramBusinessId,
-    ownerType,
-    ordersGroupedUrl,
-    params,
-  ]);
-
-  /* ===========================
-     When user selects GRAB: create batch then send request immediately
+     ✅ CHANGE: When user selects GRAB, do NOT broadcast.
+     Instead: redirect immediately to NearbyOrdersScreen
      =========================== */
   const onSetDeliveryChoice = useCallback(
     async (choice) => {
@@ -3116,7 +2326,6 @@ export default function OrderDetails() {
 
       // reset when switching away from grab
       if (nextChoice !== "grab") {
-        stopGrabLoop();
         setRideMessage("");
         setDriverAccepted(false);
         driverAcceptedRef.current = false;
@@ -3124,10 +2333,15 @@ export default function OrderDetails() {
         return;
       }
 
-      // ✅ IMPORTANT: only create batch & send when user clicks GRAB (or presses start)
-      await runGrabFlow({ source: "onSetDeliveryChoice" });
+      // GRAB selected: reset states then redirect
+      setDriverAccepted(false);
+      driverAcceptedRef.current = false;
+      setDriverArrived(false);
+      setRideMessage("");
+
+      await redirectToNearbyOrders();
     },
-    [stopGrabLoop, runGrabFlow]
+    [redirectToNearbyOrders]
   );
 
   const isCancelledByCustomer = useMemo(() => {
@@ -3174,10 +2388,12 @@ export default function OrderDetails() {
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
       {/* Header */}
       <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
-        <Pressable onPress={goBackToOrders} style={styles.backBtn} hitSlop={S(8)}>
+        <Pressable onPress={goBackToOrders} style={styles.backBtn} hitSlop={hit(S(8))}>
           <Ionicons name="arrow-back" size={S(22)} color="#0f172a" />
         </Pressable>
+
         <Text style={styles.headerTitle}>Order details</Text>
+
         <View
           style={{
             width: S(80),
@@ -3199,15 +2415,13 @@ export default function OrderDetails() {
               borderColor: "#D1FAE5",
               backgroundColor: "#F0FDF4",
             }}
-            hitSlop={S(8)}
+            hitSlop={hit(S(8))}
           >
             <Ionicons name="chatbubble-ellipses-outline" size={S(18)} color="#00B14F" />
           </Pressable>
 
           <ActivityIndicator animating={refreshing} size="small" />
         </View>
-
-
       </View>
 
       <ScrollView
@@ -3236,7 +2450,6 @@ export default function OrderDetails() {
             status={status}
             fulfillment={fulfillment}
             fulfillmentLower={fulfillmentLower}
-            deliveryOptionDisplay={deliveryOptionDisplay}
             ifUnavailableDisplay={ifUnavailableDisplay}
             estimatedArrivalDisplay={estimatedArrivalDisplay}
             etaText={etaText}
@@ -3259,24 +2472,22 @@ export default function OrderDetails() {
                 isTerminalSuccess={isTerminalSuccess}
                 isSelfSelected={isSelfSelected}
                 isGrabSelected={isGrabSelected}
-                sendingGrab={sendingGrab}
-                rideMessage={
-                  retryInSec > 0 && rideMessage
-                    ? `${rideMessage}\nRetry option in ${retryInSec}s`
-                    : rideMessage
-                }
+                sendingGrab={false}
+                rideMessage={rideMessage}
                 driverSummaryText={driverSummaryText}
                 driverAccepted={driverAccepted}
                 setDeliveryChoice={onSetDeliveryChoice}
-                stopGrabLoop={stopGrabLoop}
-                startGrabLoop={startGrabLoop}
-                showDeliverInGroup={status === "READY"}
-                onDeliverInGroup={goToCluster}
+                stopGrabLoop={() => { }}
+                startGrabLoop={() => { }} // ✅ no popup
+                // ✅ deliver-in-group removed
+                showDeliverInGroup={false}
+                onDeliverInGroup={() => { }}
               />
             </View>
 
-            <View style={{ marginTop: S(12) }}>
-              {!isDriverAssigned ? (
+            {/* ✅ Show "Update status" ONLY for SELF */}
+            {isSelfSelected && (
+              <View style={{ marginTop: S(12) }}>
                 <UpdateStatusActions
                   status={status}
                   isCancelledByCustomer={isCancelledByCustomer}
@@ -3290,23 +2501,12 @@ export default function OrderDetails() {
                   primaryLabel={primaryLabel}
                   onPrimaryAction={onPrimaryAction}
                   doUpdate={doUpdate}
-                  onDecline={onDecline}
+                  onDecline={() => setDeclineOpen(true)}
                   driverAccepted={driverAccepted}
                 />
-              ) : (
-                <View style={[styles.block, { marginTop: S(12) }]}>
-                  <Text style={[styles.segmentHint, { fontWeight: "700" }]}>
-                    Driver will update order status automatically.
-                  </Text>
-                  <Text style={[styles.segmentHint, { marginTop: S(6) }]}>
-                    Current status: {STATUS_META[status]?.label || status.replace(/_/g, " ")}
-                  </Text>
-                  {!!rideMessage ? (
-                    <Text style={[styles.segmentHint, { marginTop: S(6) }]}>{rideMessage}</Text>
-                  ) : null}
-                </View>
-              )}
-            </View>
+              </View>
+            )}
+
           </>
         )}
 
