@@ -1,5 +1,5 @@
 // screens/NotificationsTab.js
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -10,12 +10,13 @@ import {
   Alert,
   Modal,
   ScrollView,
-} from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as SecureStore from 'expo-secure-store';
-import { Ionicons } from '@expo/vector-icons';
-import { Swipeable } from 'react-native-gesture-handler';
-import { useNavigation } from '@react-navigation/native';
+  DeviceEventEmitter,
+} from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
+import { Ionicons } from "@expo/vector-icons";
+import { Swipeable } from "react-native-gesture-handler";
+import { useNavigation } from "@react-navigation/native";
 import {
   NOTIFICATIONS_ENDPOINT as ENV_NOTIFS_ENDPOINT,
   NOTIFICATION_READ_ENDPOINT as ENV_NOTIF_READ_ENDPOINT,
@@ -23,13 +24,14 @@ import {
   NOTIFICATION_DELETE_ENDPOINT as ENV_NOTIF_DELETE_ENDPOINT,
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
   SYSTEM_NOTIFICATIONS_ENDPOINT as ENV_SYSTEM_NOTIFS_ENDPOINT,
-} from '@env';
+} from "@env";
 
-const STORAGE_KEY_READMAP = '@notifications_readmap_v1';
+const STORAGE_KEY_READMAP = "@notifications_readmap_v1";
+const STORAGE_KEY_LAST_UNREAD = "@notifications_unread_count_v1";
 
 /* ---------- helpers: int ---------- */
 const toInt = (v) => {
-  const n = Number.parseInt(String(v ?? '').trim(), 10);
+  const n = Number.parseInt(String(v ?? "").trim(), 10);
   return Number.isFinite(n) ? n : null;
 };
 
@@ -39,7 +41,7 @@ async function resolveBusinessId(routeParams) {
   if (fromParams != null) return fromParams;
 
   try {
-    const rawAS = await AsyncStorage.getItem('merchant_login');
+    const rawAS = await AsyncStorage.getItem("merchant_login");
     if (rawAS) {
       const parsed = JSON.parse(rawAS);
       const id = toInt(
@@ -53,7 +55,7 @@ async function resolveBusinessId(routeParams) {
   } catch {}
 
   try {
-    const rawSS = await SecureStore.getItemAsync('merchant_login');
+    const rawSS = await SecureStore.getItemAsync("merchant_login");
     if (rawSS) {
       const parsed = JSON.parse(rawSS);
       const id = toInt(
@@ -72,7 +74,7 @@ async function resolveBusinessId(routeParams) {
 /* ---------- helpers: user id (for system notifications) ---------- */
 async function resolveUserId() {
   try {
-    const rawAS = await AsyncStorage.getItem('merchant_login');
+    const rawAS = await AsyncStorage.getItem("merchant_login");
     if (rawAS) {
       const parsed = JSON.parse(rawAS);
       const id = toInt(
@@ -87,7 +89,7 @@ async function resolveUserId() {
   } catch {}
 
   try {
-    const rawSS = await SecureStore.getItemAsync('merchant_login');
+    const rawSS = await SecureStore.getItemAsync("merchant_login");
     if (rawSS) {
       const parsed = JSON.parse(rawSS);
       const id = toInt(
@@ -105,50 +107,50 @@ async function resolveUserId() {
 }
 
 /* ---------- endpoints (env) ---------- */
-const trimSlashes = (s = '') => String(s).replace(/\/+$/, '');
-const NOTIFS_BASE = trimSlashes(String(ENV_NOTIFS_ENDPOINT || ''));
-const READ_ONE_BASE = trimSlashes(String(ENV_NOTIF_READ_ENDPOINT || ''));
-const READ_ALL_BASE = trimSlashes(String(ENV_NOTIF_READ_ALL_ENDPOINT || ''));
-const DELETE_BASE = trimSlashes(String(ENV_NOTIF_DELETE_ENDPOINT || ''));
-const ORDER_BASE = trimSlashes(String(ENV_ORDER_ENDPOINT || ''));
-const SYSTEM_NOTIFS_BASE = trimSlashes(String(ENV_SYSTEM_NOTIFS_ENDPOINT || ''));
+const trimSlashes = (s = "") => String(s).replace(/\/+$/, "");
+const NOTIFS_BASE = trimSlashes(String(ENV_NOTIFS_ENDPOINT || ""));
+const READ_ONE_BASE = trimSlashes(String(ENV_NOTIF_READ_ENDPOINT || ""));
+const READ_ALL_BASE = trimSlashes(String(ENV_NOTIF_READ_ALL_ENDPOINT || ""));
+const DELETE_BASE = trimSlashes(String(ENV_NOTIF_DELETE_ENDPOINT || ""));
+const ORDER_BASE = trimSlashes(String(ENV_ORDER_ENDPOINT || ""));
+const SYSTEM_NOTIFS_BASE = trimSlashes(String(ENV_SYSTEM_NOTIFS_ENDPOINT || ""));
 
 const buildNotificationsUrl = (businessId) =>
-  NOTIFS_BASE ? NOTIFS_BASE.replace('{business_id}', String(businessId)) : null;
+  NOTIFS_BASE ? NOTIFS_BASE.replace("{business_id}", String(businessId)) : null;
 
 const buildReadOneUrl = (notificationId) =>
-  READ_ONE_BASE ? READ_ONE_BASE.replace('{notificationId}', String(notificationId)) : null;
+  READ_ONE_BASE ? READ_ONE_BASE.replace("{notificationId}", String(notificationId)) : null;
 
 const buildReadAllUrl = (businessId) =>
   READ_ALL_BASE
-    ? READ_ALL_BASE.replace('{businessId}', String(businessId)).replace(
-        '{business_id}',
+    ? READ_ALL_BASE.replace("{businessId}", String(businessId)).replace(
+        "{business_id}",
         String(businessId)
       )
     : null;
 
 const buildDeleteUrl = (notificationId) =>
-  DELETE_BASE ? DELETE_BASE.replace('{notificationId}', String(notificationId)) : null;
+  DELETE_BASE ? DELETE_BASE.replace("{notificationId}", String(notificationId)) : null;
 
 const buildSystemNotificationsUrl = (userId) =>
-  SYSTEM_NOTIFS_BASE ? SYSTEM_NOTIFS_BASE.replace('{user_id}', String(userId)) : null;
+  SYSTEM_NOTIFS_BASE ? SYSTEM_NOTIFS_BASE.replace("{user_id}", String(userId)) : null;
 
 // Grouped orders URL (same one OrdersTab uses)
 const buildOrdersGroupedUrl = (businessId, ownerType) => {
   if (!ORDER_BASE || !businessId) return null;
-  let url = ORDER_BASE.replace('{businessId}', String(businessId)).replace(
-    '{business_id}',
+  let url = ORDER_BASE.replace("{businessId}", String(businessId)).replace(
+    "{business_id}",
     String(businessId)
   );
   try {
     const u = new URL(url);
-    if (ownerType === 'mart' && !u.searchParams.get('owner_type')) {
-      u.searchParams.set('owner_type', 'mart');
+    if (ownerType === "mart" && !u.searchParams.get("owner_type")) {
+      u.searchParams.set("owner_type", "mart");
     }
     return u.toString();
   } catch {
-    if (ownerType === 'mart' && !/[?&]owner_type=/.test(url)) {
-      url += (url.includes('?') ? '&' : '?') + 'owner_type=mart';
+    if (ownerType === "mart" && !/[?&]owner_type=/.test(url)) {
+      url += (url.includes("?") ? "&" : "?") + "owner_type=mart";
     }
     return url;
   }
@@ -156,10 +158,10 @@ const buildOrdersGroupedUrl = (businessId, ownerType) => {
 
 /* ---------- auth headers ---------- */
 async function getToken() {
-  let token = await SecureStore.getItemAsync('auth_token');
+  let token = await SecureStore.getItemAsync("auth_token");
   if (!token) {
     try {
-      const raw = await SecureStore.getItemAsync('merchant_login');
+      const raw = await SecureStore.getItemAsync("merchant_login");
       if (raw) {
         const parsed = JSON.parse(raw);
         token = parsed?.token ?? parsed?.auth_token ?? parsed?.access_token ?? null;
@@ -170,23 +172,23 @@ async function getToken() {
 }
 async function buildHeaders(hasBody) {
   const token = await getToken();
-  const h = { Accept: 'application/json' };
-  if (hasBody) h['Content-Type'] = 'application/json';
+  const h = { Accept: "application/json" };
+  if (hasBody) h["Content-Type"] = "application/json";
   if (token) h.Authorization = `Bearer ${token}`;
   return h;
 }
 
 /* ---------- TIME HELPERS ---------- */
 const showAsGiven = (s) => {
-  if (!s) return '';
+  if (!s) return "";
   const d = String(s);
-  const isoish = d.includes('T') ? d : d.replace(' ', 'T');
+  const isoish = d.includes("T") ? d : d.replace(" ", "T");
   const y = isoish.slice(0, 4),
     m = isoish.slice(5, 7),
     dd = isoish.slice(8, 10);
   const hh = isoish.slice(11, 13),
     mm = isoish.slice(14, 16);
-  const monNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const monNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const mon = monNames[(+m || 1) - 1] || m;
   if (!y || !m || !dd || !hh || !mm) return d;
   return `${mon} ${dd}, ${hh}:${mm}`;
@@ -194,16 +196,16 @@ const showAsGiven = (s) => {
 
 const parseLocalFromGiven = (s) => {
   if (!s) return null;
-  const str = String(s).replace(' ', 'T');
+  const str = String(s).replace(" ", "T");
   const m = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
   if (!m) return null;
   const [, y, mo, d, hh, mm, ss] = m;
-  return new Date(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mm), Number(ss || '0'));
+  return new Date(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mm), Number(ss || "0"));
 };
 
 const timeAgoLocal = (s) => {
   const dt = parseLocalFromGiven(s) || new Date(s);
-  if (!dt || isNaN(+dt)) return '';
+  if (!dt || Number.isNaN(+dt)) return "";
   const diffSec = Math.max(1, Math.floor((Date.now() - dt.getTime()) / 1000));
   if (diffSec < 60) return `${diffSec}s`;
   const m = Math.floor(diffSec / 60);
@@ -216,49 +218,46 @@ const timeAgoLocal = (s) => {
 
 const isTodayLocal = (s) => {
   const dt = parseLocalFromGiven(s) || new Date(s);
-  if (!dt || isNaN(+dt)) return false;
+  if (!dt || Number.isNaN(+dt)) return false;
   const now = new Date();
-  return (
-    dt.getFullYear() === now.getFullYear() &&
-    dt.getMonth() === now.getMonth() &&
-    dt.getDate() === now.getDate()
-  );
+  return dt.getFullYear() === now.getFullYear() && dt.getMonth() === now.getMonth() && dt.getDate() === now.getDate();
 };
 
 /* ---------- type helpers ---------- */
 const typeIcon = (type) => {
   switch (type) {
-    case 'order':
-      return 'receipt-outline';
-    case 'success':
-      return 'checkmark-circle-outline';
-    case 'warning':
-      return 'alert-circle-outline';
-    case 'payout':
-      return 'card-outline';
-    case 'wallet':
-      return 'card-outline';
+    case "order":
+      return "receipt-outline";
+    case "success":
+      return "checkmark-circle-outline";
+    case "warning":
+      return "alert-circle-outline";
+    case "payout":
+      return "card-outline";
+    case "wallet":
+      return "card-outline";
     default:
-      return 'time-outline';
+      return "time-outline";
   }
 };
 const typeTint = (type) => {
   switch (type) {
-    case 'order':
-      return '#2563eb';
-    case 'success':
-      return '#10b981';
-    case 'warning':
-      return '#f59e0b';
-    case 'payout':
-      return '#14b8a6';
-    case 'wallet':
-      return '#14b8a6';
+    case "order":
+      return "#2563eb";
+    case "success":
+      return "#10b981";
+    case "warning":
+      return "#f59e0b";
+    case "payout":
+      return "#14b8a6";
+    case "wallet":
+      return "#14b8a6";
     default:
-      return '#0ea5e9';
+      return "#0ea5e9";
   }
 };
 
+/* ---------- order parsing ---------- */
 const toOrderParts = (val) => {
   if (!val) return { orderCode: null, orderIdNumeric: null };
   const raw = String(val).trim();
@@ -269,7 +268,7 @@ const toOrderParts = (val) => {
   return { orderCode, orderIdNumeric };
 };
 
-const parseOrderFromText = (text = '') => {
+const parseOrderFromText = (text = "") => {
   const str = String(text);
   let m = str.match(/\b(ORD[-_]\d+)\b/i) || str.match(/#\s*(ORD[-_]\d+)\b/i);
   if (m?.[1]) return toOrderParts(m[1]);
@@ -294,71 +293,71 @@ const resolveOrderFromRecord = (n) => {
     null;
 
   if (first) return toOrderParts(first);
-  return parseOrderFromText(n.body_preview ?? n.body ?? n.message ?? n.description ?? '');
+  return parseOrderFromText(n.body_preview ?? n.body ?? n.message ?? n.description ?? "");
 };
 
-const inferStatusFromText = (title = '', body = '') => {
+const inferStatusFromText = (title = "", body = "") => {
   const t = `${title} ${body}`.toLowerCase();
-  if (t.includes('completed') || t.includes('delivered')) return 'COMPLETED';
-  if (t.includes('out for delivery')) return 'OUT_FOR_DELIVERY';
-  if (t.includes('ready')) return 'READY';
-  if (t.includes('confirm')) return 'CONFIRMED';
-  if (t.includes('declin') || t.includes('reject')) return 'DECLINED';
-  return 'PENDING';
+  if (t.includes("completed") || t.includes("delivered")) return "COMPLETED";
+  if (t.includes("out for delivery")) return "OUT_FOR_DELIVERY";
+  if (t.includes("ready")) return "READY";
+  if (t.includes("confirm")) return "CONFIRMED";
+  if (t.includes("declin") || t.includes("reject")) return "DECLINED";
+  return "PENDING";
 };
 
 const isDeliveredLike = (status) => {
-  const s = String(status || '').toUpperCase();
-  return s === 'COMPLETED' || s === 'DELIVERED' || s === 'DELIVERED_SUCCESS' || s === 'SUCCESS';
+  const s = String(status || "").toUpperCase();
+  return s === "COMPLETED" || s === "DELIVERED" || s === "DELIVERED_SUCCESS" || s === "SUCCESS";
 };
 
 /* ---------- filters/tabs ---------- */
 const FILTER_TABS = [
-  { key: 'all', label: 'All' },
-  { key: 'orders', label: 'Orders' },
-  { key: 'wallet', label: 'Wallet' },
-  { key: 'system', label: 'System' },
+  { key: "all", label: "All" },
+  { key: "orders", label: "Orders" },
+  { key: "wallet", label: "Wallet" },
+  { key: "system", label: "System" },
 ];
 
 /* ---------- local helpers ---------- */
 function normalizeType(raw) {
-  const t = String(raw || '').toLowerCase();
-  if (t.includes('wallet')) return 'wallet';
-  if (t.startsWith('order')) return 'order';
-  if (t.includes('payout')) return 'payout';
-  if (t.includes('warn')) return 'warning';
-  if (t.includes('success')) return 'success';
-  return 'system';
+  const t = String(raw || "").toLowerCase();
+  if (t.includes("wallet")) return "wallet";
+  if (t.startsWith("order")) return "order";
+  if (t.includes("payout")) return "payout";
+  if (t.includes("warn")) return "warning";
+  if (t.includes("success")) return "success";
+  return "system";
 }
 
 /* ---------- map API → UI ---------- */
 const mapApiNotif = (n, readMap) => {
-  const id = String(n.notification_id ?? n.id ?? n._id ?? '');
+  const id = String(n.notification_id ?? n.id ?? n._id ?? "");
   if (!id) return null;
 
   const type = normalizeType(n.type);
   const created = n.created_at ?? n.createdAt ?? n.timestamp ?? null;
 
-  const title = n.title ?? 'Activity';
-  let body = n.body_preview ?? n.body ?? n.message ?? n.description ?? '';
+  const title = n.title ?? "Activity";
+  let body = n.body_preview ?? n.body ?? n.message ?? n.description ?? "";
   if (
-    String(n.type).toLowerCase() === 'order:status' &&
-    String(body).toLowerCase().includes('status changed to completed')
+    String(n.type).toLowerCase() === "order:status" &&
+    String(body).toLowerCase().includes("status changed to completed")
   ) {
-    body = 'Order completed successfully.';
+    body = "Order completed successfully.";
   }
 
   const readServer = n.is_read ?? n.read ?? n.isRead ?? null;
   const read =
-    readServer == null ? Boolean(readMap[id]) : String(readServer) === '1' || readServer === true;
+    readServer == null ? Boolean(readMap[id]) : String(readServer) === "1" || readServer === true;
 
   const { orderCode, orderIdNumeric } = resolveOrderFromRecord(n);
   const orderId = orderIdNumeric ?? orderCode ?? null;
   const createdISO = created || null;
   const status = inferStatusFromText(title, body);
 
-  const absolute = createdISO ? showAsGiven(createdISO) : '';
-  const relative = createdISO ? timeAgoLocal(createdISO) : '';
+  const absolute = createdISO ? showAsGiven(createdISO) : "";
+  const relative = createdISO ? timeAgoLocal(createdISO) : "";
   const chip = createdISO && isTodayLocal(createdISO) ? relative : absolute;
 
   const customerName =
@@ -368,16 +367,10 @@ const mapApiNotif = (n, readMap) => {
     n.userName ??
     n.user?.name ??
     n.user?.user_name ??
-    '';
+    "";
 
   const minimalOrder = orderId
-    ? {
-        id: String(orderId),
-        created_at: createdISO,
-        time: absolute,
-        status,
-        customer_name: customerName || '',
-      }
+    ? { id: String(orderId), created_at: createdISO, time: absolute, status, customer_name: customerName || "" }
     : null;
 
   const walletId = n.wallet_id ?? n.walletId ?? n.wallet ?? null;
@@ -401,10 +394,10 @@ const mapApiNotif = (n, readMap) => {
 
 /* ---------- fetch a single order from grouped endpoint ---------- */
 const sameId = (a, b) =>
-  String(a ?? '').replace(/^ORD[-_]?/i, '') === String(b ?? '').replace(/^ORD[-_]?/i, '');
+  String(a ?? "").replace(/^ORD[-_]?/i, "") === String(b ?? "").replace(/^ORD[-_]?/i, "");
 
 function coalesce(...vals) {
-  for (const v of vals) if (v != null && v !== '') return v;
+  for (const v of vals) if (v != null && v !== "") return v;
   return null;
 }
 
@@ -414,7 +407,7 @@ function normalizeOrderRecord(row = {}, user = {}) {
   const normalizedItems = Array.isArray(items)
     ? items.map((it, idx) => ({
         item_id: coalesce(it.item_id, it.id, idx),
-        item_name: coalesce(it.item_name, it.name, it.title, 'Item'),
+        item_name: coalesce(it.item_name, it.name, it.title, "Item"),
         quantity: Number(coalesce(it.quantity, it.qty, 1)),
       }))
     : [];
@@ -422,20 +415,20 @@ function normalizeOrderRecord(row = {}, user = {}) {
   return {
     id: coalesce(row.order_code, row.orderCode, row.id, row.order_id),
     order_code: coalesce(row.order_code, row.orderCode, row.id, row.order_id),
-    customer_name: coalesce(row.customer_name, user.user_name, user.name, ''),
-    payment_method: coalesce(row.payment_method, row.payment, ''),
-    type: coalesce(row.type, row.fulfillment_type, row.delivery_option, row.delivery_type, ''),
-    delivery_address: coalesce(row.delivery_address, row.address, ''),
+    customer_name: coalesce(row.customer_name, user.user_name, user.name, ""),
+    payment_method: coalesce(row.payment_method, row.payment, ""),
+    type: coalesce(row.type, row.fulfillment_type, row.delivery_option, row.delivery_type, ""),
+    delivery_address: coalesce(row.delivery_address, row.address, ""),
     note_for_restaurant: coalesce(
       row.note_for_restaurant,
       row.restaurant_note,
       row.note_for_store,
       row.note,
-      ''
+      ""
     ),
     total: Number(coalesce(row.total, row.total_amount, 0)),
     raw_items: normalizedItems,
-    status: String(row.status || 'PENDING').toUpperCase(),
+    status: String(row.status || "PENDING").toUpperCase(),
   };
 }
 
@@ -486,7 +479,7 @@ async function markOneReadServer(id) {
   try {
     const headers = await buildHeaders(true);
     const res = await fetch(url, {
-      method: 'PATCH',
+      method: "PATCH",
       headers,
       body: JSON.stringify({ is_read: true }),
     });
@@ -502,7 +495,7 @@ async function markAllReadServer(businessId) {
   try {
     const headers = await buildHeaders(true);
     const res = await fetch(url, {
-      method: 'PATCH',
+      method: "PATCH",
       headers,
       body: JSON.stringify({ is_read: true }),
     });
@@ -517,7 +510,7 @@ async function deleteNotificationServer(id) {
   if (!url) return false;
   try {
     const headers = await buildHeaders(false);
-    const res = await fetch(url, { method: 'DELETE', headers });
+    const res = await fetch(url, { method: "DELETE", headers });
     return ok(res);
   } catch {
     return false;
@@ -525,21 +518,20 @@ async function deleteNotificationServer(id) {
 }
 
 /* ============================= Component ============================= */
-export default function NotificationsTab({
-  isTablet = false,
-  route,
-  detailsRoute = 'OrderDetails',
-  kpis,
-}) {
+export default function NotificationsTab({ isTablet = false, route, detailsRoute = "OrderDetails" }) {
   const navigation = useNavigation();
   const [list, setList] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+
   const [bizId, setBizId] = useState(null);
   const [userId, setUserId] = useState(null);
 
-  const [activeTab, setActiveTab] = useState('all');
+  // ✅ NEW: readiness flags (prevents 2 fetches / 2 badge updates)
+  const [bizReady, setBizReady] = useState(false);
+  const [userReady, setUserReady] = useState(false);
 
-  // overlay for BOTH system + orders + others
+  const [activeTab, setActiveTab] = useState("all");
+
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [selectedOrderDetails, setSelectedOrderDetails] = useState(null);
   const [orderLoading, setOrderLoading] = useState(false);
@@ -548,16 +540,40 @@ export default function NotificationsTab({
   const [selectedIds, setSelectedIds] = useState(() => new Set());
 
   const readMapRef = useRef({});
+  const didFirstFetchRef = useRef(false);
+
+  const lastEmittedUnreadRef = useRef(null);
+  const emitTimerRef = useRef(null);
 
   const ownerType =
-    String(route?.params?.ownerType || 'food').toLowerCase() === 'mart' ? 'mart' : 'food';
+    String(route?.params?.ownerType || "food").toLowerCase() === "mart" ? "mart" : "food";
 
+  // ✅ resolve bizId once and mark ready (even if null)
   useEffect(() => {
-    (async () => setBizId(await resolveBusinessId(route?.params ?? {})))();
+    let alive = true;
+    (async () => {
+      const id = await resolveBusinessId(route?.params ?? {});
+      if (!alive) return;
+      setBizId(id);
+      setBizReady(true);
+    })();
+    return () => {
+      alive = false;
+    };
   }, [route?.params]);
 
+  // ✅ resolve userId once and mark ready (even if null)
   useEffect(() => {
-    (async () => setUserId(await resolveUserId()))();
+    let alive = true;
+    (async () => {
+      const id = await resolveUserId();
+      if (!alive) return;
+      setUserId(id);
+      setUserReady(true);
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -571,6 +587,13 @@ export default function NotificationsTab({
     })();
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (emitTimerRef.current) clearTimeout(emitTimerRef.current);
+      emitTimerRef.current = null;
+    };
+  }, []);
+
   const saveReadMap = useCallback(async (next) => {
     readMapRef.current = next;
     try {
@@ -578,11 +601,37 @@ export default function NotificationsTab({
     } catch {}
   }, []);
 
+  const computeUnread = useCallback((arr) => {
+    const listArr = Array.isArray(arr) ? arr : [];
+    return listArr.reduce((acc, n) => acc + (!n?.read ? 1 : 0), 0);
+  }, []);
+
+  const emitUnreadStable = useCallback(async (count) => {
+    const n = Number(count ?? 0);
+    const safe = Number.isFinite(n) ? Math.max(0, n) : 0;
+
+    if (!didFirstFetchRef.current) return;
+
+    if (lastEmittedUnreadRef.current === safe) return;
+    lastEmittedUnreadRef.current = safe;
+
+    if (emitTimerRef.current) clearTimeout(emitTimerRef.current);
+    emitTimerRef.current = setTimeout(async () => {
+      try {
+        await AsyncStorage.setItem(STORAGE_KEY_LAST_UNREAD, String(safe));
+      } catch {}
+      DeviceEventEmitter.emit("notifications-unread-count", { count: safe, at: Date.now() });
+    }, 140);
+  }, []);
+
   const fetchNotifications = useCallback(async () => {
+    // ✅ CRITICAL: wait until BOTH resolvers finished
+    if (!bizReady || !userReady) return;
+
+    // after ready, still require at least one id
     if (!bizId && !userId) return;
 
     let mappedAll = [];
-
     try {
       const headers = await buildHeaders(false);
 
@@ -608,7 +657,7 @@ export default function NotificationsTab({
             const mappedBiz = arr
               .map((n) => mapApiNotif(n, readMapRef.current))
               .filter(Boolean)
-              .map((n) => ({ ...n, source: 'business' }));
+              .map((n) => ({ ...n, source: "business" }));
 
             mappedAll = mappedAll.concat(mappedBiz);
           } catch {}
@@ -637,11 +686,7 @@ export default function NotificationsTab({
             const mappedSys = arrSys
               .map((n) => mapApiNotif(n, readMapRef.current))
               .filter(Boolean)
-              .map((n) => ({
-                ...n,
-                type: 'system',
-                source: 'system',
-              }));
+              .map((n) => ({ ...n, type: "system", source: "system" }));
 
             mappedAll = mappedAll.concat(mappedSys);
           } catch {}
@@ -649,11 +694,17 @@ export default function NotificationsTab({
       }
 
       mappedAll.sort((a, b) => new Date(b._created_at) - new Date(a._created_at));
+
       setList(mappedAll);
       setSelectionMode(false);
       setSelectedIds(() => new Set());
-    } catch {}
-  }, [bizId, userId]);
+
+      didFirstFetchRef.current = true;
+      emitUnreadStable(computeUnread(mappedAll));
+    } catch {
+      // keep badge stable
+    }
+  }, [bizId, userId, bizReady, userReady, computeUnread, emitUnreadStable]);
 
   useEffect(() => {
     fetchNotifications();
@@ -667,15 +718,20 @@ export default function NotificationsTab({
 
   const unreadCount = useMemo(() => list.filter((n) => !n.read).length, [list]);
 
+  useEffect(() => {
+    if (!didFirstFetchRef.current) return;
+    emitUnreadStable(unreadCount);
+  }, [unreadCount, emitUnreadStable]);
+
   const filteredList = useMemo(() => {
     switch (activeTab) {
-      case 'orders':
-        return list.filter((n) => n.type === 'order');
-      case 'wallet':
-        return list.filter((n) => n.type === 'wallet' || n.type === 'payout');
-      case 'system':
-        return list.filter((n) => n.type === 'system');
-      case 'all':
+      case "orders":
+        return list.filter((n) => n.type === "order");
+      case "wallet":
+        return list.filter((n) => n.type === "wallet" || n.type === "payout");
+      case "system":
+        return list.filter((n) => n.type === "system");
+      case "all":
       default:
         return list;
     }
@@ -707,13 +763,13 @@ export default function NotificationsTab({
     if (!ids.length) return;
 
     Alert.alert(
-      'Delete Activities',
-      `Delete ${ids.length} selected ${ids.length === 1 ? 'activity' : 'activities'}?`,
+      "Delete Activities",
+      `Delete ${ids.length} selected ${ids.length === 1 ? "activity" : "activities"}?`,
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: "Cancel", style: "cancel" },
         {
-          text: 'Delete',
-          style: 'destructive',
+          text: "Delete",
+          style: "destructive",
           onPress: async () => {
             setList((cur) => cur.filter((n) => !ids.includes(n.id)));
             setSelectionMode(false);
@@ -746,7 +802,7 @@ export default function NotificationsTab({
 
     for (const id of ids) {
       const item = snapshot.find((n) => n.id === id);
-      if (item && item.source === 'business') {
+      if (item && item.source === "business") {
         // eslint-disable-next-line no-await-in-loop
         await markOneReadServer(id);
       }
@@ -761,11 +817,11 @@ export default function NotificationsTab({
     const anyUnread = list.some((n) => !n.read);
     if (!anyUnread) return;
 
-    Alert.alert('Mark all as read', 'This will mark all activities as read.', [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert("Mark all as read", "This will mark all activities as read.", [
+      { text: "Cancel", style: "cancel" },
       {
-        text: 'Mark all',
-        style: 'default',
+        text: "Mark all",
+        style: "default",
         onPress: async () => {
           const nextReadMap = { ...readMapRef.current };
           for (const n of list) nextReadMap[n.id] = true;
@@ -790,8 +846,8 @@ export default function NotificationsTab({
       const nextReadMap = { ...readMapRef.current, [item.id]: true };
       await saveReadMap(nextReadMap);
 
-      if (item.source === 'business') {
-        await markOneReadServer(item.id); // ✅ NOTIFICATION_READ_ENDPOINT
+      if (item.source === "business") {
+        await markOneReadServer(item.id);
       }
     },
     [saveReadMap]
@@ -799,21 +855,21 @@ export default function NotificationsTab({
 
   const onPressItem = async (item) => {
     if (selectionMode) {
-      if (item.source !== 'system') toggleSelect(item.id);
+      if (item.source !== "system") toggleSelect(item.id);
       return;
     }
 
     await markReadOnClick(item);
 
-    if (item.type === 'wallet' || item.type === 'payout') {
-      navigation.navigate('GrabMerchantHomeScreen', { activeTab: 'Payouts', from: 'Notifications' });
+    if (item.type === "wallet" || item.type === "payout") {
+      navigation.navigate("GrabMerchantHomeScreen", { activeTab: "Payouts", from: "Notifications" });
       return;
     }
 
     setSelectedActivity(item);
     setSelectedOrderDetails(null);
 
-    if (item.type === 'order') {
+    if (item.type === "order") {
       const orderId = item.orderIdNumeric ?? item.orderCode ?? item._order_like?.id ?? null;
       if (!orderId || !bizId) return;
 
@@ -834,13 +890,13 @@ export default function NotificationsTab({
   };
 
   const confirmDelete = (item) => {
-    if (item.source === 'system') return;
+    if (item.source === "system") return;
 
-    Alert.alert('Delete Activity', 'Are you sure you want to delete this activity?', [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert("Delete Activity", "Are you sure you want to delete this activity?", [
+      { text: "Cancel", style: "cancel" },
       {
-        text: 'Delete',
-        style: 'destructive',
+        text: "Delete",
+        style: "destructive",
         onPress: async () => {
           setList((cur) => cur.filter((n) => n.id !== item.id));
           const okRes = await deleteNotificationServer(item.id);
@@ -870,15 +926,15 @@ export default function NotificationsTab({
           activeOpacity={0.7}
           style={[styles.itemWrap, isSelected && styles.itemWrapSelected]}
         >
-          <View style={[styles.iconWrap, { backgroundColor: typeTint(item.type) + '22' }]}>
+          <View style={[styles.iconWrap, { backgroundColor: typeTint(item.type) + "22" }]}>
             <Ionicons name={typeIcon(item.type)} size={22} color={typeTint(item.type)} />
             {!item.read && <View style={styles.unreadDot} />}
             {selectionMode && (
               <View style={styles.checkboxOverlay}>
                 <Ionicons
-                  name={isSelected ? 'checkbox-outline' : 'square-outline'}
+                  name={isSelected ? "checkbox-outline" : "square-outline"}
                   size={18}
-                  color={isSelected ? '#00b14f' : '#9ca3af'}
+                  color={isSelected ? "#00b14f" : "#9ca3af"}
                 />
               </View>
             )}
@@ -898,7 +954,7 @@ export default function NotificationsTab({
         </TouchableOpacity>
       );
 
-      if (selectionMode || item.source === 'system') return content;
+      if (selectionMode || item.source === "system") return content;
       return <Swipeable renderRightActions={() => renderRightActions(item)}>{content}</Swipeable>;
     },
     [selectionMode, selectedIds, onPressItem]
@@ -915,10 +971,7 @@ export default function NotificationsTab({
       return (
         <View style={styles.headerTools}>
           <View style={styles.headerTitleRow}>
-            <TouchableOpacity
-              onPress={cancelSelection}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
+            <TouchableOpacity onPress={cancelSelection} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <Ionicons name="close-outline" size={22} color="#111827" />
             </TouchableOpacity>
             <Text style={[styles.title, { fontSize: isTablet ? 20 : 16 }]}>{selectedCount} selected</Text>
@@ -957,11 +1010,11 @@ export default function NotificationsTab({
 
         <TouchableOpacity
           onPress={canMarkAll ? markAllRead : undefined}
-          style={[styles.actionBtn, { alignSelf: 'flex-start', opacity: canMarkAll ? 1 : 0.5 }]}
+          style={[styles.actionBtn, { alignSelf: "flex-start", opacity: canMarkAll ? 1 : 0.5 }]}
           activeOpacity={canMarkAll ? 0.8 : 1}
         >
           <Ionicons name="checkmark-done-outline" size={16} color="#00b14f" />
-          <Text style={styles.actionText}>{canMarkAll ? 'Mark all read' : 'All read'}</Text>
+          <Text style={styles.actionText}>{canMarkAll ? "Mark all read" : "All read"}</Text>
         </TouchableOpacity>
 
         <View style={styles.tabsRow}>
@@ -1000,15 +1053,12 @@ export default function NotificationsTab({
   };
 
   const goToOrderDetailsFromModal = () => {
-    if (!selectedActivity || selectedActivity.type !== 'order') return;
+    if (!selectedActivity || selectedActivity.type !== "order") return;
     const orderId = selectedActivity.orderIdNumeric ?? selectedActivity.orderCode ?? null;
     if (!orderId || !bizId) return;
 
     const groupedUrl = buildOrdersGroupedUrl(bizId, ownerType);
-    const fallbackOrder = {
-      id: String(orderId),
-      customer_name: selectedActivity?._order_like?.customer_name || '',
-    };
+    const fallbackOrder = { id: String(orderId), customer_name: selectedActivity?._order_like?.customer_name || "" };
 
     navigation.navigate(detailsRoute, {
       orderId: String(orderId),
@@ -1021,11 +1071,10 @@ export default function NotificationsTab({
     closeActivityModal();
   };
 
-  const prettyStatus = (s) => String(s || '').replace(/_/g, ' ');
+  const prettyStatus = (s) => String(s || "").replace(/_/g, " ");
 
-  // ✅ delivered detection for hiding "Open details"
   const deliveredNow =
-    selectedActivity?.type === 'order' &&
+    selectedActivity?.type === "order" &&
     (isDeliveredLike(selectedOrderDetails?.status) ||
       isDeliveredLike(selectedActivity?._order_like?.status) ||
       isDeliveredLike(inferStatusFromText(selectedActivity?.title, selectedActivity?.body)));
@@ -1049,39 +1098,27 @@ export default function NotificationsTab({
         removeClippedSubviews
       />
 
-      <Modal
-        visible={!!selectedActivity}
-        transparent
-        animationType="fade"
-        onRequestClose={closeActivityModal}
-      >
+      <Modal visible={!!selectedActivity} transparent animationType="fade" onRequestClose={closeActivityModal}>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
-              <Ionicons
-                name={typeIcon(selectedActivity?.type)}
-                size={22}
-                color="#00b14f"
-                style={{ marginRight: 6 }}
-              />
+              <Ionicons name={typeIcon(selectedActivity?.type)} size={22} color="#00b14f" style={{ marginRight: 6 }} />
               <Text style={styles.modalTitle} numberOfLines={2}>
                 {selectedActivity?.title}
               </Text>
             </View>
 
-            {!!selectedActivity?._created_at && (
-              <Text style={styles.modalTime}>{showAsGiven(selectedActivity._created_at)}</Text>
-            )}
+            {!!selectedActivity?._created_at && <Text style={styles.modalTime}>{showAsGiven(selectedActivity._created_at)}</Text>}
 
             <Text style={styles.modalBody}>{selectedActivity?.body}</Text>
 
-            {selectedActivity?.type === 'order' && (
+            {selectedActivity?.type === "order" && (
               <View style={styles.orderBox}>
                 <View style={styles.orderRow}>
                   <Text style={styles.orderLabel}>Order</Text>
                   <Text style={styles.orderValue}>
                     {selectedActivity?.orderCode ||
-                      (selectedActivity?.orderIdNumeric ? `ORD-${selectedActivity.orderIdNumeric}` : '—')}
+                      (selectedActivity?.orderIdNumeric ? `ORD-${selectedActivity.orderIdNumeric}` : "—")}
                   </Text>
                 </View>
 
@@ -1103,21 +1140,20 @@ export default function NotificationsTab({
                       </View>
                     )}
 
-                    {Array.isArray(selectedOrderDetails.raw_items) &&
-                      selectedOrderDetails.raw_items.length > 0 && (
-                        <View style={{ marginTop: 8 }}>
-                          <Text style={styles.orderLabel}>Items</Text>
-                          <ScrollView style={{ maxHeight: 140, marginTop: 6 }}>
-                            {selectedOrderDetails.raw_items.slice(0, 30).map((it, idx) => (
-                              <View key={String(it.item_id ?? idx)} style={styles.itemLine}>
-                                <Text style={styles.itemLineText} numberOfLines={1}>
-                                  {it.quantity} × {it.item_name}
-                                </Text>
-                              </View>
-                            ))}
-                          </ScrollView>
-                        </View>
-                      )}
+                    {Array.isArray(selectedOrderDetails.raw_items) && selectedOrderDetails.raw_items.length > 0 && (
+                      <View style={{ marginTop: 8 }}>
+                        <Text style={styles.orderLabel}>Items</Text>
+                        <ScrollView style={{ maxHeight: 140, marginTop: 6 }}>
+                          {selectedOrderDetails.raw_items.slice(0, 30).map((it, idx) => (
+                            <View key={String(it.item_id ?? idx)} style={styles.itemLine}>
+                              <Text style={styles.itemLineText} numberOfLines={1}>
+                                {it.quantity} × {it.item_name}
+                              </Text>
+                            </View>
+                          ))}
+                        </ScrollView>
+                      </View>
+                    )}
                   </>
                 ) : (
                   <View style={{ paddingVertical: 10 }}>
@@ -1126,35 +1162,22 @@ export default function NotificationsTab({
                 )}
 
                 <View style={styles.modalButtonsRow}>
-                  {/* ✅ HIDE when delivered/completed */}
                   {!deliveredNow && (
-                    <TouchableOpacity
-                      style={styles.modalGhostBtn}
-                      onPress={goToOrderDetailsFromModal}
-                      activeOpacity={0.85}
-                    >
+                    <TouchableOpacity style={styles.modalGhostBtn} onPress={goToOrderDetailsFromModal} activeOpacity={0.85}>
                       <Ionicons name="open-outline" size={16} color="#00b14f" />
                       <Text style={styles.modalGhostText}>Open details</Text>
                     </TouchableOpacity>
                   )}
 
-                  <TouchableOpacity
-                    style={styles.modalCloseBtn}
-                    onPress={closeActivityModal}
-                    activeOpacity={0.8}
-                  >
+                  <TouchableOpacity style={styles.modalCloseBtn} onPress={closeActivityModal} activeOpacity={0.8}>
                     <Text style={styles.modalCloseText}>Close</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             )}
 
-            {selectedActivity?.type !== 'order' && (
-              <TouchableOpacity
-                style={styles.modalCloseBtn}
-                onPress={closeActivityModal}
-                activeOpacity={0.8}
-              >
+            {selectedActivity?.type !== "order" && (
+              <TouchableOpacity style={styles.modalCloseBtn} onPress={closeActivityModal} activeOpacity={0.8}>
                 <Text style={styles.modalCloseText}>Close</Text>
               </TouchableOpacity>
             )}
@@ -1167,156 +1190,156 @@ export default function NotificationsTab({
 
 /* ---------- styles ---------- */
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: '#f6f7f8' },
+  wrap: { flex: 1, backgroundColor: "#f6f7f8" },
 
   headerTools: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
-  headerTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  title: { fontWeight: '700', color: '#111827' },
-  badge: { backgroundColor: '#00b14f', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
-  badgeText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  headerTitleRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  title: { fontWeight: "700", color: "#111827" },
+  badge: { backgroundColor: "#00b14f", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
+  badgeText: { color: "#fff", fontWeight: "700", fontSize: 12 },
 
   actionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 9,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: "#e5e7eb",
   },
-  actionText: { color: '#00b14f', fontWeight: '600' },
+  actionText: { color: "#00b14f", fontWeight: "600" },
 
-  tabsRow: { flexDirection: 'row', marginTop: 12, gap: 8, flexWrap: 'wrap' },
+  tabsRow: { flexDirection: "row", marginTop: 12, gap: 8, flexWrap: "wrap" },
   tabPill: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#ffffff',
+    borderColor: "#e5e7eb",
+    backgroundColor: "#ffffff",
   },
-  tabPillActive: { backgroundColor: '#00b14f11', borderColor: '#00b14f' },
-  tabLabel: { fontSize: 13, color: '#4b5563', fontWeight: '500' },
-  tabLabelActive: { color: '#00b14f', fontWeight: '700' },
+  tabPillActive: { backgroundColor: "#00b14f11", borderColor: "#00b14f" },
+  tabLabel: { fontSize: 13, color: "#4b5563", fontWeight: "500" },
+  tabLabelActive: { color: "#00b14f", fontWeight: "700" },
 
-  sep: { height: 1, backgroundColor: '#e5e7eb', marginLeft: 16 },
+  sep: { height: 1, backgroundColor: "#e5e7eb", marginLeft: 16 },
 
-  itemWrap: { flexDirection: 'row', backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 12 },
-  itemWrapSelected: { backgroundColor: '#dcfce7' },
+  itemWrap: { flexDirection: "row", backgroundColor: "#fff", paddingHorizontal: 16, paddingVertical: 12 },
+  itemWrapSelected: { backgroundColor: "#dcfce7" },
   iconWrap: {
     width: 40,
     height: 40,
     borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     marginRight: 12,
-    position: 'relative',
+    position: "relative",
   },
   unreadDot: {
-    position: 'absolute',
+    position: "absolute",
     top: -2,
     right: -2,
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: '#00b14f',
+    backgroundColor: "#00b14f",
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: "#fff",
   },
-  checkboxOverlay: { position: 'absolute', bottom: -6, right: -6 },
+  checkboxOverlay: { position: "absolute", bottom: -6, right: -6 },
   itemTextWrap: { flex: 1 },
-  itemTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  itemTitle: { color: '#111827', fontWeight: '600' },
-  itemTitleUnread: { fontWeight: '800' },
-  itemBody: { color: '#4b5563', marginTop: 2 },
-  time: { color: '#6b7280', fontSize: 12 },
+  itemTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  itemTitle: { color: "#111827", fontWeight: "600" },
+  itemTitleUnread: { fontWeight: "800" },
+  itemBody: { color: "#4b5563", marginTop: 2 },
+  time: { color: "#6b7280", fontSize: 12 },
 
   deleteAction: {
-    backgroundColor: '#ef4444',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "#ef4444",
+    justifyContent: "center",
+    alignItems: "center",
     width: 70,
     borderRadius: 8,
     marginVertical: 4,
   },
 
   bulkDeleteBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ef4444',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#ef4444",
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
     gap: 4,
   },
-  bulkDeleteText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  bulkDeleteText: { color: "#fff", fontWeight: "700", fontSize: 13 },
   bulkReadBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#00b14f',
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#00b14f",
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
     gap: 4,
   },
-  bulkReadText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  bulkReadText: { color: "#fff", fontWeight: "700", fontSize: 13 },
 
-  emptyWrap: { alignItems: 'center', paddingVertical: 40, gap: 8 },
-  emptyTitle: { color: '#111827', fontWeight: '700' },
-  emptyBody: { color: '#6b7280' },
+  emptyWrap: { alignItems: "center", paddingVertical: 40, gap: 8 },
+  emptyTitle: { color: "#111827", fontWeight: "700" },
+  emptyBody: { color: "#6b7280" },
 
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.45)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "rgba(15, 23, 42, 0.45)",
+    alignItems: "center",
+    justifyContent: "center",
     paddingHorizontal: 24,
   },
   modalCard: {
-    width: '100%',
+    width: "100%",
     maxWidth: 460,
-    backgroundColor: '#ffffff',
+    backgroundColor: "#ffffff",
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 16,
   },
-  modalHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
-  modalTitle: { fontSize: 16, fontWeight: '700', color: '#111827', flex: 1 },
-  modalTime: { fontSize: 12, color: '#6b7280', marginBottom: 8 },
-  modalBody: { fontSize: 14, color: '#374151', marginBottom: 12 },
+  modalHeader: { flexDirection: "row", alignItems: "center", marginBottom: 4 },
+  modalTitle: { fontSize: 16, fontWeight: "700", color: "#111827", flex: 1 },
+  modalTime: { fontSize: 12, color: "#6b7280", marginBottom: 8 },
+  modalBody: { fontSize: 14, color: "#374151", marginBottom: 12 },
 
   orderBox: {
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
+    borderColor: "#e5e7eb",
+    backgroundColor: "#f9fafb",
     borderRadius: 14,
     padding: 12,
     marginTop: 6,
   },
-  orderRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginTop: 6 },
-  orderLabel: { color: '#6b7280', fontSize: 12, fontWeight: '700' },
-  orderValue: { color: '#111827', fontSize: 13, fontWeight: '700', flexShrink: 1, textAlign: 'right' },
-  orderMuted: { color: '#6b7280', fontSize: 13 },
+  orderRow: { flexDirection: "row", justifyContent: "space-between", gap: 10, marginTop: 6 },
+  orderLabel: { color: "#6b7280", fontSize: 12, fontWeight: "700" },
+  orderValue: { color: "#111827", fontSize: 13, fontWeight: "700", flexShrink: 1, textAlign: "right" },
+  orderMuted: { color: "#6b7280", fontSize: 13 },
 
-  itemLine: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: '#e5e7eb' },
-  itemLineText: { color: '#111827', fontSize: 13, fontWeight: '600' },
+  itemLine: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#e5e7eb" },
+  itemLineText: { color: "#111827", fontSize: 13, fontWeight: "600" },
 
-  modalButtonsRow: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 12, alignItems: 'center' },
+  modalButtonsRow: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 12, alignItems: "center" },
   modalGhostBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#00b14f',
-    backgroundColor: '#00b14f11',
+    borderColor: "#00b14f",
+    backgroundColor: "#00b14f11",
   },
-  modalGhostText: { color: '#00b14f', fontWeight: '800', fontSize: 13 },
+  modalGhostText: { color: "#00b14f", fontWeight: "800", fontSize: 13 },
 
-  modalCloseBtn: { alignSelf: 'flex-end', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: '#00b14f' },
-  modalCloseText: { color: '#ffffff', fontWeight: '700', fontSize: 13 },
+  modalCloseBtn: { alignSelf: "flex-end", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: "#00b14f" },
+  modalCloseText: { color: "#ffffff", fontWeight: "700", fontSize: 13 },
 });

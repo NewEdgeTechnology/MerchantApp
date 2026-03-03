@@ -1,9 +1,7 @@
 // ✅ UPDATED BatchRidesScreen (FULL CODE)
-// - Builds GET_BATCH_RIDE_ID_ENDPOINT using business_id (supports {business_id} / {businessId} / :business_id / :businessId)
-// - Example .env:
-//   GET_BATCH_RIDE_ID_ENDPOINT=http://192.168.131.106:4000/api/batch-ride/get-batch-ride-id?business_id={business_id}
+// ✅ CHANGE: Show driver as: Delivered by: Name (18)
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -18,35 +16,30 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
-import { GET_BATCH_RIDE_ID_ENDPOINT } from '@env';
+import { GET_BATCH_RIDE_ID_ENDPOINT, DRIVER_DETAILS_ENDPOINT } from '@env';
 
 const safeStr = (v) => (v == null ? '' : String(v)).trim();
 
 const pickArray = (json) => {
-  const a =
-    json?.data ??
-    json?.batches ??
-    json?.batchRides ??
-    json?.items ??
-    json?.rows ??
-    json ??
-    null;
+  const a = json?.data ?? json?.batches ?? json?.batchRides ?? json?.items ?? json?.rows ?? json ?? null;
   return Array.isArray(a) ? a : [];
 };
 
 const pickBatchId = (x) => x?.batch_id ?? x?.batchId ?? x?.id ?? x?.batch ?? x?.batchID ?? null;
-
 const pickRideId = (x) => x?.ride_id ?? x?.rideId ?? x?.ride ?? x?.rideID ?? x?.rider_id ?? null;
 
-const pickBatchOrderIds = (x) => {
-  const arr =
-    x?.order_ids ??
-    x?.orderIds ??
-    x?.orders ??
-    x?.batch_order_ids ??
-    x?.batchOrderIds ??
-    null;
+const pickDriverId = (x) =>
+  x?.driver_id ??
+  x?.driverId ??
+  x?.driver?.id ??
+  x?.driver?.driver_id ??
+  x?.driver?.user_id ??
+  x?.driver_user_id ??
+  x?.driverUserId ??
+  null;
 
+const pickBatchOrderIds = (x) => {
+  const arr = x?.order_ids ?? x?.orderIds ?? x?.orders ?? x?.batch_order_ids ?? x?.batchOrderIds ?? null;
   if (!Array.isArray(arr)) return [];
   return arr.map((v) => safeStr(v)).filter(Boolean);
 };
@@ -63,13 +56,11 @@ const normalizeBatchOrderIdsMap = (v) => {
   return out;
 };
 
-// ✅ build endpoint with business_id placeholder support
 const buildBatchRideUrl = (endpoint, businessId) => {
   const base = safeStr(endpoint);
   const bid = safeStr(businessId);
   if (!base) return '';
 
-  // if endpoint already has no placeholder, still allow appending
   const hasPlaceholder =
     base.includes('{business_id}') ||
     base.includes('{businessId}') ||
@@ -84,13 +75,45 @@ const buildBatchRideUrl = (endpoint, businessId) => {
       .replace(/:businessId\b/g, encodeURIComponent(bid));
   }
 
-  // no placeholder: try appending business_id as query param (if not present)
   if (bid && !/business_id=/i.test(base)) {
     const sep = base.includes('?') ? '&' : '?';
     return `${base}${sep}business_id=${encodeURIComponent(bid)}`;
   }
 
   return base;
+};
+
+const buildDriverDetailsUrl = (endpoint, driverId) => {
+  const base = safeStr(endpoint);
+  const did = safeStr(driverId);
+  if (!base || !did) return '';
+
+  const hasPlaceholder =
+    base.includes('{driverId}') ||
+    base.includes('{driver_id}') ||
+    /:driverId\b/i.test(base) ||
+    /:driver_id\b/i.test(base);
+
+  if (hasPlaceholder) {
+    return base
+      .replace(/\{\s*driverId\s*\}/g, encodeURIComponent(did))
+      .replace(/\{\s*driver_id\s*\}/gi, encodeURIComponent(did))
+      .replace(/:driverId\b/gi, encodeURIComponent(did))
+      .replace(/:driver_id\b/gi, encodeURIComponent(did));
+  }
+
+  if (!/driverId=/i.test(base) && !/driver_id=/i.test(base)) {
+    const sep = base.includes('?') ? '&' : '?';
+    return `${base}${sep}driverId=${encodeURIComponent(did)}`;
+  }
+
+  return base;
+};
+
+const pickDriverNameFromJson = (json) => {
+  const d = json?.details ?? json?.data ?? json?.driver ?? json ?? null;
+  if (!d || typeof d !== 'object') return '';
+  return safeStr(d.user_name ?? d.name ?? d.full_name ?? d.fullName ?? d.username ?? '');
 };
 
 export default function BatchRidesScreen() {
@@ -100,7 +123,7 @@ export default function BatchRidesScreen() {
 
   const {
     businessId: businessIdParam,
-    bizId, // optional alias
+    bizId,
     label,
     orders,
     batch_id,
@@ -114,9 +137,7 @@ export default function BatchRidesScreen() {
     trackScreen = 'TrackBatchOrdersScreen',
   } = route.params || {};
 
-  // ✅ accept business id from either key
   const businessId = useMemo(() => businessIdParam ?? bizId ?? null, [businessIdParam, bizId]);
-
   const batchOrderIdsMap = useMemo(() => normalizeBatchOrderIdsMap(batch_order_ids), [batch_order_ids]);
 
   const [loading, setLoading] = useState(true);
@@ -125,10 +146,48 @@ export default function BatchRidesScreen() {
   const [error, setError] = useState('');
 
   const endpoint = safeStr(GET_BATCH_RIDE_ID_ENDPOINT);
+  const driverEndpoint = safeStr(DRIVER_DETAILS_ENDPOINT);
+  const buildUrl = useMemo(() => buildBatchRideUrl(endpoint, businessId), [endpoint, businessId]);
 
-  const buildUrl = useMemo(() => {
-    return buildBatchRideUrl(endpoint, businessId);
-  }, [endpoint, businessId]);
+  const [driverNameMap, setDriverNameMap] = useState({}); // { [driverId]: name }
+  const driverNameRef = useRef({});
+  useEffect(() => {
+    driverNameRef.current = driverNameMap;
+  }, [driverNameMap]);
+
+  const fetchDriverName = useCallback(
+    async (driverId) => {
+      const did = safeStr(driverId);
+      if (!did) return;
+      if (driverNameRef.current?.[did]) return;
+      if (!driverEndpoint) return;
+
+      try {
+        const token = await SecureStore.getItemAsync('auth_token');
+        const headers = { Accept: 'application/json' };
+        if (token) headers.Authorization = `Bearer ${token}`;
+
+        const url = buildDriverDetailsUrl(driverEndpoint, did);
+        const res = await fetch(url, { headers });
+        const text = await res.text();
+
+        let json = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {}
+
+        if (!res.ok) return;
+
+        const name = pickDriverNameFromJson(json);
+        if (!name) return;
+
+        setDriverNameMap((prev) => ({ ...prev, [did]: name }));
+      } catch {
+        // ignore
+      }
+    },
+    [driverEndpoint]
+  );
 
   const load = useCallback(async () => {
     if (!endpoint) {
@@ -169,10 +228,12 @@ export default function BatchRidesScreen() {
         .map((x) => {
           const rowBatch = pickBatchId(x);
           const rowRide = pickRideId(x);
+          const rowDriver = pickDriverId(x);
           const rowOrders = pickBatchOrderIds(x);
 
           const batch_id_str = rowBatch != null ? String(rowBatch) : '';
           const ride_id_str = rowRide != null ? String(rowRide) : '';
+          const driver_id_str = rowDriver != null ? String(rowDriver) : '';
 
           let orderCount = -1;
           if (rowOrders.length) orderCount = rowOrders.length;
@@ -184,6 +245,7 @@ export default function BatchRidesScreen() {
             raw: x,
             batch_id: batch_id_str,
             ride_id: ride_id_str,
+            driver_id: driver_id_str,
             order_ids: rowOrders,
             order_count: orderCount,
           };
@@ -198,12 +260,16 @@ export default function BatchRidesScreen() {
       }
 
       setItems(cleaned);
+
+      cleaned.forEach((row) => {
+        if (row?.driver_id) fetchDriverName(row.driver_id);
+      });
     } catch (e) {
       setError(e?.message || 'Failed to load batch rides.');
     } finally {
       setLoading(false);
     }
-  }, [endpoint, businessId, buildUrl, lastBatch?.batch_id, batch_id, batchOrderIdsMap]);
+  }, [endpoint, businessId, buildUrl, lastBatch?.batch_id, batch_id, batchOrderIdsMap, fetchDriverName]);
 
   useEffect(() => {
     load();
@@ -229,8 +295,11 @@ export default function BatchRidesScreen() {
       else if (batchOrderIdsMap && rowBatchId && Array.isArray(batchOrderIdsMap[rowBatchId])) outgoingBatchOrderIds = batchOrderIdsMap[rowBatchId];
       else outgoingBatchOrderIds = batch_order_ids;
 
+      const driverIdStr = safeStr(row?.driver_id) || undefined;
+      const driverName = driverIdStr ? driverNameRef.current?.[driverIdStr] || '' : '';
+
       navigation.navigate(trackScreen, {
-        businessId, // ✅ forwarded
+        businessId,
         label,
         orders,
         batch_id: rowBatchId,
@@ -245,6 +314,10 @@ export default function BatchRidesScreen() {
 
         ride_id: safeStr(row?.ride_id) || undefined,
         batchRide: row?.raw,
+
+        driver_id: driverIdStr,
+        driverId: driverIdStr,
+        driverName: driverName || undefined,
       });
     },
     [
@@ -269,13 +342,28 @@ export default function BatchRidesScreen() {
     const highlightBatch = safeStr(lastBatch?.batch_id) || safeStr(batch_id) || '';
     const highlight = highlightBatch && highlightBatch === item.batch_id;
 
+    const did = safeStr(item.driver_id);
+    const name = did ? driverNameMap[did] : '';
+
     return (
-      <TouchableOpacity activeOpacity={0.75} onPress={() => openBatchTrack(item)} style={[styles.row, highlight && styles.rowHighlight]}>
+      <TouchableOpacity
+        activeOpacity={0.75}
+        onPress={() => openBatchTrack(item)}
+        style={[styles.row, highlight && styles.rowHighlight]}
+      >
         <View style={{ flex: 1 }}>
           <Text style={styles.rowTitle}>Batch: {item.batch_id || '—'}</Text>
           <Text style={styles.rowSub}>Ride ID: {item.ride_id || '—'}</Text>
+
+          {!!(name || did) && (
+            <Text style={styles.rowSub}>
+              Delivered by: {name || '—'}{did ? ` (ID: ${did})` : ''}
+            </Text>
+          )}
+
           {item.order_count >= 0 && <Text style={styles.rowSub}>Orders: {item.order_count}</Text>}
         </View>
+
         <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
       </TouchableOpacity>
     );

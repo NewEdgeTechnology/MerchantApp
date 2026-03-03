@@ -17,29 +17,21 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { Ionicons } from "@expo/vector-icons";
 import { getUserInfo } from "../../utils/authToken";
 
-import { connectPassengerSocket, loadChatHistory } from "../../utils/passengerSocket";
 import * as SecureStore from "expo-secure-store";
 
-import {
-  RIDE_SOCKET_ENDPOINT,
-  GET_BATCH_RIDE_ID_ENDPOINT,
-  DRIVER_DETAILS_ENDPOINT,
-} from "@env";
+import { DRIVER_DETAILS_ENDPOINT } from "@env";
 
 // ✅ business-based chat list
 import { listMerchantConversations } from "../../utils/chatApi";
 
 /* ───────────── helpers ───────────── */
-const BASE_ORIGIN = (() => {
-  try {
-    return new URL(String(RIDE_SOCKET_ENDPOINT || "")).origin;
-  } catch {
-    const m = String(RIDE_SOCKET_ENDPOINT || "").match(/^https?:\/\/[^/]+/i);
-    return m ? m[0] : "";
-  }
-})();
+const BASE_ORIGIN = "https://grab.newedge.bt/grablike";
 
 const CUSTOMER_PROFILE_BASE = "https://grab.newedge.bt/driver";
+
+// change this to grab.newedge.bt/grablike afterwards
+const MERCHANT_DRIVER_CHAT_LIST_ENDPOINT =
+  "https://grab.newedge.bt/grablike/api/rides/merchant/chat-list";
 
 const trim = (v) => String(v || "").trim();
 const pickFirst = (...vals) => {
@@ -51,17 +43,6 @@ const pickFirst = (...vals) => {
   return null;
 };
 
-function fillTemplateUrl(template, params = {}) {
-  let out = String(template || "");
-  Object.keys(params).forEach((k) => {
-    out = out.replaceAll(`{${k}}`, encodeURIComponent(String(params[k] ?? "")));
-  });
-  return out;
-}
-function safeNum(x) {
-  const n = Number(x);
-  return Number.isFinite(n) ? n : null;
-}
 function formatClock(ts) {
   try {
     const d = new Date(ts);
@@ -229,89 +210,17 @@ async function fetchUserNameById(userId) {
   return null;
 }
 
-/* --- ensure socket connected --- */
-async function ensureSocketConnected(timeoutMs = 1200) {
-  try {
-    const u = await getUserInfo();
-    const id = String(u?.user_id || "").trim();
-    if (!id) return false;
-
-    const s = connectPassengerSocket(id);
-    if (s?.connected) return true;
-
-    return await new Promise((resolve) => {
-      let done = false;
-      const finish = (ok) => {
-        if (done) return;
-        done = true;
-        resolve(!!ok);
-      };
-
-      const t = setTimeout(() => finish(false), timeoutMs);
-
-      try {
-        const onConnect = () => {
-          clearTimeout(t);
-          try {
-            s?.off?.("connect", onConnect);
-          } catch {}
-          finish(true);
-        };
-
-        if (s?.once) s.once("connect", onConnect);
-        else {
-          setTimeout(() => {
-            clearTimeout(t);
-            finish(!!s?.connected);
-          }, 350);
-        }
-      } catch {
-        clearTimeout(t);
-        finish(false);
-      }
-    });
-  } catch {
-    return false;
-  }
-}
-
-function loadLatestMessagePreview(rideId, timeoutMs = 2500) {
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = (val) => {
-      if (done) return;
-      done = true;
-      resolve(val);
-    };
-
-    const t = setTimeout(() => finish(null), timeoutMs);
-
-    try {
-      loadChatHistory({ request_id: Number(rideId), limit: 5 }, (ack) => {
-        clearTimeout(t);
-        if (!ack?.ok || !Array.isArray(ack?.messages)) return finish(null);
-
-        const arr = ack.messages;
-        const last = arr[arr.length - 1] || arr[0] || null;
-        if (!last) return finish(null);
-
-        const text = String(last?.message ?? last?.text ?? "").trim();
-        const ts = last?.created_at || last?.ts || null;
-
-        if (text) return finish({ text, ts });
-        return finish(null);
-      });
-    } catch {
-      clearTimeout(t);
-      finish(null);
-    }
-  });
-}
-
 /* ===================== Screen ===================== */
 export default function MessageScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState("customer"); // 'driver' | 'customer'
+  const routeMerchantId = useMemo(() => {
+    const p = route?.params || {};
+    const mid =
+      p.businessId ??
+      null;
+    return mid != null ? String(mid) : "";
+  }, [route?.params]);
 
   const routeBusinessId = useMemo(() => {
     const p = route?.params || {};
@@ -378,77 +287,135 @@ export default function MessageScreen({ navigation, route }) {
   /* ===================== DRIVER TAB (unchanged) ===================== */
   const fetchDriverBatches = useCallback(
     async ({ refreshing = false } = {}) => {
-      const bid = trim(businessId);
-      if (!bid) return;
-
       if (refreshing) setDriverRefreshing(true);
       else setDriverLoading(true);
 
       try {
-        const tpl = String(GET_BATCH_RIDE_ID_ENDPOINT || "").trim();
-        if (!tpl) throw new Error("GET_BATCH_RIDE_ID_ENDPOINT missing in env");
-
-        const url = fillTemplateUrl(tpl, { business_id: bid });
-
-        const res = await fetch(url);
-        const j = await res.json().catch(() => null);
-
-        if (!res.ok || !j?.ok || !Array.isArray(j?.data)) {
-          throw new Error(j?.message || `Failed (${res.status})`);
+        let merchantId = trim(routeMerchantId);
+        if (!merchantId) {
+          merchantId = await getMerchantUserIdFromSecureStore();
+        }
+        if (!merchantId) {
+          throw new Error("Missing merchant id for driver chat list");
         }
 
-        const rows = j.data
-          .map((r) => ({
-            batch_id: String(r?.batch_id ?? ""),
-            ride_id: String(r?.ride_id ?? ""),
-            driver_id: r?.driver_id != null ? String(r.driver_id) : "",
-            order_ids: Array.isArray(r?.order_ids) ? r.order_ids : [],
-            _batchN: safeNum(r?.batch_id) ?? -1,
-            _rideN: safeNum(r?.ride_id) ?? -1,
-          }))
-          .filter((r) => r.ride_id);
+        const url =
+          `${MERCHANT_DRIVER_CHAT_LIST_ENDPOINT}?merchant_id=` +
+          `${encodeURIComponent(merchantId)}&limit=50`;
+        console.log("[MessageScreen] fetching driver chat list from:", url);
+        const res = await fetch(url);
+        const j = await res.json().catch(() => null);
+        console.log("[MessageScreen] fetched driver chat list response:", j);
+        const rowsRaw =
+          j?.threads ??
+          j?.data ??
+          j?.rows ??
+          j?.chat_list ??
+          j?.conversations ??
+          [];
+        const rows = Array.isArray(rowsRaw) ? rowsRaw : [];
 
-        rows.sort((a, b) => {
-          if (b._batchN !== a._batchN) return b._batchN - a._batchN;
-          return b._rideN - a._rideN;
-        });
+        // console.log("[MessageScreen] fetched driver chat list:", rows, "rows");
 
-        const connected = await ensureSocketConnected();
+        if (!res.ok || !rows.length) {
+          throw new Error(j?.message || `Failed (${res.status})`);
+        }
 
         const enriched = [];
         for (let i = 0; i < rows.length; i++) {
           const r = rows[i];
 
-          let driverName = "Driver";
-          if (r.driver_id) {
-            const nm = await fetchUserNameById(r.driver_id);
+          const rideId = pickFirst(
+            r?.request_id,
+            r?.requestId,
+            r?.ride_id,
+            r?.rideId,
+            r?.id,
+            r?.thread_id
+          );
+          if (!rideId) continue;
+
+          const driverId = pickFirst(
+            r?.driver_id,
+            r?.driverId,
+            r?.driver_user_id,
+            r?.driverUserId,
+            r?.peer?.id,
+            r?.peer?.user_id,
+            r?.peer?.driver_id,
+            r?.peer?.driverId
+          );
+
+          let driverName =
+            pickFirst(
+              r?.driver_name,
+              r?.driverName,
+              r?.driver?.user_name,
+              r?.driver?.name,
+              r?.peer?.name,
+              r?.peer?.user_name
+            ) || "Driver";
+          if (driverId && driverName === "Driver") {
+            const nm = await fetchUserNameById(driverId);
             if (nm) driverName = nm;
           }
 
-          let latest = null;
-          if (connected && r.ride_id) {
-            latest = await loadLatestMessagePreview(r.ride_id);
+          const lastMsgObj = r?.last_message ?? r?.lastMessage ?? null;
+          const lastType = String(
+            lastMsgObj?.message_type || lastMsgObj?.type || ""
+          ).toUpperCase();
+          const lastMsgText = pickFirst(
+            typeof lastMsgObj === "object"
+              ? pickFirst(
+                  lastMsgObj?.message,
+                  lastMsgObj?.text,
+                  lastMsgObj?.body,
+                  lastMsgObj?.message_body,
+                  lastMsgObj?.messageBody
+                )
+              : lastMsgObj,
+            r?.preview,
+            r?.message
+          );
+          const lastMsg =
+            lastMsgText ||
+            (lastType === "IMAGE" ? "📷 Photo" : "") ||
+            "Tap to open chat";
+
+          const lastAtRaw = pickFirst(
+            r?.last_message_at,
+            r?.lastMessageAt,
+            r?.updated_at,
+            r?.created_at,
+            r?.ts,
+            lastMsgObj?.created_at,
+            lastMsgObj?.ts
+          );
+          const lastAtNum = Number(lastAtRaw || 0);
+          let lastAt = 0;
+          if (Number.isFinite(lastAtNum) && lastAtNum > 0) {
+            lastAt = lastAtNum < 1e12 ? lastAtNum * 1000 : lastAtNum;
+          } else if (lastAtRaw) {
+            const parsed = new Date(lastAtRaw);
+            const ms = parsed.getTime();
+            if (Number.isFinite(ms)) lastAt = ms;
           }
 
           enriched.push({
-            id: `b-${r.batch_id || r.ride_id}-${r.ride_id}`,
+            id: `d-${rideId}-${driverId || i}`,
             type: "driver",
-            batchId: r.batch_id,
-            rideId: r.ride_id,
-            driverId: r.driver_id,
+            rideId: String(rideId),
+            driverId: driverId ? String(driverId) : "",
             name: driverName,
-            orderIds: r.order_ids,
-            lastMessage:
-              latest?.text ||
-              (r.order_ids?.length ? "Batch orders ready" : "Tap to open chat"),
-            time: latest?.ts
-              ? formatClock(latest.ts)
-              : r.batch_id
-              ? `Batch #${r.batch_id}`
-              : "",
+            merchantId: merchantId,
+            lastMessage: String(lastMsg),
+            lastAt,
+            unread: Number(r?.unread_count ?? r?.unread ?? r?.total_unread ?? 0),
+            time: lastAt ? formatClock(lastAt) : "",
           });
         }
 
+        enriched.sort((a, b) => (b?.lastAt || 0) - (a?.lastAt || 0));
         if (aliveRef.current) setDriverThreads(enriched);
       } catch (e) {
         if (aliveRef.current) {
@@ -462,14 +429,13 @@ export default function MessageScreen({ navigation, route }) {
         }
       }
     },
-    [businessId],
+    [routeMerchantId],
   );
 
   useEffect(() => {
     if (!isDriverTab) return;
-    if (!trim(businessId)) return;
     fetchDriverBatches({ refreshing: false });
-  }, [isDriverTab, businessId, fetchDriverBatches]);
+  }, [isDriverTab, fetchDriverBatches]);
 
   /* ===================== CUSTOMER TAB (FIXED) ===================== */
   const fetchCustomerConversations = useCallback(async ({ refreshing = false } = {}) => {
@@ -594,10 +560,6 @@ export default function MessageScreen({ navigation, route }) {
   const renderItem = ({ item }) => {
     // DRIVER row
     if (isDriverTab) {
-      const orderLine = `Orders: ${
-        Array.isArray(item.orderIds) && item.orderIds.length ? item.orderIds.join(", ") : "-"
-      }`;
-
       return (
         <TouchableOpacity
           style={styles.threadRow}
@@ -608,10 +570,12 @@ export default function MessageScreen({ navigation, route }) {
               rideId: item.rideId,
               driverUserId: item.driverId,
               driverName: item.name,
+              me: {
+                role: "merchant",
+                id: String(item.merchantId || ""),
+              },
               business_id: businessId,
               businessId: businessId,
-              batch_id: item.batchId,
-              order_ids: item.orderIds,
               type: "driver",
               name: item.name,
             });
@@ -628,17 +592,12 @@ export default function MessageScreen({ navigation, route }) {
             </View>
 
             <Text style={styles.threadOrder} numberOfLines={1}>
-              Batch: <Text style={styles.threadOrderBold}>{item.batchId || "-"}</Text>
-              {"  "}• Ride: <Text style={styles.threadOrderBold}>{item.rideId}</Text>
+              Ride ID: <Text style={styles.threadOrderBold}>{item.rideId || "-"}</Text>
             </Text>
 
-            <Text style={styles.threadLastMsg} numberOfLines={1}>{orderLine}</Text>
-
-            {!!item.lastMessage ? (
-              <Text style={[styles.threadLastMsg, { marginTop: 2 }]} numberOfLines={1}>
-                {item.lastMessage}
-              </Text>
-            ) : null}
+            <Text style={[styles.threadLastMsg, { marginTop: 2 }]} numberOfLines={1}>
+              {item.lastMessage}
+            </Text>
           </View>
 
           <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />

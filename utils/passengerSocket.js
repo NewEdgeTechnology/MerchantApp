@@ -1,51 +1,35 @@
-// File: utils/passengerSocket.js
 import { io } from "socket.io-client";
-import { MY_LOCAL_SOCKET, MY_LOCAL_URL, RIDE_REQUEST_ENDPOINT } from "@env";
+import { MY_LOCAL_URL, RIDE_REQUEST_ENDPOINT } from "@env";
 
-/**
- * ✅ Grablike Socket.IO on server:
- *   origin: https://grab.newedge.bt
- *   path:   /grablike/socket.io
- */
+// prod socket base + path
 const PROD_ORIGIN = "https://grab.newedge.bt";
 const PROD_PATH = "/grablike/socket.io";
+const PROD_HTTP_BASE = "https://grab.newedge.bt/grablike";
 
-/** Resolve Socket.IO endpoint from envs (local), otherwise use prod */
 function resolveSocketConfig() {
-  const raw = (MY_LOCAL_SOCKET || MY_LOCAL_URL || RIDE_REQUEST_ENDPOINT || "").trim();
-
-  // If env points to localhost/dev, use it
-  try {
-    if (raw) {
-      const u = new URL(raw);
-      const origin = `${u.protocol}//${u.host}`;
-
-      // if you want to force prod when env is grab.newedge.bt
-      if (u.hostname === "grab.newedge.bt") {
-        return { origin: PROD_ORIGIN, path: PROD_PATH };
-      }
-
-      // local/dev servers usually use default "/socket.io"
-      return { origin, path: "/socket.io" };
-    }
-  } catch {}
-
-  // default to prod grablike socket
   return { origin: PROD_ORIGIN, path: PROD_PATH };
 }
 
-let socket = null;
-let currentPassengerId = null;
+function resolveHttpBase() {
+  const raw = (MY_LOCAL_URL || RIDE_REQUEST_ENDPOINT || "").trim();
+  try {
+    if (!raw) return PROD_HTTP_BASE;
+    const u = new URL(raw);
+    return `${u.protocol}//${u.host}${u.pathname.replace(/\/$/, "")}`;
+  } catch {
+    return PROD_HTTP_BASE;
+  }
+}
 
-// ✅ Keep last ride + last order so we can rejoin on reconnect
+let socket = null;
+let currentIdentity = { role: "passenger", userId: null };
+
 let lastRideId = null;
 let lastOrderId = null;
 
-// ✅ prevent join spam (duplicate joinOrder/joinRide logs)
 let joinedRideId = null;
 let joinedOrderId = null;
 
-// ✅ small de-dupe for frequent location packets
 let lastDeliveryLocSig = "";
 let lastRideLocSig = "";
 
@@ -59,15 +43,58 @@ function sigForLoc(e) {
   return `${did}:${qLat}:${qLng}:${Math.floor(ts / 500)}`;
 }
 
-/** Ensure singleton socket exists and is connected */
-function ensureSocket(passengerId) {
+function identityPayload(role, userId) {
+  const rid = userId != null ? String(userId) : undefined;
+  const base = { role: String(role || "passenger") };
+
+  if (base.role === "merchant") {
+    return { ...base, merchant_id: rid, merchantId: rid };
+  }
+  if (base.role === "driver") {
+    return { ...base, driver_id: rid, driverId: rid };
+  }
+  return { ...base, passenger_id: rid, passengerId: rid };
+}
+
+function authPayload(role, userId) {
+  const rid = userId != null ? String(userId) : undefined;
+  if (role === "merchant") {
+    return {
+      role,
+      merchantId: rid,
+      merchant_id: rid,
+    };
+  }
+  if (role === "driver") {
+    return {
+      role,
+      driverId: rid,
+      driver_id: rid,
+    };
+  }
+  return {
+    role,
+    passengerId: rid,
+    passenger_id: rid,
+  };
+}
+
+function ensureSocket(identity) {
+  const role = String(identity?.role || currentIdentity?.role || "passenger");
+  const userId =
+    identity?.userId != null
+      ? String(identity.userId)
+      : currentIdentity?.userId != null
+      ? String(currentIdentity.userId)
+      : null;
+
+  currentIdentity = { role, userId };
+
   const { origin, path } = resolveSocketConfig();
 
   if (!socket) {
     socket = io(origin, {
       path,
-
-      // ✅ IMPORTANT: keep polling fallback for mobile networks
       transports: ["websocket", "polling"],
       autoConnect: false,
       reconnection: true,
@@ -75,79 +102,36 @@ function ensureSocket(passengerId) {
       reconnectionDelay: 800,
       reconnectionDelayMax: 7000,
       timeout: 15000,
-
-      auth: { passengerId: passengerId ? String(passengerId) : undefined },
+      auth: authPayload(role, userId),
     });
 
-    console.log("[socket] init", { origin, path });
-
-    // ---- Dev universal event tap ----
-    if (typeof __DEV__ !== "undefined" && __DEV__) {
-      socket.onAny((event, ...args) => {
-        try {
-          const one = args && args.length ? args[0] : undefined;
-          console.log("[socket EVT]", event, one);
-        } catch {}
-      });
-    }
-
-    // ---- Connect lifecycle ----
     socket.on("connect", () => {
-      console.log("[socket] connected:", socket.id);
+      const idPayload = identityPayload(currentIdentity.role, currentIdentity.userId);
+      socket.emit("whoami", idPayload);
 
-      // (Re)identify
-      if (currentPassengerId) {
-        socket.emit("whoami", {
-          role: "passenger",
-          passenger_id: String(currentPassengerId),
-        });
+      if (lastRideId && joinedRideId !== String(lastRideId)) {
+        socket.emit("joinRide", { rideId: String(lastRideId) }, () => {});
+        joinedRideId = String(lastRideId);
       }
 
-      // ✅ Re-join ride room
-      if (lastRideId) {
-        if (joinedRideId !== String(lastRideId)) {
-          socket.emit("joinRide", { rideId: String(lastRideId) }, (ack) => {
-            console.log("[rejoinRide ACK]", ack);
-          });
-          joinedRideId = String(lastRideId);
-        }
-      }
-
-      // ✅ Re-join order room
-      if (lastOrderId) {
-        if (joinedOrderId !== String(lastOrderId)) {
-          socket.emit("joinOrder", { orderId: String(lastOrderId) }, (ack) => {
-            console.log("[rejoinOrder ACK]", ack);
-          });
-          joinedOrderId = String(lastOrderId);
-        }
+      if (lastOrderId && joinedOrderId !== String(lastOrderId)) {
+        socket.emit("joinOrder", { orderId: String(lastOrderId) }, () => {});
+        joinedOrderId = String(lastOrderId);
       }
     });
 
-    socket.on("connect_error", (err) => {
-      console.log("[socket connect_error]", err?.message || err);
-    });
-
-    socket.on("disconnect", (reason) => {
-      console.log("[socket disconnect]", reason);
+    socket.on("disconnect", () => {
       joinedRideId = null;
       joinedOrderId = null;
     });
   }
 
-  // Update auth if passenger changes
-  if (passengerId && String(passengerId) !== String(currentPassengerId)) {
-    currentPassengerId = String(passengerId);
-    try {
-      socket.auth = { ...(socket.auth || {}), passengerId: currentPassengerId };
-      if (socket.connected) {
-        socket.emit("whoami", {
-          role: "passenger",
-          passenger_id: currentPassengerId,
-        });
-      }
-    } catch {}
-  }
+  try {
+    socket.auth = authPayload(role, userId);
+    if (socket.connected) {
+      socket.emit("whoami", identityPayload(role, userId));
+    }
+  } catch {}
 
   if (!socket.connected) {
     try {
@@ -158,28 +142,63 @@ function ensureSocket(passengerId) {
   return socket;
 }
 
-/* ========================== Public helpers ========================== */
+export function connectRideSocket({ role = "passenger", userId } = {}) {
+  return ensureSocket({ role, userId });
+}
 
 export function connectPassengerSocket(passengerId) {
-  return ensureSocket(passengerId);
+  return connectRideSocket({ role: "passenger", userId: passengerId });
 }
 
 export function getPassengerSocket() {
   return socket;
 }
 
-/* ========================== Rooms ========================== */
+export async function resolveCurrentRideId(passengerId) {
+  const pid = String(passengerId || currentIdentity?.userId || "").trim();
+  if (!pid) return null;
+
+  const base = resolveHttpBase();
+  const endsWithRides = /\/rides$/i.test(base);
+  const urls = [
+    `${base}/passenger/current-ride?passenger_id=${encodeURIComponent(pid)}`,
+    endsWithRides
+      ? null
+      : `${base}/rides/passenger/current-ride?passenger_id=${encodeURIComponent(pid)}`,
+  ].filter(Boolean);
+
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { method: "GET" });
+      if (!res.ok) continue;
+      const json = await res.json().catch(() => ({}));
+      const rid =
+        json?.data?.request_id ??
+        json?.data?.ride_id ??
+        json?.data?.rideId ??
+        null;
+      if (rid != null) {
+        return {
+          data: {
+            ...(json?.data || {}),
+            request_id: String(rid),
+          },
+        };
+      }
+    } catch {}
+  }
+
+  return null;
+}
 
 export function joinRideRoom(rideId, ackCb) {
   const rid = String(rideId);
   lastRideId = rid;
 
-  const s = ensureSocket(currentPassengerId);
-
+  const s = ensureSocket(currentIdentity);
   const doJoin = () => {
     if (joinedRideId === rid) return;
     s.emit("joinRide", { rideId: rid }, (ack) => {
-      console.log("[joinRide ACK]", ack);
       joinedRideId = rid;
       if (typeof ackCb === "function") ackCb(ack);
     });
@@ -194,11 +213,9 @@ export function leaveRideRoom(rideId, ackCb) {
   if (lastRideId === id) lastRideId = null;
   if (joinedRideId === id) joinedRideId = null;
 
-  const s = ensureSocket(currentPassengerId);
-
+  const s = ensureSocket(currentIdentity);
   const doLeave = () => {
     s.emit("leaveRide", { rideId: id }, (ack) => {
-      console.log("[leaveRide ACK]", ack);
       if (typeof ackCb === "function") ackCb(ack);
     });
   };
@@ -211,12 +228,10 @@ export function joinOrderRoom(orderId, ackCb) {
   const oid = String(orderId);
   lastOrderId = oid;
 
-  const s = ensureSocket(currentPassengerId);
-
+  const s = ensureSocket(currentIdentity);
   const doJoin = () => {
     if (joinedOrderId === oid) return;
     s.emit("joinOrder", { orderId: oid }, (ack) => {
-      console.log("[joinOrder ACK]", ack);
       joinedOrderId = oid;
       if (typeof ackCb === "function") ackCb(ack);
     });
@@ -231,11 +246,9 @@ export function leaveOrderRoom(orderId, ackCb) {
   if (lastOrderId === id) lastOrderId = null;
   if (joinedOrderId === id) joinedOrderId = null;
 
-  const s = ensureSocket(currentPassengerId);
-
+  const s = ensureSocket(currentIdentity);
   const doLeave = () => {
     s.emit("leaveOrder", { orderId: id }, (ack) => {
-      console.log("[leaveOrder ACK]", ack);
       if (typeof ackCb === "function") ackCb(ack);
     });
   };
@@ -243,8 +256,6 @@ export function leaveOrderRoom(orderId, ackCb) {
   if (s.connected) doLeave();
   else s.once("connect", doLeave);
 }
-
-/* ========================== Passenger ride events ========================== */
 
 export function onPassengerEvents({
   onRideAccepted,
@@ -255,7 +266,7 @@ export function onPassengerEvents({
   onBookingCancelled,
   onBookingStageUpdate,
 } = {}) {
-  const s = ensureSocket(currentPassengerId);
+  const s = ensureSocket(currentIdentity);
   const handlers = [];
 
   const bind = (evt, fn) => {
@@ -286,11 +297,8 @@ export function onPassengerEvents({
   return () => handlers.forEach(([evt, h]) => s.off(evt, h));
 }
 
-/* ===================== LIVE LOCATION listeners ===================== */
-
 export function onDeliveryDriverLocation(handler) {
-  const s = ensureSocket(currentPassengerId);
-
+  const s = ensureSocket(currentIdentity);
   const h = (e) => {
     const sig = sigForLoc(e);
     if (sig && sig === lastDeliveryLocSig) return;
@@ -303,8 +311,7 @@ export function onDeliveryDriverLocation(handler) {
 }
 
 export function onRideDriverLocation(handler) {
-  const s = ensureSocket(currentPassengerId);
-
+  const s = ensureSocket(currentIdentity);
   const h = (e) => {
     const sig = sigForLoc(e);
     if (sig && sig === lastRideLocSig) return;
@@ -317,7 +324,7 @@ export function onRideDriverLocation(handler) {
 }
 
 export function onDriverLocation(handler) {
-  const s = ensureSocket(currentPassengerId);
+  const s = ensureSocket(currentIdentity);
   const h = (e) => {
     if (typeof handler === "function") handler(e);
   };
@@ -325,17 +332,12 @@ export function onDriverLocation(handler) {
   return () => s.off("driverLocationBroadcast", h);
 }
 
-/* ============================= CHAT ============================= */
-
 export function sendChat(
   { request_id, message, attachments = null, temp_id = null },
   ackCb
 ) {
-  const s = ensureSocket(currentPassengerId);
-  console.log(s)
-  const payload = { request_id, message, attachments, temp_id };
-  console.log("[sendChat] payload:", payload);
-  s.emit("chat:send", payload, (ack) => {
+  const s = ensureSocket(currentIdentity);
+  s.emit("chat:send", { request_id, message, attachments, temp_id }, (ack) => {
     if (typeof ackCb === "function") ackCb(ack);
   });
 }
@@ -344,31 +346,32 @@ export function loadChatHistory(
   { request_id, before_id = null, limit = 50 },
   ackCb
 ) {
-  const s = ensureSocket(currentPassengerId);
+  const s = ensureSocket(currentIdentity);
   const payload = {
     request_id,
     ...(before_id != null ? { before_id } : {}),
     limit,
   };
+
   s.emit("chat:history", payload, (ack) => {
     if (typeof ackCb === "function") ackCb(ack);
   });
 }
 
 export function setTyping(request_id, is_typing) {
-  const s = ensureSocket(currentPassengerId);
+  const s = ensureSocket(currentIdentity);
   s.emit("chat:typing", { request_id, is_typing: !!is_typing });
 }
 
 export function markChatRead({ request_id, last_seen_id }, ackCb) {
-  const s = ensureSocket(currentPassengerId);
+  const s = ensureSocket(currentIdentity);
   s.emit("chat:read", { request_id, last_seen_id }, (ack) => {
     if (typeof ackCb === "function") ackCb(ack);
   });
 }
 
 export function onChatEvents({ onNewMessage, onTyping, onRead } = {}) {
-  const s = ensureSocket(currentPassengerId);
+  const s = ensureSocket(currentIdentity);
   const handlers = [];
 
   if (typeof onNewMessage === "function") {

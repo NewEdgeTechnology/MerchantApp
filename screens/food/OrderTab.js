@@ -7,6 +7,7 @@
 // ✅ UPDATE: Scheduled orders now show schedule time using scheduled_at_local / scheduled_at_utc from API.
 // ✅ UPDATE: Order "total" now matches OrderDetails display total (EXCLUDES platform_fee; includes delivery + merchant_delivery - discount).
 // ✅ FIX: Totals computed robustly from nested totals + item line totals (supports string prices like "Nu. 20")
+// ✅ UPDATE: Hide Delivered/Completed orders everywhere (DELIVERED/DELIVERED_* -> COMPLETED -> filtered out)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -41,7 +42,7 @@ const BASE_STATUS_LABELS = [
   { key: 'CONFIRMED', label: 'Confirmed' },
   { key: 'READY', label: 'Ready' },
   { key: 'OUT_FOR_DELIVERY', label: 'Out for delivery' },
-  // { key: 'COMPLETED', label: 'Completed' },
+  // { key: 'COMPLETED', label: 'Completed' }, // hidden
   { key: 'DECLINED', label: 'Declined' },
 ];
 
@@ -66,9 +67,21 @@ const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Se
 // ✅ normalize status keys from backend into UI keys
 const normalizeStatusKey = (s) => {
   const k = String(s || '').trim().toUpperCase().replace(/\s+/g, '_');
+
+  // map "on road" variants
   if (k === 'ON_ROAD' || k === 'ONROAD') return 'OUT_FOR_DELIVERY';
+
+  // ✅ treat delivered variants as completed so we can hide them consistently
+  if (k === 'DELIVERED' || k === 'DELIVERED_TO_CUSTOMER' || k === 'DELIVERED_TO_CLIENT') return 'COMPLETED';
+
+  // some backends might use "COMPLETED" already
+  if (k === 'COMPLETED') return 'COMPLETED';
+
   return k;
 };
+
+// ✅ hide these statuses from the list everywhere
+const HIDE_STATUSES = new Set(['COMPLETED']);
 
 const showAsGiven = (s) => {
   if (!s) return '';
@@ -512,7 +525,9 @@ const groupOrders = (rows = []) => {
     };
   });
 
-  return list.sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
+  return list
+    .filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o.status)))
+    .sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
 };
 
 const buildOrdersUrl = (base, businessId, { appendOwnerType = false, ownerType = 'mart' } = {}) => {
@@ -572,7 +587,9 @@ const parseJSON = async (res) => {
 
 const normalizeOrdersFromApi = (payload) => {
   try {
-    if (Array.isArray(payload)) return groupOrders(payload);
+    if (Array.isArray(payload)) {
+      return groupOrders(payload).filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o.status)));
+    }
 
     const blocks = Array.isArray(payload?.data) ? payload.data : [];
     const list = [];
@@ -617,6 +634,9 @@ const normalizeOrdersFromApi = (payload) => {
         // ✅ total matches OrderDetails display total
         const displayTotal = computeDisplayTotal({ items: itemsArr, totals: snap });
 
+        const statusKey = normalizeStatusKey(o.status);
+        if (HIDE_STATUSES.has(statusKey)) continue;
+
         list.push({
           id: String(o.order_id ?? o.id),
           type: o.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
@@ -624,7 +644,7 @@ const normalizeOrdersFromApi = (payload) => {
           created_at: createdISO,
           items: itemsStr,
           total: displayTotal,
-          status: normalizeStatusKey(o.status),
+          status: statusKey,
           payment_method: o.payment_method,
           business_name: businessName,
           delivery_address: deliveryAddr || '',
@@ -641,7 +661,9 @@ const normalizeOrdersFromApi = (payload) => {
       }
     }
 
-    return list.sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
+    return list
+      .filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o.status)))
+      .sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
   } catch {
     return [];
   }
@@ -786,7 +808,9 @@ export default function MartOrdersTab({
   );
 
   const [loading, setLoading] = useState(false);
-  const [orders, setOrders] = useState(ordersProp || []);
+  const [orders, setOrders] = useState(
+    Array.isArray(ordersProp) ? ordersProp.filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status))) : []
+  );
   const [error, setError] = useState(null);
 
   const [scheduledOrders, setScheduledOrders] = useState([]);
@@ -821,6 +845,7 @@ export default function MartOrdersTab({
 
   const STATUS_LABELS = useMemo(() => {
     const isMart = String(ownerType || '').toLowerCase() === 'mart';
+    // Completed is hidden from BASE_STATUS_LABELS already
     return isMart ? BASE_STATUS_LABELS.filter((s) => s.key !== 'PREPARING') : BASE_STATUS_LABELS;
   }, [ownerType]);
 
@@ -928,7 +953,7 @@ export default function MartOrdersTab({
           throw new Error(msg);
         }
         const json = await parseJSON(res);
-        const list = normalizeOrdersFromApi(json);
+        const list = normalizeOrdersFromApi(json).filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status)));
         setOrders(list);
       } catch (e) {
         setError(String(e?.message || e) || 'Failed to load orders');
@@ -977,8 +1002,11 @@ export default function MartOrdersTab({
 
   // Initial fetch
   useEffect(() => {
-    if (ordersProp && ordersProp.length) setOrders(ordersProp);
-    else fetchOrders();
+    if (ordersProp && ordersProp.length) {
+      setOrders(ordersProp.filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status))));
+    } else {
+      fetchOrders();
+    }
   }, [ordersProp, fetchOrders]);
 
   // Prefetch upcoming so count shows quickly
@@ -992,13 +1020,25 @@ export default function MartOrdersTab({
   }, [activeChip, scheduledOrders.length, bizId, fetchScheduledOrders]);
 
   // ✅ IMPORTANT: auto-normalize status patches so ON ROAD becomes OUT_FOR_DELIVERY immediately
+  // ✅ ALSO: if it becomes DELIVERED/COMPLETED -> remove from list instantly
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener('order-updated', ({ id, patch }) => {
+      const nextStatus = patch?.status ? normalizeStatusKey(patch.status) : null;
+
+      // remove delivered/completed immediately
+      if (nextStatus && HIDE_STATUSES.has(nextStatus)) {
+        setOrders((prev) => prev.filter((o) => String(o.id) !== String(id)));
+        return;
+      }
+
       const fixedPatch = {
         ...patch,
-        ...(patch?.status ? { status: normalizeStatusKey(patch.status) } : null),
+        ...(nextStatus ? { status: nextStatus } : null),
       };
-      setOrders((prev) => prev.map((o) => (String(o.id) === String(id) ? { ...o, ...fixedPatch } : o)));
+
+      setOrders((prev) =>
+        prev.map((o) => (String(o.id) === String(id) ? { ...o, ...fixedPatch } : o))
+      );
     });
     return () => sub.remove();
   }, []);
@@ -1030,6 +1070,9 @@ export default function MartOrdersTab({
         const snap = getTotalsSnapshot(o);
         const displayTotal = computeDisplayTotal({ items: itemsArr, totals: snap });
 
+        const normalizedStatus = normalizeStatusKey(o.status || 'PENDING');
+        if (HIDE_STATUSES.has(normalizedStatus)) return;
+
         const normalized = {
           id: String(o.order_id || o.id),
           type: o.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
@@ -1039,7 +1082,7 @@ export default function MartOrdersTab({
             .map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`)
             .join(', '),
           total: displayTotal,
-          status: normalizeStatusKey(o.status || 'PENDING'),
+          status: normalizedStatus,
           payment_method: o.payment_method || 'COD',
           business_name:
             (itemsArr && itemsArr[0] && itemsArr[0].business_name) ||
@@ -1060,7 +1103,9 @@ export default function MartOrdersTab({
 
         setOrders((prev) => {
           const without = prev.filter((x) => String(x.id) !== String(normalized.id));
-          return [normalized, ...without].sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
+          return [normalized, ...without]
+            .filter((x) => !HIDE_STATUSES.has(normalizeStatusKey(x?.status)))
+            .sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
         });
       } catch {}
     });
@@ -1155,7 +1200,8 @@ export default function MartOrdersTab({
       });
     }
 
-    return base;
+    // extra safety: never show completed
+    return base.filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status)));
   }, [dateFilteredOrders, scheduledOrders, query, activeChip]);
 
   const renderItem = useCallback(

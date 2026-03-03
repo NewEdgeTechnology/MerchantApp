@@ -1,15 +1,7 @@
 // screens/food/NearbyOrdersScreen.js
-// ✅ FOOD version (no Mart tab fallback)
-// ✅ Uses UNIQUE FOOD cluster route name: "FoodNearbyClusterOrdersScreen"
-// ✅ Fetches orders directly from ORDER_ENDPOINT (no reliance on paramOrders shape)
-// ✅ FIX: extracts coords from YOUR payload: order.deliver_to.lat/lng (and also legacy fields)
-// ✅ FIX: extracts address from order.deliver_to.address (and also legacy fields)
-// ✅ FIX: "tight" clustering (complete-linkage) + grid pre-bucketing (prevents far merge)
-// ✅ FIX: unique cluster label per card (no duplicate place names on same screen)
-// ✅ Default thresholdKm = 2
-// ✅ NEW: ONE global "Track orders" button (ready-for-delivery pill style)
-// ✅ FIX: If no IN-PROGRESS trackable orders -> Track button is unclickable (disabled + dimmed)
-// ✅ FIX: Remove orders from this screen if status is DECLINED/REJECTED/DENIED OR fulfillment_type is PICKUP
+// ✅ UPDATE: Track orders button is clickable ONLY if batch exists in GET_BATCH_RIDE_ID_ENDPOINT
+// ✅ UPDATE: On Track orders press -> navigates to BatchRidesScreen with { batches, businessId }
+// ✅ Keeps your existing clustering + filters + responsive UI
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -21,12 +13,26 @@ import {
   ActivityIndicator,
   BackHandler,
   RefreshControl,
+  useWindowDimensions,
 } from "react-native";
 import { useNavigation, useRoute, useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { ORDER_ENDPOINT as ENV_ORDER_ENDPOINT, BUSINESS_DETAILS } from "@env";
+import {
+  ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
+  BUSINESS_DETAILS,
+  GET_BATCH_RIDE_ID_ENDPOINT as ENV_GET_BATCH_RIDE_ID_ENDPOINT,
+} from "@env";
+
+/* ---------------- responsive helpers ---------------- */
+const makeScaler = (screenWidth) => {
+  const base = 375;
+  const ratio = screenWidth > 0 ? screenWidth / base : 1;
+  const clampedRatio = Math.max(0.88, Math.min(1.25, ratio));
+  const s = (n) => Math.round((Number(n) || 0) * clampedRatio);
+  return s;
+};
 
 /* ---------------- status normalizer ---------------- */
 const normalizeStatusForCluster = (v) => {
@@ -34,7 +40,7 @@ const normalizeStatusForCluster = (v) => {
   if (!s) return "PENDING";
   if (s === "ON ROAD" || s === "ON_ROAD" || s === "ONROAD") return "OUT_FOR_DELIVERY";
   if (s === "OUT FOR DELIVERY") return "OUT_FOR_DELIVERY";
-  if (s === "DELIVERED") return "COMPLETED"; // legacy mapping
+  if (s === "DELIVERED") return "COMPLETED";
   return s;
 };
 
@@ -49,7 +55,7 @@ const shouldIncludeInCluster = (statusRaw) => {
   return true;
 };
 
-/** ✅ Track list should include only IN-PROGRESS statuses (so 0 disables button) */
+/** ✅ Track list should include only IN-PROGRESS statuses (for your Batch list screen usage) */
 const isTrackableStatus = (statusRaw) => {
   const s = normalizeStatusForCluster(statusRaw);
   return (
@@ -96,6 +102,45 @@ const shouldExcludeFromScreen = (rawOrder) => {
     "";
 
   return isDeclinedStatus(rawStatus) || isPickupFulfillment(fulfillmentType);
+};
+
+/* ---------------- delivery method helpers ---------------- */
+const normalizeDeliveryMethod = (v) => {
+  const s = String(v || "").trim().toUpperCase();
+  if (!s) return "";
+  if (s === "3RD_PARTY" || s === "THIRD_PARTY" || s === "PLATFORM") return "GRAB";
+  if (s === "RIDER" || s === "DRIVER") return "GRAB";
+  if (s === "OUTSOURCE" || s === "OUTSOURCED") return "GRAB";
+  return s;
+};
+
+const isGrabChosenForOrder = (rawOrder) => {
+  if (!rawOrder || typeof rawOrder !== "object") return false;
+
+  const methodRaw =
+    rawOrder.delivery_method ??
+    rawOrder.deliveryMethod ??
+    rawOrder.delivery_choice ??
+    rawOrder.deliveryChoice ??
+    rawOrder.delivery_type ??
+    rawOrder.deliveryType ??
+    rawOrder.delivery_option_selected ??
+    rawOrder.deliveryOptionSelected ??
+    rawOrder.delivery_option ??
+    rawOrder.deliveryOption ??
+    rawOrder.rider_type ??
+    rawOrder.riderType ??
+    rawOrder.driver_type ??
+    rawOrder.driverType ??
+    "";
+
+  const method = normalizeDeliveryMethod(methodRaw);
+  if (method === "GRAB") return true;
+
+  if (rawOrder.ride_id || rawOrder.rideId) return true;
+  if (rawOrder.batch_id || rawOrder.batchId) return true;
+
+  return false;
 };
 
 /* ---------------- coords helpers ---------------- */
@@ -192,12 +237,15 @@ const decorateOrdersFromApiPayload = (apiJson) => {
   for (const g of groups) {
     const orders = Array.isArray(g?.orders) ? g.orders : [];
     for (const o of orders) {
-      // ✅ EXCLUDE: status declined OR fulfillment pickup
       if (shouldExcludeFromScreen(o)) continue;
 
       const rawStatus = o.status || o.order_status || "";
       const fulfillmentType =
-        o.fulfillment_type ?? o.fulfillmentType ?? o.fulfillment ?? o.fulfillment_type_name ?? "";
+        o.fulfillment_type ??
+        o.fulfillmentType ??
+        o.fulfillment ??
+        o.fulfillment_type_name ??
+        "";
 
       const addr =
         normalizeAddressField(o?.deliver_to?.address) ||
@@ -265,6 +313,29 @@ const buildOrdersUrl = (bizId, ownerType, overrideBase) => {
   if (encOwner) {
     const sep2 = url.includes("?") ? "&" : "?";
     url = `${url}${sep2}owner_type=${encOwner}`;
+  }
+
+  return url;
+};
+
+/* ✅ NEW: Build GET_BATCH_RIDE_ID_ENDPOINT url */
+const buildGetBatchRideUrl = (bizId) => {
+  const rawId = bizId != null ? String(bizId).trim() : "";
+  const tpl = (ENV_GET_BATCH_RIDE_ID_ENDPOINT || "").trim();
+  if (!rawId || !tpl) return null;
+
+  const encId = encodeURIComponent(rawId);
+
+  let url = tpl
+    .replace("{business_id}", encId)
+    .replace("{businessId}", encId)
+    .replace(":business_id", encId)
+    .replace(":businessId", encId);
+
+  // If template didn't have placeholder, append query param
+  if (url === tpl) {
+    const sep = url.includes("?") ? "&" : "?";
+    url = `${url}${sep}business_id=${encId}`;
   }
 
   return url;
@@ -373,15 +444,51 @@ const clusterOrdersByRadius = (ordersList, radiusKm) => {
   return out;
 };
 
-/* ---------------- unique label helper ---------------- */
-const labelForCluster = (cluster) => {
-  const first = cluster?.orders?.[0]?.raw;
+/* ---------------- unique label helper (MOST COMMON) ---------------- */
+const labelTokenFromOrder = (orderLike) => {
+  const raw = orderLike?.raw || orderLike || {};
   const addr =
-    first?.deliver_to?.address ||
-    first?.deliverTo?.address ||
-    cluster?.orders?.[0]?.delivery_address ||
-    "Nearby orders";
+    raw?.deliver_to?.address ||
+    raw?.deliverTo?.address ||
+    orderLike?.delivery_address ||
+    raw?.delivery_address ||
+    raw?.dropoff_address ||
+    raw?.shipping_address ||
+    raw?.address ||
+    "";
+
   return pick2ndOr1stPlace(addr);
+};
+
+const labelForCluster = (cluster) => {
+  const arr = Array.isArray(cluster?.orders) ? cluster.orders : [];
+  if (!arr.length) return "Nearby orders";
+
+  const counts = new Map();
+  for (const o of arr) {
+    const t = labelTokenFromOrder(o);
+    if (!t) continue;
+    counts.set(t, (counts.get(t) || 0) + 1);
+  }
+
+  if (counts.size === 0) return "Nearby orders";
+
+  let best = null;
+  let bestCount = -1;
+
+  for (const [label, c] of counts.entries()) {
+    if (c > bestCount) {
+      best = label;
+      bestCount = c;
+      continue;
+    }
+    if (c === bestCount && best) {
+      if (label.length < best.length) best = label;
+      else if (label.length === best.length && label.localeCompare(best) < 0) best = label;
+    }
+  }
+
+  return best || "Nearby orders";
 };
 
 const applyUniqueLabels = (clusters) => {
@@ -404,15 +511,16 @@ function NearbyOrdersScreen() {
   const navigation = useNavigation();
   const route = useRoute();
   const insets = useSafeAreaInsets();
+  const { width: screenW } = useWindowDimensions();
+  const S = useMemo(() => makeScaler(screenW), [screenW]);
 
   const businessIdFromParams = route?.params?.businessId;
 
   const ownerType = route?.params?.ownerType || route?.params?.owner_type || "food";
   const orderEndpointFromParams = route?.params?.orderEndpoint;
   const detailsRoute = route?.params?.detailsRoute || "OrderDetails";
-  const thresholdKm = Number(route?.params?.thresholdKm ?? 2);
 
-  // ✅ which screen shows batch/track list
+  const thresholdKm = 2;
   const batchListScreen = route?.params?.batchListScreen || "BatchRidesScreen";
 
   const [deliveryOption, setDeliveryOption] = useState(null);
@@ -421,6 +529,10 @@ function NearbyOrdersScreen() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  // ✅ NEW: batches from GET_BATCH_RIDE_ID_ENDPOINT
+  const [batchRides, setBatchRides] = useState([]);
+  const [batchLoading, setBatchLoading] = useState(false);
 
   const abortRef = useRef(null);
 
@@ -533,32 +645,95 @@ function NearbyOrdersScreen() {
       const decorated = decorateOrdersFromApiPayload(json);
       setOrders(decorated);
     } catch (e) {
-      console.warn("[NearbyOrders][FOOD] fetch error", e?.message || e);
+      const msg = String(e?.message || "");
+      const isAbort =
+        e?.name === "AbortError" ||
+        msg.toLowerCase().includes("aborted") ||
+        msg.toLowerCase().includes("abort");
+
+      if (!isAbort) {
+        console.warn("[NearbyOrders][FOOD] fetch error", e?.message || e);
+      }
     } finally {
       setLoading(false);
     }
   }, [bizId, buildUrl]);
 
+  // ✅ NEW: fetch batches for business
+  const fetchBatchRides = useCallback(async () => {
+    if (!bizId) return;
+
+    try {
+      setBatchLoading(true);
+
+      const url = buildGetBatchRideUrl(bizId);
+      if (!url) {
+        setBatchRides([]);
+        return;
+      }
+
+      const headers = { Accept: "application/json" };
+      const token = await SecureStore.getItemAsync("auth_token");
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const res = await fetch(url, { method: "GET", headers });
+      const text = await res.text();
+
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = null;
+      }
+
+      if (!res.ok) {
+        setBatchRides([]);
+        return;
+      }
+
+      const arr = Array.isArray(json?.data) ? json.data : [];
+      // keep only batches that look valid
+      const cleaned = arr
+        .map((x) => ({
+          batch_id: x?.batch_id ?? x?.batchId ?? null,
+          ride_id: x?.ride_id ?? x?.rideId ?? null,
+          driver_id: x?.driver_id ?? x?.driverId ?? null,
+          order_ids: Array.isArray(x?.order_ids) ? x.order_ids : Array.isArray(x?.orderIds) ? x.orderIds : [],
+          raw: x,
+        }))
+        .filter((x) => x.batch_id != null && String(x.batch_id).trim());
+
+      setBatchRides(cleaned);
+    } catch (e) {
+      console.log("[NearbyOrders][FOOD] batch ride fetch error:", e?.message || e);
+      setBatchRides([]);
+    } finally {
+      setBatchLoading(false);
+    }
+  }, [bizId]);
+
   useEffect(() => {
     fetchOrders();
-  }, [fetchOrders]);
+    fetchBatchRides();
+  }, [fetchOrders, fetchBatchRides]);
 
   useFocusEffect(
     useCallback(() => {
       fetchBusinessDetailsFromApi();
       fetchOrders();
-    }, [fetchBusinessDetailsFromApi, fetchOrders])
+      fetchBatchRides();
+    }, [fetchBusinessDetailsFromApi, fetchOrders, fetchBatchRides])
   );
 
   const onRefresh = useCallback(async () => {
     if (!bizId) return;
     setRefreshing(true);
     try {
-      await Promise.all([fetchBusinessDetailsFromApi(), fetchOrders()]);
+      await Promise.all([fetchBusinessDetailsFromApi(), fetchOrders(), fetchBatchRides()]);
     } finally {
       setRefreshing(false);
     }
-  }, [bizId, fetchBusinessDetailsFromApi, fetchOrders]);
+  }, [bizId, fetchBusinessDetailsFromApi, fetchOrders, fetchBatchRides]);
 
   const clusterEligibleOrders = useMemo(
     () =>
@@ -569,56 +744,77 @@ function NearbyOrdersScreen() {
   );
 
   const clusters = useMemo(() => {
-    const threshold = Number.isFinite(thresholdKm) && thresholdKm > 0 ? thresholdKm : 2;
-
-    const rawClusters = clusterOrdersByRadius(clusterEligibleOrders || [], threshold);
+    const rawClusters = clusterOrdersByRadius(clusterEligibleOrders || [], thresholdKm);
     const labeled = applyUniqueLabels(rawClusters);
-
     labeled.sort((a, b) => (b.orders?.length || 0) - (a.orders?.length || 0));
     return labeled;
   }, [clusterEligibleOrders, thresholdKm]);
 
-  /* ✅ ONE global track list (IN-PROGRESS only) */
+  /* (kept) your trackable list */
   const trackableAll = useMemo(() => {
     const src = Array.isArray(orders) ? orders : [];
     return src
       .filter((o) => !shouldExcludeFromScreen(o?.raw))
-      .filter((o) => isTrackableStatus(o?.statusNorm || o?.status));
+      .filter((o) => isTrackableStatus(o?.statusNorm || o?.status))
+      .filter((o) => isGrabChosenForOrder(o?.raw));
   }, [orders]);
 
-  const trackCount = trackableAll.length;
-  const trackDisabled = trackCount === 0;
+  // ✅ REQUIRED CHANGE:
+  // Track button clickable ONLY if there is at least one batch from GET_BATCH_RIDE_ID_ENDPOINT
+  const batchCount = batchRides.length;
+  const trackDisabled = batchCount === 0;
 
   const onTrackAllPress = useCallback(() => {
     if (trackDisabled) return;
 
     navigation.navigate(batchListScreen, {
       businessId: bizId,
-      bizId: bizId,
+      bizId,
       merchant_id: bizId,
 
-      label: "Track orders",
-      orders: trackableAll,
+      // ✅ pass batches (your BatchRidesScreen can use this to show list)
+      batches: batchRides,
 
+      // keep these for convenience / backward compat
+      orders: trackableAll,
       ownerType,
       delivery_option: deliveryOption,
-      deliveryOption: deliveryOption,
+      deliveryOption,
     });
-  }, [trackDisabled, navigation, batchListScreen, bizId, trackableAll, ownerType, deliveryOption]);
+  }, [
+    trackDisabled,
+    navigation,
+    batchListScreen,
+    bizId,
+    batchRides,
+    trackableAll,
+    ownerType,
+    deliveryOption,
+  ]);
 
-  const headerTopPad = Math.max(insets.top, 8) + 18;
-  const bottomFabPad = Math.max(insets.bottom, 0) + 18;
+  const headerTopPad = Math.max(insets.top, S(8)) + S(18);
+  const bottomFabPad = Math.max(insets.bottom, 0) + S(18);
 
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
-      <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
-        <TouchableOpacity onPress={handleBack} style={styles.backBtn} activeOpacity={0.7}>
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+      <View
+        style={[
+          styles.headerBar,
+          { paddingTop: headerTopPad, paddingHorizontal: S(12), paddingBottom: S(8) },
+        ]}
+      >
+        <TouchableOpacity
+          onPress={handleBack}
+          style={[styles.backBtn, { height: S(40), width: S(40), borderRadius: S(12) }]}
+          activeOpacity={0.7}
+          hitSlop={S(8)}
+        >
+          <Ionicons name="arrow-back" size={S(22)} color="#0f172a" />
         </TouchableOpacity>
 
-        <Text style={styles.headerTitle}>Nearby Orders</Text>
+        <Text style={[styles.headerTitle, { fontSize: S(17) }]}>Nearby Orders</Text>
 
-        <View style={{ width: 40 }} />
+        <View style={{ width: S(40) }} />
       </View>
 
       {loading && orders.length === 0 ? (
@@ -636,10 +832,10 @@ function NearbyOrdersScreen() {
           data={clusters}
           keyExtractor={(c) => c.id}
           contentContainerStyle={{
-            padding: 16,
-            paddingBottom: 90 + bottomFabPad,
+            padding: S(16),
+            paddingBottom: S(90) + bottomFabPad,
           }}
-          ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+          ItemSeparatorComponent={() => <View style={{ height: S(12) }} />}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           renderItem={({ item }) => {
             const { label, orders: clusterOrders, centerCoords } = item;
@@ -653,10 +849,13 @@ function NearbyOrdersScreen() {
 
             return (
               <TouchableOpacity
-                style={styles.clusterCard}
+                style={[
+                  styles.clusterCard,
+                  { padding: S(16), borderRadius: S(14) },
+                ]}
                 activeOpacity={0.9}
                 onPress={() => {
-                  navigation.navigate("FoodNearbyClusterOrdersScreen", {
+                  navigation.navigate("NearbyClusterOrdersScreen", {
                     label,
 
                     merchant_id: bizId,
@@ -670,28 +869,43 @@ function NearbyOrdersScreen() {
 
                     ownerType,
                     detailsRoute,
-                    thresholdKm,
+                    thresholdKm: 2,
                     centerCoords,
                     orders: clusterOrders,
 
                     delivery_option: deliveryOption,
-                    deliveryOption: deliveryOption,
+                    deliveryOption,
                   });
                 }}
               >
                 <View style={styles.clusterHeader}>
-                  <Ionicons name="location-outline" size={18} color="#0f172a" />
-                  <Text style={styles.clusterTitle} numberOfLines={1}>
+                  <Ionicons name="location-outline" size={S(18)} color="#0f172a" />
+                  <Text
+                    style={[styles.clusterTitle, { marginLeft: S(8), fontSize: S(16) }]}
+                    numberOfLines={1}
+                  >
                     {label}
                   </Text>
                 </View>
 
-                <Text style={styles.clusterSub} numberOfLines={2}>
+                <Text style={[styles.clusterSub, { marginTop: S(6), fontSize: S(12) }]} numberOfLines={2}>
                   {firstAddr}
                 </Text>
 
-                <View style={styles.clusterBadge}>
-                  <Text style={styles.clusterBadgeText}>{clusterOrders.length} orders</Text>
+                <View
+                  style={[
+                    styles.clusterBadge,
+                    {
+                      marginTop: S(10),
+                      borderRadius: S(10),
+                      paddingHorizontal: S(10),
+                      paddingVertical: S(4),
+                    },
+                  ]}
+                >
+                  <Text style={[styles.clusterBadgeText, { fontSize: S(12) }]}>
+                    {clusterOrders.length} orders
+                  </Text>
                 </View>
               </TouchableOpacity>
             );
@@ -699,22 +913,28 @@ function NearbyOrdersScreen() {
         />
       )}
 
-      {/* ✅ ONE global Track button */}
-      <View style={[styles.fabWrapper, { paddingBottom: bottomFabPad }]}>
+      {/* ✅ ONE global Track button (enabled only when batches exist) */}
+      <View style={[styles.fabWrapper, { paddingHorizontal: S(16), paddingBottom: bottomFabPad }]}>
         <TouchableOpacity
-          style={[styles.fab, trackDisabled && { opacity: 0.4 }]}
+          style={[
+            styles.fab,
+            { paddingHorizontal: S(12), paddingVertical: S(15), borderRadius: S(999) },
+            trackDisabled && { opacity: 0.4 },
+          ]}
           activeOpacity={trackDisabled ? 1 : 0.85}
           onPress={onTrackAllPress}
           disabled={trackDisabled}
         >
-          <Ionicons name="bicycle" size={18} color="#fff" />
+          <Ionicons name="bicycle" size={S(18)} color="#fff" />
           <Text
-            style={styles.fabText}
+            style={[styles.fabText, { marginLeft: S(8), fontSize: S(13) }]}
             numberOfLines={1}
             adjustsFontSizeToFit
             minimumFontScale={0.85}
           >
-            Track orders{trackCount ? ` (${trackCount})` : ""}
+            {batchLoading
+              ? "Checking batch…"
+              : `Track orders${batchCount ? ` (${batchCount})` : ""}`}
           </Text>
         </TouchableOpacity>
       </View>
@@ -727,8 +947,6 @@ const styles = StyleSheet.create({
 
   headerBar: {
     minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
     flexDirection: "row",
     alignItems: "center",
     borderBottomColor: "#e5e7eb",
@@ -736,16 +954,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   backBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 17,
     fontWeight: "700",
     color: "#0f172a",
   },
@@ -754,8 +968,6 @@ const styles = StyleSheet.create({
 
   clusterCard: {
     backgroundColor: "#fff",
-    padding: 16,
-    borderRadius: 14,
     borderWidth: 1,
     borderColor: "#e2e8f0",
   },
@@ -764,29 +976,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   clusterTitle: {
-    marginLeft: 8,
-    fontSize: 16,
     fontWeight: "700",
     color: "#0f172a",
     flexShrink: 1,
   },
 
   clusterSub: {
-    marginTop: 6,
-    fontSize: 12,
     color: "#64748b",
   },
 
   clusterBadge: {
-    marginTop: 10,
     alignSelf: "flex-start",
     backgroundColor: "#dcfce7",
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
   },
   clusterBadgeText: {
-    fontSize: 12,
     fontWeight: "700",
     color: "#16a34a",
   },
@@ -796,7 +999,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    paddingHorizontal: 16,
     backgroundColor: "transparent",
   },
   fab: {
@@ -804,9 +1006,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 15,
-    borderRadius: 999,
     backgroundColor: "#16a34a",
     shadowColor: "#000",
     shadowOpacity: 0.2,
@@ -815,9 +1014,7 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   fabText: {
-    marginLeft: 8,
     color: "#fff",
-    fontSize: 13,
     fontWeight: "700",
     flexShrink: 1,
   },
