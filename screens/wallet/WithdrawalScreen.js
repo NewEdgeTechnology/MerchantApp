@@ -2,10 +2,10 @@
 // ✅ Nicer inputs + Bhutan bank dropdown + auto bank code + smooth animations
 // Requires: react-native-reanimated, react-native-safe-area-context, @expo/vector-icons
 //
-// Backend (no-auth dev):
-//  - POST   /api/wallet/withdrawals
-//  - GET    /api/wallet/withdrawals?user_id=...
-//  - POST   /api/wallet/withdrawals/:id/cancel
+// Backend:
+//  - POST   /bfs/api/wallet/withdrawals
+//  - GET    /bfs/api/wallet/withdrawals?user_id=...
+//  - POST   /bfs/api/wallet/withdrawals/:id/cancel
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -36,8 +36,6 @@ import Animated, {
 } from "react-native-reanimated";
 import { API_BASE_URL } from "@env";
 
-// const API_BASE = WALLET_WITHDRAWAL_BASE; // change if needed
-
 const G = {
   brand: "#00B14F",
   brandDark: "#028A47",
@@ -52,24 +50,28 @@ const G = {
   ok: "#16A34A",
 };
 
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+if (
+  Platform.OS === "android" &&
+  UIManager.setLayoutAnimationEnabledExperimental
+) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
 /**
  * Bhutan banks list
- * Note: Codes vary per implementation. You can adjust codes to match your internal mapping.
+ * Adjust codes if your backend uses different internal mapping.
  */
 const BT_BANKS = [
   { code: "BOB", name: "Bank of Bhutan" },
   { code: "BNB", name: "Bhutan National Bank" },
   { code: "BDBL", name: "Bhutan Development Bank" },
-  { code: "DKB", name: "Druk PNB Bank" }, // rename/code if you use different
-  { code: "T-BANK", name: "T-Bank" }, // rename/code if you use different
+  { code: "DKB", name: "Druk PNB Bank" },
+  { code: "T-BANK", name: "T-Bank" },
 ];
 
 const safe = (v) => (v == null ? "" : String(v));
-const makeIdemKey = () => `wd-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+const makeIdemKey = () =>
+  `wd-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const normalizeAmount = (txt) => {
   const s = safe(txt).trim().replace(/,/g, "");
@@ -87,17 +89,34 @@ const fmtNu = (v) => {
 
 const statusMeta = (st) => {
   const s = String(st || "").toUpperCase();
-  if (s === "PAID") return { label: "Paid", icon: "checkmark-circle", color: G.ok };
-  if (s === "APPROVED") return { label: "Approved", icon: "shield-checkmark", color: G.ok };
-  if (s === "HELD") return { label: "Held", icon: "time", color: G.warn };
-  if (s === "NEEDS_INFO") return { label: "Needs info", icon: "alert-circle", color: G.warn };
-  if (s === "REJECTED") return { label: "Rejected", icon: "close-circle", color: G.danger };
-  if (s === "CANCELLED") return { label: "Cancelled", icon: "remove-circle", color: G.sub };
-  if (s === "FAILED") return { label: "Failed", icon: "warning", color: G.danger };
+
+  if (s === "PAID") {
+    return { label: "Paid", icon: "checkmark-circle", color: G.ok };
+  }
+  if (s === "APPROVED") {
+    return { label: "Approved", icon: "shield-checkmark", color: G.ok };
+  }
+  if (s === "HELD") {
+    return { label: "Held", icon: "time", color: G.warn };
+  }
+  if (s === "NEEDS_INFO") {
+    return { label: "Needs info", icon: "alert-circle", color: G.warn };
+  }
+  if (s === "REJECTED") {
+    return { label: "Rejected", icon: "close-circle", color: G.danger };
+  }
+  if (s === "CANCELLED") {
+    return { label: "Cancelled", icon: "remove-circle", color: G.sub };
+  }
+  if (s === "FAILED") {
+    return { label: "Failed", icon: "warning", color: G.danger };
+  }
+
   return { label: safe(st) || "Unknown", icon: "help-circle", color: G.sub };
 };
 
-const canCancel = (st) => ["HELD", "NEEDS_INFO"].includes(String(st || "").toUpperCase());
+const canCancel = (st) =>
+  ["HELD", "NEEDS_INFO"].includes(String(st || "").toUpperCase());
 
 function BankPicker({ visible, onClose, value, onPick }) {
   const [q, setQ] = useState("");
@@ -105,7 +124,10 @@ function BankPicker({ visible, onClose, value, onPick }) {
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return BT_BANKS;
-    return BT_BANKS.filter((b) => b.name.toLowerCase().includes(s) || b.code.toLowerCase().includes(s));
+    return BT_BANKS.filter(
+      (b) =>
+        b.name.toLowerCase().includes(s) || b.code.toLowerCase().includes(s)
+    );
   }, [q]);
 
   useEffect(() => {
@@ -118,7 +140,10 @@ function BankPicker({ visible, onClose, value, onPick }) {
       <View style={styles.modalSheet}>
         <View style={styles.modalTop}>
           <Text style={styles.modalTitle}>Select your bank</Text>
-          <Pressable onPress={onClose} style={({ pressed }) => [styles.modalClose, pressed && { opacity: 0.7 }]}>
+          <Pressable
+            onPress={onClose}
+            style={({ pressed }) => [styles.modalClose, pressed && { opacity: 0.7 }]}
+          >
             <Ionicons name="close" size={18} color={G.text} />
           </Pressable>
         </View>
@@ -137,6 +162,7 @@ function BankPicker({ visible, onClose, value, onPick }) {
         <ScrollView style={{ maxHeight: 340 }} showsVerticalScrollIndicator={false}>
           {filtered.map((b) => {
             const active = value?.code === b.code;
+
             return (
               <Pressable
                 key={b.code}
@@ -148,16 +174,28 @@ function BankPicker({ visible, onClose, value, onPick }) {
                 ]}
               >
                 <View style={styles.bankLeft}>
-                  <View style={[styles.bankDot, active && { backgroundColor: G.brandDark, borderColor: G.brandDark }]} />
+                  <View
+                    style={[
+                      styles.bankDot,
+                      active && {
+                        backgroundColor: G.brandDark,
+                        borderColor: G.brandDark,
+                      },
+                    ]}
+                  />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.bankName}>{b.name}</Text>
                     <Text style={styles.bankCode}>Code: {b.code}</Text>
                   </View>
                 </View>
-                {active ? <Ionicons name="checkmark" size={18} color={G.brandDark} /> : null}
+
+                {active ? (
+                  <Ionicons name="checkmark" size={18} color={G.brandDark} />
+                ) : null}
               </Pressable>
             );
           })}
+
           {filtered.length === 0 ? (
             <View style={{ padding: 14 }}>
               <Text style={{ color: G.sub }}>No banks found.</Text>
@@ -169,18 +207,26 @@ function BankPicker({ visible, onClose, value, onPick }) {
   );
 }
 
-export default function WithdrawalScreen({ navigation, route }) {
+export default function Withdrawal({ navigation, route }) {
   const insets = useSafeAreaInsets();
 
   const userId = useMemo(() => {
     const p = route?.params || {};
-    return Number(p.user_id || 59); // dev fallback
+    const uid =
+      p?.wallet?.user_id ??
+      p?.user_id ??
+      null;
+
+    console.log("[WithdrawalScreen] route params:", p);
+    console.log("[WithdrawalScreen] resolved user_id:", uid);
+
+    return uid != null ? Number(uid) : null;
   }, [route?.params]);
 
   // --- Form state ---
   const [amountTxt, setAmountTxt] = useState("");
   const [bankPickerOpen, setBankPickerOpen] = useState(false);
-  const [bank, setBank] = useState(BT_BANKS[0]); // default BOB
+  const [bank, setBank] = useState(BT_BANKS[0]);
   const [accountNo, setAccountNo] = useState("");
   const [accountName, setAccountName] = useState("");
   const [note, setNote] = useState("");
@@ -204,19 +250,38 @@ export default function WithdrawalScreen({ navigation, route }) {
   const heroStyle = useAnimatedStyle(() => {
     const y = interpolate(hero.value, [0, 1], [14, 0], Extrapolate.CLAMP);
     const op = interpolate(hero.value, [0, 1], [0, 1], Extrapolate.CLAMP);
-    return { transform: [{ translateY: y }], opacity: op };
+    return {
+      transform: [{ translateY: y }],
+      opacity: op,
+    };
   });
 
-  const ctaStyle = useAnimatedStyle(() => ({ transform: [{ scale: pulse.value }] }));
+  const ctaStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pulse.value }],
+  }));
 
   const fetchList = useCallback(async () => {
+    if (!userId) {
+      setItems([]);
+      return;
+    }
+
     setLoadingList(true);
     try {
-      const url = `${API_BASE_URL}/bfs/api/wallet/withdrawals?user_id=${encodeURIComponent(String(userId))}&limit=50&offset=0`;
+      const url = `${API_BASE_URL}/bfs/api/wallet/withdrawals?user_id=${encodeURIComponent(
+        String(userId)
+      )}&limit=50&offset=0`;
+      console.log("[WithdrawalScreen] fetching withdrawals with URL:", url);
+
       const res = await fetch(url);
       const j = await res.json().catch(() => ({}));
-      console.log("Fetch withdrawals:", url, j);
-      if (!res.ok || j?.ok === false) throw new Error(j?.error || j?.message || "Failed to load withdrawals");
+
+      console.log("[WithdrawalScreen] fetch withdrawals:", url, j);
+
+      if (!res.ok || j?.ok === false) {
+        throw new Error(j?.error || j?.message || "Failed to load withdrawals");
+      }
+
       setItems(Array.isArray(j?.data) ? j.data : []);
     } catch (e) {
       Alert.alert("Error", e?.message || "Failed to load withdrawals");
@@ -240,20 +305,40 @@ export default function WithdrawalScreen({ navigation, route }) {
 
   const validate = () => {
     const amt = normalizeAmount(amountTxt);
-    if (!amt) return { ok: false, msg: "Enter a valid amount (e.g., 120 or 120.00)" };
-    if (Number(amt) <= 0) return { ok: false, msg: "Amount must be greater than 0" };
-    if (!safe(accountNo).trim()) return { ok: false, msg: "Account number is required" };
-    if (!safe(accountName).trim()) return { ok: false, msg: "Account name is required" };
-    if (!bank?.code || !bank?.name) return { ok: false, msg: "Select a bank" };
+
+    if (!userId) {
+      return { ok: false, msg: "User information is missing." };
+    }
+    if (!amt) {
+      return { ok: false, msg: "Enter a valid amount (e.g., 120 or 120.00)" };
+    }
+    if (Number(amt) <= 0) {
+      return { ok: false, msg: "Amount must be greater than 0" };
+    }
+    if (!safe(accountNo).trim()) {
+      return { ok: false, msg: "Account number is required" };
+    }
+    if (!safe(accountName).trim()) {
+      return { ok: false, msg: "Account name is required" };
+    }
+    if (!bank?.code || !bank?.name) {
+      return { ok: false, msg: "Select a bank" };
+    }
+
     return { ok: true, amt };
   };
 
   const submitWithdrawal = useCallback(async () => {
     const v = validate();
+
     if (!v.ok) {
       pulse.value = withSpring(0.97, { damping: 14, stiffness: 220 });
-      setTimeout(() => (pulse.value = withSpring(1, { damping: 14, stiffness: 220 })), 120);
-      return Alert.alert("Check details", v.msg);
+      setTimeout(() => {
+        pulse.value = withSpring(1, { damping: 14, stiffness: 220 });
+      }, 120);
+
+      Alert.alert("Check details", v.msg);
+      return;
     }
 
     setSubmitting(true);
@@ -271,17 +356,27 @@ export default function WithdrawalScreen({ navigation, route }) {
         user_note: safe(note).trim() || null,
       };
 
+      console.log("[WithdrawalScreen] submitting withdrawal:", body, "IdemKey:", idem);
+
       const res = await fetch(`${API_BASE_URL}/bfs/api/wallet/withdrawals`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": idem },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": idem,
+        },
         body: JSON.stringify(body),
       });
 
       const j = await res.json().catch(() => ({}));
-      if (!res.ok || j?.ok === false) throw new Error(j?.error || j?.message || "Withdrawal request failed");
+
+      if (!res.ok || j?.ok === false) {
+        throw new Error(j?.error || j?.message || "Withdrawal request failed");
+      }
 
       pulse.value = withSpring(1.03, { damping: 14, stiffness: 220 });
-      setTimeout(() => (pulse.value = withSpring(1, { damping: 14, stiffness: 220 })), 160);
+      setTimeout(() => {
+        pulse.value = withSpring(1, { damping: 14, stiffness: 220 });
+      }, 160);
 
       setAmountTxt("");
       setNote("");
@@ -289,7 +384,10 @@ export default function WithdrawalScreen({ navigation, route }) {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       await fetchList();
 
-      Alert.alert("Request submitted", "Your withdrawal request is now HELD for admin review.");
+      Alert.alert(
+        "Request submitted",
+        "Your withdrawal request is now HELD for admin review."
+      );
     } catch (e) {
       Alert.alert("Error", e?.message || "Withdrawal request failed");
     } finally {
@@ -299,30 +397,43 @@ export default function WithdrawalScreen({ navigation, route }) {
 
   const cancelRequest = useCallback(
     async (requestId) => {
-      Alert.alert("Cancel withdrawal?", "This will refund the held amount back to your wallet.", [
-        { text: "No", style: "cancel" },
-        {
-          text: "Yes, cancel",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const res = await fetch(`${API_BASE_URL}/bfs/api/wallet/withdrawals/${encodeURIComponent(String(requestId))}/cancel`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ user_id: userId }),
-              });
-              const j = await res.json().catch(() => ({}));
-              if (!res.ok || j?.ok === false) throw new Error(j?.error || j?.message || "Cancel failed");
+      Alert.alert(
+        "Cancel withdrawal?",
+        "This will refund the held amount back to your wallet.",
+        [
+          { text: "No", style: "cancel" },
+          {
+            text: "Yes, cancel",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                const res = await fetch(
+                  `${API_BASE_URL}/bfs/api/wallet/withdrawals/${encodeURIComponent(
+                    String(requestId)
+                  )}/cancel`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ user_id: userId }),
+                  }
+                );
 
-              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-              await fetchList();
-              Alert.alert("Cancelled", "Your withdrawal was cancelled and refunded.");
-            } catch (e) {
-              Alert.alert("Error", e?.message || "Cancel failed");
-            }
+                const j = await res.json().catch(() => ({}));
+
+                if (!res.ok || j?.ok === false) {
+                  throw new Error(j?.error || j?.message || "Cancel failed");
+                }
+
+                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                await fetchList();
+                Alert.alert("Cancelled", "Your withdrawal was cancelled and refunded.");
+              } catch (e) {
+                Alert.alert("Error", e?.message || "Cancel failed");
+              }
+            },
           },
-        },
-      ]);
+        ]
+      );
     },
     [userId, fetchList]
   );
@@ -339,11 +450,16 @@ export default function WithdrawalScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={[styles.safe, { paddingTop: insets.top }]}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
         <ScrollView
           style={styles.flex}
           contentContainerStyle={{ paddingBottom: 22 + insets.bottom }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
           keyboardShouldPersistTaps="handled"
         >
           <Animated.View style={[styles.header, heroStyle]}>
@@ -362,9 +478,12 @@ export default function WithdrawalScreen({ navigation, route }) {
 
             <View style={styles.heroRow}>
               <View style={styles.heroLeft}>
-                <Text style={styles.headerSub}>Send a request. Admin verifies & transfers.</Text>
+                <Text style={styles.headerSub}>
+                  Send a request. Admin verifies & transfers.
+                </Text>
                 <Text style={styles.heroAmount}>{amountPreview}</Text>
               </View>
+
               <View style={styles.heroBadge}>
                 <Ionicons name="card-outline" size={18} color={G.brandDark} />
                 <Text style={styles.heroBadgeText}>Bank</Text>
@@ -372,14 +491,12 @@ export default function WithdrawalScreen({ navigation, route }) {
             </View>
           </Animated.View>
 
-          {/* Form */}
           <View style={styles.card}>
             <View style={styles.cardRow}>
               <Ionicons name="cash-outline" size={18} color={G.brandDark} />
               <Text style={styles.cardTitle}>Withdrawal details</Text>
             </View>
 
-            {/* Amount */}
             <Field label="Amount (Nu.)" hint="Enter amount with up to 2 decimals">
               <View style={styles.niceInputWrap}>
                 <Ionicons name="wallet-outline" size={18} color={G.sub} />
@@ -401,7 +518,6 @@ export default function WithdrawalScreen({ navigation, route }) {
               </View>
             </Field>
 
-            {/* Bank dropdown */}
             <Field label="Bank" hint="Select your bank (code is auto-filled)">
               <Pressable
                 onPress={() => setBankPickerOpen(true)}
@@ -415,8 +531,10 @@ export default function WithdrawalScreen({ navigation, route }) {
               </Pressable>
             </Field>
 
-            {/* Account number */}
-            <Field label="Account number" hint="Double check the number before submitting">
+            <Field
+              label="Account number"
+              hint="Double check the number before submitting"
+            >
               <View style={styles.niceInputWrap}>
                 <Ionicons name="key-outline" size={18} color={G.sub} />
                 <TextInput
@@ -430,8 +548,10 @@ export default function WithdrawalScreen({ navigation, route }) {
               </View>
             </Field>
 
-            {/* Account name */}
-            <Field label="Account name" hint="Use the exact name as in the bank account">
+            <Field
+              label="Account name"
+              hint="Use the exact name as in the bank account"
+            >
               <View style={styles.niceInputWrap}>
                 <Ionicons name="person-outline" size={18} color={G.sub} />
                 <TextInput
@@ -444,10 +564,13 @@ export default function WithdrawalScreen({ navigation, route }) {
               </View>
             </Field>
 
-            {/* Note */}
             <Field label="Note (optional)" hint="Short note for admin (optional)">
               <View style={styles.niceInputWrap}>
-                <Ionicons name="chatbubble-ellipses-outline" size={18} color={G.sub} />
+                <Ionicons
+                  name="chatbubble-ellipses-outline"
+                  size={18}
+                  color={G.sub}
+                />
                 <TextInput
                   value={note}
                   onChangeText={setNote}
@@ -458,7 +581,6 @@ export default function WithdrawalScreen({ navigation, route }) {
               </View>
             </Field>
 
-            {/* CTA */}
             <Animated.View style={[styles.ctaWrap, ctaStyle]}>
               <Pressable
                 onPress={submitWithdrawal}
@@ -488,7 +610,6 @@ export default function WithdrawalScreen({ navigation, route }) {
             </View>
           </View>
 
-          {/* History */}
           <View style={[styles.sectionHead, { marginTop: 14 }]}>
             <Text style={styles.sectionTitle}>History</Text>
             <Pressable
@@ -510,7 +631,9 @@ export default function WithdrawalScreen({ navigation, route }) {
               <View style={styles.emptyBox}>
                 <Ionicons name="document-text-outline" size={28} color={G.sub} />
                 <Text style={styles.emptyTitle}>No withdrawals yet</Text>
-                <Text style={styles.emptySub}>Create your first withdrawal request above.</Text>
+                <Text style={styles.emptySub}>
+                  Create your first withdrawal request above.
+                </Text>
               </View>
             ) : (
               items.map((it) => {
@@ -520,42 +643,82 @@ export default function WithdrawalScreen({ navigation, route }) {
 
                 return (
                   <View key={id} style={styles.item}>
-                    <Pressable onPress={() => toggleExpand(id)} style={({ pressed }) => [styles.itemTop, pressed && { opacity: 0.9 }]}>
+                    <Pressable
+                      onPress={() => toggleExpand(id)}
+                      style={({ pressed }) => [styles.itemTop, pressed && { opacity: 0.9 }]}
+                    >
                       <View style={styles.itemLeft}>
                         <View style={[styles.chip, { borderColor: meta.color }]}>
                           <Ionicons name={meta.icon} size={14} color={meta.color} />
-                          <Text style={[styles.chipText, { color: meta.color }]}>{meta.label}</Text>
+                          <Text style={[styles.chipText, { color: meta.color }]}>
+                            {meta.label}
+                          </Text>
                         </View>
 
                         <Text style={styles.itemAmount}>{fmtNu(it.amount)}</Text>
                         <Text style={styles.itemSub}>
-                          {safe(it.bank_name)} • {safe(it.account_no).slice(-4).padStart(4, "•")}
+                          {safe(it.bank_name)} •{" "}
+                          {safe(it.account_no).slice(-4).padStart(4, "•")}
                         </Text>
                       </View>
 
-                      <Ionicons name={expanded ? "chevron-up" : "chevron-down"} size={18} color={G.sub} />
+                      <Ionicons
+                        name={expanded ? "chevron-up" : "chevron-down"}
+                        size={18}
+                        color={G.sub}
+                      />
                     </Pressable>
 
                     {expanded && (
                       <View style={styles.itemBody}>
                         <Row k="Request ID" v={safe(it.request_id)} />
-                        <Row k="Bank" v={`${safe(it.bank_name)} (${safe(it.bank_code)})`} />
-                        <Row k="Account" v={`${safe(it.account_name)} • ${safe(it.account_no)}`} />
-                        {safe(it.user_note) ? <Row k="Note" v={safe(it.user_note)} /> : null}
-                        {safe(it.admin_note) ? <Row k="Admin note" v={safe(it.admin_note)} /> : null}
-                        {safe(it.bank_reference) ? <Row k="Bank ref" v={safe(it.bank_reference)} /> : null}
+                        <Row
+                          k="Bank"
+                          v={`${safe(it.bank_name)} (${safe(it.bank_code)})`}
+                        />
+                        <Row
+                          k="Account"
+                          v={`${safe(it.account_name)} • ${safe(it.account_no)}`}
+                        />
+                        {safe(it.user_note) ? (
+                          <Row k="Note" v={safe(it.user_note)} />
+                        ) : null}
+                        {safe(it.admin_note) ? (
+                          <Row k="Admin note" v={safe(it.admin_note)} />
+                        ) : null}
+                        {safe(it.bank_reference) ? (
+                          <Row k="Bank ref" v={safe(it.bank_reference)} />
+                        ) : null}
 
                         <View style={styles.itemActions}>
                           <Pressable
-                            onPress={() => Alert.alert("Details", `Status: ${meta.label}\nAmount: ${fmtNu(it.amount)}\nID: ${safe(it.request_id)}`)}
-                            style={({ pressed }) => [styles.ghostBtn, pressed && { opacity: 0.75 }]}
+                            onPress={() =>
+                              Alert.alert(
+                                "Details",
+                                `Status: ${meta.label}\nAmount: ${fmtNu(
+                                  it.amount
+                                )}\nID: ${safe(it.request_id)}`
+                              )
+                            }
+                            style={({ pressed }) => [
+                              styles.ghostBtn,
+                              pressed && { opacity: 0.75 },
+                            ]}
                           >
-                            <Ionicons name="information-circle-outline" size={18} color={G.text} />
+                            <Ionicons
+                              name="information-circle-outline"
+                              size={18}
+                              color={G.text}
+                            />
                             <Text style={styles.ghostText}>Details</Text>
                           </Pressable>
 
                           <Pressable
-                            onPress={() => (canCancel(it.status) ? cancelRequest(it.request_id) : null)}
+                            onPress={() =>
+                              canCancel(it.status)
+                                ? cancelRequest(it.request_id)
+                                : null
+                            }
                             disabled={!canCancel(it.status)}
                             style={({ pressed }) => [
                               styles.dangerBtn,
@@ -563,7 +726,11 @@ export default function WithdrawalScreen({ navigation, route }) {
                               !canCancel(it.status) && { opacity: 0.45 },
                             ]}
                           >
-                            <Ionicons name="close-circle-outline" size={18} color="#fff" />
+                            <Ionicons
+                              name="close-circle-outline"
+                              size={18}
+                              color="#fff"
+                            />
                             <Text style={styles.dangerText}>Cancel</Text>
                           </Pressable>
                         </View>
@@ -619,11 +786,24 @@ function Row({ k, v }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: G.bg },
-  flex: { flex: 1 },
+  safe: {
+    flex: 1,
+    backgroundColor: G.bg,
+  },
+  flex: {
+    flex: 1,
+  },
 
-  header: { paddingHorizontal: 16,paddingBottom: 10 },
-  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  header: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 10,
+  },
+  headerTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   iconBtn: {
     width: 38,
     height: 38,
@@ -634,12 +814,34 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  headerTitle: { fontSize: 18, fontWeight: "800", color: G.text },
-  headerSub: { marginTop: 8, fontSize: 13, color: G.sub, lineHeight: 18 },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: G.text,
+  },
+  headerSub: {
+    marginTop: 8,
+    fontSize: 13,
+    color: G.sub,
+    lineHeight: 18,
+  },
 
-  heroRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", marginTop: 10, gap: 12 },
-  heroLeft: { flex: 1 },
-  heroAmount: { marginTop: 6, fontSize: 18, fontWeight: "900", color: G.text },
+  heroRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    marginTop: 10,
+    gap: 12,
+  },
+  heroLeft: {
+    flex: 1,
+  },
+  heroAmount: {
+    marginTop: 6,
+    fontSize: 18,
+    fontWeight: "900",
+    color: G.text,
+  },
   heroBadge: {
     height: 38,
     borderRadius: 14,
@@ -651,7 +853,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  heroBadgeText: { fontSize: 12, fontWeight: "800", color: G.text },
+  heroBadgeText: {
+    fontSize: 12,
+    fontWeight: "800",
+    color: G.text,
+  },
 
   card: {
     marginHorizontal: 16,
@@ -662,14 +868,33 @@ const styles = StyleSheet.create({
     borderColor: G.border,
     padding: 14,
   },
-  cardRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
-  cardTitle: { fontSize: 14, fontWeight: "800", color: G.text },
+  cardRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: G.text,
+  },
 
-  field: { marginTop: 12 },
-  label: { fontSize: 12, color: G.sub, marginBottom: 8, fontWeight: "700" },
-  hint: { fontSize: 11, color: "rgba(100,116,139,0.92)", marginTop: 8 },
+  field: {
+    marginTop: 12,
+  },
+  label: {
+    fontSize: 12,
+    color: G.sub,
+    marginBottom: 8,
+    fontWeight: "700",
+  },
+  hint: {
+    fontSize: 11,
+    color: "rgba(100,116,139,0.92)",
+    marginTop: 8,
+  },
 
-  // nicer input wrapper
   niceInputWrap: {
     height: 48,
     borderRadius: 14,
@@ -681,8 +906,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
   },
-  nuPrefix: { fontSize: 13, color: G.sub, fontWeight: "800" },
-  niceInput: { flex: 1, height: 48, fontSize: 14, color: G.text },
+  nuPrefix: {
+    fontSize: 13,
+    color: G.sub,
+    fontWeight: "800",
+  },
+  niceInput: {
+    flex: 1,
+    height: 48,
+    fontSize: 14,
+    color: G.text,
+  },
 
   quickChip: {
     borderRadius: 999,
@@ -692,7 +926,11 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     backgroundColor: "rgba(2, 138, 71, 0.06)",
   },
-  quickChipText: { fontSize: 12, fontWeight: "900", color: G.brandDark },
+  quickChipText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: G.brandDark,
+  },
 
   dropdown: {
     borderRadius: 14,
@@ -705,10 +943,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  dropdownMain: { fontSize: 14, fontWeight: "900", color: G.text },
-  dropdownSub: { fontSize: 12, color: G.sub, marginTop: 2 },
+  dropdownMain: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: G.text,
+  },
+  dropdownSub: {
+    fontSize: 12,
+    color: G.sub,
+    marginTop: 2,
+  },
 
-  ctaWrap: { marginTop: 14 },
+  ctaWrap: {
+    marginTop: 14,
+  },
   cta: {
     height: 48,
     borderRadius: 16,
@@ -718,10 +966,24 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  ctaText: { color: "#fff", fontSize: 14, fontWeight: "900" },
+  ctaText: {
+    color: "#fff",
+    fontSize: 14,
+    fontWeight: "900",
+  },
 
-  smallRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 12 },
-  smallText: { flex: 1, fontSize: 11, color: G.sub, lineHeight: 16 },
+  smallRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 12,
+  },
+  smallText: {
+    flex: 1,
+    fontSize: 11,
+    color: G.sub,
+    lineHeight: 16,
+  },
 
   sectionHead: {
     marginHorizontal: 16,
@@ -730,7 +992,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 10,
   },
-  sectionTitle: { fontSize: 14, fontWeight: "900", color: G.text },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: G.text,
+  },
   refreshBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -742,7 +1008,11 @@ const styles = StyleSheet.create({
     borderColor: G.border,
     backgroundColor: "#fff",
   },
-  refreshText: { fontSize: 12, color: G.text, fontWeight: "800" },
+  refreshText: {
+    fontSize: 12,
+    color: G.text,
+    fontWeight: "800",
+  },
 
   listCard: {
     marginHorizontal: 16,
@@ -753,14 +1023,38 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
 
-  loadingBox: { padding: 16, flexDirection: "row", alignItems: "center", gap: 10 },
-  loadingText: { color: G.sub, fontSize: 12 },
+  loadingBox: {
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  loadingText: {
+    color: G.sub,
+    fontSize: 12,
+  },
 
-  emptyBox: { padding: 18, alignItems: "center" },
-  emptyTitle: { marginTop: 10, fontSize: 14, fontWeight: "900", color: G.text },
-  emptySub: { marginTop: 4, fontSize: 12, color: G.sub, textAlign: "center" },
+  emptyBox: {
+    padding: 18,
+    alignItems: "center",
+  },
+  emptyTitle: {
+    marginTop: 10,
+    fontSize: 14,
+    fontWeight: "900",
+    color: G.text,
+  },
+  emptySub: {
+    marginTop: 4,
+    fontSize: 12,
+    color: G.sub,
+    textAlign: "center",
+  },
 
-  item: { borderTopWidth: 1, borderTopColor: G.border },
+  item: {
+    borderTopWidth: 1,
+    borderTopColor: G.border,
+  },
   itemTop: {
     paddingHorizontal: 14,
     paddingVertical: 12,
@@ -769,7 +1063,9 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 12,
   },
-  itemLeft: { flex: 1 },
+  itemLeft: {
+    flex: 1,
+  },
 
   chip: {
     alignSelf: "flex-start",
@@ -783,17 +1079,49 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     marginBottom: 8,
   },
-  chipText: { fontSize: 12, fontWeight: "900" },
+  chipText: {
+    fontSize: 12,
+    fontWeight: "900",
+  },
 
-  itemAmount: { fontSize: 16, fontWeight: "900", color: G.text, marginBottom: 4 },
-  itemSub: { fontSize: 12, color: G.sub },
+  itemAmount: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: G.text,
+    marginBottom: 4,
+  },
+  itemSub: {
+    fontSize: 12,
+    color: G.sub,
+  },
 
-  itemBody: { paddingHorizontal: 14, paddingBottom: 12, paddingTop: 6 },
-  row: { flexDirection: "row", justifyContent: "space-between", gap: 12, marginTop: 8 },
-  rowKey: { fontSize: 12, color: G.sub },
-  rowVal: { flex: 1, fontSize: 12, color: G.text, textAlign: "right" },
+  itemBody: {
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    paddingTop: 6,
+  },
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 8,
+  },
+  rowKey: {
+    fontSize: 12,
+    color: G.sub,
+  },
+  rowVal: {
+    flex: 1,
+    fontSize: 12,
+    color: G.text,
+    textAlign: "right",
+  },
 
-  itemActions: { flexDirection: "row", gap: 10, marginTop: 14 },
+  itemActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+  },
   ghostBtn: {
     flex: 1,
     height: 42,
@@ -806,7 +1134,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  ghostText: { fontSize: 13, fontWeight: "900", color: G.text },
+  ghostText: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: G.text,
+  },
 
   dangerBtn: {
     flex: 1,
@@ -818,12 +1150,27 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 8,
   },
-  dangerText: { fontSize: 13, fontWeight: "900", color: "#fff" },
+  dangerText: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: "#fff",
+  },
 
-  disabledNote: { marginTop: 10, fontSize: 11, color: G.sub, lineHeight: 16 },
+  disabledNote: {
+    marginTop: 10,
+    fontSize: 11,
+    color: G.sub,
+    lineHeight: 16,
+  },
 
-  // Modal (bank picker)
-  modalBackdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.35)" },
+  modalBackdrop: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
   modalSheet: {
     position: "absolute",
     left: 14,
@@ -844,7 +1191,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  modalTitle: { fontSize: 14, fontWeight: "900", color: G.text },
+  modalTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: G.text,
+  },
   modalClose: {
     width: 34,
     height: 34,
@@ -867,7 +1218,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 8,
   },
-  searchInput: { flex: 1, height: 44, fontSize: 13, color: G.text },
+  searchInput: {
+    flex: 1,
+    height: 44,
+    fontSize: 13,
+    color: G.text,
+  },
 
   bankRow: {
     paddingHorizontal: 14,
@@ -878,8 +1234,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  bankRowActive: { backgroundColor: "rgba(2, 138, 71, 0.05)" },
-  bankLeft: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
+  bankRowActive: {
+    backgroundColor: "rgba(2, 138, 71, 0.05)",
+  },
+  bankLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+  },
   bankDot: {
     width: 12,
     height: 12,
@@ -888,6 +1251,14 @@ const styles = StyleSheet.create({
     borderColor: G.border,
     backgroundColor: "#fff",
   },
-  bankName: { fontSize: 13, fontWeight: "900", color: G.text },
-  bankCode: { fontSize: 12, color: G.sub, marginTop: 2 },
+  bankName: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: G.text,
+  },
+  bankCode: {
+    fontSize: 12,
+    color: G.sub,
+    marginTop: 2,
+  },
 });

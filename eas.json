@@ -1,20 +1,131 @@
 {
-  "cli": { "version": ">= 11.0.0" },
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
   "build": {
     "development": {
       "developmentClient": true,
-      "distribution": "internal",
-      "android": { "buildType": "apk" }
+      "distribution": "internal"
     },
     "preview": {
+      "developmentClient": false,
       "distribution": "internal",
-      "android": { "buildType": "apk" }
+      "android": {
+        "buildType": "apk"
+      }
     },
     "production": {
-      "android": { "buildType": "app-bundle" }
+      "distribution": "store",
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "ios": {
+        "distribution": "store"
+      },
+      "env": {
+       
+       "SEND_OTP_ENDPOINT":"https://grab.newedge.bt/driver/api/auth/send-otp",
+       "VERIFY_OTP_ENDPOINT":"https://grab.newedge.bt/driver/api/auth/verify-otp",
+       "REGISTER_MERCHANT_ENDPOINT":"https://grab.newedge.bt/merchant/api/merchant/register",
+       "LOGIN_MERCHANT_ENDPOINT":"https://grab.newedge.bt/driver/api/login",
+       "BUSINESS_TYPES_FOOD_ENDPOINT":"https://grab.newedge.bt/merchant/api/admin/business-types/type/food",
+       "BUSINESS_TYPES_MART_ENDPOINT":"https://grab.newedge.bt/merchant/api/admin/business-types/type/mart",
+       "LOGIN_USERNAME_MERCHANT_ENDPOINT":"https://grab.newedge.bt/merchant/api/merchant/login-email",
+       "CATEGORY_ENDPOINT":"https://grab.newedge.bt/merchant/api/category/business",
+       "MENU_ENDPOINT":"https://grab.newedge.bt/food/api/food-menu",
+       "MENU_IMAGE_ENDPOINT":"https://grab.newedge.bt/food",
+       "DISPLAY_MENU_ENDPOINT":"https://grab.newedge.bt/food/api/food-menu/business",
+       "BANNERS_ENDPOINT":"https://grab.newedge.bt/merchant/api/banners",
+       "BANNERS_IMAGE_ENDPOINT":"https://grab.newedge.bt/merchant",
+       "CREATE_BANNER_ENDPOINT":"https://grab.newedge.bt/merchant/api/banners",
+       "UPDATE_BANNER_ENDPOINT":"https://grab.newedge.bt/merchant/api/banners",
+       "REACTIVATING_BANNER_ENDPOINT":"https://grab.newedge.bt/merchant/api/banners",
+       "BANNERS_BY_BUSINESS_ENDPOINT":"https://grab.newedge.bt/merchant/api/banners/business",
+       "PROFILE_ENDPOINT":"https://grab.newedge.bt/driver/api/profile",
+       "PROFILE_IMAGE":"https://grab.newedge.bt/driver/",
+       "MERCHANT_LOGO":"https://grab.newedge.bt/merchant/",
+       "PASSWORD_CHANGE_ENDPOINT":"https://grab.newedge.bt/driver/api/profile/password",
+       "BUSINESS_DETAILS":"https://grab.newedge.bt/merchant/api/merchant-business/{business_id}",
+       "MEDIA_BASE_URL":"https://grab.newedge.bt",
+       "ORDER_ENDPOINT":"https://grab.newedge.bt/orders/orders/business/{businessId}/grouped",
+       "SCHEDULED_ORDER_ENDPOINT":"https://grab.newedge.bt/orders/api/scheduled-orders/business/{business_Id}",
+       "UPDATE_ORDER_STATUS_ENDPOINT":"https://grab.newedge.bt/orders/orders/{order_id}/status",
+       "ITEM_ENDPOINT":"https://grab.newedge.bt/mart/api/mart-menu",
+       "ITEM_IMAGE_ENDPOINT":"https://grab.newedge.bt/mart",
+       "DISPLAY_ITEM_ENDPOINT":"https://grab.newedge.bt/mart/api/mart-menu/business",
+       "FEEDBACK_ENDPOINT":"https://grab.newedge.bt/merchant/api/merchant/ratings/{business_id}",
+       "FEEDBACK_REPLY_ENDPOINT":"https://grab.newedge.bt/merchant/api/merchant/ratings/food/{notification_id}/replies",
+       "FEEDBACK_REPLY_DELETE_ENDPOINT":"https://grab.newedge.bt/merchant/api/merchant/ratings/replies/{reply_id}",
+       "FORGOT_SEND_OTP_ENDPOINT":"https://grab.newedge.bt/driver/api/forgotpassword/send-otp",
+       "FORGOT_VERIFY_OTP_ENDPOINT":"https://grab.newedge.bt/driver/api/forgotpassword/verify-otp",
+       "FORGOT_RESET_PASSWORD_ENDPOINT":"https://grab.newedge.bt/driver/api/forgotpassword/reset-password",
+       "NEARBY_DRIVERS_ENDPOINT":"https://grab.newedge.bt/grablike/api/nearby-drivers?cityId=thimphu&lng=89.6387255&lat=27.4775469&radiusKm=5&limit=20",
+       "DRIVER_RATING_ENDPOINT":"https://grab.newedge.bt/grablike/api/ratings?driver_id={driver_id}&limit=20&offset=0",
+       "SEND_REQUEST_DRIVER_ENDPOINT":"https://grab.newedge.bt/grablike/rides/match/broadcast-delivery",
+       "LOGOUT_ENDPOINT":"https://grab.newedge.bt/driver/api/logout/{user_id}",
+       "NOTIFICATIONS_ENDPOINT":"https://grab.newedge.bt/orders/api/order_notification/business/{business_id}",
+       "SYSTEM_NOTIFICATIONS_ENDPOINT":"https://grab.newedge.bt/admin/api/system-notifications/{user_id}",
+       "CREATE_WALLET_ENDPOINT":"https://grab.newedge.bt/wallet/wallet/create",
+       "WALLET_ENDPOINT":"https://grab.newedge.bt/wallet/wallet/getbyuser/{user_id}",
+       "WALLET_USERNAME_ENDPOINT":"https://grab.newedge.bt/wallet/wallet/{wallet_id}/user-name",
+       "TRANSACTION_HISTORY_ENDPOINT":"https://grab.newedge.bt/wallet/transactions/wallet/{wallet_id}",
+       "NOTIFICATION_READ_ENDPOINT":"https://grab.newedge.bt/orders/api/order_notification/{notificationId}/read",
+       "NOTIFICATION_READ_ALL_ENDPOINT":"https://grab.newedge.bt/orders/api/order_notification/business/{businessId}/read-all",
+       "NOTIFICATION_DELETE_ENDPOINT":"https://grab.newedge.bt/orders/api/order_notification/{notificationId}",
+       "STATUS_COUNT_ENDPOINT":"https://grab.newedge.bt/orders/orders/business/{business_id}/status-counts",
+       "BANNER_BASE_PRICE_ENDPOINT":"https://grab.newedge.bt/merchant/api/banners/base-price",
+       "UPDATE_BUSINESS_LICENSE_ENDPOINT":"https://grab.newedge.bt/merchant/api/merchant/update/{businessId}",
+       "SALES_TODAY_ENDPOINT":"https://grab.newedge.bt/merchant/api/sales/today/{businessId}",
+       "HAS_TPIN_ENDPOINT":"https://grab.newedge.bt/wallet/wallet/{user_id}/has-tpin",
+       "CREATE_TPIN_ENDPOINT":"https://grab.newedge.bt/wallet/wallet/{wallet_id}/t-pin",
+       "WALLET_TPIN_VERIFY_ENDPOINT":"https://grab.newedge.bt/wallet/wallet/{wallet_id}/forgot-tpin/verify",
+       "WALLET_TPIN_FORGOT_ENDPOINT":"https://grab.newedge.bt/wallet/wallet/{wallet_id}/forgot-tpin",
+       "WALLET_TPIN_CHANGE_ENDPOINT":"https://grab.newedge.bt/wallet/wallet/{wallet_id}/t-pin",
+       "SEND_TO_FRIEND_ENDPOINT":"https://grab.newedge.bt/wallet/wallet/transfer",
+       "WALLET_TOPUP_BASE":"https://grab.newedge.bt/bfs/api/wallet/topup",
+       "RIDE_SOCKET_ENDPOINT":"https://grab.newedge.bt/grablike/socket.io",
+       "DRIVER_DETAILS_ENDPOINT":"https://grab.newedge.bt/grablike/api/driver_id?driverId={driverId}",
+       "MIN_AMT_UPDATE_ENDPOINT":"https://grab.newedge.bt/merchant/api/merchant/update/{businessId}",
+       "GROUP_NEARBY_ORDER_ENDPOINT":"https://grab.newedge.bt/grablike/driver/delivery/batch/create",
+       "BATCH_ORDER_BROADCAST_ENDPOINT":"https://grab.newedge.bt/grablike/rides/match/broadcast-delivery",
+       "GET_BATCH_RIDE_ID_ENDPOINT":"https://grab.newedge.bt/grablike/api/batch-ride/get-batch-ride-id?business_id={business_id}",
+       "SEND_OTP_REGISTER_SMS_ENDPOINT":"https://grab.newedge.bt/driver/api/sms-otp/send-otp-sms",
+       "VERIFY_OTP_REGISTER_SMS_ENDPOINT":"https://grab.newedge.bt/driver/api/sms-otp/verify-otp-sms",
+       "FORGOT_TPIN_SMS_ENDPOINT":"https://grab.newedge.bt/wallet/wallet/{wallet_id}/forgot-tpin-sms",
+       "VERIFY_TPIN_SMS_ENDPOINT":"https://grab.newedge.bt/wallet/wallet/{wallet_id}/forgot-tpin-sms/verify",
+       "SEND_OTP_FPW_SMS_ENDPOINT":"https://grab.newedge.bt/driver/api/forgotpassword/send-otp-sms",
+       "VERIFY_OTP_FPW_SMS_ENDPOINT":"https://grab.newedge.bt/driver/api/forgotpassword/verify-otp-sms",
+       "NEW_PASSWORD_SET_SMS_ENDPOINT":"https://grab.newedge.bt/driver/api/forgotpassword/reset-password-sms",
+       "DELIVERY_RIDE_ID_ENDPOINT":"https://grab.newedge.bt/grablike/api/delivery/ride?delivery_batch_id={batch_id}",
+       "REMOVE_SPECIAL_CELEBRATION_ENDPOINT":"https://grab.newedge.bt/merchant/api/merchant-business/{business_id}/special-celebration",
+       "TOTAL_SALES_ENDPOINT":"https://grab.newedge.bt/merchant/api/merchant-earnings/business/{business_id}",
+       "REPORT_COMMENT":"https://grab.newedge.bt/merchant/api/merchant/ratings/{type}/{rating_id}/report",
+       "REPORT_REPLY":"https://grab.newedge.bt/merchant/api/merchant/ratings/{type}/replies/{reply_id}/report",
+       "RIDE_LOCAL_ENDPOINT":"https://grab.newedge.bt/grablike",
+       "ASSET_ORIGIN":"https://grab.newedge.bt",
+       "API_BASE_URL":"https://grab.newedge.bt",
+       "CHAT_ORIGIN":"https://grab.newedge.bt",
+       "USER_MERCHANT_CHAT_ORIGIN":"https://grab.newedge.bt/chat",
+       "MERCHANT_CHAT_CONVERSATIONS_URL":"https://grab.newedge.bt/chat/chat/conversations",
+       "CHAT_CREATE_CONVERSATION_URL":"https://grab.newedge.bt/chat/chat/conversations/order/:orderId",
+       "CHAT_MESSAGES_URL":"https://grab.newedge.bt/chat/chat/messages/:conversationId",
+       "CHAT_SEND_MESSAGE_URL":"https://grab.newedge.bt/chat/chat/messages/:conversationId",
+       "CHAT_MARK_READ_URL":"https://grab.newedge.bt/chat/chat/read/:conversationId",
+       "CHAT_SOCKET_ORIGIN":"https://grab.newedge.bt",
+       "CHAT_SOCKET_PATH":"/chat/socket.io",
+       "MERCHANT_LOGO_BASE":"https://grab.newedge.bt/merchant",
+       "MY_LOCAL_SOCKET":"https://grab.newedge.bt/grablike",
+       "VERIFY_SESSION_ENDPOINT":"https://grab.newedge.bt/driver/api/verify-session"
+      }
     }
   },
   "submit": {
-    "production": { "android": { "serviceAccountKeyPath": "./google-play-key.json" } }
+    "production": {
+      "android": {
+        "serviceAccountKeyPath": "./google-services.json",
+        "track": "production"
+      }
+    }
   }
 }

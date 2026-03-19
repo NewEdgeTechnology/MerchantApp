@@ -23,11 +23,12 @@ const G = {
   line: "#E5E7EB",
   danger: "#EF4444",
   white: "#ffffff",
+  slate: "#0F172A",
 };
 
 const mpinKeyForWallet = (walletId) => {
   const raw = String(walletId || "default");
-  const safe = raw.replace(/[^A-Za-z0-9._-]/g, "_"); // replace *, :, etc. with "_"
+  const safe = raw.replace(/[^A-Za-z0-9._-]/g, "_");
   return `wallet_mpin_${safe}`;
 };
 
@@ -35,16 +36,17 @@ export default function WalletSetMPIN() {
   const nav = useNavigation();
   const route = useRoute();
 
-  const userId = route?.params?.user_id;
-  const walletId = route?.params?.wallet_id;
+  const userId = route?.params?.user_id || null;
+  const walletId = route?.params?.wallet_id || null;
 
-  const [existingMpin, setExistingMpin] = useState(null); // if present, we can show "Change MPIN" later
+  const [existingMpin, setExistingMpin] = useState(null);
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
         if (!walletId) return;
@@ -53,21 +55,26 @@ export default function WalletSetMPIN() {
           setExistingMpin(stored);
         }
       } catch (e) {
-        // ignore
+        console.log("[WalletSetMPIN] load existing MPIN error:", e?.message || e);
       }
     })();
+
     return () => {
       alive = false;
     };
   }, [walletId]);
 
   const onChangePin = (val) => {
-    const clean = (val || "").replace(/[^0-9]/g, "").slice(0, 4);
+    const clean = String(val || "")
+      .replace(/[^0-9]/g, "")
+      .slice(0, 4);
     setPin(clean);
   };
 
   const onChangePin2 = (val) => {
-    const clean = (val || "").replace(/[^0-9]/g, "").slice(0, 4);
+    const clean = String(val || "")
+      .replace(/[^0-9]/g, "")
+      .slice(0, 4);
     setPin2(clean);
   };
 
@@ -78,6 +85,7 @@ export default function WalletSetMPIN() {
       Alert.alert("Error", "Wallet ID missing. Please reopen your wallet.");
       return;
     }
+
     if (!canSubmit) {
       Alert.alert("Invalid MPIN", "Please enter and confirm a 4-digit MPIN.");
       return;
@@ -85,9 +93,6 @@ export default function WalletSetMPIN() {
 
     setLoading(true);
     try {
-      // === Local secure save ===
-      // If later you create a backend API for MPIN,
-      // replace this block with a fetch() call and keep SecureStore as cache.
       await SecureStore.setItemAsync(mpinKeyForWallet(walletId), pin);
 
       Alert.alert(
@@ -99,7 +104,6 @@ export default function WalletSetMPIN() {
           {
             text: "OK",
             onPress: () => {
-              // Go back to wallet screen
               try {
                 nav.goBack();
               } catch {}
@@ -108,6 +112,7 @@ export default function WalletSetMPIN() {
         ]
       );
     } catch (e) {
+      console.log("[WalletSetMPIN] save MPIN error:", e?.message || e);
       Alert.alert("Failed", e?.message || "Could not save MPIN.");
     } finally {
       setLoading(false);
@@ -145,15 +150,17 @@ export default function WalletSetMPIN() {
       <View style={styles.body}>
         <View style={styles.card}>
           <Ionicons name="keypad-outline" size={32} color={G.grab} />
+
           <Text style={styles.title}>
             {existingMpin ? "Update your wallet MPIN" : "Create your wallet MPIN"}
           </Text>
+
           <Text style={styles.sub}>
             This 4-digit MPIN will be used to access your wallet information on
             this device when biometrics are not available.
           </Text>
 
-          <View style={{ marginTop: 16, width: "100%" }}>
+          <View style={styles.inputBlock}>
             <Text style={styles.label}>New MPIN</Text>
             <TextInput
               value={pin}
@@ -164,10 +171,11 @@ export default function WalletSetMPIN() {
               style={styles.input}
               placeholder="••••"
               placeholderTextColor="#CBD5E1"
+              editable={!loading}
             />
           </View>
 
-          <View style={{ marginTop: 12, width: "100%" }}>
+          <View style={styles.inputBlock}>
             <Text style={styles.label}>Confirm MPIN</Text>
             <TextInput
               value={pin2}
@@ -178,15 +186,16 @@ export default function WalletSetMPIN() {
               style={styles.input}
               placeholder="••••"
               placeholderTextColor="#CBD5E1"
+              editable={!loading}
             />
           </View>
 
-          {pin2.length === 4 && pin !== pin2 && (
+          {pin2.length === 4 && pin !== pin2 ? (
             <Text style={styles.errorText}>MPIN does not match.</Text>
-          )}
+          ) : null}
 
           <TouchableOpacity
-            style={[styles.btn, !canSubmit || loading ? styles.btnDisabled : null]}
+            style={[styles.btn, (!canSubmit || loading) && styles.btnDisabled]}
             onPress={handleSave}
             disabled={!canSubmit || loading}
             activeOpacity={0.9}
@@ -211,7 +220,10 @@ export default function WalletSetMPIN() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: G.bg },
+  wrap: {
+    flex: 1,
+    backgroundColor: G.bg,
+  },
   gradientHeader: {
     paddingTop: Platform.OS === "android" ? 36 : 56,
     paddingHorizontal: 16,
@@ -221,6 +233,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    paddingTop: 14,
   },
   backBtn: {
     width: 32,
@@ -228,9 +241,13 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,.18)",
   },
-  headerTitle: { color: G.white, fontSize: 18, fontWeight: "800" },
-
+  headerTitle: {
+    color: G.white,
+    fontSize: 18,
+    fontWeight: "800",
+  },
   body: {
     flex: 1,
     padding: 16,
@@ -255,6 +272,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: G.sub,
     textAlign: "center",
+  },
+  inputBlock: {
+    marginTop: 16,
+    width: "100%",
   },
   label: {
     fontSize: 13,

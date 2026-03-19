@@ -403,7 +403,7 @@ const pickRideId = (payload) =>
   payload?.rideId ??
   payload?.delivery_ride_id ??
   payload?.deliveryRideId ??
-  payload?.ride ??
+  payload?.ride?.id ??
   payload?.ride?.id ??
   payload?.data?.ride_id ??
   payload?.data?.rideId ??
@@ -809,6 +809,18 @@ export default function ClusterDeliveryOptionsScreen() {
 
         if (!rideIdRef.current) {
           const savedRide = await SecureStore.getItemAsync(keyRideId(businessId));
+          console.log("========== SECURESTORE RIDE DEBUG ==========");
+          console.log("Raw value:", savedRide);
+          console.log("Type:", typeof savedRide);
+          console.log("Length:", savedRide?.length);
+          console.log("===========================================");
+`1`
+          if (savedRide === "[object Object]") {
+            console.log("[SecureStore] corrupted rideId detected, clearing");
+            await SecureStore.deleteItemAsync(keyRideId(businessId));
+            return;
+          }
+
           if (!cancelled && savedRide && String(savedRide).trim()) {
             setRideId(String(savedRide).trim());
           }
@@ -827,19 +839,39 @@ export default function ClusterDeliveryOptionsScreen() {
   }, [businessId, resolvedBatchId]);
 
   const saveRideId = useCallback(
-    async (rid) => {
-      try {
-        if (!businessId) return;
-        const v = rid != null ? String(rid).trim() : '';
-        if (!v) return;
-        setRideId(v);
-        await SecureStore.setItemAsync(keyRideId(businessId), v);
-      } catch (e) {
-        console.log('[SecureStore] saveRideId error:', e?.message || e);
+  async (rid) => {
+    try {
+      if (!businessId) return;
+
+      let rideValue = rid;
+
+      // normalize object rideId
+      if (typeof rideValue === "object" && rideValue !== null) {
+        rideValue =
+          rideValue.id ??
+          rideValue.ride_id ??
+          rideValue.rideId ??
+          null;
       }
-    },
-    [businessId]
-  );
+
+      const v = rideValue != null ? String(rideValue).trim() : "";
+
+      if (!v || v === "[object Object]") {
+        console.log("[SecureStore] invalid rideId:", rideValue);
+        return;
+      }
+
+      console.log("[SecureStore] saving rideId:", v);
+
+      setRideId(v);
+      await SecureStore.setItemAsync(keyRideId(businessId), v);
+
+    } catch (e) {
+      console.log("[SecureStore] saveRideId error:", e?.message || e);
+    }
+  },
+  [businessId]
+);
 
   const saveBatchId = useCallback(
     async (bid) => {

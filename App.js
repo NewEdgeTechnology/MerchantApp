@@ -73,18 +73,18 @@ import PasswordSentScreen from "./screens/general/PasswordSentScreen.js";
 import BatchRidesScreen from "./screens/food/GroupOrder/BatchRidesScreen.js";
 import SalesAnalyticsScreen from "./screens/food/SalesAnalyticsScreen.js";
 import EditBusinessDetails from "./screens/profile/component/EditBusinessDetails.js";
-import WalletScreen from "./screens/wallet/Wallet.js";
-import ScanQRScreen from "./screens/wallet/ScanQR.js";
-import TopUpScreen from "./screens/wallet/TopUp.js";
-import TopUpBankScreen from "./screens/wallet/TopUpBank.js";
-import TopUpOtpScreen from "./screens/wallet/TopUpOtp.js";
-import WalletMyQRScreen from "./screens/wallet/WalletMyQR.js";
+import Wallet from "./screens/wallet/Wallet.js";
+import ScanQR from "./screens/wallet/ScanQR.js";
+import TopUp from "./screens/wallet/TopUp.js";
+import TopUpBank from "./screens/wallet/TopUpBank.js";
+import TopUpOtp from "./screens/wallet/TopUpOtp.js";
+import WalletMyQR from "./screens/wallet/WalletMyQR.js";
 import WalletSetMPIN from "./screens/wallet/WalletSetMPIN.js";
-import WalletSettingsScreen from "./screens/wallet/WalletSettings.js";
+import WalletSettings from "./screens/wallet/WalletSettings.js";
 import WalletSetTPIN from "./screens/wallet/WalletSetTPIN.js";
-import WalletTransferScreen from "./screens/wallet/WalletTransfer.js";
+import WalletTransfer from "./screens/wallet/WalletTransfer.js";
 import WalletTransferSuccess from "./screens/wallet/WalletTransferSuccess.js";
-import WithdrawalScreen from "./screens/wallet/WithdrawalScreen.js";
+import Withdrawal from "./screens/wallet/WithdrawalScreen.js";
 import Chat from "./screens/message/Chat.js";
 import ChatRoomScreen from "./screens/message/ChatRoomScreen";
 
@@ -424,18 +424,18 @@ export default function App() {
             <Stack.Screen name="PasswordSentScreen" component={PasswordSentScreen} />
             <Stack.Screen name="BatchRidesScreen" component={BatchRidesScreen} />
 
-            <Stack.Screen name="WalletScreen" component={WalletScreen} />
-            <Stack.Screen name="ScanQRScreen" component={ScanQRScreen} />
-            <Stack.Screen name="TopUpScreen" component={TopUpScreen} />
-            <Stack.Screen name="TopUpBankScreen" component={TopUpBankScreen} />
-            <Stack.Screen name="TopUpOtpScreen" component={TopUpOtpScreen} />
-            <Stack.Screen name="WalletMyQRScreen" component={WalletMyQRScreen} />
+            <Stack.Screen name="Wallet" component={Wallet} />
+            <Stack.Screen name="ScanQR" component={ScanQR} />
+            <Stack.Screen name="TopUp" component={TopUp} />
+            <Stack.Screen name="TopUpBank" component={TopUpBank} />
+            <Stack.Screen name="TopUpOtp" component={TopUpOtp} />
+            <Stack.Screen name="WalletMyQR" component={WalletMyQR} />
             <Stack.Screen name="WalletSetMPIN" component={WalletSetMPIN} />
-            <Stack.Screen name="WalletSettingsScreen" component={WalletSettingsScreen} />
+            <Stack.Screen name="WalletSettings" component={WalletSettings} />
             <Stack.Screen name="WalletSetTPIN" component={WalletSetTPIN} />
-            <Stack.Screen name="WalletTransferScreen" component={WalletTransferScreen} />
+            <Stack.Screen name="WalletTransfer" component={WalletTransfer} />
             <Stack.Screen name="WalletTransferSuccess" component={WalletTransferSuccess} />
-            <Stack.Screen name="WithdrawalScreen" component={WithdrawalScreen} />
+            <Stack.Screen name="Withdrawal" component={Withdrawal} />
 
             <Stack.Screen name="Chat" component={Chat} />
             <Stack.Screen name="MerchantChatRoomScreen" component={ChatRoomScreen} />

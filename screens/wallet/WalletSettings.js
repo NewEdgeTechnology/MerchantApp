@@ -62,16 +62,19 @@ async function authFetch(url, opts = {}) {
 async function fetchJson(url, opts) {
   const res = await authFetch(url, opts);
   const text = await res.text();
+
   let json;
   try {
     json = text ? JSON.parse(text) : {};
   } catch {
     json = { success: false, message: "Invalid JSON", raw: text };
   }
+
   if (!res.ok) {
     const msg = json?.message || `HTTP ${res.status}`;
     throw new Error(msg);
   }
+
   return json;
 }
 
@@ -85,6 +88,7 @@ function PinInput({
   visible,
   onToggleVisible,
   autoFocus = false,
+  editable = true,
 }) {
   return (
     <>
@@ -100,12 +104,14 @@ function PinInput({
           placeholder={placeholder}
           placeholderTextColor="#CBD5E1"
           autoFocus={autoFocus}
+          editable={editable}
         />
         <TouchableOpacity
           onPress={onToggleVisible}
           activeOpacity={0.8}
           style={styles.eyeBtn}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          disabled={!editable}
         >
           <Ionicons
             name={visible ? "eye-off-outline" : "eye-outline"}
@@ -119,11 +125,10 @@ function PinInput({
 }
 
 /* ========= screen ========= */
-export default function WalletSettingsScreen() {
+export default function WalletSettings() {
   const nav = useNavigation();
   const route = useRoute();
 
-  // Expecting params from WalletScreen: { wallet } or { wallet_id }
   const walletFromParams = route?.params?.wallet || null;
   const walletIdFromParams =
     walletFromParams?.wallet_id || route?.params?.wallet_id || null;
@@ -142,19 +147,19 @@ export default function WalletSettingsScreen() {
   const [otpSending, setOtpSending] = useState(false);
   const [otpVerifying, setOtpVerifying] = useState(false);
 
-  // ✅ eye toggles
   const [showOld, setShowOld] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showConfirmNew, setShowConfirmNew] = useState(false);
   const [showForgotNew, setShowForgotNew] = useState(false);
   const [showForgotConfirm, setShowForgotConfirm] = useState(false);
 
-  // ✅ keyboard padding so you can scroll to the end WITHOUT dismissing keyboard
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   useEffect(() => {
-    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
 
     const subShow = Keyboard.addListener(showEvt, (e) => {
       const h = e?.endCoordinates?.height || 0;
@@ -172,7 +177,6 @@ export default function WalletSettingsScreen() {
   }, []);
 
   const scrollPaddingBottom = useMemo(() => {
-    // base padding + keyboard height when open so last inputs stay reachable
     const base = 32;
     const extra = keyboardHeight ? Math.max(16, keyboardHeight + 16) : 0;
     return base + extra;
@@ -228,14 +232,17 @@ export default function WalletSettingsScreen() {
         old_t_pin: oldTPIN,
         new_t_pin: newTPIN,
       });
-      console.log("[WalletSettings] Changing TPIN for wallet body data:", body);
+
+      console.log("[WalletSettings] Changing TPIN body:", body);
 
       const res = await fetchJson(CHANGE_TPIN_URL(walletId), {
         method: "POST",
         body,
       });
 
-      if (!res?.success) throw new Error(res?.message || "Failed to change TPIN.");
+      if (!res?.success) {
+        throw new Error(res?.message || "Failed to change TPIN.");
+      }
 
       Alert.alert("TPIN updated", "Your wallet TPIN has been changed.", [
         {
@@ -270,7 +277,9 @@ export default function WalletSettingsScreen() {
         body: JSON.stringify({}),
       });
 
-      if (!res?.success) throw new Error(res?.message || "Failed to send OTP.");
+      if (!res?.success) {
+        throw new Error(res?.message || "Failed to send OTP.");
+      }
 
       setOtpSent(true);
       Alert.alert(
@@ -320,21 +329,27 @@ export default function WalletSettingsScreen() {
         body,
       });
 
-      if (!res?.success) throw new Error(res?.message || "Failed to verify OTP.");
+      if (!res?.success) {
+        throw new Error(res?.message || "Failed to verify OTP.");
+      }
 
-      Alert.alert("TPIN reset", "Your wallet TPIN has been reset successfully.", [
-        {
-          text: "OK",
-          onPress: () => {
-            setOtpCode("");
-            setForgotNewTPIN("");
-            setForgotConfirmTPIN("");
-            setOtpSent(false);
-            setShowForgotNew(false);
-            setShowForgotConfirm(false);
+      Alert.alert(
+        "TPIN reset",
+        "Your wallet TPIN has been reset successfully.",
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              setOtpCode("");
+              setForgotNewTPIN("");
+              setForgotConfirmTPIN("");
+              setOtpSent(false);
+              setShowForgotNew(false);
+              setShowForgotConfirm(false);
+            },
           },
-        },
-      ]);
+        ]
+      );
     } catch (e) {
       Alert.alert("Failed", String(e.message || e));
     } finally {
@@ -344,7 +359,6 @@ export default function WalletSettingsScreen() {
 
   return (
     <View style={styles.wrap}>
-      {/* Header */}
       <LinearGradient
         colors={["#46e693", "#40d9c2"]}
         start={{ x: 0, y: 0 }}
@@ -359,6 +373,7 @@ export default function WalletSettingsScreen() {
           >
             <Ionicons name="chevron-back" size={22} color={G.white} />
           </TouchableOpacity>
+
           <Text style={styles.headerTitle}>Wallet Settings</Text>
           <View style={{ width: 32 }} />
         </View>
@@ -376,14 +391,11 @@ export default function WalletSettingsScreen() {
         <ScrollView
           style={styles.body}
           contentContainerStyle={{ paddingBottom: scrollPaddingBottom }}
-          // ✅ keep keyboard open while scrolling
           keyboardShouldPersistTaps="always"
           keyboardDismissMode="none"
-          // ✅ iOS auto inset when keyboard shows (RN 0.71+)
           automaticallyAdjustKeyboardInsets={true}
           showsVerticalScrollIndicator={false}
         >
-          {/* Change TPIN */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Change TPIN</Text>
             <Text style={styles.cardSubtitle}>
@@ -397,6 +409,7 @@ export default function WalletSettingsScreen() {
               onChangeText={onChangeOldTPIN}
               visible={showOld}
               onToggleVisible={() => setShowOld((s) => !s)}
+              editable={!changeLoading}
             />
 
             <PinInput
@@ -405,6 +418,7 @@ export default function WalletSettingsScreen() {
               onChangeText={onChangeNewTPIN}
               visible={showNew}
               onToggleVisible={() => setShowNew((s) => !s)}
+              editable={!changeLoading}
             />
 
             <PinInput
@@ -413,6 +427,7 @@ export default function WalletSettingsScreen() {
               onChangeText={onChangeConfirmNewTPIN}
               visible={showConfirmNew}
               onToggleVisible={() => setShowConfirmNew((s) => !s)}
+              editable={!changeLoading}
             />
 
             <TouchableOpacity
@@ -437,10 +452,8 @@ export default function WalletSettingsScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Divider */}
           <View style={styles.sectionDivider} />
 
-          {/* Forgot TPIN */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Forgot TPIN</Text>
             <Text style={styles.cardSubtitle}>
@@ -474,6 +487,7 @@ export default function WalletSettingsScreen() {
                   style={styles.input}
                   placeholder="6-digit OTP"
                   placeholderTextColor="#CBD5E1"
+                  editable={!otpVerifying}
                 />
 
                 <PinInput
@@ -482,6 +496,7 @@ export default function WalletSettingsScreen() {
                   onChangeText={onChangeForgotNewTPIN}
                   visible={showForgotNew}
                   onToggleVisible={() => setShowForgotNew((s) => !s)}
+                  editable={!otpVerifying}
                 />
 
                 <PinInput
@@ -490,6 +505,7 @@ export default function WalletSettingsScreen() {
                   onChangeText={onChangeForgotConfirmTPIN}
                   visible={showForgotConfirm}
                   onToggleVisible={() => setShowForgotConfirm((s) => !s)}
+                  editable={!otpVerifying}
                 />
 
                 <TouchableOpacity
@@ -547,7 +563,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.1)",
+    backgroundColor: "rgba(255,255,255,.18)",
   },
   headerTitle: {
     color: G.white,
@@ -603,7 +619,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    paddingRight: 44, // room for eye button
+    paddingRight: 44,
     fontSize: 16,
     color: G.text,
     backgroundColor: "#F8FAFC",

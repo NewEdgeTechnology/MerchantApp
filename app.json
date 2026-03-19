@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "GrabMerchant",
-    "slug": "GrabMerchant",
+    "name": "TabDhey Merchant",
+    "slug": "tabdhey-merchant",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -13,33 +13,76 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
+      "bundleIdentifier": "com.newedge.tabdheymerchant",
+      "buildNumber": "1",
       "supportsTablet": true,
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "We need access to your photo library to upload business logo.",
-        "NSCameraUsageDescription": "We need access to your camera to take a business logo photo.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false
+        },
+        "NSLocationWhenInUseUsageDescription": "We need your location for business verification and nearby customer features.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "We need your location to provide location-based services.",
+        "NSCameraUsageDescription": "We need access to your camera to take business logo photos and scan documents.",
+        "NSPhotoLibraryUsageDescription": "We need access to your photo library to upload business logo and documents.",
         "NSFaceIDUsageDescription": "Allow Face ID/Touch ID to unlock your account."
       }
     },
     "android": {
+      "package": "com.newedge.tabdheymerchant",
+      "versionCode": 1,
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.CAMERA",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#ffffff"
       },
-      "permissions": [
-        "CAMERA",
-        "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
-      ],
       "edgeToEdgeEnabled": true,
-      "softwareKeyboardLayoutMode": "resize",
-      "usesCleartextTraffic": true,
-      "package": "com.anonymous.GrabMerchant"
+      "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-font",
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": false
+          }
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow TabDhey to use your location for business verification and nearby customer features."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow TabDhey to access your camera for business logo photos and document uploads."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#00B14F"
+        }
+      ]
     ],
     "updates": {
       "enabled": false,
@@ -49,7 +92,7 @@
     "runtimeVersion": "1.0.0",
     "extra": {
       "eas": {
-        "projectId": "f5377050-a920-4fd2-9af2-9cd2bcc537d5"
+        "projectId": "39465596-f80e-4ebb-b661-e149cd200ad8"
       }
     },
     "owner": "chospa"

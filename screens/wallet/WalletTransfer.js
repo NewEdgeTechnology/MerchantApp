@@ -16,6 +16,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
+import * as LocalAuthentication from "expo-local-authentication";
 import { getValidAccessToken } from "../../utils/authToken";
 
 /* ========= tokens ========= */
@@ -38,7 +39,9 @@ const TRANSFER_URL = "https://grab.newedge.bt/wallet/wallet/transfer";
 const GET_RECIPIENT_USERNAME = (walletId) =>
   `https://grab.newedge.bt/wallet/wallet/${walletId}/user-name`;
 
-/* ========= networking helpers ========= */
+/* ========= tiny helpers ========= */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 async function authFetch(url, opts = {}) {
   const token = await getValidAccessToken();
   const baseHeaders = { "Content-Type": "application/json" };
@@ -55,21 +58,44 @@ async function authFetch(url, opts = {}) {
 async function fetchJson(url, opts) {
   const res = await authFetch(url, opts);
   const text = await res.text();
+
   let json;
   try {
     json = text ? JSON.parse(text) : {};
   } catch {
     json = { success: false, message: "Invalid JSON", raw: text };
   }
+
   if (!res.ok) {
     const msg = json?.message || `HTTP ${res.status}`;
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = res.status;
+    err.raw = json;
+    throw err;
   }
+
   return json;
 }
 
+/**
+ * Some servers wake up and first call returns 500.
+ * Retry once for HTTP 500 only.
+ */
+async function fetchJsonWithWarmupRetry(url, opts, delayMs = 900) {
+  try {
+    return await fetchJson(url, opts);
+  } catch (e) {
+    const status = e?.status || 0;
+    if (status === 500) {
+      await sleep(delayMs);
+      return await fetchJson(url, opts);
+    }
+    throw e;
+  }
+}
+
 /* ========= screen ========= */
-export default function WalletTransferScreen() {
+export default function WalletTransfer() {
   const nav = useNavigation();
   const route = useRoute();
 
@@ -77,10 +103,13 @@ export default function WalletTransferScreen() {
   const senderWalletId =
     walletFromParams?.wallet_id || route?.params?.wallet_id || "";
 
-  // 👇 QR payload from ScanQR (optional)
   const qrPayload = route?.params?.qrPayload || null;
 
-  // store only suffix – UI shows NET + suffix
+  console.log("[WalletTransfer] senderWalletId:", senderWalletId);
+  console.log("[WalletTransfer] qrPayload:", qrPayload);
+  console.log("[WalletTransfer] wallet params:", walletFromParams);
+
+  // store only suffix – UI shows TD + suffix
   const [recipientSuffix, setRecipientSuffix] = useState("");
   const [amountStr, setAmountStr] = useState("");
   const [note, setNote] = useState("Transfer");
@@ -94,13 +123,16 @@ export default function WalletTransferScreen() {
 
   // TPIN attempts & lock
   const [tpinAttempts, setTpinAttempts] = useState(0);
-  const [tpinLockedUntil, setTpinLockedUntil] = useState(null); // timestamp (ms)
+  const [tpinLockedUntil, setTpinLockedUntil] = useState(null);
   const [lockSecondsLeft, setLockSecondsLeft] = useState(0);
 
   // Recipient username
   const [recipientName, setRecipientName] = useState("");
   const [recipientLoading, setRecipientLoading] = useState(false);
   const [recipientError, setRecipientError] = useState("");
+
+  // biometric state
+  const [bioChecking, setBioChecking] = useState(false);
 
   const handleBack = () => {
     try {
@@ -122,34 +154,27 @@ export default function WalletTransferScreen() {
   const onChangeTPIN = (val) =>
     setTpin((val || "").replace(/[^0-9]/g, "").slice(0, 4));
 
-  // Recipient wallet – limit total to 9 chars ("NET" + 6 digits)
+  // Recipient wallet – TD + 8 digits = 10 total
   const onChangeRecipient = (val) => {
     const upper = (val || "").toUpperCase();
-
-    // Remove "NET" if present
-    let body = upper.startsWith("NET") ? upper.slice(3) : upper;
-
-    // Keep digits only and limit to 6 → "NET" + 6 = 9 total
-    body = body.replace(/[^0-9]/g, "").slice(0, 6);
-
+    let body = upper.startsWith("TD") ? upper.slice(2) : upper;
+    body = body.replace(/[^0-9]/g, "").slice(0, 8);
     setRecipientSuffix(body);
   };
 
-  const fullRecipientId = recipientSuffix ? `NET${recipientSuffix}` : "";
+  const fullRecipientId = recipientSuffix ? `TD${recipientSuffix}` : "";
 
-  /* ========= Prefill from QR payload (walletId, userName, amount, note) ========= */
+  /* ========= Prefill from QR payload ========= */
   useEffect(() => {
     if (!qrPayload) return;
 
-    // We encoded this in WalletMyQR:
-    // { kind: "user_wallet", walletId, userName, userId, amount?, note? }
     const kind = qrPayload.kind || qrPayload.type || "";
 
     if (kind === "user_wallet" || !kind) {
       if (qrPayload.walletId) {
         const upper = String(qrPayload.walletId).toUpperCase();
-        let body = upper.startsWith("NET") ? upper.slice(3) : upper;
-        body = body.replace(/[^0-9]/g, "").slice(0, 6);
+        let body = upper.startsWith("TD") ? upper.slice(2) : upper;
+        body = body.replace(/[^0-9]/g, "").slice(0, 8);
         setRecipientSuffix(body);
       }
 
@@ -161,7 +186,6 @@ export default function WalletTransferScreen() {
         setNote(String(qrPayload.note));
       }
 
-      // optional: prefill recipientName from QR (backend lookup will still run)
       if (qrPayload.userName) {
         setRecipientName(String(qrPayload.userName));
       }
@@ -170,21 +194,27 @@ export default function WalletTransferScreen() {
 
   /* ========= Recipient username lookup ========= */
   useEffect(() => {
-    // Reset whenever input changes
     setRecipientName("");
     setRecipientError("");
 
-    // Only fetch when full ID is complete (NET + 6 digits = 9 chars)
-    if (!fullRecipientId || fullRecipientId.length !== 9) {
+    if (!fullRecipientId || fullRecipientId.length !== 10) {
       setRecipientLoading(false);
       return;
     }
 
     let alive = true;
+
     (async () => {
       setRecipientLoading(true);
       try {
-        const res = await fetchJson(GET_RECIPIENT_USERNAME(fullRecipientId));
+        const res = await fetchJsonWithWarmupRetry(
+          GET_RECIPIENT_USERNAME(fullRecipientId),
+          undefined,
+          700
+        );
+
+        console.log("[WalletTransfer] recipient lookup result:", res);
+
         if (!alive) return;
 
         if (res?.success && res?.data?.user_name) {
@@ -198,7 +228,8 @@ export default function WalletTransferScreen() {
         if (!alive) return;
         setRecipientName("");
         setRecipientError(
-          e?.message || "Could not fetch recipient details. Please check the ID."
+          e?.message ||
+            "Could not fetch recipient details. Please check the ID."
         );
       } finally {
         if (alive) setRecipientLoading(false);
@@ -220,7 +251,6 @@ export default function WalletTransferScreen() {
       setLockSecondsLeft(secs);
 
       if (secs <= 0) {
-        // unlock
         setTpinLockedUntil(null);
         setTpinAttempts(0);
         setLockSecondsLeft(0);
@@ -230,36 +260,143 @@ export default function WalletTransferScreen() {
     return () => clearInterval(timer);
   }, [tpinLockedUntil]);
 
-  const handleOpenTPINModal = () => {
+  const validateBeforePay = useCallback(() => {
     if (!senderWalletId) {
       Alert.alert("Error", "Sender wallet ID missing.");
-      return;
-    }
-    if (!recipientSuffix.trim()) {
-      Alert.alert("Missing field", "Please enter recipient wallet ID.");
-      return;
+      return false;
     }
 
-    if (fullRecipientId === senderWalletId.trim()) {
+    if (!recipientSuffix.trim()) {
+      Alert.alert("Missing field", "Please enter recipient wallet ID.");
+      return false;
+    }
+
+    if (fullRecipientId.length !== 10) {
+      Alert.alert(
+        "Invalid recipient",
+        "Recipient wallet ID must be TD followed by 8 digits."
+      );
+      return false;
+    }
+
+    if (fullRecipientId === String(senderWalletId).trim()) {
       Alert.alert(
         "Invalid recipient",
         "You cannot transfer to the same wallet."
       );
-      return;
+      return false;
     }
 
     const amt = parseFloat(amountStr);
     if (!Number.isFinite(amt) || amt <= 0) {
-      Alert.alert("Invalid amount", "Please enter a valid amount greater than 0.");
-      return;
+      Alert.alert(
+        "Invalid amount",
+        "Please enter a valid amount greater than 0."
+      );
+      return false;
     }
 
-    setTpin("");
-    setTpinModalVisible(true);
-  };
+    return true;
+  }, [senderWalletId, recipientSuffix, fullRecipientId, amountStr]);
 
-  const handleConfirmTransfer = useCallback(async () => {
-    // If locked, block immediately
+  /**
+   * Calls backend transfer.
+   * biometric=true -> t_pin:null
+   * biometric=false -> t_pin:"1234"
+   */
+  const doTransfer = useCallback(
+    async ({ biometric, t_pin }) => {
+      const amt = parseFloat(amountStr);
+
+      const payload = {
+        sender_wallet_id: senderWalletId,
+        recipient_wallet_id: fullRecipientId,
+        amount: amt,
+        note: note?.trim() || "Transfer",
+        biometric: !!biometric,
+        t_pin: biometric ? null : String(t_pin || ""),
+      };
+
+      console.log("[WalletTransfer] payload:", payload);
+
+      const res = await fetchJsonWithWarmupRetry(
+        TRANSFER_URL,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+        900
+      );
+
+      if (!res?.success) {
+        throw new Error(res?.message || "Transfer failed.");
+      }
+
+      const tx = res?.data || {};
+      const createdAt =
+        tx.created_at_local || tx.created_at || new Date().toISOString();
+
+      nav.navigate("WalletTransferSuccess", {
+        amount: amt,
+        senderWalletId,
+        recipientWalletId: fullRecipientId,
+        recipientName,
+        journalCode: tx.journal_code || "",
+        transactionId: tx.transaction_id || "",
+        note: payload.note,
+        createdAt,
+      });
+    },
+    [amountStr, senderWalletId, fullRecipientId, note, nav, recipientName]
+  );
+
+  /**
+   * Try biometric first.
+   * If unavailable or fails, fallback to TPIN modal.
+   */
+  const handleContinue = useCallback(async () => {
+    if (!validateBeforePay()) return;
+
+    setSubmitting(true);
+
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+
+      if (!hasHardware || !isEnrolled) {
+        setSubmitting(false);
+        setTpin("");
+        setTpinModalVisible(true);
+        return;
+      }
+
+      setBioChecking(true);
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: "Confirm wallet transfer",
+        fallbackLabel: "Use device passcode",
+        cancelLabel: "Cancel",
+      });
+      setBioChecking(false);
+
+      if (!result?.success) {
+        setSubmitting(false);
+        setTpin("");
+        setTpinModalVisible(true);
+        return;
+      }
+
+      await doTransfer({ biometric: true, t_pin: null });
+    } catch (e) {
+      console.log("[WalletTransfer] biometric/transfer error:", e?.message || e);
+      setTpin("");
+      setTpinModalVisible(true);
+    } finally {
+      setBioChecking(false);
+      setSubmitting(false);
+    }
+  }, [validateBeforePay, doTransfer]);
+
+  const handleConfirmWithTPIN = useCallback(async () => {
     if (tpinLockedUntil && lockSecondsLeft > 0) {
       Alert.alert(
         "Too many attempts",
@@ -268,23 +405,8 @@ export default function WalletTransferScreen() {
       return;
     }
 
-    if (!senderWalletId) {
-      Alert.alert("Error", "Sender wallet ID missing.");
-      return;
-    }
+    if (!validateBeforePay()) return;
 
-    if (!recipientSuffix.trim()) {
-      Alert.alert("Missing field", "Please enter recipient wallet ID.");
-      return;
-    }
-
-    const recipient = fullRecipientId;
-    const amt = parseFloat(amountStr);
-
-    if (!Number.isFinite(amt) || amt <= 0) {
-      Alert.alert("Invalid amount", "Please enter a valid amount greater than 0.");
-      return;
-    }
     if (tpin.length !== 4) {
       Alert.alert("Invalid TPIN", "Please enter your 4-digit TPIN.");
       return;
@@ -292,54 +414,17 @@ export default function WalletTransferScreen() {
 
     setTpinSubmitting(true);
     try {
-      const payload = {
-        sender_wallet_id: senderWalletId,
-        recipient_wallet_id: recipient,
-        amount: amt,
-        note: note?.trim() || "Transfer",
-        t_pin: tpin,
-      };
+      await doTransfer({ biometric: false, t_pin: tpin });
 
-      console.log("[WalletTransfer] payload:", payload);
-
-      const res = await fetchJson(TRANSFER_URL, {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-      if (!res?.success) {
-        throw new Error(res?.message || "Transfer failed.");
-      }
-
-      // On success, reset attempts & lock
       setTpinAttempts(0);
       setTpinLockedUntil(null);
       setLockSecondsLeft(0);
       setTpinModalVisible(false);
-
-      // try to read tx info from response (adjust as per your actual API)
-      const tx = res?.data || {};
-      const createdAt =
-        tx.created_at_local || tx.created_at || new Date().toISOString();
-
-      // Navigate to pretty receipt screen
-      nav.navigate("WalletTransferSuccess", {
-        amount: amt,
-        senderWalletId,
-        recipientWalletId: recipient,
-        recipientName, // from your state (username lookup)
-        journalCode: tx.journal_code || "",
-        transactionId: tx.transaction_id || "",
-        note: payload.note,
-        createdAt,
-      });
     } catch (e) {
-      // Count this as a failed TPIN attempt
       setTpinAttempts((prev) => {
         const next = prev + 1;
 
         if (next >= 3) {
-          // Lock for 30 seconds
           const LOCK_SECONDS = 30;
           const until = Date.now() + LOCK_SECONDS * 1000;
           setTpinLockedUntil(until);
@@ -350,10 +435,7 @@ export default function WalletTransferScreen() {
             `You have entered an incorrect TPIN too many times. Please wait ${LOCK_SECONDS} seconds before trying again.`
           );
         } else {
-          Alert.alert(
-            "Transfer failed",
-            String(e.message || "Invalid TPIN or transfer error.")
-          );
+          Alert.alert("Transfer failed", String(e.message || "Transfer error."));
         }
 
         return next;
@@ -361,24 +443,12 @@ export default function WalletTransferScreen() {
     } finally {
       setTpinSubmitting(false);
     }
-  }, [
-    senderWalletId,
-    recipientSuffix,
-    fullRecipientId,
-    amountStr,
-    note,
-    tpin,
-    nav,
-    tpinLockedUntil,
-    lockSecondsLeft,
-    recipientName,
-  ]);
+  }, [tpin, validateBeforePay, doTransfer, tpinLockedUntil, lockSecondsLeft]);
 
   const locked = !!tpinLockedUntil && lockSecondsLeft > 0;
 
   return (
     <View style={styles.wrap}>
-      {/* Header */}
       <LinearGradient
         colors={["#46e693", "#40d9c2"]}
         start={{ x: 0, y: 0 }}
@@ -393,14 +463,14 @@ export default function WalletTransferScreen() {
           >
             <Ionicons name="chevron-back" size={22} color={G.white} />
           </TouchableOpacity>
+
           <Text style={styles.headerTitle}>Wallet Transfer</Text>
           <View style={{ width: 32 }} />
         </View>
 
         {!!senderWalletId && (
           <Text style={styles.senderInfo}>
-            From Wallet:{" "}
-            <Text style={{ fontWeight: "800" }}>{senderWalletId}</Text>
+            From Wallet: <Text style={{ fontWeight: "800" }}>{senderWalletId}</Text>
           </Text>
         )}
       </LinearGradient>
@@ -417,7 +487,6 @@ export default function WalletTransferScreen() {
             transfer.
           </Text>
 
-          {/* Recipient Wallet ID */}
           <Text style={styles.inputLabel}>Recipient Wallet ID</Text>
           <TextInput
             value={fullRecipientId}
@@ -425,12 +494,12 @@ export default function WalletTransferScreen() {
             autoCapitalize="characters"
             autoCorrect={false}
             style={styles.input}
-            placeholder="NET000008"
+            placeholder="TD00000000"
             placeholderTextColor="#CBD5E1"
-            maxLength={9}
+            maxLength={10}
+            keyboardType="decimal-pad"
           />
 
-          {/* Recipient name state */}
           {recipientLoading ? (
             <View style={styles.recipientRow}>
               <ActivityIndicator size="small" color={G.grab} />
@@ -445,7 +514,6 @@ export default function WalletTransferScreen() {
             <Text style={styles.recipientErrorText}>{recipientError}</Text>
           ) : null}
 
-          {/* Amount */}
           <Text style={styles.inputLabel}>Amount (BTN)</Text>
           <TextInput
             value={amountStr}
@@ -456,7 +524,6 @@ export default function WalletTransferScreen() {
             placeholderTextColor="#CBD5E1"
           />
 
-          {/* Note */}
           <Text style={styles.inputLabel}>Note (optional)</Text>
           <TextInput
             value={note}
@@ -467,29 +534,36 @@ export default function WalletTransferScreen() {
           />
 
           <TouchableOpacity
-            style={[styles.primaryBtn, submitting && styles.btnDisabled]}
+            style={[
+              styles.primaryBtn,
+              (submitting || bioChecking) && styles.btnDisabled,
+            ]}
             activeOpacity={0.9}
-            disabled={submitting}
-            onPress={handleOpenTPINModal}
+            disabled={submitting || bioChecking}
+            onPress={handleContinue}
           >
-            {submitting ? (
+            {submitting || bioChecking ? (
               <ActivityIndicator size="small" color={G.white} />
             ) : (
               <Text style={styles.primaryBtnText}>Continue</Text>
             )}
           </TouchableOpacity>
+
+          <Text style={styles.smallHint}>
+            We&apos;ll try biometrics first. If unavailable, we&apos;ll ask for
+            TPIN.
+          </Text>
         </View>
 
         <View style={styles.infoBox}>
           <Ionicons name="information-circle-outline" size={18} color={G.sub} />
           <Text style={styles.infoText}>
-            Transfers are instant and cannot be reversed. Please double-check the
-            recipient wallet ID and user name before confirming.
+            Transfers are instant and cannot be reversed. Please double-check
+            the recipient wallet ID and user name before confirming.
           </Text>
         </View>
       </ScrollView>
 
-      {/* TPIN Modal */}
       <Modal
         visible={tpinModalVisible}
         transparent
@@ -503,8 +577,8 @@ export default function WalletTransferScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Enter Wallet TPIN</Text>
             <Text style={styles.modalSubtitle}>
-              For security, please enter your 4-digit TPIN to confirm this
-              transfer.
+              Biometrics not used. Please enter your 4-digit TPIN to confirm
+              this transfer.
             </Text>
 
             <TextInput
@@ -540,7 +614,7 @@ export default function WalletTransferScreen() {
                   (tpinSubmitting || tpin.length !== 4 || locked) &&
                     styles.btnDisabled,
                 ]}
-                onPress={handleConfirmTransfer}
+                onPress={handleConfirmWithTPIN}
                 disabled={tpinSubmitting || tpin.length !== 4 || locked}
               >
                 {tpinSubmitting ? (
@@ -561,7 +635,10 @@ export default function WalletTransferScreen() {
 
 /* ========= styles ========= */
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: G.bg },
+  wrap: {
+    flex: 1,
+    backgroundColor: G.bg,
+  },
   gradientHeader: {
     paddingTop: Platform.OS === "android" ? 36 : 56,
     paddingHorizontal: 16,
@@ -579,7 +656,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.1)",
+    backgroundColor: "rgba(255,255,255,.18)",
   },
   headerTitle: {
     color: G.white,
@@ -674,6 +751,13 @@ const styles = StyleSheet.create({
   },
   btnDisabled: {
     opacity: 0.5,
+  },
+
+  smallHint: {
+    marginTop: 10,
+    color: "#64748B",
+    fontSize: 12,
+    fontWeight: "600",
   },
 
   infoBox: {

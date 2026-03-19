@@ -30,10 +30,10 @@ const G = {
   slate: "#0F172A",
 };
 
-export default function WalletMyQRScreen() {
+export default function WalletMyQR() {
   const nav = useNavigation();
   const route = useRoute();
-  const wallet = route?.params?.wallet || null; // expect wallet from WalletScreen
+  const wallet = route?.params?.wallet || null;
 
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
@@ -41,6 +41,7 @@ export default function WalletMyQRScreen() {
 
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
         const me = await getUserInfo();
@@ -56,12 +57,15 @@ export default function WalletMyQRScreen() {
         setUserName(name);
         setUserId(me?.user_id || me?.id || null);
       } catch (e) {
+        console.log("[WalletMyQR] getUserInfo error:", e?.message || e);
         if (!alive) return;
         setUserName("Wallet user");
+        setUserId(null);
       } finally {
         if (alive) setLoading(false);
       }
     })();
+
     return () => {
       alive = false;
     };
@@ -73,7 +77,6 @@ export default function WalletMyQRScreen() {
     } catch {}
   };
 
-  // Build QR payload (JSON string)
   const qrValue = useMemo(() => {
     if (!wallet?.wallet_id) return "";
 
@@ -82,14 +85,14 @@ export default function WalletMyQRScreen() {
       walletId: wallet.wallet_id,
       userName,
       userId,
-      // extra fields if you want later:
       // currency: "BTN",
       // platform: "grab.newedge.bt",
     };
 
     try {
       return JSON.stringify(payload);
-    } catch {
+    } catch (e) {
+      console.log("[WalletMyQR] QR stringify error:", e?.message || e);
       return "";
     }
   }, [wallet?.wallet_id, userName, userId]);
@@ -115,7 +118,6 @@ export default function WalletMyQRScreen() {
 
   return (
     <View style={styles.wrap}>
-      {/* Header */}
       <LinearGradient
         colors={["#46e693", "#40d9c2"]}
         start={{ x: 0, y: 0 }}
@@ -126,18 +128,19 @@ export default function WalletMyQRScreen() {
           <TouchableOpacity style={styles.backBtn} onPress={goBack}>
             <Ionicons name="chevron-back" size={22} color={G.white} />
           </TouchableOpacity>
+
           <Text style={styles.headerTitle}>My QR Code</Text>
           <View style={{ width: 32 }} />
         </View>
+
         <Text style={styles.headerSub}>
           Let others scan this QR to send money directly to your wallet.
         </Text>
       </LinearGradient>
 
-      {/* Body */}
       <View style={styles.body}>
         <View style={styles.card}>
-          <Text style={styles.nameText}>{userName}</Text>
+          <Text style={styles.nameText}>{userName || "Wallet user"}</Text>
           <Text style={styles.walletIdText}>Wallet ID: {wallet.wallet_id}</Text>
 
           <View style={styles.qrWrap}>
@@ -149,7 +152,7 @@ export default function WalletMyQRScreen() {
                 color="#000000"
               />
             ) : (
-              <Text style={{ color: G.sub }}>QR data not available</Text>
+              <Text style={styles.qrUnavailableText}>QR data not available</Text>
             )}
           </View>
 
@@ -165,7 +168,10 @@ export default function WalletMyQRScreen() {
 
 /* ========= styles ========= */
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: G.bg },
+  wrap: {
+    flex: 1,
+    backgroundColor: G.bg,
+  },
   center: {
     flex: 1,
     alignItems: "center",
@@ -179,7 +185,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     textAlign: "center",
   },
-
   gradientHeader: {
     paddingTop: Platform.OS === "android" ? 36 : 56,
     paddingHorizontal: 16,
@@ -209,7 +214,6 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,.9)",
     fontSize: 13,
   },
-
   body: {
     flex: 1,
     paddingHorizontal: 16,
@@ -239,6 +243,9 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 16,
     backgroundColor: "#F9FAFB",
+  },
+  qrUnavailableText: {
+    color: G.sub,
   },
   helperText: {
     marginTop: 4,

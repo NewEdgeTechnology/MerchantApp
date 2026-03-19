@@ -35,15 +35,22 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useNavigation, useRoute, useFocusEffect } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import MapView, { Marker, UrlTile, PROVIDER_DEFAULT, Polyline } from "react-native-maps";
-import io from "socket.io-client";
 import * as SecureStore from "expo-secure-store";
 import {
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
   BUSINESS_DETAILS as ENV_BUSINESS_DETAILS,
-  RIDE_LOCAL_ENDPOINT as ENV_RIDE_SOCKET,
   DELIVERY_RIDE_ID_ENDPOINT as ENV_DELIVERY_RIDE_ID_ENDPOINT,
   DRIVER_DETAILS_ENDPOINT as ENV_DRIVER_DETAILS_ENDPOINT,
 } from "@env";
+
+// Import socket utility functions from local socket.js
+import { 
+  initSocket, 
+  getSocket, 
+  setCurrentRide, 
+  onDriverLocation as listenToDriverLocation,
+  disconnectSocket 
+} from "./socket";
 
 /* ---------------- helpers ---------------- */
 
@@ -350,14 +357,14 @@ const fetchOsrmRoute2 = async (a, b) => {
 const pickItemName = (it) =>
   safeStr(
     it?.item_name ??
-      it?.name ??
-      it?.product_name ??
-      it?.title ??
-      it?.item?.name ??
-      it?.product?.name ??
-      it?.food_name ??
-      it?.menu_name ??
-      it?.variant_name
+    it?.name ??
+    it?.product_name ??
+    it?.title ??
+    it?.item?.name ??
+    it?.product?.name ??
+    it?.food_name ??
+    it?.menu_name ??
+    it?.variant_name
   ) || "Item";
 
 const pickItemQty = (it) => {
@@ -475,7 +482,6 @@ export default function TrackBatchOrdersScreen() {
     driverDetails: driverDetailsFromParams,
     driverRating: driverRatingFromParams,
     rideMessage,
-    socketEndpoint,
     rideIds = [],
     batch_order_ids: batchOrderIdsFromParams,
 
@@ -516,6 +522,78 @@ export default function TrackBatchOrdersScreen() {
   useEffect(() => {
     if (driverRatingFromParams) setDriverRating(driverRatingFromParams);
   }, [driverRatingFromParams]);
+
+
+  // Add this test function inside your TrackBatchOrdersScreen component
+// Add this test function inside your TrackBatchOrdersScreen component
+const testSocketEvents = useCallback(() => {
+  console.log("[DEBUG] ===== MANUAL SOCKET TEST =====");
+  console.log("[DEBUG] restoredIds:", restoredIds);
+  console.log("[DEBUG] effectiveRideIds:", effectiveRideIds);
+  console.log("[DEBUG] businessId:", businessId);
+  console.log("[DEBUG] driverId:", driverId);
+  
+  const socket = getSocket();
+  if (!socket) {
+    console.log("[DEBUG] ❌ No socket instance found");
+    Alert.alert("Debug", "No socket connection");
+    return;
+  }
+  
+  console.log("[DEBUG] Socket exists:", !!socket);
+  console.log("[DEBUG] Socket ID:", socket.id);
+  console.log("[DEBUG] Socket connected:", socket.connected);
+  console.log("[DEBUG] Socket disconnected:", socket.disconnected);
+  
+  if (!socket.connected) {
+    console.log("[DEBUG] ❌ Socket not connected");
+    Alert.alert("Debug", "Socket not connected");
+    return;
+  }
+  
+  // Test 1: Ping the server
+  console.log("[DEBUG] 📡 Sending ping...");
+  socket.emit("ping", { timestamp: Date.now() }, (response) => {
+    console.log("[DEBUG] 📡 Ping response:", response);
+    Alert.alert("Debug", `Ping response: ${JSON.stringify(response)}`);
+  });
+  
+  // Test 2: Check what rooms we're in using a custom event
+  console.log("[DEBUG] 🚪 Requesting rooms...");
+  socket.emit("getRooms", {}, (response) => {
+    console.log("[DEBUG] 🚪 Rooms response:", response);
+    Alert.alert("Debug", `Rooms: ${JSON.stringify(response)}`);
+  });
+  
+  // Test 3: Explicitly join rides again
+  effectiveRideIds.forEach(rid => {
+    console.log(`[DEBUG] 🚪 Re-joining ride: ${rid}`);
+    socket.emit("joinRide", { rideId: String(rid) }, (response) => {
+      console.log(`[DEBUG] 🚪 Join response for ${rid}:`, response);
+    });
+  });
+  
+  // Test 4: Request current driver location
+  effectiveRideIds.forEach(rid => {
+    console.log(`[DEBUG] 📍 Requesting location for ride: ${rid}`);
+    socket.emit("requestDriverLocation", { rideId: String(rid) }, (response) => {
+      console.log(`[DEBUG] 📍 Location response for ${rid}:`, response);
+    });
+  });
+  
+  // Alternative way to see what events are registered
+  console.log("[DEBUG] 👂 Socket has listeners for:", {
+    connect: socket.hasListeners?.('connect') || 'unknown',
+    disconnect: socket.hasListeners?.('disconnect') || 'unknown',
+    deliveryDriverLocation: socket.hasListeners?.('deliveryDriverLocation') || 'unknown',
+    driverLocation: socket.hasListeners?.('driverLocation') || 'unknown'
+  });
+  
+  // Log all listeners if _callbacks is available (older socket.io versions)
+  if (socket._callbacks) {
+    console.log("[DEBUG] 👂 Socket callbacks:", Object.keys(socket._callbacks));
+  }
+}, [restoredIds, effectiveRideIds, businessId, driverId]);
 
   // ✅ prefer incoming param driver id ALWAYS
   useEffect(() => {
@@ -599,14 +677,14 @@ export default function TrackBatchOrdersScreen() {
               const id = extractDriverId(parsed);
               if (!hasExplicitDriverParam && !safeStr(driverId) && id) setDriverId(id);
             }
-          } catch {}
+          } catch { }
         }
 
         if (!driverRating && savedDriverRatingJson) {
           try {
             const parsed = JSON.parse(savedDriverRatingJson);
             if (parsed && typeof parsed === "object") setDriverRating(parsed);
-          } catch {}
+          } catch { }
         }
       } catch (e) {
         console.log("[SecureStore] restore error:", e?.message || e);
@@ -637,12 +715,12 @@ export default function TrackBatchOrdersScreen() {
         if (driverInfo) {
           try {
             await SecureStore.setItemAsync(dKey, JSON.stringify(driverInfo));
-          } catch {}
+          } catch { }
         }
         if (driverRating) {
           try {
             await SecureStore.setItemAsync(drKey, JSON.stringify(driverRating));
-          } catch {}
+          } catch { }
         }
       } catch (e) {
         console.log("[SecureStore] save error:", e?.message || e);
@@ -727,6 +805,8 @@ export default function TrackBatchOrdersScreen() {
 
   const mapRef = useRef(null);
   const socketRef = useRef(null);
+  const unsubscribeRef = useRef(null);
+  const initializedRef = useRef(false);
 
   const lastDriverUpdateMsRef = useRef(0);
   const didFitOnceRef = useRef(false);
@@ -790,7 +870,7 @@ export default function TrackBatchOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch {}
+      } catch { }
 
       if (!res.ok) return [];
 
@@ -927,7 +1007,7 @@ export default function TrackBatchOrdersScreen() {
         extractLatLng(base?.location);
 
       if (coords) setBusinessCoords(coords);
-    } catch {}
+    } catch { }
   }, [businessId]);
 
   // ✅ fetch driver details by driverId (throttled)
@@ -1030,88 +1110,293 @@ export default function TrackBatchOrdersScreen() {
 
   /* ---------------- SOCKET ---------------- */
 
-  useEffect(() => {
-    const endpoint = String(socketEndpoint || ENV_RIDE_SOCKET || "").trim();
-    if (!endpoint) {
-      console.log("[MERCHANT][SOCKET] ❌ No socket endpoint");
+  // Handler for driver location updates with detailed logging
+  const onDriverLocation = useCallback((p) => {
+    console.log("[SOCKET] 🔵 RAW driver location event received at:", new Date().toISOString());
+    console.log("[SOCKET] 🔵 Full payload:", JSON.stringify(p, null, 2));
+    
+    const now = Date.now();
+    if (now - lastDriverUpdateMsRef.current < 800) {
+      console.log("[SOCKET] ⏱️ Throttling - too frequent (last update was", (now - lastDriverUpdateMsRef.current), "ms ago)");
+      return;
+    }
+    lastDriverUpdateMsRef.current = now;
+
+    // Log all possible coordinate fields for debugging
+    console.log("[SOCKET] 📍 Checking for coordinates in payload:");
+    console.log("  - p.lat, p.lng:", p?.lat, p?.lng);
+    console.log("  - p.latitude, p.longitude:", p?.latitude, p?.longitude);
+    console.log("  - p.driver_lat, p.driver_lng:", p?.driver_lat, p?.driver_lng);
+    console.log("  - p.coords:", p?.coords);
+    console.log("  - p.location:", p?.location);
+
+    // Extract coordinates
+    const coords = p?.lat && p?.lng ? { lat: p.lat, lng: p.lng } : 
+                   p?.latitude && p?.longitude ? { lat: p.latitude, lng: p.longitude } :
+                   p?.driver_lat && p?.driver_lng ? { lat: p.driver_lat, lng: p.driver_lng } :
+                   extractLatLng(p);
+    
+    if (!coords) {
+      console.log("[SOCKET] ❌ No coordinates found in payload after all extraction attempts");
       return;
     }
 
-    if (!restoredIds) return;
+    console.log("[SOCKET] ✅ Driver's location extracted SUCCESSFULLY:", coords);
+    console.log("[SOCKET] 📍 Driver is at latitude:", coords.lat, "longitude:", coords.lng);
+
+    // Extract ride ID with logging
+    const ridFromPayload = p?.ride_id || p?.rideId || p?.delivery_ride_id || p?.room || p?.request_id;
+    console.log("[SOCKET] 🆔 Ride ID from payload:", ridFromPayload);
+    console.log("[SOCKET] 🆔 Effective ride IDs available:", effectiveRideIds);
+    
+    const rid = String(ridFromPayload || effectiveRideIds[0] || "driver").trim();
+    console.log("[SOCKET] 🆔 Using ride ID:", rid);
+
+    // Extract driver ID with logging
+    const pid = p?.driver_id || p?.driverId || p?.driver?.id || "";
+    if (pid) {
+      console.log("[SOCKET] 👤 Driver ID extracted:", pid);
+      console.log("[SOCKET] 👤 Current driverId state:", driverId);
+      setDriverId(pid);
+
+      const missingName = !safeStr(driverInfo?.user_name) && !safeStr(driverInfo?.name);
+      if (missingName) {
+        console.log("[SOCKET] 👤 Driver name missing, fetching details for ID:", pid);
+        fetchDriverDetailsById(pid, { force: true });
+      }
+    } else {
+      console.log("[SOCKET] 👤 No driver ID found in payload");
+      console.log("[SOCKET] 👤 Available driver ID fields:", {
+        driver_id: p?.driver_id,
+        driverId: p?.driverId,
+        'driver.id': p?.driver?.id
+      });
+    }
+
+    // Extract driver info if available
+    const maybeDriver = {
+      user_name: p?.driver_name || p?.driverName,
+      phone: p?.driver_phone || p?.driverPhone,
+      ...(coords && { lat: coords.lat, lng: coords.lng })
+    };
+    
+    if (maybeDriver.user_name || maybeDriver.phone) {
+      console.log("[SOCKET] ℹ️ Driver info extracted:", maybeDriver);
+      setDriverInfo((prev) => ({ ...(prev || {}), ...maybeDriver }));
+    }
+
+    // Update driversByRideId state
+    setDriversByRideId((prev) => {
+      const prevEntry = prev?.[rid];
+      console.log("[SOCKET] 🗺️ Previous location for ride", rid, ":", prevEntry?.coords);
+      
+      if (prevEntry?.coords && haversineMeters(prevEntry.coords, coords) < 5) {
+        console.log("[SOCKET] 📍 Location unchanged (within 5m), skipping update");
+        return prev;
+      }
+
+      console.log("[SOCKET] 📍 Updating driver location for ride:", rid);
+      console.log("[SOCKET] 📍 New location:", coords);
+      console.log("[SOCKET] 📍 Distance from previous:", prevEntry?.coords ? 
+        haversineMeters(prevEntry.coords, coords).toFixed(2) + "m" : "N/A");
+      
+      const next = { ...(prev || {}) };
+      next[rid] = { coords, lastPing: new Date().toISOString(), batchId: batchId || null };
+      
+      console.log("[SOCKET] 📍 driversByRideId updated. Total drivers tracked:", Object.keys(next).length);
+      return next;
+    });
+
+    setTrackMarkerViewsMain(true);
+    setTimeout(() => setTrackMarkerViewsMain(false), 1400);
+    
+    console.log("[SOCKET] ✅ Location processing complete for this update");
+  }, [effectiveRideIds, batchId, fetchDriverDetailsById, driverInfo]);
+
+  // Set up socket connection using the utility (ONLY ONE INSTANCE) - FIXED DEPENDENCIES
+  useEffect(() => {
+    // Prevent multiple initializations
+    if (initializedRef.current) {
+      console.log("[SOCKET] Already initialized, skipping...");
+      return;
+    }
+
+    if (!restoredIds) {
+      console.log("[SOCKET] ⏳ Waiting for restoredIds");
+      return;
+    }
 
     if (!effectiveRideIds.length) {
-      console.log("[MERCHANT][JOIN] ⏳ waiting for delivery_ride_id / rideIds (batch_id:", batchId || "—", ")");
+      console.log("[SOCKET] ⏳ waiting for delivery_ride_id / rideIds (batch_id:", batchId || "—", ")");
       return;
     }
 
-    const socket = io(endpoint, {
-      transports: ["websocket"],
-      forceNew: true,
-      reconnection: true,
-      reconnectionAttempts: 50,
-      reconnectionDelay: 600,
-    });
+    initializedRef.current = true;
+    console.log("[SOCKET] 🚀 ===== INITIALIZING SOCKET CONNECTION =====");
+    console.log("[SOCKET] 🚀 Business ID:", businessId);
+    console.log("[SOCKET] 🚀 Ride IDs:", effectiveRideIds);
+    console.log("[SOCKET] 🚀 Batch ID:", batchId);
 
-    socketRef.current = socket;
+    // Initialize socket WITHOUT driverId (as a merchant, we don't need to authenticate as driver)
+    console.log("[SOCKET] 🔌 Initializing socket (merchant mode)");
+    const socket = initSocket({}); // Empty object, no driverId
+    
+    if (!socket) {
+      console.log("[SOCKET] ❌ Failed to initialize socket");
+      return;
+    }
 
-    socket.on("connect", () => {
-      for (const rid of effectiveRideIds) {
-        socket.emit("joinRide", { rideId: String(rid) }, () => {});
-      }
-    });
+    console.log("[SOCKET] ✅ Socket initialized");
+    console.log("[SOCKET] 🔌 Socket ID:", socket.id || "not connected yet");
+    console.log("[SOCKET] 🔌 Socket connected status:", socket.connected);
 
-    socket.on("disconnect", () => {});
-    socket.on("connect_error", () => {});
+    // Set current ride for auto-rejoin (this is for the socket utility's internal tracking)
+    if (effectiveRideIds[0]) {
+      console.log("[SOCKET] 🎯 Setting current ride:", effectiveRideIds[0]);
+      setCurrentRide(effectiveRideIds[0]);
+    }
 
-    const onDriverLocation = (p) => {
-      const now = Date.now();
-      if (now - lastDriverUpdateMsRef.current < 800) return;
-      lastDriverUpdateMsRef.current = now;
+    // Join all ride rooms with acknowledgment
+    const joinPromises = effectiveRideIds.map(rid => {
+      return new Promise((resolve) => {
+        console.log("[SOCKET] 🚪 Attempting to join ride room:", rid);
+        
+        const joinRide = () => {
+          socket.emit("joinRide", { rideId: String(rid) }, (response) => {
+            console.log("[SOCKET] 🚪 Join ride response for", rid, ":", response);
+            if (response && response.error) {
+              console.log("[SOCKET] ❌ Failed to join ride room:", rid, "Error:", response.error);
+            } else {
+              console.log("[SOCKET] ✅ Successfully joined ride room:", rid);
+            }
+            resolve(response);
+          });
+        };
 
-      const coords = extractLatLng(p);
-      if (!coords) return;
-
-      const ridFromPayload = pickRideIdFromPayload(p);
-      const rid = String(ridFromPayload || effectiveRideIds[0] || "driver").trim();
-
-      // capture driverId & fetch details (throttled)
-      const pid = extractDriverId(p) || extractDriverId(p?.driver) || "";
-      if (pid) {
-        setDriverId(pid);
-
-        const missingName = !safeStr(driverInfo?.user_name) && !safeStr(driverInfo?.name);
-        fetchDriverDetailsById(pid, { force: missingName });
-      }
-
-      const maybeDriver = extractDriverInfoFromPayload(p);
-      if (maybeDriver) {
-        setDriverInfo((prev) => ({ ...(prev || {}), ...maybeDriver }));
-      }
-
-      setDriversByRideId((prev) => {
-        const prevEntry = prev?.[rid];
-        if (prevEntry?.coords && haversineMeters(prevEntry.coords, coords) < 5) return prev;
-
-        const next = { ...(prev || {}) };
-        next[rid] = { coords, lastPing: new Date().toISOString(), batchId: batchId || null };
-        return next;
+        if (socket.connected) {
+          joinRide();
+        } else {
+          socket.once("connect", () => {
+            console.log("[SOCKET] 🔌 Connected now, joining ride room:", rid);
+            joinRide();
+          });
+        }
       });
+    });
 
-      setTrackMarkerViewsMain(true);
-      setTimeout(() => setTrackMarkerViewsMain(false), 1400);
-    };
+    // Wait for all join attempts
+    Promise.all(joinPromises).then(() => {
+      console.log("[SOCKET] ✅ All ride rooms join attempts completed");
+    });
 
-    socket.on("deliveryDriverLocation", onDriverLocation);
+    // Subscribe to driver location events
+    console.log("[SOCKET] 👂 Setting up driver location listener...");
+    console.log("[SOCKET] 👂 This will listen for: deliveryDriverLocation, driverLocation, location, driver_location");
+    
+    const unsubscribe = listenToDriverLocation((locationData) => {
+      console.log("[SOCKET] 📍 ===== DRIVER LOCATION RECEIVED =====");
+      console.log("[SOCKET] 📍 Timestamp:", new Date().toISOString());
+      console.log("[SOCKET] 📍 Raw location data:", JSON.stringify(locationData, null, 2));
+      console.log("[SOCKET] 📍 Location keys:", Object.keys(locationData));
+      
+      // Log specific fields we care about
+      if (locationData.lat) console.log("[SOCKET] 📍 lat:", locationData.lat);
+      if (locationData.lng) console.log("[SOCKET] 📍 lng:", locationData.lng);
+      if (locationData.driver_id) console.log("[SOCKET] 📍 driver_id:", locationData.driver_id);
+      if (locationData.ride_id) console.log("[SOCKET] 📍 ride_id:", locationData.ride_id);
+      if (locationData.request_id) console.log("[SOCKET] 📍 request_id:", locationData.request_id);
+      
+      onDriverLocation(locationData);
+    });
+    
+    unsubscribeRef.current = unsubscribe;
+    console.log("[SOCKET] ✅ Driver location listener registered");
+
+    // Log connection status with more details
+    if (socket.connected) {
+      console.log("[SOCKET] ✅ Already connected. Socket ID:", socket.id);
+    } else {
+      console.log("[SOCKET] ⏳ Waiting for connection...");
+      socket.once("connect", () => {
+        console.log("[SOCKET] ✅ Connected! Socket ID:", socket.id);
+      });
+    }
+
+    socket.on("connect_error", (error) => {
+      console.log("[SOCKET] ❌ Connection error:", error.message);
+    });
+
+    socket.on("disconnect", (reason) => {
+      console.log("[SOCKET] ❌ Disconnected:", reason);
+    });
+
+    // Use socket.onAny to log ALL events (temporary for debugging)
+    socket.onAny((eventName, ...args) => {
+      console.log(`[SOCKET][ANY] ${eventName}  `);
+    });
+
+    // Add a test ping to verify socket is working
+    setTimeout(() => {
+      if (socket && socket.connected) {
+        console.log("[SOCKET] 📡 Sending test ping...");
+        socket.emit("ping", { timestamp: Date.now() }, (response) => {
+          console.log("[SOCKET] 📡 Ping response:", response);
+        });
+        
+        // Also check what rooms we're in
+        socket.emit("getRooms", {}, (response) => {
+          console.log("[SOCKET] 🚪 Current rooms:", response);
+        });
+      }
+    }, 3000);
 
     return () => {
-      try {
-        socket.off("deliveryDriverLocation", onDriverLocation);
-        socket.disconnect();
-      } catch {}
-      socketRef.current = null;
+      console.log("[SOCKET] 🧹 ===== CLEANING UP SOCKET =====");
+      console.log("[SOCKET] 🧹 Removing socket.onAny listener");
+      socket.offAny();
+      
+      console.log("[SOCKET] 🧹 Unsubscribing from driver location events");
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        console.log("[SOCKET] ✅ Unsubscribed");
+      }
+      console.log("[SOCKET] 🧹 Cleanup complete");
+      initializedRef.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [socketEndpoint, restoredIds, effectiveRideIds.join("|"), batchId, fetchDriverDetailsById, driverInfo]);
+    // FIXED DEPENDENCIES - removed driverId and driverInfo to prevent re-renders
+  }, [restoredIds, businessId, JSON.stringify(effectiveRideIds), onDriverLocation, batchId]);
+
+  // Add this debug helper function
+  const debugSocketStatus = useCallback(() => {
+    console.log("[DEBUG] ===== SOCKET DEBUG INFO =====");
+    console.log("[DEBUG] restoredIds:", restoredIds);
+    console.log("[DEBUG] effectiveRideIds:", effectiveRideIds);
+    console.log("[DEBUG] businessId:", businessId);
+    console.log("[DEBUG] driverId:", driverId);
+    console.log("[DEBUG] driverInfo:", driverInfo);
+    console.log("[DEBUG] driversByRideId:", driversByRideId);
+    
+    // Try to get socket instance
+    try {
+      const socket = getSocket();
+      console.log("[DEBUG] Socket exists:", !!socket);
+      if (socket) {
+        console.log("[DEBUG] Socket ID:", socket.id);
+        console.log("[DEBUG] Socket connected:", socket.connected);
+      }
+    } catch (e) {
+      console.log("[DEBUG] Error getting socket:", e.message);
+    }
+    console.log("[DEBUG] ===== END DEBUG =====");
+  }, [restoredIds, effectiveRideIds, businessId, driverId, driverInfo, driversByRideId]);
+
+  // Call debug after connection
+  useEffect(() => {
+    if (restoredIds && effectiveRideIds.length) {
+      const timer = setTimeout(debugSocketStatus, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [restoredIds, effectiveRideIds.length, debugSocketStatus]);
 
   /* ---------------- UI derived ---------------- */
 
@@ -1124,8 +1409,8 @@ export default function TrackBatchOrdersScreen() {
       effectiveRideIds.length === 1
         ? ` · Ride #${effectiveRideIds[0]}`
         : effectiveRideIds.length > 1
-        ? ` · ${effectiveRideIds.length} rides`
-        : "";
+          ? ` · ${effectiveRideIds.length} rides`
+          : "";
     return `${base}${method}${bid}${rid}`;
   }, [batchOrders.length, selectedMethod, batchId, effectiveRideIds]);
 
@@ -1250,7 +1535,6 @@ export default function TrackBatchOrdersScreen() {
     const biz = businessCoords;
 
     // ✅ build routes ONLY for groups that are NOT fully delivered
-    // (remove this filter if you want routes for delivered too)
     const targets = (groupedDropPoints || []).filter((g) => {
       const allDelivered =
         Array.isArray(g?.orderIds) && g.orderIds.length > 0 && g.orderIds.every((oid) => isDelivered(statusMap?.[oid]));
@@ -1510,7 +1794,7 @@ export default function TrackBatchOrdersScreen() {
       {/* LOCATION -> ORDERS MODAL */}
       <Modal visible={locationModalOpen} transparent animationType="fade" onRequestClose={closeGroupModal}>
         <Pressable style={styles.modalBackdrop} onPress={closeGroupModal}>
-          <Pressable style={styles.modalCard} onPress={() => {}}>
+          <Pressable style={styles.modalCard} onPress={() => { }}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 Orders at this location {selectedGroup?.count > 1 ? `(${selectedGroup.count})` : ""}
@@ -1586,7 +1870,7 @@ export default function TrackBatchOrdersScreen() {
                     setTimeout(() => {
                       try {
                         fitOverlay();
-                      } catch {}
+                      } catch { }
                     }, 180);
                   }}
                 >
@@ -1709,7 +1993,7 @@ export default function TrackBatchOrdersScreen() {
                 setTimeout(() => {
                   try {
                     fitAll();
-                  } catch {}
+                  } catch { }
                 }, 180);
               }}
               zoomEnabled
@@ -1832,6 +2116,27 @@ export default function TrackBatchOrdersScreen() {
           </View>
         </View>
       </View>
+      {/* Add this after the driver card section, before the list header */}
+<View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
+  <TouchableOpacity 
+    style={{
+      backgroundColor: '#f3f4f6',
+      padding: 10,
+      borderRadius: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 10,
+    }}
+    onPress={testSocketEvents}
+    activeOpacity={0.7}
+  >
+    <Ionicons name="bug-outline" size={18} color="#4b5563" />
+    <Text style={{ marginLeft: 8, color: '#4b5563', fontWeight: '600' }}>
+      Debug Socket Connection
+    </Text>
+  </TouchableOpacity>
+</View>
 
       <View style={styles.listHeader}>
         <Text style={styles.listHeaderText}>Orders in this batch</Text>

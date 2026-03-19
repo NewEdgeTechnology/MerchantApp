@@ -1,8 +1,8 @@
 // screens/chat/ChatRoomScreen.js
-// ✅ Updated as requested:
-// - Customer profile image base: https://grab.newedge.bt/driver/
-// - Header subtitle: Order <orderId> (instead of "Chat")
-// - Full file included
+// ✅ Updated to use .env for ALL origins/bases (no hardcoded hosts):
+// - Customer profile base: PROFILE_IMAGE (fallback API_BASE_URL + "/driver")
+// - Chat media base: CHAT_ORIGIN (fallback API_BASE_URL)
+// - Socket config is already handled inside utils/chatSocket (recommended), but we pass ctx as before.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -43,6 +43,9 @@ import {
 
 import { getUserInfo } from "../../utils/authToken";
 
+// ✅ .env
+import { PROFILE_IMAGE, API_BASE_URL, CHAT_ORIGIN } from "@env";
+
 const { width: W, height: H } = Dimensions.get("window");
 
 /* ===================== helpers ===================== */
@@ -64,11 +67,25 @@ const num = (v) => {
 };
 
 /**
- * ✅ Requested base for user profile image:
- * https://grab.newedge.bt/driver/<relative_path>
+ * ✅ Bases from env (NO hardcoding):
+ * - Customer profile base: PROFILE_IMAGE (example: https://grab.newedge.bt/driver/)
+ *   fallback: API_BASE_URL + "/driver"
+ * - Chat media base: CHAT_ORIGIN (example: https://grab.newedge.bt)
+ *   fallback: API_BASE_URL
  */
-const CUSTOMER_PROFILE_BASE = "https://grab.newedge.bt/driver";
-const CHAT_MEDIA_ORIGIN = "https://grab.newedge.bt"; // chat images served from here
+const CUSTOMER_PROFILE_BASE = (() => {
+  const p = String(PROFILE_IMAGE || "").trim();
+  if (p) return p.replace(/\/+$/, ""); // keep no trailing slash for join
+  const api = String(API_BASE_URL || "").trim().replace(/\/+$/, "");
+  return api ? `${api}/driver` : "";
+})();
+
+const CHAT_MEDIA_ORIGIN = (() => {
+  const c = String(CHAT_ORIGIN || "").trim();
+  if (c) return c.replace(/\/+$/, "");
+  const api = String(API_BASE_URL || "").trim().replace(/\/+$/, "");
+  return api || "";
+})();
 
 const resolveCustomerProfileUrl = (raw) => {
   const s = String(raw || "").trim();
@@ -77,10 +94,10 @@ const resolveCustomerProfileUrl = (raw) => {
   if (/^https?:\/\//i.test(s)) return s;
   if (/^\/\//.test(s)) return `https:${s}`;
 
-  // remove leading slashes
-  const rel = s.replace(/^\/+/, "");
-
   const base = CUSTOMER_PROFILE_BASE.replace(/\/+$/, "");
+  if (!base) return "";
+
+  const rel = s.replace(/^\/+/, "");
   return `${base}/${rel}`;
 };
 
@@ -92,6 +109,8 @@ const resolveChatMediaUrl = (raw) => {
   if (/^\/\//.test(s)) return `https:${s}`;
 
   const base = CHAT_MEDIA_ORIGIN.replace(/\/+$/, "");
+  if (!base) return "";
+
   const rel = s.startsWith("/") ? s : `/${s}`;
   return `${base}${rel}`;
 };
@@ -99,10 +118,7 @@ const resolveChatMediaUrl = (raw) => {
 const formatDateTime = (ts) => {
   const n0 = Number(ts);
   if (!Number.isFinite(n0) || n0 <= 0) return "";
-
-  // seconds -> ms
   const ms = n0 < 1e12 ? n0 * 1000 : n0;
-
   try {
     const d = new Date(ms);
     return d.toLocaleString(undefined, {
@@ -130,10 +146,7 @@ const isEmptyMessage = (msg) => {
 const normalizeMessage = (m) => {
   if (!m || typeof m !== "object") return null;
 
-  const message_type = String(
-    m.message_type || m.type || (m.media_url ? "IMAGE" : "TEXT"),
-  ).toUpperCase();
-
+  const message_type = String(m.message_type || m.type || (m.media_url ? "IMAGE" : "TEXT")).toUpperCase();
   const body = trim(m.body ?? m.message ?? m.text);
   const media_url = trim(m.media_url ?? m.media ?? m.image_url ?? "");
 
@@ -174,7 +187,6 @@ const extractMessagesArray = (res) => {
     null;
 
   if (Array.isArray(direct)) return direct;
-
   if (Array.isArray(res.data?.data)) return res.data.data;
   if (Array.isArray(res.data?.messages?.rows)) return res.data.messages.rows;
 
@@ -259,16 +271,7 @@ function ImageViewerModal({ visible, uri, onClose }) {
 }
 
 /* ===================== Caption Modal (Responsive) ===================== */
-function CaptionModal({
-  visible,
-  imageUri,
-  caption,
-  setCaption,
-  onCancel,
-  onSend,
-  sending,
-  bottomInset,
-}) {
+function CaptionModal({ visible, imageUri, caption, setCaption, onCancel, onSend, sending, bottomInset }) {
   return (
     <Modal
       visible={visible}
@@ -277,13 +280,8 @@ function CaptionModal({
       presentationStyle="overFullScreen"
       onRequestClose={onCancel}
     >
-      <KeyboardAvoidingView
-        style={styles.modalRoot}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={0}
-      >
+      <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
         <Pressable style={styles.modalBackdrop} onPress={onCancel} />
-
         <View style={[styles.modalSheet, { paddingBottom: Math.max(bottomInset, 12) }]}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Send photo</Text>
@@ -465,66 +463,44 @@ export default function ChatRoomScreen({ route, navigation }) {
     } finally {
       setLoading(false);
     }
-  }, [
-    conversationId,
-    ctx.userType,
-    ctx.userId,
-    ctx.businessIdHeader,
-    getToken,
-    metaParam,
-    scrollToBottom,
-  ]);
+  }, [conversationId, ctx.userType, ctx.userId, ctx.businessIdHeader, getToken, metaParam, scrollToBottom]);
 
   // socket
-// socket
-useEffect(() => {
-  if (!conversationId) return;
+  useEffect(() => {
+    if (!conversationId) return;
 
-  connectChatSocket({
-    userType: ctx.userType,
-    userId: ctx.userId,
-    businessId: ctx.businessIdHeader,
-  });
-
-  joinChatConversation(conversationId);
-
-  const sub = onChatNewMessage((evt) => {
-    // evt shape from updated chatSocket:
-    // { eventName, conversationId, message, raw }
-
-    const incomingCid = String(evt?.conversationId || "").trim();
-    if (!incomingCid) {
-      console.log("[CHAT][UI] dropped (no conversationId)", evt?.eventName, evt?.raw);
-      return;
-    }
-    if (incomingCid !== String(conversationId)) {
-      // keep this log for 1-2 tests, then remove
-      console.log("[CHAT][UI] dropped (cid mismatch)", { incomingCid, my: String(conversationId), event: evt?.eventName });
-      return;
-    }
-
-    const msg = evt?.message;
-    if (!msg || isEmptyMessage(msg)) {
-      console.log("[CHAT][UI] dropped (no message)", evt?.eventName, evt?.raw);
-      return;
-    }
-
-    setRows((prev) => {
-      const mid = msg?.id;
-      if (mid && prev.some((x) => String(x?.id) === String(mid))) return prev;
-      return [...prev, msg].sort(sortAscByTs);
+    connectChatSocket({
+      userType: ctx.userType,
+      userId: ctx.userId,
+      businessId: ctx.businessIdHeader,
     });
 
-    scrollToBottom(true);
-  });
+    joinChatConversation(conversationId);
 
-  return () => {
-    try {
-      offChatNewMessage(sub);
-    } catch {}
-    leaveChatConversation(conversationId);
-  };
-}, [conversationId, ctx.userType, ctx.userId, ctx.businessIdHeader, scrollToBottom]);
+    const sub = onChatNewMessage((evt) => {
+      const incomingCid = String(evt?.conversationId || "").trim();
+      if (!incomingCid) return;
+      if (incomingCid !== String(conversationId)) return;
+
+      const msg = evt?.message;
+      if (!msg || isEmptyMessage(msg)) return;
+
+      setRows((prev) => {
+        const mid = msg?.id;
+        if (mid && prev.some((x) => String(x?.id) === String(mid))) return prev;
+        return [...prev, msg].sort(sortAscByTs);
+      });
+
+      scrollToBottom(true);
+    });
+
+    return () => {
+      try {
+        offChatNewMessage(sub);
+      } catch {}
+      leaveChatConversation(conversationId);
+    };
+  }, [conversationId, ctx.userType, ctx.userId, ctx.businessIdHeader, scrollToBottom]);
 
   useEffect(() => {
     load();
@@ -574,7 +550,7 @@ useEffect(() => {
       setRows((prev) => [...prev, temp].sort(sortAscByTs));
       scrollToBottom(true);
     },
-    [ctx.userType, ctx.userId, scrollToBottom],
+    [ctx.userType, ctx.userId, scrollToBottom]
   );
 
   const replaceTempIfPossible = useCallback(
@@ -589,7 +565,7 @@ useEffect(() => {
 
       scrollToBottom(true);
     },
-    [scrollToBottom],
+    [scrollToBottom]
   );
 
   const onSendText = async () => {
@@ -666,11 +642,7 @@ useEffect(() => {
     if (!pendingImage || sending) return;
 
     setSending(true);
-    optimisticAppend({
-      type: "IMAGE",
-      body: trim(imageCaption),
-      media_url: pendingImage.uri,
-    });
+    optimisticAppend({ type: "IMAGE", body: trim(imageCaption), media_url: pendingImage.uri });
 
     try {
       const token = await getToken();
@@ -714,9 +686,7 @@ useEffect(() => {
     const senderType = String(msg?.sender_type || "").toUpperCase();
     const senderId = toStr(msg?.sender_id);
 
-    const mine =
-      senderType === String(ctx.userType).toUpperCase() &&
-      senderId === String(ctx.userId);
+    const mine = senderType === String(ctx.userType).toUpperCase() && senderId === String(ctx.userId);
 
     const type = String(msg?.message_type || "TEXT").toUpperCase();
     const body = trim(msg?.body);
@@ -748,25 +718,14 @@ useEffect(() => {
           {type === "IMAGE" ? (
             <>
               {media ? (
-                <Pressable
-                  onPress={() => openViewer(media)}
-                  style={[styles.imageWrap, { width: imageW, height: imageH }]}
-                >
-                  <Image
-                    source={{ uri: media }}
-                    style={{ width: "100%", height: "100%" }}
-                    resizeMode="cover"
-                  />
+                <Pressable onPress={() => openViewer(media)} style={[styles.imageWrap, { width: imageW, height: imageH }]}>
+                  <Image source={{ uri: media }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
                 </Pressable>
               ) : (
                 <Text style={[styles.msgText, msgTextStyle]}>[image unavailable]</Text>
               )}
 
-              {!!body && (
-                <Text style={[styles.msgText, msgTextStyle, { marginTop: 8 }]}>
-                  {body}
-                </Text>
-              )}
+              {!!body && <Text style={[styles.msgText, msgTextStyle, { marginTop: 8 }]}>{body}</Text>}
             </>
           ) : (
             <Text style={[styles.msgText, msgTextStyle]}>{body}</Text>
@@ -780,18 +739,9 @@ useEffect(() => {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <ChatHeader
-        title={customerName || "Customer"}
-        subtitle={headerSubtitle}
-        logoUrl={customerProfileUrl}
-        onBack={() => navigation.goBack()}
-      />
+      <ChatHeader title={customerName || "Customer"} subtitle={headerSubtitle} logoUrl={customerProfileUrl} onBack={() => navigation.goBack()} />
 
-      <ImageViewerModal
-        visible={viewerVisible}
-        uri={viewerUri}
-        onClose={() => setViewerVisible(false)}
-      />
+      <ImageViewerModal visible={viewerVisible} uri={viewerUri} onClose={() => setViewerVisible(false)} />
 
       <CaptionModal
         visible={captionModalVisible}
@@ -804,11 +754,7 @@ useEffect(() => {
         bottomInset={insets.bottom}
       />
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={0}
-      >
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
         {loading ? (
           <View style={styles.center}>
             <ActivityIndicator />
@@ -827,12 +773,7 @@ useEffect(() => {
         )}
 
         <View style={[styles.inputBar, { paddingBottom: inputBottomPad }]}>
-          <TouchableOpacity
-            onPress={onPickImage}
-            style={styles.iconBtn}
-            disabled={sending}
-            activeOpacity={0.85}
-          >
+          <TouchableOpacity onPress={onPickImage} style={styles.iconBtn} disabled={sending} activeOpacity={0.85}>
             <Ionicons name="image-outline" size={20} color="#00B14F" />
           </TouchableOpacity>
 
@@ -847,17 +788,8 @@ useEffect(() => {
             />
           </View>
 
-          <TouchableOpacity
-            onPress={onSendText}
-            style={styles.sendBtn}
-            disabled={sending || !trim(text)}
-            activeOpacity={0.85}
-          >
-            {sending ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Ionicons name="send" size={18} color="#fff" />
-            )}
+          <TouchableOpacity onPress={onSendText} style={styles.sendBtn} disabled={sending || !trim(text)} activeOpacity={0.85}>
+            {sending ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={18} color="#fff" />}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -871,7 +803,6 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   loadingTxt: { marginTop: 8, color: "#6b7280", fontWeight: "700" },
 
-  /* Header */
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -914,7 +845,6 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 15, fontWeight: "900", color: "#0F172A" },
   headerSub: { marginTop: 2, fontSize: 11, fontWeight: "800", color: "#64748B" },
 
-  /* Messages */
   row: { marginBottom: 10 },
   rowLeft: { alignItems: "flex-start" },
   rowRight: { alignItems: "flex-end" },
@@ -961,7 +891,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
 
-  /* Input */
   inputBar: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -1010,7 +939,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#00B14F",
   },
 
-  /* Caption modal */
   modalRoot: { flex: 1, justifyContent: "flex-end" },
   modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.35)" },
   modalSheet: {
@@ -1080,7 +1008,6 @@ const styles = StyleSheet.create({
   },
   modalSendTxt: { color: "#fff", fontWeight: "900" },
 
-  /* Fullscreen viewer */
   viewerWrap: { flex: 1, backgroundColor: "#000" },
   viewerTop: {
     paddingTop: Platform.OS === "ios" ? 48 : 14,
