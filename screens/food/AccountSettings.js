@@ -773,7 +773,7 @@ const AccountSettings = () => {
 
         <TouchableOpacity
           style={styles.section}
-          onPress={() => navigation.navigate("WalletScreen", { authContext })}
+          onPress={() => navigation.navigate("Wallet", { authContext })}
         >
           <Text style={styles.text}>Wallet</Text>
           <Ionicons name="chevron-forward" size={24} color="#16a34a" />

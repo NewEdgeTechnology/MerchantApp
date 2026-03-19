@@ -16,8 +16,8 @@ import {
 } from "react-native";
 import MapView, { Marker, Polyline, UrlTile } from "react-native-maps";
 import Icon from "react-native-vector-icons/MaterialCommunityIcons";
-// import { getUserInfo } from "../../utils/authToken";
-// import { connectPassengerSocket } from "../../utils/passengerSocket";
+import { getUserInfo } from "../../../utils/authToken";
+import { connectPassengerSocket } from "../../../utils/passengerSocket";
 // import { getSocket } from "../../utils/socket";
 
 const { height } = Dimensions.get("window");

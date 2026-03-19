@@ -1,4 +1,4 @@
-// services/wallet/ScanQR.js
+// screens/wallet/ScanQR.js
 import React, { useCallback, useState } from "react";
 import {
   View,
@@ -63,7 +63,7 @@ function parseQrPayload(raw) {
   return out;
 }
 
-export default function ScanQRScreen() {
+export default function ScanQR() {
   const nav = useNavigation();
   const route = useRoute();
   const wallet = route?.params?.wallet || null;
@@ -88,7 +88,6 @@ export default function ScanQRScreen() {
       } catch (e) {
         console.log("[ScanQR] navigate WalletTransfer error:", e?.message || e);
         Alert.alert("Scanned", parsedPayload.raw || "QR scanned successfully.");
-        // allow another try if navigation failed
         setScanned(false);
       }
     },
@@ -103,7 +102,6 @@ export default function ScanQRScreen() {
 
   /* ===== Permission states ===== */
 
-  // Still loading permission object
   if (!permission) {
     return (
       <View style={styles.center}>
@@ -113,7 +111,6 @@ export default function ScanQRScreen() {
     );
   }
 
-  // Not granted yet
   if (!permission.granted) {
     return (
       <View style={styles.wrap}>
@@ -159,7 +156,6 @@ export default function ScanQRScreen() {
 
   return (
     <View style={styles.wrap}>
-      {/* Header */}
       <LinearGradient
         colors={["#46e693", "#40d9c2"]}
         start={{ x: 0, y: 0 }}
@@ -178,7 +174,6 @@ export default function ScanQRScreen() {
         </Text>
       </LinearGradient>
 
-      {/* Scanner area */}
       <View style={styles.body}>
         <View style={styles.scannerWrap}>
           <CameraView
@@ -190,12 +185,10 @@ export default function ScanQRScreen() {
             onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
           />
 
-          {/* Overlay / mask */}
           <View style={styles.overlay}>
-            <View className="overlayRow" style={styles.overlayRow}>
+            <View style={styles.overlayRow}>
               <View style={styles.overlaySide} />
               <View style={styles.scanBox}>
-                {/* Corner decorations */}
                 <View style={[styles.corner, styles.cornerTL]} />
                 <View style={[styles.corner, styles.cornerTR]} />
                 <View style={[styles.corner, styles.cornerBL]} />
@@ -207,7 +200,6 @@ export default function ScanQRScreen() {
           </View>
         </View>
 
-        {/* Bottom sheet with info */}
         <View style={styles.bottomCard}>
           <Text style={styles.bottomTitle}>Ready to scan</Text>
           <Text style={styles.bottomSub}>
@@ -216,7 +208,7 @@ export default function ScanQRScreen() {
           </Text>
 
           <TouchableOpacity
-            style={[styles.helperRow]}
+            style={styles.helperRow}
             activeOpacity={0.75}
             onPress={() => {
               Alert.alert(

@@ -1,4 +1,4 @@
-// services/wallet/TopUp.js
+// screens/wallet/TopUp.js
 import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
@@ -36,33 +36,50 @@ const TOPUP_INIT_URL = `${TOPUP_BASE}/init`;
 
 async function authFetch(url, opts = {}) {
   const token = await getValidAccessToken();
-  const baseHeaders = { "Content-Type": "application/json" };
+
+  const baseHeaders = {
+    "Content-Type": "application/json",
+  };
+
   const headers = token
     ? { ...baseHeaders, Authorization: `Bearer ${token}` }
     : baseHeaders;
+
   const res = await fetch(url, {
     ...opts,
-    headers: { ...(opts.headers || {}), ...headers },
+    headers: {
+      ...(opts.headers || {}),
+      ...headers,
+    },
   });
+
   const text = await res.text();
   let json;
+
   try {
     json = text ? JSON.parse(text) : {};
   } catch {
-    json = { ok: false, message: "Invalid JSON", raw: text };
+    json = {
+      ok: false,
+      message: "Invalid JSON",
+      raw: text,
+    };
   }
+
   if (!res.ok) {
     const msg = json?.message || `HTTP ${res.status}`;
     throw new Error(msg);
   }
+
   return json;
 }
 
-export default function TopUpScreen() {
+export default function TopUp() {
   const navigation = useNavigation();
   const route = useRoute();
-  const wallet = route.params?.wallet || null;
-  const passedUserId = route.params?.user_id || null;
+
+  const wallet = route?.params?.wallet || null;
+  const passedUserId = route?.params?.user_id || null;
 
   const [user, setUser] = useState(null);
   const [amount, setAmount] = useState("");
@@ -71,6 +88,7 @@ export default function TopUpScreen() {
 
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
         const me = await getUserInfo();
@@ -80,27 +98,38 @@ export default function TopUpScreen() {
         console.log("[TopUp] getUserInfo error:", e?.message || e);
       }
     })();
+
     return () => {
       alive = false;
     };
   }, []);
 
   const onChangeAmount = useCallback((val) => {
-    const clean = (val || "").replace(/[^0-9.]/g, "");
+    let clean = String(val || "").replace(/[^0-9.]/g, "");
+
+    // keep only first dot
+    const firstDot = clean.indexOf(".");
+    if (firstDot !== -1) {
+      clean =
+        clean.slice(0, firstDot + 1) +
+        clean
+          .slice(firstDot + 1)
+          .replace(/\./g, "");
+    }
+
     setAmount(clean);
   }, []);
 
   const onContinue = useCallback(async () => {
     const num = Number(amount);
+
     if (!num || !isFinite(num) || num <= 0) {
       Alert.alert("Invalid amount", "Please enter a valid amount.");
       return;
     }
+
     if (num < 10) {
-      Alert.alert(
-        "Minimum amount",
-        "Please top up at least BTN 10.00."
-      );
+      Alert.alert("Minimum amount", "Please top up at least BTN 10.00.");
       return;
     }
 
@@ -117,13 +146,16 @@ export default function TopUpScreen() {
     }
 
     setSubmitting(true);
+
     try {
       const payload = {
         userId,
         amount: num,
         email: me?.email || me?.user_email || "",
-        description: note || "Wallet topup",
+        description: note?.trim() || "Wallet topup",
       };
+
+      console.log("[TopUp] init payload:", payload);
 
       const res = await authFetch(TOPUP_INIT_URL, {
         method: "POST",
@@ -132,6 +164,7 @@ export default function TopUpScreen() {
 
       const data = res?.data || res;
       console.log("[TopUp] init response data:", data);
+
       const { orderNo, bfsTxnId, bankList } = data || {};
 
       if (!orderNo || !bfsTxnId || !Array.isArray(bankList)) {
@@ -149,7 +182,7 @@ export default function TopUpScreen() {
       });
     } catch (e) {
       console.log("[TopUp] init error:", e?.message || e);
-      Alert.alert("Top up failed", String(e.message || e));
+      Alert.alert("Top up failed", String(e?.message || e));
     } finally {
       setSubmitting(false);
     }
@@ -173,6 +206,7 @@ export default function TopUpScreen() {
           >
             <Ionicons name="chevron-back" size={22} color={G.white} />
           </TouchableOpacity>
+
           <Text style={styles.headerTitle}>Top Up Wallet</Text>
           <View style={{ width: 32 }} />
         </View>
@@ -180,6 +214,7 @@ export default function TopUpScreen() {
 
       <View style={styles.body}>
         <Text style={styles.label}>Enter amount</Text>
+
         <View style={styles.amountRow}>
           <Text style={styles.currency}>BTN</Text>
           <TextInput
@@ -191,13 +226,13 @@ export default function TopUpScreen() {
             placeholderTextColor="#CBD5E1"
           />
         </View>
+
         <Text style={styles.hint}>
           This amount will be debited from your bank and added to your wallet.
         </Text>
 
-        <Text style={[styles.label, { marginTop: 20 }]}>
-          Note (optional)
-        </Text>
+        <Text style={[styles.label, { marginTop: 20 }]}>Note (optional)</Text>
+
         <TextInput
           style={styles.noteInput}
           placeholder="e.g. Ride wallet top up"
@@ -230,7 +265,10 @@ export default function TopUpScreen() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: G.bg },
+  wrap: {
+    flex: 1,
+    backgroundColor: G.bg,
+  },
   gradientHeader: {
     paddingTop: Platform.OS === "android" ? 36 : 56,
     paddingHorizontal: 16,
@@ -248,8 +286,13 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,.18)",
   },
-  headerTitle: { color: G.white, fontSize: 18, fontWeight: "800" },
+  headerTitle: {
+    color: G.white,
+    fontSize: 18,
+    fontWeight: "800",
+  },
   body: {
     flex: 1,
     padding: 16,
@@ -302,6 +345,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 24,
   },
-  primaryText: { color: G.white, fontWeight: "800", fontSize: 16 },
-  btnDisabled: { opacity: 0.5 },
+  primaryText: {
+    color: G.white,
+    fontWeight: "800",
+    fontSize: 16,
+  },
+  btnDisabled: {
+    opacity: 0.5,
+  },
 });

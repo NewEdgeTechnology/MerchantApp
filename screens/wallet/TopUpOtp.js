@@ -35,30 +35,37 @@ const TOPUP_BASE = (WALLET_TOPUP_BASE || "").replace(/\/+$/, "");
 const TOPUP_DEBIT_URL = `${TOPUP_BASE}/debit`;
 
 /* ===================== timing controls ===================== */
-const WAIT_BEFORE_DEBIT_MS = 600; // small wait for upstream readiness
-const RETRY_ON_500_DELAY_MS = 1200; // retry delay if first call returns 500
+const WAIT_BEFORE_DEBIT_MS = 600;
+const RETRY_ON_500_DELAY_MS = 1200;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/* ===================== fetch helper (with raw logging) ===================== */
+/* ===================== fetch helper ===================== */
 async function authFetch(url, opts = {}) {
   const token = await getValidAccessToken();
-  const baseHeaders = { "Content-Type": "application/json" };
+
+  const baseHeaders = {
+    "Content-Type": "application/json",
+  };
+
   const headers = token
     ? { ...baseHeaders, Authorization: `Bearer ${token}` }
     : baseHeaders;
 
   const res = await fetch(url, {
     ...opts,
-    headers: { ...(opts.headers || {}), ...headers },
+    headers: {
+      ...(opts.headers || {}),
+      ...headers,
+    },
   });
 
-  const text = await res.text(); // ✅ keep raw response
+  const text = await res.text();
   let json = null;
 
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
-    // not JSON
+    json = null;
   }
 
   if (!res.ok) {
@@ -77,27 +84,30 @@ async function authFetch(url, opts = {}) {
   return json ?? (text ? { raw: text } : {});
 }
 
-export default function TopUpOtpScreen() {
+export default function TopUpOtp() {
   const navigation = useNavigation();
   const route = useRoute();
 
-  const wallet = route.params?.wallet || null;
-  const amount = route.params?.amount || 0;
-  const orderNo = route.params?.orderNo;
+  const wallet = route?.params?.wallet || null;
+  const amount = Number(route?.params?.amount || 0);
+  const orderNo = route?.params?.orderNo || null;
+  const bfsTxnId = route?.params?.bfsTxnId || null;
+  const remitterBankId = route?.params?.remitterBankId || null;
+  const remitterAccNo = route?.params?.remitterAccNo || null;
+  const selectedBank = route?.params?.selectedBank || null;
 
   const [otp, setOtp] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
-  // ✅ status hint (Submitting / Retrying…)
   const [hint, setHint] = useState("");
 
-  // ✅ warm token to reduce “first request fails then works” due to refresh race
   useEffect(() => {
     getValidAccessToken().catch(() => {});
   }, []);
 
   const onChangeOtp = useCallback((val) => {
-    const clean = (val || "").replace(/[^0-9]/g, "").slice(0, 6);
+    const clean = String(val || "")
+      .replace(/[^0-9]/g, "")
+      .slice(0, 6);
     setOtp(clean);
   }, []);
 
@@ -108,6 +118,7 @@ export default function TopUpOtpScreen() {
       Alert.alert("Error", "Missing order number.");
       return;
     }
+
     if (!otp || otp.length < 4) {
       Alert.alert("OTP required", "Please enter the OTP sent by your bank.");
       return;
@@ -117,9 +128,13 @@ export default function TopUpOtpScreen() {
     setHint("Submitting payment…");
 
     try {
-      const payload = { orderNo, otp };
+      const payload = {
+        orderNo,
+        otp,
+      };
 
-      // ✅ tiny wait (sometimes debit is called too fast after account-enquiry)
+      console.log("[TopUpOtp] debit payload:", payload);
+
       await sleep(WAIT_BEFORE_DEBIT_MS);
 
       let res;
@@ -132,7 +147,6 @@ export default function TopUpOtpScreen() {
         console.log("[TopUpOtp] first debit error:", e?.status, e?.message);
         if (e?.raw) console.log("[TopUpOtp] first debit raw:", e.raw);
 
-        // ✅ If first call returns 500, wait and retry ONCE
         if (Number(e?.status) === 500) {
           setHint("Server busy, retrying…");
           await sleep(RETRY_ON_500_DELAY_MS);
@@ -148,19 +162,27 @@ export default function TopUpOtpScreen() {
       }
 
       const data = res?.data || res;
-      const status = data?.status || "";
+      console.log("[TopUpOtp] debit response data:", data);
+
+      const status = String(data?.status || "").toUpperCase();
+      const responseCode = String(data?.responseCode || "");
       const message =
         data?.message ||
-        (status === "SUCCESS" ? "Payment successful." : "Payment failed.");
+        data?.responseDesc ||
+        (status === "SUCCESS" || responseCode === "00"
+          ? "Payment successful."
+          : "Payment failed.");
 
       setHint("");
 
-      if (status === "SUCCESS") {
+      if (status === "SUCCESS" || responseCode === "00") {
         Alert.alert("Top up successful", message, [
           {
             text: "OK",
             onPress: () => {
-              navigation.navigate("Wallet");
+              navigation.navigate("Wallet", {
+                wallet,
+              });
             },
           },
         ]);
@@ -179,13 +201,23 @@ export default function TopUpOtpScreen() {
           "Payment server is temporarily busy. Please try again."
         );
       } else {
-        Alert.alert("Payment failed", String(e.message || e));
+        Alert.alert("Payment failed", String(e?.message || e));
       }
     } finally {
       setSubmitting(false);
       setHint("");
     }
-  }, [orderNo, otp, navigation, submitting]);
+  }, [
+    submitting,
+    orderNo,
+    otp,
+    navigation,
+    wallet,
+    bfsTxnId,
+    remitterBankId,
+    remitterAccNo,
+    selectedBank,
+  ]);
 
   return (
     <KeyboardAvoidingView
@@ -200,22 +232,25 @@ export default function TopUpOtpScreen() {
       >
         <View style={styles.headerRow}>
           <TouchableOpacity
-            style={styles.backBtn}
+            style={[styles.backBtn, styles.backBtnFilled]}
             onPress={() => navigation.goBack()}
             disabled={submitting}
           >
             <Ionicons name="chevron-back" size={22} color={G.white} />
           </TouchableOpacity>
+
           <Text style={styles.headerTitle}>Enter OTP</Text>
           <View style={{ width: 32 }} />
         </View>
+
         <Text style={styles.subHeader}>
-          Amount: BTN {amount.toFixed ? amount.toFixed(2) : amount}
+          Amount: BTN {Number.isFinite(amount) ? amount.toFixed(2) : amount}
         </Text>
       </LinearGradient>
 
       <View style={styles.body}>
         <Text style={styles.label}>One-time password</Text>
+
         <TextInput
           style={styles.otpInput}
           value={otp}
@@ -227,11 +262,11 @@ export default function TopUpOtpScreen() {
           secureTextEntry
           editable={!submitting}
         />
+
         <Text style={styles.hint}>
           Enter the OTP you received from your bank to confirm this payment.
         </Text>
 
-        {/* ✅ status hint row */}
         {submitting && !!hint ? (
           <View style={styles.hintRow}>
             <ActivityIndicator size="small" color={G.warn} />
@@ -262,7 +297,10 @@ export default function TopUpOtpScreen() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: G.bg },
+  wrap: {
+    flex: 1,
+    backgroundColor: G.bg,
+  },
   gradientHeader: {
     paddingTop: Platform.OS === "android" ? 36 : 56,
     paddingHorizontal: 16,
@@ -272,6 +310,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    paddingTop: 14,
   },
   backBtn: {
     width: 32,
@@ -280,11 +319,19 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  headerTitle: { color: G.white, fontSize: 18, fontWeight: "800" },
+  backBtnFilled: {
+    backgroundColor: "rgba(255,255,255,.18)",
+  },
+  headerTitle: {
+    color: G.white,
+    fontSize: 18,
+    fontWeight: "800",
+  },
   subHeader: {
-    marginTop: 6,
+    marginTop: 8,
     color: G.white,
     fontWeight: "600",
+    fontSize: 13,
   },
   body: {
     flex: 1,
@@ -313,20 +360,17 @@ const styles = StyleSheet.create({
     color: "#64748B",
     fontSize: 12,
   },
-
-  // ✅ status hint row
   hintRow: {
     marginTop: 10,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
   },
   hintText: {
     color: G.sub,
     fontWeight: "700",
     fontSize: 13,
+    marginLeft: 8,
   },
-
   primaryBtn: {
     backgroundColor: G.grab,
     borderRadius: 999,
@@ -334,7 +378,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 24,
   },
-  primaryText: { color: G.white, fontWeight: "800", fontSize: 16 },
+  primaryText: {
+    color: G.white,
+    fontWeight: "800",
+    fontSize: 16,
+  },
   btnDisabled: {
     opacity: 0.5,
   },

@@ -241,7 +241,7 @@ async function getAccessTokenFromLogin() {
 
       if (candidate) return stripBearer(candidate);
     }
-  } catch {}
+  } catch { }
 
   try {
     const raw = await SecureStore.getItemAsync(KEY_AUTH_TOKEN);
@@ -255,7 +255,7 @@ async function getAccessTokenFromLogin() {
       );
       if (candidate) return stripBearer(candidate);
     }
-  } catch {}
+  } catch { }
 
   const keysToTry = ["access_token", "ACCESS_TOKEN", "token", "authToken", "AUTH_TOKEN"];
   for (const k of keysToTry) {
@@ -270,7 +270,7 @@ async function getAccessTokenFromLogin() {
         typeof raw === "string" ? raw : null
       );
       if (candidate) return stripBearer(candidate);
-    } catch {}
+    } catch { }
   }
 
   return null;
@@ -307,6 +307,36 @@ async function pickFromCamera() {
   if (res.canceled) return null;
   return res.assets?.[0] || null;
 }
+
+/* ---------------- helper to convert comma string to JSON array ---------------- */
+const commaStringToJsonArray = (str) => {
+  if (!str || !str.trim()) return null;
+  
+  // Split by comma, trim each item, remove empty items
+  const items = str.split(',').map(item => item.trim()).filter(item => item.length > 0);
+  
+  if (items.length === 0) return null;
+  
+  // Return as JSON string
+  return JSON.stringify(items);
+};
+
+/* ---------------- helper to convert JSON array to comma string for display ---------------- */
+const jsonArrayToCommaString = (jsonStr) => {
+  if (!jsonStr) return "";
+  
+  try {
+    // If it's already a JSON string, parse it
+    const parsed = JSON.parse(jsonStr);
+    if (Array.isArray(parsed)) {
+      return parsed.join(', ');
+    }
+    return jsonStr;
+  } catch {
+    // If it's not valid JSON, return as is
+    return jsonStr;
+  }
+};
 
 /* ---------------- small UI atoms ---------------- */
 
@@ -383,7 +413,13 @@ export default function EditBusinessDetails() {
   const [delivery_option, setDeliveryOption] = useState(
     safeText(initial?.delivery_option, "BOTH").toUpperCase()
   );
-  const [holidays, setHolidays] = useState(safeText(initial?.holidays));
+  
+  // Handle holidays as comma-separated string for display, but store as JSON for backend
+  const [holidaysDisplay, setHolidaysDisplay] = useState(() => {
+    const val = initial?.holidays;
+    if (!val) return "";
+    return jsonArrayToCommaString(val);
+  });
 
   const [min_amount_for_fd, setMinAmountForFD] = useState(safeText(initial?.min_amount_for_fd));
 
@@ -492,7 +528,7 @@ export default function EditBusinessDetails() {
 
       const out = parts.join(", ").replace(/\s+/g, " ").trim();
       if (out) setAddress(out);
-    } catch {}
+    } catch { }
   }, []);
 
   const applyCoords = useCallback(
@@ -521,37 +557,35 @@ export default function EditBusinessDetails() {
     [reverseGeocodeToAddress]
   );
 
-  const useCurrentLocation = useCallback(
-    async () => {
-      try {
-        setLocating(true);
+  const useCurrentLocation = useCallback(async () => {
+    try {
+      setLocating(true);
 
-        const perm = await Location.requestForegroundPermissionsAsync();
-        if (!perm.granted) {
-          Alert.alert("Permission required", "Please allow location access.");
-          return;
-        }
-
-        const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-
-        const lat = pos?.coords?.latitude;
-        const lng = pos?.coords?.longitude;
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-          Alert.alert("Location error", "Could not get your GPS location.");
-          return;
-        }
-
-        await applyCoords(lat, lng, { alsoAddress: true });
-      } catch (e) {
-        Alert.alert("Location error", String(e?.message || e));
-      } finally {
-        setLocating(false);
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Permission required", "Please allow location access.");
+        return;
       }
-    },
-    [applyCoords]
-  );
+
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+
+      const lat = pos?.coords?.latitude;
+      const lng = pos?.coords?.longitude;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        Alert.alert("Location error", "Could not get your GPS location.");
+        return;
+      }
+
+      // ✅ FIX: Pass lat and lng as separate arguments, not as an object
+      await applyCoords(lat, lng, { alsoAddress: true });
+    } catch (e) {
+      Alert.alert("Location error", String(e?.message || e));
+    } finally {
+      setLocating(false);
+    }
+  }, [applyCoords]);
 
   const openMapPicker = useCallback(async () => {
     const latNum = Number(latitude);
@@ -683,7 +717,15 @@ export default function EditBusinessDetails() {
         setClosingMeridiem(c.meridiem);
 
         setDeliveryOption(safeText(data?.delivery_option, "BOTH").toUpperCase());
-        setHolidays(safeText(data?.holidays));
+        
+        // Handle holidays - convert from JSON to display string
+        const holidayVal = data?.holidays;
+        if (holidayVal) {
+          setHolidaysDisplay(jsonArrayToCommaString(holidayVal));
+        } else {
+          setHolidaysDisplay("");
+        }
+        
         setMinAmountForFD(safeText(data?.min_amount_for_fd));
         setComplementary(safeText(data?.complementary));
         setComplementaryDetails(safeText(data?.complementary_details));
@@ -749,6 +791,7 @@ export default function EditBusinessDetails() {
     ) {
       return "Discount % must be a number";
     }
+    
     return "";
   }, [
     business_name,
@@ -780,6 +823,9 @@ export default function EditBusinessDetails() {
   );
 
   const buildPayload = useCallback(() => {
+    // Convert holidays display string to JSON array for backend
+    const holidaysJson = commaStringToJsonArray(holidaysDisplay);
+    
     const payload = {
       business_name: business_name.trim(),
       latitude: latitude.trim() || null,
@@ -790,7 +836,7 @@ export default function EditBusinessDetails() {
       complementary_details: complementary_details.trim() || null,
       opening_time: normalizeTime(opening_time),
       closing_time: normalizeTime(closing_time),
-      holidays: holidays.trim() || null,
+      holidays: holidaysJson,
       special_celebration: special_celebration.trim() || null,
       special_celebration_discount_percentage: special_celebration_discount_percentage.trim() || null,
       min_amount_for_fd: min_amount_for_fd.trim() || null,
@@ -810,7 +856,7 @@ export default function EditBusinessDetails() {
     complementary_details,
     opening_time,
     closing_time,
-    holidays,
+    holidaysDisplay,
     special_celebration,
     special_celebration_discount_percentage,
     min_amount_for_fd,
@@ -827,6 +873,37 @@ export default function EditBusinessDetails() {
       if (/^\d{2}:\d{2}:\d{2}$/.test(t)) return t;
       if (/^\d{2}:\d{2}$/.test(t)) return t + ":00";
       return t || "";
+    }
+
+    if (key === "holidays") {
+      // Get the current value from display string
+      const currentDisplay = holidaysDisplay;
+      const currentJson = commaStringToJsonArray(currentDisplay);
+      
+      // Get the original value from the object
+      let originalJson = null;
+      if (v) {
+        if (typeof v === "string") {
+          // Try to parse if it's a JSON string
+          try {
+            const parsed = JSON.parse(v);
+            if (Array.isArray(parsed)) {
+              originalJson = v; // Keep as JSON string
+            } else {
+              originalJson = JSON.stringify([v]); // Convert single value to array
+            }
+          } catch {
+            // If it's not JSON, treat as comma string and convert
+            originalJson = commaStringToJsonArray(v);
+          }
+        } else if (Array.isArray(v)) {
+          originalJson = JSON.stringify(v);
+        } else {
+          originalJson = JSON.stringify([String(v)]);
+        }
+      }
+      
+      return (currentJson || "") === (originalJson || "");
     }
 
     if (v === null || v === undefined) return "";
@@ -938,6 +1015,7 @@ export default function EditBusinessDetails() {
     initial,
     navigation,
     BACKEND_KEYS,
+    valueForCompare,
   ]);
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
@@ -1041,7 +1119,7 @@ export default function EditBusinessDetails() {
       {/* ✅ AM/PM dropdown modal */}
       <Modal visible={ampmModalOpen} transparent animationType="fade" onRequestClose={closeAmPmModal}>
         <Pressable style={styles.modalBackdrop} onPress={closeAmPmModal}>
-          <Pressable style={styles.sourceCard} onPress={() => {}}>
+          <Pressable style={styles.sourceCard} onPress={() => { }}>
             <Text style={styles.sourceTitle}>Select AM / PM</Text>
 
             {["AM", "PM"].map((opt) => {
@@ -1077,7 +1155,7 @@ export default function EditBusinessDetails() {
         onRequestClose={() => setDeliveryModalOpen(false)}
       >
         <Pressable style={styles.modalBackdrop} onPress={() => setDeliveryModalOpen(false)}>
-          <Pressable style={styles.sourceCard} onPress={() => {}}>
+          <Pressable style={styles.sourceCard} onPress={() => { }}>
             <Text style={styles.sourceTitle}>Delivery Option</Text>
 
             {["GRAB", "BOTH", "SELF"].map((opt) => (
@@ -1105,7 +1183,7 @@ export default function EditBusinessDetails() {
       {/* Image viewer modal */}
       <Modal visible={imgModalOpen} transparent animationType="fade" onRequestClose={closeImageModal}>
         <Pressable style={styles.modalBackdrop} onPress={closeImageModal}>
-          <Pressable style={styles.modalCard} onPress={() => {}}>
+          <Pressable style={styles.modalCard} onPress={() => { }}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle} numberOfLines={1}>
                 {imgModalTitle}
@@ -1122,7 +1200,7 @@ export default function EditBusinessDetails() {
       {/* Source chooser modal */}
       <Modal visible={sourceModalOpen} transparent animationType="fade" onRequestClose={closeSourceModal}>
         <Pressable style={styles.modalBackdrop} onPress={closeSourceModal}>
-          <Pressable style={styles.sourceCard} onPress={() => {}}>
+          <Pressable style={styles.sourceCard} onPress={() => { }}>
             <Text style={styles.sourceTitle}>Choose image source</Text>
 
             <TouchableOpacity style={styles.sourceBtn} onPress={chooseFromCamera} activeOpacity={0.9}>
@@ -1381,13 +1459,18 @@ export default function EditBusinessDetails() {
 
             <Label>Holidays</Label>
             <Input
-              value={holidays}
-              onChangeText={setHolidays}
-              placeholder="e.g. Sunday / null"
+              value={holidaysDisplay}
+              onChangeText={setHolidaysDisplay}
+              placeholder="e.g. Sunday, Saturday"
+              placeholderTextColor="#94a3b8"
+              autoCapitalize="words"
               isFocused={focusedKey === "holidays"}
               onFocus={() => setFocusedKey("holidays")}
               onBlur={() => setFocusedKey(null)}
             />
+            <Text style={styles.hintText}>
+              Tip: Separate multiple days with commas (e.g., "Sunday, Saturday")
+            </Text>
           </View>
 
           {/* Promotions */}
@@ -1775,4 +1858,12 @@ const styles = StyleSheet.create({
   mapFullBtnText: { fontSize: 13, fontWeight: "900", color: "#0f172a" },
 
   mapFullBottomHint: { marginTop: 10, fontSize: 11, color: "#64748b", fontWeight: "700" },
+
+  hintText: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 4,
+    marginLeft: 4,
+    fontWeight: '500',
+  },
 });

@@ -1,0 +1,67 @@
+{
+  "project_info": {
+    "project_number": "26408694405",
+    "project_id": "tabdhey-50668",
+    "storage_bucket": "tabdhey-50668.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:26408694405:android:5fa78b702834a28d12efec",
+        "android_client_info": {
+          "package_name": "com.newedge.superapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBaR7rT44p5duxW9pLGT-neCKcxgZwtJlM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:26408694405:android:efe3fd2601df497512efec",
+        "android_client_info": {
+          "package_name": "com.tabdhey.driver"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBaR7rT44p5duxW9pLGT-neCKcxgZwtJlM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:26408694405:android:d5c9fba6c15e883812efec",
+        "android_client_info": {
+          "package_name": "com.tabdhey.merchant"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBaR7rT44p5duxW9pLGT-neCKcxgZwtJlM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

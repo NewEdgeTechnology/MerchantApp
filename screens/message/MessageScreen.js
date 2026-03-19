@@ -16,23 +16,20 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { getUserInfo } from "../../utils/authToken";
-
 import * as SecureStore from "expo-secure-store";
 
-import { DRIVER_DETAILS_ENDPOINT } from "@env";
+// ✅ use .env
+import {
+  DRIVER_DETAILS_ENDPOINT,
+  RIDE_LOCAL_ENDPOINT,
+  API_BASE_URL,
+  PROFILE_IMAGE,
+} from "@env";
 
 // ✅ business-based chat list
 import { listMerchantConversations } from "../../utils/chatApi";
 
 /* ───────────── helpers ───────────── */
-const BASE_ORIGIN = "https://grab.newedge.bt/grablike";
-
-const CUSTOMER_PROFILE_BASE = "https://grab.newedge.bt/driver";
-
-// change this to grab.newedge.bt/grablike afterwards
-const MERCHANT_DRIVER_CHAT_LIST_ENDPOINT =
-  "https://grab.newedge.bt/grablike/api/rides/merchant/chat-list";
-
 const trim = (v) => String(v || "").trim();
 const pickFirst = (...vals) => {
   for (const v of vals) {
@@ -67,6 +64,13 @@ function formatChatTime(ts) {
   }
 }
 
+/**
+ * ✅ Profile base from env:
+ * - Prefer PROFILE_IMAGE (https://grab.newedge.bt/driver/)
+ * - Fallback API_BASE_URL (https://grab.newedge.bt)
+ */
+const CUSTOMER_PROFILE_BASE = String(PROFILE_IMAGE || API_BASE_URL || "").replace(/\/+$/, "");
+
 const resolveCustomerProfileUrl = (raw) => {
   const s = String(raw || "").trim();
   if (!s) return "";
@@ -81,13 +85,9 @@ const resolveCustomerProfileUrl = (raw) => {
 
 async function getBusinessIdFromSecureStore() {
   const keys = [
-    "business_id_v1",
     "business_id",
     "businessId",
-    "merchant_business_id",
-    "merchantBusinessId",
-    "selected_business_id",
-    "selectedBusinessId",
+    "merchant_business_id", 
   ];
 
   for (const k of keys) {
@@ -173,6 +173,13 @@ async function getMerchantUserIdFromSecureStore() {
 }
 
 /* --- driver name lookup --- */
+/**
+ * ✅ BASE_ORIGIN now from env:
+ * - RIDE_LOCAL_ENDPOINT = https://grab.newedge.bt/grablike
+ * fallback API_BASE_URL
+ */
+const BASE_ORIGIN = String(RIDE_LOCAL_ENDPOINT || API_BASE_URL || "").replace(/\/+$/, "");
+
 const _nameCache = new Map();
 async function fetchUserNameById(userId) {
   const key = String(userId || "").trim();
@@ -192,7 +199,9 @@ async function fetchUserNameById(userId) {
 
     const res = await fetch(url);
     const j = await res.json().catch(() => null);
-    if (!res.ok || !j?.ok) return null;
+
+    // ✅ be tolerant: some APIs don't return j.ok
+    if (!res.ok) return null;
 
     const raw =
       j?.details?.user_name ??
@@ -214,11 +223,10 @@ async function fetchUserNameById(userId) {
 export default function MessageScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState("customer"); // 'driver' | 'customer'
+
   const routeMerchantId = useMemo(() => {
     const p = route?.params || {};
-    const mid =
-      p.businessId ??
-      null;
+    const mid = p.businessId ?? null;
     return mid != null ? String(mid) : "";
   }, [route?.params]);
 
@@ -284,7 +292,16 @@ export default function MessageScreen({ navigation, route }) {
     })();
   }, [businessId]);
 
-  /* ===================== DRIVER TAB (unchanged) ===================== */
+  /* ===================== DRIVER TAB ===================== */
+  // ✅ use .env for endpoint instead of hardcoding
+  const MERCHANT_DRIVER_CHAT_LIST_ENDPOINT = useMemo(() => {
+    const base = String(RIDE_LOCAL_ENDPOINT || "").replace(/\/+$/, "");
+    // default to original path if base exists
+    return base
+      ? `${base}/api/rides/merchant/chat-list`
+      : "https://grab.newedge.bt/grablike/api/rides/merchant/chat-list";
+  }, []);
+
   const fetchDriverBatches = useCallback(
     async ({ refreshing = false } = {}) => {
       if (refreshing) setDriverRefreshing(true);
@@ -303,9 +320,11 @@ export default function MessageScreen({ navigation, route }) {
           `${MERCHANT_DRIVER_CHAT_LIST_ENDPOINT}?merchant_id=` +
           `${encodeURIComponent(merchantId)}&limit=50`;
         console.log("[MessageScreen] fetching driver chat list from:", url);
+
         const res = await fetch(url);
         const j = await res.json().catch(() => null);
         console.log("[MessageScreen] fetched driver chat list response:", j);
+
         const rowsRaw =
           j?.threads ??
           j?.data ??
@@ -314,8 +333,6 @@ export default function MessageScreen({ navigation, route }) {
           j?.conversations ??
           [];
         const rows = Array.isArray(rowsRaw) ? rowsRaw : [];
-
-        // console.log("[MessageScreen] fetched driver chat list:", rows, "rows");
 
         if (!res.ok || !rows.length) {
           throw new Error(j?.message || `Failed (${res.status})`);
@@ -361,9 +378,7 @@ export default function MessageScreen({ navigation, route }) {
           }
 
           const lastMsgObj = r?.last_message ?? r?.lastMessage ?? null;
-          const lastType = String(
-            lastMsgObj?.message_type || lastMsgObj?.type || ""
-          ).toUpperCase();
+          const lastType = String(lastMsgObj?.message_type || lastMsgObj?.type || "").toUpperCase();
           const lastMsgText = pickFirst(
             typeof lastMsgObj === "object"
               ? pickFirst(
@@ -377,10 +392,7 @@ export default function MessageScreen({ navigation, route }) {
             r?.preview,
             r?.message
           );
-          const lastMsg =
-            lastMsgText ||
-            (lastType === "IMAGE" ? "📷 Photo" : "") ||
-            "Tap to open chat";
+          const lastMsg = lastMsgText || (lastType === "IMAGE" ? "📷 Photo" : "") || "Tap to open chat";
 
           const lastAtRaw = pickFirst(
             r?.last_message_at,
@@ -420,7 +432,7 @@ export default function MessageScreen({ navigation, route }) {
       } catch (e) {
         if (aliveRef.current) {
           setDriverThreads([]);
-          Alert.alert("Could not load driver chats", String(e?.message || e));
+          // Alert.alert("Could not load driver chats", String(e?.message || e));
         }
       } finally {
         if (aliveRef.current) {
@@ -429,7 +441,7 @@ export default function MessageScreen({ navigation, route }) {
         }
       }
     },
-    [routeMerchantId],
+    [routeMerchantId, MERCHANT_DRIVER_CHAT_LIST_ENDPOINT]
   );
 
   useEffect(() => {
@@ -437,118 +449,116 @@ export default function MessageScreen({ navigation, route }) {
     fetchDriverBatches({ refreshing: false });
   }, [isDriverTab, fetchDriverBatches]);
 
-  /* ===================== CUSTOMER TAB (FIXED) ===================== */
-  const fetchCustomerConversations = useCallback(async ({ refreshing = false } = {}) => {
-    if (refreshing) setCustomerRefreshing(true);
-    else setCustomerLoading(true);
+  /* ===================== CUSTOMER TAB ===================== */
+  const fetchCustomerConversations = useCallback(
+    async ({ refreshing = false } = {}) => {
+      if (refreshing) setCustomerRefreshing(true);
+      else setCustomerLoading(true);
 
-    try {
-      // ✅ always use SecureStore business id for merchant chat list
-      const bid = await getBusinessIdFromSecureStore();
-      if (!bid) throw new Error("Business id not found in SecureStore");
+      try {
+        // ✅ always use SecureStore business id for merchant chat list
+        const bid = await getBusinessIdFromSecureStore();
+        if (!bid) throw new Error("Business id not found in SecureStore");
 
-      // keep state in sync
-      if (aliveRef.current && bid !== businessId) setBusinessId(bid);
+        // keep state in sync
+        if (aliveRef.current && bid !== businessId) setBusinessId(bid);
 
-      // token optional
-      const info = (await getUserInfo?.()) || {};
-      const token =
-        pickFirst(
-          info.accessToken,
-          info.access_token,
-          info.token,
-          info.jwt,
-          info?.user?.token,
-          info?.user?.accessToken,
-        ) || null;
+        // token optional
+        const info = (await getUserInfo?.()) || {};
+        const token =
+          pickFirst(
+            info.accessToken,
+            info.access_token,
+            info.token,
+            info.jwt,
+            info?.user?.token,
+            info?.user?.accessToken
+          ) || null;
 
-      const res = await listMerchantConversations({ businessId: bid, token });
+        const res = await listMerchantConversations({ businessId: bid, token });
 
-      // ✅ robust rows extraction
-      const rawRows =
-        res?.rows ??
-        res?.data?.rows ??
-        res?.data?.data ??
-        res?.data ??
-        [];
+        // ✅ robust rows extraction
+        const rawRows = res?.rows ?? res?.data?.rows ?? res?.data?.data ?? res?.data ?? [];
+        const arr = Array.isArray(rawRows) ? rawRows : [];
 
-      const arr = Array.isArray(rawRows) ? rawRows : [];
+        const mapped = arr
+          .map((r, idx) => {
+            const conversationId = String(r?.conversation_id ?? r?.conversationId ?? r?.id ?? "").trim();
+            if (!conversationId) return null;
 
-      const mapped = arr
-        .map((r, idx) => {
-          const conversationId =
-            String(r?.conversation_id ?? r?.conversationId ?? r?.id ?? "").trim();
-          if (!conversationId) return null;
+            const lastType = String(r?.last_message_type || r?.lastMessageType || "").toUpperCase();
+            const lastBody = String(r?.last_message_body || r?.lastMessageBody || r?.last_message || "").trim();
+            const lastText = lastType === "IMAGE" ? "📷 Photo" : lastBody;
 
-          const lastType = String(r?.last_message_type || r?.lastMessageType || "").toUpperCase();
-          const lastBody = String(r?.last_message_body || r?.lastMessageBody || r?.last_message || "").trim();
-          const lastText = lastType === "IMAGE" ? "📷 Photo" : lastBody;
+            const lastAtRaw =
+              r?.last_message_at ??
+              r?.lastMessageAt ??
+              r?.updated_at ??
+              r?.updatedAt ??
+              r?.created_at ??
+              r?.createdAt ??
+              0;
 
-          const lastAtRaw =
-            r?.last_message_at ??
-            r?.lastMessageAt ??
-            r?.updated_at ??
-            r?.updatedAt ??
-            r?.created_at ??
-            r?.createdAt ??
-            0;
+            const lastAtNum = Number(lastAtRaw);
+            const lastAt = Number.isFinite(lastAtNum)
+              ? lastAtNum < 1e12
+                ? lastAtNum * 1000
+                : lastAtNum
+              : 0;
 
-          const lastAtNum = Number(lastAtRaw);
-          const lastAt = Number.isFinite(lastAtNum)
-            ? (lastAtNum < 1e12 ? lastAtNum * 1000 : lastAtNum)
-            : 0;
+            const customerName =
+              r?.customer_name ??
+              r?.customerName ??
+              r?.customer?.name ??
+              r?.user_name ??
+              r?.userName ??
+              "Customer";
 
-          const customerName =
-            r?.customer_name ??
-            r?.customerName ??
-            r?.customer?.name ??
-            r?.user_name ??
-            r?.userName ??
-            "Customer";
+            const profileRaw =
+              r?.customer_profile_image ??
+              r?.customerProfileImage ??
+              r?.customer_profile ??
+              r?.customerProfile ??
+              r?.profile_image ??
+              r?.profileImage ??
+              r?.avatar ??
+              r?.customer_avatar ??
+              r?.customer?.profile_image ??
+              r?.customer?.avatar ??
+              "";
 
-          const profileRaw =
-            r?.customer_profile_image ??
-            r?.customerProfileImage ??
-            r?.customer_profile ??
-            r?.customerProfile ??
-            r?.profile_image ??
-            r?.profileImage ??
-            r?.avatar ??
-            r?.customer_avatar ??
-            r?.customer?.profile_image ??
-            r?.customer?.avatar ??
-            "";
+            return {
+              id: conversationId || `c_${idx}`,
+              conversationId,
+              orderId: String(r?.order_id ?? r?.orderId ?? "").trim(),
+              customerId: r?.customer_id ?? r?.customerId ?? r?.user_id ?? r?.userId ?? null,
+              business_id: r?.business_id ?? r?.businessId ?? bid,
+              customerName: String(customerName),
+              customer_profile_image: String(profileRaw || ""),
+              lastMessage: lastText || "Tap to open chat",
+              lastAt,
+              unread: Number(r?.unread_count ?? r?.unread ?? 0),
+              _sort: lastAt || 0,
+            };
+          })
+          .filter(Boolean);
 
-          return {
-            id: conversationId || `c_${idx}`,
-            conversationId,
-            orderId: String(r?.order_id ?? r?.orderId ?? "").trim(),
-            customerId: r?.customer_id ?? r?.customerId ?? r?.user_id ?? r?.userId ?? null,
-            business_id: r?.business_id ?? r?.businessId ?? bid,
-            customerName: String(customerName),
-            customer_profile_image: String(profileRaw || ""),
-            lastMessage: lastText || "Tap to open chat",
-            lastAt,
-            unread: Number(r?.unread_count ?? r?.unread ?? 0),
-            _sort: lastAt || 0,
-          };
-        })
-        .filter(Boolean);
-
-      mapped.sort((a, b) => b._sort - a._sort);
-      if (aliveRef.current) setCustomerThreads(mapped);
-    } catch (e) {
-      if (aliveRef.current) {
-        setCustomerThreads([]);
-        Alert.alert("Could not load customer chats", String(e?.message || e));
+        mapped.sort((a, b) => b._sort - a._sort);
+        if (aliveRef.current) setCustomerThreads(mapped);
+      } catch (e) {
+        if (aliveRef.current) {
+          setCustomerThreads([]);
+          Alert.alert("Could not load customer chats", String(e?.message || e));
+        }
+      } finally {
+        if (aliveRef.current) {
+          setCustomerLoading(false);
+          setCustomerRefreshing(false);
+        }
       }
-    } finally {
-      if (aliveRef.current) {
-        setCustomerLoading(false);
-        setCustomerRefreshing(false);
-      }
-    }
-  }, [businessId]);
+    },
+    [businessId]
+  );
 
   useEffect(() => {
     if (isDriverTab) return;
@@ -587,7 +597,9 @@ export default function MessageScreen({ navigation, route }) {
 
           <View style={styles.threadTextWrap}>
             <View style={styles.threadTopRow}>
-              <Text style={styles.threadName} numberOfLines={1}>{item.name}</Text>
+              <Text style={styles.threadName} numberOfLines={1}>
+                {item.name}
+              </Text>
               {!!item.time ? <Text style={styles.threadTime}>{item.time}</Text> : null}
             </View>
 
@@ -605,7 +617,7 @@ export default function MessageScreen({ navigation, route }) {
       );
     }
 
-    // ✅ CUSTOMER chat row
+    // CUSTOMER chat row
     const time = formatChatTime(item.lastAt);
     const avatarUrl = resolveCustomerProfileUrl(item.customer_profile_image);
 
@@ -631,8 +643,8 @@ export default function MessageScreen({ navigation, route }) {
               businessId: String(bid),
               meta: {
                 customerName: item.customerName,
-                customer_profile_image: item.customer_profile_image || "", // ✅ used by ChatRoomScreen header
-                customerProfileImage: item.customer_profile_image || "",   // ✅ extra alias (safe)
+                customer_profile_image: item.customer_profile_image || "",
+                customerProfileImage: item.customer_profile_image || "",
                 customerId: item.customerId,
                 businessId: bid,
               },
@@ -646,15 +658,15 @@ export default function MessageScreen({ navigation, route }) {
           <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
         ) : (
           <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>
-              {item.customerName?.charAt(0)?.toUpperCase() || "C"}
-            </Text>
+            <Text style={styles.avatarText}>{item.customerName?.charAt(0)?.toUpperCase() || "C"}</Text>
           </View>
         )}
 
         <View style={styles.threadTextWrap}>
           <View style={styles.threadTopRow}>
-            <Text style={styles.threadName} numberOfLines={1}>{item.customerName}</Text>
+            <Text style={styles.threadName} numberOfLines={1}>
+              {item.customerName}
+            </Text>
             {!!time ? <Text style={styles.threadTime}>{time}</Text> : null}
           </View>
 
@@ -716,11 +728,7 @@ export default function MessageScreen({ navigation, route }) {
           </View>
         ) : data.length === 0 ? (
           <View style={styles.emptyState}>
-            <Ionicons
-              name={isDriverTab ? "car-outline" : "person-outline"}
-              size={32}
-              color="#9CA3AF"
-            />
+            <Ionicons name={isDriverTab ? "car-outline" : "person-outline"} size={32} color="#9CA3AF" />
             <Text style={styles.emptyTitle}>No conversations yet</Text>
             <Text style={styles.emptySubtitle}>
               When you have orders, {isDriverTab ? "batches/drivers" : "customers"} will appear here.
@@ -757,20 +765,9 @@ export default function MessageScreen({ navigation, route }) {
 /* ───────────── Components ───────────── */
 function TabButton({ label, icon, active, onPress }) {
   return (
-    <TouchableOpacity
-      style={[styles.tabButton, active && styles.tabButtonActive]}
-      onPress={onPress}
-      activeOpacity={0.9}
-    >
-      <Ionicons
-        name={icon}
-        size={18}
-        color={active ? "#00b14f" : "#6B7280"}
-        style={{ marginRight: 6 }}
-      />
-      <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
-        {label}
-      </Text>
+    <TouchableOpacity style={[styles.tabButton, active && styles.tabButtonActive]} onPress={onPress} activeOpacity={0.9}>
+      <Ionicons name={icon} size={18} color={active ? "#00b14f" : "#6B7280"} style={{ marginRight: 6 }} />
+      <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{label}</Text>
     </TouchableOpacity>
   );
 }

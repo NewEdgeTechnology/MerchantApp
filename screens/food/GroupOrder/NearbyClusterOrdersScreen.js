@@ -448,7 +448,7 @@ export default function NearbyClusterOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch {}
+      } catch { }
 
       if (!res.ok) return;
 
@@ -488,7 +488,7 @@ export default function NearbyClusterOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch {}
+      } catch { }
 
       if (!res.ok) throw new Error(json?.message || json?.error || text || `HTTP ${res.status}`);
 
@@ -586,7 +586,7 @@ export default function NearbyClusterOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch {}
+      } catch { }
       if (!json) return;
 
       const nextMap = {};
@@ -855,10 +855,11 @@ export default function NearbyClusterOrdersScreen() {
       });
 
       const bodyText = await res.text();
+      console.log("Batch API Response Text:", bodyText);
       let bodyJson = null;
       try {
         bodyJson = bodyText ? JSON.parse(bodyText) : null;
-      } catch {}
+      } catch { }
 
       if (!res.ok) {
         const msg =
@@ -870,10 +871,18 @@ export default function NearbyClusterOrdersScreen() {
         Alert.alert("Failed to create batch", safeStr(msg));
         return;
       }
-
       const json = bodyJson || null;
+
+      console.log("========== BATCH CREATED ==========");
+      console.log("Batch API Response:", json);
+
       const batchId = pickBatchId(json);
       const batchOrderIds = pickBatchOrderIds(json);
+
+      console.log("Batch ID:", batchId);
+      console.log("Batch Order IDs:", batchOrderIds);
+      console.log("Selected Orders:", orderCodes);
+      console.log("===================================");
 
       clearSelectedReady();
 

@@ -84,7 +84,7 @@ function ensureChatSocket({ role, ids }) {
   if (chatSocket) {
     try {
       chatSocket.disconnect();
-    } catch {}
+    } catch { }
   }
 
   chatConfig = nextCfg;
@@ -159,6 +159,7 @@ const toRequestId = (v) => {
 
 const joinChatRoom = (rideId) => {
   const requestId = toRequestId(rideId);
+  console.log(`Joining chat room for rideId=${rideId} (requestId=${requestId})`);
   if (requestId == null) {
     return Promise.resolve({ ok: false, error: "missing_request_id" });
   }
@@ -202,7 +203,7 @@ const emitReadReceipt = (rideId, lastSeenId) => {
 };
 const registerChatEvents = ({ onNewMessage, onTyping, onRead } = {}) => {
   const sock = getChatSocket();
-  if (!sock) return () => {};
+  if (!sock) return () => { };
 
   const handlers = [];
   if (typeof onNewMessage === "function") {
@@ -210,16 +211,33 @@ const registerChatEvents = ({ onNewMessage, onTyping, onRead } = {}) => {
       const msg = payload?.message ?? payload?.data?.message ?? payload;
       const tempId = payload?.temp_id ?? payload?.data?.temp_id ?? null;
       try {
-        const senderRole = msg?.sender_role ?? msg?.sender_type ?? "unknown";
-        const senderId = msg?.sender_id ?? msg?.from?.id ?? "unknown";
-        console.log("[chat] recv message", {
+        const senderRole = msg?.sender_role ?? msg?.sender_type ?? msg?.from?.role ?? "unknown";
+        const senderId = msg?.sender_id ?? msg?.from?.id ?? msg?.sender?.id ?? "unknown";
+
+        console.log("📥 [CHAT INCOMING] raw payload =", payload);
+        console.log("📥 [CHAT INCOMING] parsed msg =", msg);
+        console.log("📥 [CHAT INCOMING] summary =", {
           event: "chat:new*",
-          senderRole,
-          senderId,
+          tempId,
           id: msg?.id ?? msg?.message_id ?? null,
           request_id: msg?.request_id ?? payload?.request_id ?? null,
+          senderRole,
+          senderId,
+          text:
+            msg?.message ??
+            msg?.text ??
+            msg?.body ??
+            msg?.content ??
+            "",
+          image:
+            msg?.image_url ??
+            msg?.attachment?.url ??
+            msg?.attachments?.[0]?.url ??
+            null,
         });
-      } catch {}
+      } catch (e) {
+        console.log("❌ [CHAT INCOMING LOG ERROR]", e);
+      }
       onNewMessage(msg, tempId);
     };
     const evts = ["chat:new", "chat:new_message", "chat:new-message"];
@@ -241,7 +259,7 @@ const registerChatEvents = ({ onNewMessage, onTyping, onRead } = {}) => {
     handlers.forEach(([evt, handler]) => {
       try {
         sock.off(evt, handler);
-      } catch {}
+      } catch { }
     });
   };
 };
@@ -278,7 +296,7 @@ async function fetchUserNameById(userId) {
       _nameCache.set(key, name);
       return name;
     }
-  } catch {}
+  } catch { }
   return null;
 }
 
@@ -547,7 +565,7 @@ export default function Chat({ route, navigation }) {
         }));
         return String(u.user_id);
       }
-    } catch {}
+    } catch { }
     return "";
   };
 
@@ -589,14 +607,14 @@ export default function Chat({ route, navigation }) {
       try {
         s.off("rideAccepted", onRideAccepted);
         s.off("rideStageUpdate", onRideStageUpdate);
-      } catch {}
+      } catch { }
     };
   };
 
   const detachRideLevelListeners = () => {
     try {
       unsubSocketRideRef.current?.();
-    } catch {}
+    } catch { }
     unsubSocketRideRef.current = null;
   };
 
@@ -634,7 +652,7 @@ export default function Chat({ route, navigation }) {
       if (unsubChatRef.current) {
         try {
           unsubChatRef.current();
-        } catch {}
+        } catch { }
       }
       unsubChatRef.current = registerChatEvents({
         onNewMessage: (message, temp_id) => {
@@ -689,7 +707,7 @@ export default function Chat({ route, navigation }) {
               setPeerTyping(false);
               clearTimeoutSafe(typingTimerRef);
             }
-          } catch {}
+          } catch { }
         },
 
         onRead: (p) => {
@@ -700,7 +718,7 @@ export default function Chat({ route, navigation }) {
             if (Number.isFinite(seen) && seen > 0) {
               setPeerLastSeenId((prev) => (seen > prev ? seen : prev));
             }
-          } catch {}
+          } catch { }
         },
       });
     } finally {
@@ -740,7 +758,7 @@ export default function Chat({ route, navigation }) {
 
         try {
           activeMeta = await resolveCurrentRideId(pid);
-        } catch {}
+        } catch { }
 
         if (activeMeta != null) {
           if (typeof activeMeta === "object") {
@@ -791,10 +809,10 @@ export default function Chat({ route, navigation }) {
       mounted = false;
       try {
         unsubChatRef.current?.();
-      } catch {}
+      } catch { }
       try {
         detachRideLevelListeners();
-      } catch {}
+      } catch { }
       clearTimeoutSafe(typingTimerRef);
       if (requestId) {
         leaveChatRoom(requestId);
@@ -816,7 +834,7 @@ export default function Chat({ route, navigation }) {
     if (!last) return;
     try {
       emitReadReceipt(requestId, last);
-    } catch {}
+    } catch { }
   }, [msgs.length, requestId]);
 
   const latestMineIdStr = useMemo(() => {
@@ -868,19 +886,32 @@ export default function Chat({ route, navigation }) {
     try {
       const reqId = toRequestId(requestId);
       if (reqId == null) return;
-      const ack = await emitChatMessage({
+      const outgoingPayload = {
         request_id: reqId,
         message: text,
         temp_id,
         ...(replyMeta
           ? {
-              reply_to: replyMeta,
-              reply_to_id: replyMeta.id || undefined,
-              reply_message_id: replyMeta.id || undefined,
-            }
+            reply_to: replyMeta,
+            reply_to_id: replyMeta.id || undefined,
+            reply_message_id: replyMeta.id || undefined,
+          }
           : {}),
+      };
+
+      console.log("📤 [CHAT OUTGOING TEXT] local message =", {
+        id: String(temp_id),
+        text,
+        sender_role: meRole,
+        sender_id: meId || "me",
+        name: me?.name || "Me",
+        ts: new Date().toISOString(),
+        reply_to: replyMeta || null,
       });
 
+      console.log("📤 [CHAT OUTGOING TEXT] socket payload =", outgoingPayload);
+      const ack = await emitChatMessage(outgoingPayload);
+      console.log("✅ [CHAT OUTGOING TEXT ACK] =", ack);
       if (ack?.ok) {
         const ackMsg =
           ack?.message ||
@@ -911,7 +942,7 @@ export default function Chat({ route, navigation }) {
           return next;
         });
       }
-    } catch {}
+    } catch { }
   };
 
   const guessMime = (uri = "") => {
@@ -934,6 +965,19 @@ export default function Chat({ route, navigation }) {
       return false;
     }
     return true;
+  };
+  const formatFullDate = (ts) => {
+    try {
+      const d = new Date(ts);
+      const day = String(d.getDate()).padStart(2, "0");
+      const month = d.toLocaleString("en-US", { month: "short" });
+      const year = d.getFullYear();
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      return `${day} ${month} ${year}, ${hh}:${mm}`;
+    } catch {
+      return "";
+    }
   };
 
   const uploadChatImage = async (localUri) => {
@@ -981,20 +1025,26 @@ export default function Chat({ route, navigation }) {
       const remote = await uploadChatImage(localUri);
       const reqId = toRequestId(requestId);
       if (reqId == null) return;
-      const ack = await emitChatMessage({
+
+      const outgoingPayload = {
         request_id: reqId,
         message: "",
         attachments: [{ type: "image", url: remote }],
         temp_id,
         ...(replyMeta
           ? {
-              reply_to: replyMeta,
-              reply_to_id: replyMeta.id || undefined,
-              reply_message_id: replyMeta.id || undefined,
-            }
+            reply_to: replyMeta,
+            reply_to_id: replyMeta.id || undefined,
+            reply_message_id: replyMeta.id || undefined,
+          }
           : {}),
-      });
+      };
 
+      console.log("📤 [CHAT OUTGOING IMAGE] uploaded remote url =", remote);
+      console.log("📤 [CHAT OUTGOING IMAGE] socket payload =", outgoingPayload);
+
+      const ack = await emitChatMessage(outgoingPayload);
+      console.log("✅ [CHAT OUTGOING IMAGE ACK] =", ack);
       if (ack?.ok) {
         const ackMsg =
           ack?.message ||
@@ -1044,7 +1094,6 @@ export default function Chat({ route, navigation }) {
       Alert.alert("Upload failed", String(e?.message || e));
     }
   };
-
   const handleAddPhoto = async () => {
     if (!requestId || joining || !isCurrentRide) return;
     const ok = await ensureMediaPermissions();
@@ -1092,7 +1141,7 @@ export default function Chat({ route, navigation }) {
     if (!requestId || !isCurrentRide) return;
     try {
       emitTyping(Number(requestId), !!text);
-    } catch {}
+    } catch { }
   };
 
   const isMine = (m) =>
@@ -1125,10 +1174,10 @@ export default function Chat({ route, navigation }) {
       (reply?.sender_role === "driver"
         ? "Driver"
         : reply?.sender_role === "merchant"
-        ? "Merchant"
-        : reply?.sender_role === "passenger"
-        ? "Passenger"
-        : "User");
+          ? "Merchant"
+          : reply?.sender_role === "passenger"
+            ? "Passenger"
+            : "User");
     const replyText =
       reply?.text || (reply?.image_url ? "📷 Photo" : "") || "";
 
@@ -1176,6 +1225,23 @@ export default function Chat({ route, navigation }) {
               </View>
             ) : null}
 
+            {!mine ? (
+              <View style={styles.msgTopRow}>
+                <Text style={styles.senderName} numberOfLines={1}>
+                  {[
+                    item?.name,
+                    item?.sender_name,
+                    driverName,
+                    headerTitle,
+                    "User",
+                  ].find((v) => String(v || "").trim().length > 0)}
+                </Text>
+                <Text style={styles.senderDate} numberOfLines={1}>
+                  {formatFullDate(item.ts)}
+                </Text>
+              </View>
+            ) : null}
+
             {item.image_url ? (
               <Image
                 source={{ uri: toAbs(item.image_url) }}
@@ -1212,8 +1278,8 @@ export default function Chat({ route, navigation }) {
   };
 
   const onBack = () => navigation.goBack?.();
-  const onCall = () => {};
-  const onInfo = () => {};
+  const onCall = () => { };
+  const onInfo = () => { };
 
   if (loading) {
     return (
@@ -1330,10 +1396,10 @@ export default function Chat({ route, navigation }) {
                       (replyTo?.sender_role === "driver"
                         ? "Driver"
                         : replyTo?.sender_role === "merchant"
-                        ? "Merchant"
-                        : replyTo?.sender_role === "passenger"
-                        ? "Passenger"
-                        : "User")}
+                          ? "Merchant"
+                          : replyTo?.sender_role === "passenger"
+                            ? "Passenger"
+                            : "User")}
                   </Text>
                   <Text style={styles.replyBarText} numberOfLines={1}>
                     {replyTo?.text ||
@@ -1460,20 +1526,20 @@ const ChatHeader = ({ insetsTop = 0, onBack, title, subtitle, requestId, onCall,
 function toUiMsg(m) {
   const id = String(
     m?.id ??
-      m?.message_id ??
-      m?.messageId ??
-      m?.msg_id ??
-      `${Date.now()}-${Math.random()}`
+    m?.message_id ??
+    m?.messageId ??
+    m?.msg_id ??
+    `${Date.now()}-${Math.random()}`
   );
 
   const text = String(pickMessageText(m));
 
   const sender_role = String(
     m?.sender_type ??
-      m?.sender_role ??
-      m?.from?.role ??
-      m?.sender?.role ??
-      ""
+    m?.sender_role ??
+    m?.from?.role ??
+    m?.sender?.role ??
+    ""
   ).toLowerCase();
 
   const sender_id = String(m?.sender_id ?? m?.from?.id ?? m?.sender?.id ?? "");
@@ -1484,8 +1550,8 @@ function toUiMsg(m) {
     (sender_role === "driver"
       ? "Driver"
       : sender_role === "merchant"
-      ? "Merchant"
-      : "Passenger");
+        ? "Merchant"
+        : "Passenger");
 
   const ts =
     m?.created_at ??
@@ -1623,10 +1689,10 @@ function normalizeReply(r) {
     (sender_role === "driver"
       ? "Driver"
       : sender_role === "merchant"
-      ? "Merchant"
-      : sender_role === "passenger"
-      ? "Passenger"
-      : "User");
+        ? "Merchant"
+        : sender_role === "passenger"
+          ? "Passenger"
+          : "User");
 
   const image_url = pickImageUrl(r);
 
@@ -1648,7 +1714,7 @@ function clearTimeoutSafe(ref) {
       clearTimeout(ref.current);
       ref.current = null;
     }
-  } catch {}
+  } catch { }
 }
 
 /* ---------------- styles (UI updated to match ChatDetailScreen) ---------------- */
@@ -1727,7 +1793,25 @@ const styles = StyleSheet.create({
     backgroundColor: "#9CA3AF",
     marginHorizontal: 3,
   },
+  msgTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 6,
+  },
 
+  senderName: {
+    flexShrink: 1,
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#111827",
+    marginRight: 10,
+  },
+
+  senderDate: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6B7280",
+  },
   dayWrap: {
     alignSelf: "center",
     backgroundColor: "#EFF2F6",
