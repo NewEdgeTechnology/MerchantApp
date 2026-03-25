@@ -27,8 +27,7 @@ export default function DeliveryMethodChooser({
   showDeliverInGroup = false,
   onDeliverInGroup,
 }) {
-  // If not BOTH or already terminal/cancelled → show nothing at all
-  if (!isBothOption || isTerminalNegative || isTerminalSuccess) return null;
+  if (isTerminalNegative || isTerminalSuccess) return null;
 
   // Once a driver is accepted, ALWAYS show only driver details (no chooser)
   if (driverAccepted) {
@@ -42,8 +41,7 @@ export default function DeliveryMethodChooser({
     );
   }
 
-  // Only when order is READY → show the delivery method chooser
-  if (status !== "READY") return null;
+  if (!["CONFIRMED", "READY"].includes(status)) return null;
 
   const hintText = (() => {
     if (isSelfSelected) return "Self delivery selected.";
@@ -125,29 +123,6 @@ export default function DeliveryMethodChooser({
           </Pressable>
         </View>
 
-        {/* RIGHT: Deliver in group (separate button like screenshot) */}
-        {showDeliverInGroup ? (
-          <Pressable
-            onPress={onDeliverInGroup}
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 8,
-              paddingHorizontal: 14,
-              height: 42,
-              borderRadius: 12,
-              marginTop: 10,
-              borderWidth: 1,
-              borderColor: "#e5e7eb",
-              backgroundColor: "#fff",
-            }}
-          >
-            <Ionicons name="grid-outline" size={16} color="#0f172a" />
-            <Text style={{ fontSize: 13, fontWeight: "700", color: "#0f172a" }}>
-              Deliver in group
-            </Text>
-          </Pressable>
-        ) : null}
       </View>
 
       <Text style={[styles.segmentHint, { marginTop: 8 }]}>{hintText}</Text>

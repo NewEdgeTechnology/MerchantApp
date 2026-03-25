@@ -38,7 +38,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LOGIN_MERCHANT_ENDPOINT } from "@env";
 import { connectMerchantSocket } from "../realtime/merchantSocket";
 import { getExpoPushTokenAsync } from "../../utils/getExpoPushTokenAsync";
-import { getStableDeviceId } from "../../utils/deviceId";
+// import { getStableDeviceId } from "../../utils/deviceId";
+
 /* ===== Safe emitter (no-op if unavailable) ===== */
 const SafeDeviceEventEmitter =
   RNDeviceEventEmitter && typeof RNDeviceEventEmitter.emit === "function"
@@ -86,6 +87,17 @@ const goToWelcome = (navigation) => {
   navigation.navigate(WELCOME_ROUTE);
 };
 
+async function getValidExpoPushToken() {
+  let token = await getExpoPushTokenAsync();
+
+  // retry if not ready
+  if (!token || !token.startsWith("ExponentPushToken")) {
+    await new Promise((res) => setTimeout(res, 1000));
+    token = await getExpoPushTokenAsync();
+  }
+
+  return token;
+}
 /* ---------------- enable LayoutAnimation (Android only) ---------------- */
 function enableAndroidLayoutAnimationOnPaper() {
   if (Platform.OS !== "android") return;
@@ -181,15 +193,8 @@ async function getOrCreateLocalDeviceId() {
   return fresh;
 }
 async function printPushIdOnLoginClick(pushToken) {
-  try {
-    const id = await getStableDeviceId();
-    console.log("[DEVICE] Stable device id:", id);
-    console.log("[PUSH] Expo push token:", pushToken || "");
-    return { expo_push_token: pushToken || "", device_id: id };
-  } catch (e) {
-    console.log("[DEVICE] Failed:", e?.message || String(e));
-    return { expo_push_token: pushToken || "", device_id: "" };
-  }
+  console.log("[DEVICE] Expo push token (device_id):", pushToken || "");
+  return { expo_push_token: pushToken || "", device_id: pushToken || "" };
 }
 
 /* ✅ NEW: robust error message extraction */
@@ -270,11 +275,14 @@ export default function MobileLoginScreen() {
     fetchPushToken();
   }, []);
   useEffect(() => {
-    (async () => {
-      const id = await getStableDeviceId();
-      setDeviceId(id);
-      console.log("Stable device_id (mobile login):", id);
-    })();
+  (async () => {
+    const token = await getValidExpoPushToken();
+
+    setPushToken(token);
+    setDeviceId(token);
+
+    console.log("Expo Push Token (used as device_id):", token);
+  })();
   }, []);
   // ✅ load saved phone/password or last phone
   useEffect(() => {
@@ -320,224 +328,229 @@ export default function MobileLoginScreen() {
   };
 
   const handleLogin = async () => {
-    setTouched(true);
-    setErrorText("");
+  setTouched(true);
+  setErrorText("");
 
-    const pushInfo = await printPushIdOnLoginClick(pushToken);
+  const base = (LOGIN_MERCHANT_ENDPOINT || "").trim();
+  if (!base) {
+    Alert.alert(
+      "Configuration error",
+      "LOGIN_MERCHANT_ENDPOINT is not configured in .env"
+    );
+    return;
+  }
 
-    const base = (LOGIN_MERCHANT_ENDPOINT || "").trim();
-    if (!base) {
-      Alert.alert(
-        "Configuration error",
-        "LOGIN_MERCHANT_ENDPOINT is not configured in .env"
-      );
-      return;
+  const digits = phoneDigits;
+  const prefix = digits.slice(0, 2);
+  const okPrefix = ALLOWED_PREFIXES.includes(prefix);
+
+  if (!(digits.length === 8 && okPrefix) || password.trim().length < 6) {
+    const msg =
+      "Please enter a valid mobile number (77/17/16 + 8 digits) and a password (min 6 chars).";
+    setErrorText(msg);
+    return;
+  }
+
+  // ✅ ALWAYS fetch fresh Expo Push Token here
+  const getValidExpoToken = async () => {
+    let token = await getExpoPushTokenAsync();
+
+    if (!token || !token.startsWith("ExponentPushToken")) {
+      await new Promise((res) => setTimeout(res, 1000));
+      token = await getExpoPushTokenAsync();
     }
 
-    const digits = phoneDigits;
-    const prefix = digits.slice(0, 2);
-    const okPrefix = ALLOWED_PREFIXES.includes(prefix);
+    return token;
+  };
 
-    if (!(digits.length === 8 && okPrefix) || password.trim().length < 6) {
-      const msg =
-        "Please enter a valid mobile number (77/17/16 + 8 digits) and a password (min 6 chars).";
-      setErrorText(msg);
-      return;
-    }
+  const deviceId = await getValidExpoToken();
 
-    const payload = {
-      phone: `${COUNTRY.dial}${digits}`,
-      password: password.trim(),
-      device_id: String(deviceId || ""),      // ✅ stable ID
-      push_token: String(pushToken || ""),    // ✅ optional
-    };
+  if (!deviceId) {
+    Alert.alert("Error", "Unable to get device token. Please try again.");
+    return;
+  }
 
-    setLoading(true);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
+  console.log("LOGIN device_id (Expo):", deviceId);
 
-    try {
-      const out = await postJson(base, payload, controller.signal);
+  const payload = {
+    phone: `${COUNTRY.dial}${digits}`,
+    password: password.trim(),
+    device_id: deviceId,      // ✅ Expo token used as device_id
+    push_token: deviceId,     // optional (same value)
+  };
 
-      if (!out.res.ok) {
-        console.log("Login failed response:", out.res.status, out.raw);
+  setLoading(true);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
 
-        const msg = extractErrorMessage(out); // ✅ use backend message
-        setErrorText(msg); // ✅ show inline red text under password
-        Alert.alert("Login failed", msg); // ✅ show popup
-        return;
-      }
+  try {
+    const out = await postJson(base, payload, controller.signal);
 
-      const data = out.data || {};
+    if (!out.res.ok) {
+      console.log("Login failed response:", out.res.status, out.raw);
 
-      // ✅ token extraction (support multiple shapes)
-      const tokenObj = data?.token || data?.data?.token || {};
-      const accessToken =
-        (typeof data?.token === "string" && data.token) ||
-        tokenObj?.access_token ||
-        tokenObj?.accessToken ||
-        data?.access_token ||
-        data?.accessToken ||
-        "";
-
-      const refreshToken =
-        tokenObj?.refresh_token ||
-        tokenObj?.refreshToken ||
-        data?.refresh_token ||
-        data?.refreshToken ||
-        "";
-
-      if (accessToken) {
-        try {
-          await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
-        } catch { }
-      }
-      if (refreshToken) {
-        try {
-          await SecureStore.setItemAsync(KEY_REFRESH_TOKEN, String(refreshToken));
-        } catch { }
-      }
-
-      const userInfo =
-        data?.merchant ||
-        data?.user ||
-        data?.data?.merchant ||
-        data?.data?.user ||
-        data ||
-        {};
-
-      const user_id =
-        userInfo?.user_id ?? userInfo?.id ?? data?.user_id ?? data?.id ?? null;
-
-      const business_id =
-        userInfo?.business_id ??
-        userInfo?.businessId ??
-        data?.business_id ??
-        data?.id ??
-        "";
-
-      const business_name =
-        userInfo?.business_name ??
-        userInfo?.businessName ??
-        data?.business_name ??
-        "";
-
-      const business_logo =
-        userInfo?.business_logo ?? userInfo?.businessLogo ?? userInfo?.logo ?? "";
-
-      const business_address =
-        userInfo?.business_address ??
-        userInfo?.businessAddress ??
-        userInfo?.address ??
-        "";
-
-      // ✅ NEW: owner type (food/mart) so HomeTab loads correct endpoints
-      const owner_type = String(
-        userInfo?.owner_type ??
-        userInfo?.ownerType ??
-        data?.owner_type ??
-        data?.ownerType ??
-        "food"
-      )
-        .trim()
-        .toLowerCase();
-
-      // ✅ Save ids separately (like LoginScreen)
-      try {
-        if (user_id != null && String(user_id).trim()) {
-          await SecureStore.setItemAsync(KEY_USER_ID, String(user_id));
-        } else {
-          await SecureStore.deleteItemAsync(KEY_USER_ID);
-        }
-      } catch { }
-
-      try {
-        if (business_id != null && String(business_id).trim()) {
-          const bid = String(business_id);
-          await SecureStore.setItemAsync(KEY_BUSINESS_ID, bid);
-
-          // optional compatibility keys
-          await SecureStore.setItemAsync("business_id", bid);
-          await SecureStore.setItemAsync("businessId", bid);
-        } else {
-          await SecureStore.deleteItemAsync(KEY_BUSINESS_ID);
-          await SecureStore.deleteItemAsync("business_id");
-          await SecureStore.deleteItemAsync("businessId");
-        }
-      } catch { }
-
-      // ✅ Save merchant_login (now includes owner_type)
-      const userPayload = {
-        user_id,
-        business_id,
-        business_name,
-        business_logo,
-        business_address,
-        phone: `${COUNTRY.dial}${digits}`,
-        device_id: String(deviceId || ""),
-        push_token: String(pushToken || ""),
-        owner_type,
-      };
-      try {
-        await SecureStore.setItemAsync(
-          KEY_MERCHANT_LOGIN,
-          JSON.stringify(userPayload)
-        );
-      } catch { }
-
-      // ✅ store last phone (digits only) always
-      try {
-        await SecureStore.setItemAsync(KEY_LAST_LOGIN_PHONE, String(digits));
-      } catch { }
-
-      // ✅ save/clear password based on checkbox
-      try {
-        if (savePassword) {
-          await SecureStore.setItemAsync(KEY_SAVED_PHONE, String(digits));
-          await SecureStore.setItemAsync(
-            KEY_SAVED_PHONE_PASSWORD,
-            String(password || "")
-          );
-        } else {
-          await SecureStore.deleteItemAsync(KEY_SAVED_PHONE);
-          await SecureStore.deleteItemAsync(KEY_SAVED_PHONE_PASSWORD);
-        }
-      } catch { }
-
-      SafeDeviceEventEmitter.emit("profile-updated", {
-        business_name,
-        business_logo,
-      });
-
-      try {
-        connectMerchantSocket({ user_id, business_id });
-      } catch { }
-
-      // ✅ include owner_type for downstream screens (HomeTab/MenuScreen/etc.)
-      navigateHome({
-        business_name,
-        business_logo,
-        business_address,
-        business_id,
-        auth_token: accessToken,
-        user_id: user_id != null ? String(user_id) : "",
-        owner_type, // ✅ NEW
-        ownerType: owner_type, // ✅ NEW (alias)
-        expo_push_token: pushInfo.expo_push_token || "",
-        device_id: pushInfo.device_id || "",
-      });
-    } catch (e) {
-      const msg =
-        e?.name === "AbortError"
-          ? "Request timeout. Please try again."
-          : "Network error. Please try again.";
+      const msg = extractErrorMessage(out);
       setErrorText(msg);
       Alert.alert("Login failed", msg);
-    } finally {
-      clearTimeout(timer);
-      setLoading(false);
+      return;
     }
-  };
+
+    const data = out.data || {};
+
+    // ✅ token extraction
+    const tokenObj = data?.token || data?.data?.token || {};
+    const accessToken =
+      (typeof data?.token === "string" && data.token) ||
+      tokenObj?.access_token ||
+      tokenObj?.accessToken ||
+      data?.access_token ||
+      data?.accessToken ||
+      "";
+
+    const refreshToken =
+      tokenObj?.refresh_token ||
+      tokenObj?.refreshToken ||
+      data?.refresh_token ||
+      data?.refreshToken ||
+      "";
+
+    if (accessToken) {
+      await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
+    }
+    if (refreshToken) {
+      await SecureStore.setItemAsync(KEY_REFRESH_TOKEN, String(refreshToken));
+    }
+
+    const userInfo =
+      data?.merchant ||
+      data?.user ||
+      data?.data?.merchant ||
+      data?.data?.user ||
+      data ||
+      {};
+
+    const user_id =
+      userInfo?.user_id ?? userInfo?.id ?? data?.user_id ?? data?.id ?? null;
+
+    const business_id =
+      userInfo?.business_id ??
+      userInfo?.businessId ??
+      data?.business_id ??
+      data?.id ??
+      "";
+
+    const business_name =
+      userInfo?.business_name ??
+      userInfo?.businessName ??
+      data?.business_name ??
+      "";
+
+    const business_logo =
+      userInfo?.business_logo ?? userInfo?.businessLogo ?? userInfo?.logo ?? "";
+
+    const business_address =
+      userInfo?.business_address ??
+      userInfo?.businessAddress ??
+      userInfo?.address ??
+      "";
+
+    const owner_type = String(
+      userInfo?.owner_type ??
+      userInfo?.ownerType ??
+      data?.owner_type ??
+      data?.ownerType ??
+      "food"
+    )
+      .trim()
+      .toLowerCase();
+
+    // ✅ Save user_id
+    if (user_id != null && String(user_id).trim()) {
+      await SecureStore.setItemAsync(KEY_USER_ID, String(user_id));
+    } else {
+      await SecureStore.deleteItemAsync(KEY_USER_ID);
+    }
+
+    // ✅ Save business_id
+    if (business_id != null && String(business_id).trim()) {
+      const bid = String(business_id);
+      await SecureStore.setItemAsync(KEY_BUSINESS_ID, bid);
+      await SecureStore.setItemAsync("business_id", bid);
+      await SecureStore.setItemAsync("businessId", bid);
+    } else {
+      await SecureStore.deleteItemAsync(KEY_BUSINESS_ID);
+      await SecureStore.deleteItemAsync("business_id");
+      await SecureStore.deleteItemAsync("businessId");
+    }
+
+    // ✅ Save merchant login payload
+    const userPayload = {
+      user_id,
+      business_id,
+      business_name,
+      business_logo,
+      business_address,
+      phone: `${COUNTRY.dial}${digits}`,
+      device_id: deviceId,   // ✅ Expo token stored
+      push_token: deviceId,
+      owner_type,
+    };
+
+    await SecureStore.setItemAsync(
+      KEY_MERCHANT_LOGIN,
+      JSON.stringify(userPayload)
+    );
+
+    // ✅ store last phone
+    await SecureStore.setItemAsync(KEY_LAST_LOGIN_PHONE, String(digits));
+
+    // ✅ remember password
+    if (savePassword) {
+      await SecureStore.setItemAsync(KEY_SAVED_PHONE, String(digits));
+      await SecureStore.setItemAsync(
+        KEY_SAVED_PHONE_PASSWORD,
+        String(password || "")
+      );
+    } else {
+      await SecureStore.deleteItemAsync(KEY_SAVED_PHONE);
+      await SecureStore.deleteItemAsync(KEY_SAVED_PHONE_PASSWORD);
+    }
+
+    SafeDeviceEventEmitter.emit("profile-updated", {
+      business_name,
+      business_logo,
+    });
+
+    try {
+      connectMerchantSocket({ user_id, business_id });
+    } catch {}
+
+    // ✅ Navigate
+    navigateHome({
+      business_name,
+      business_logo,
+      business_address,
+      business_id,
+      auth_token: accessToken,
+      user_id: user_id != null ? String(user_id) : "",
+      owner_type,
+      ownerType: owner_type,
+      expo_push_token: deviceId,
+      device_id: deviceId,
+    });
+
+  } catch (e) {
+    const msg =
+      e?.name === "AbortError"
+        ? "Request timeout. Please try again."
+        : "Network error. Please try again.";
+    setErrorText(msg);
+    Alert.alert("Login failed", msg);
+  } finally {
+    clearTimeout(timer);
+    setLoading(false);
+  }
+};
 
   return (
     <KeyboardAvoidingView style={styles.container}>

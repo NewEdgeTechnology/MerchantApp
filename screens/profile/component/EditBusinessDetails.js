@@ -6,7 +6,13 @@
 // ✅ UPDATE: Keyboard opens -> still scrollable to the end
 // ✅ UPDATE: Removed Auto-fill (GPS) button from form (location section)
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   View,
   Text,
@@ -24,7 +30,10 @@ import {
   Dimensions,
   KeyboardAvoidingView,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import * as ImagePicker from "expo-image-picker";
@@ -192,7 +201,10 @@ const filenameFromUri = (uri, fallback) => {
   return last && last.includes(".") ? last : fallback;
 };
 
-const stripBearer = (t) => String(t || "").replace(/^Bearer\s+/i, "").trim();
+const stripBearer = (t) =>
+  String(t || "")
+    .replace(/^Bearer\s+/i, "")
+    .trim();
 const tryParseJson = (v) => {
   try {
     return JSON.parse(v);
@@ -225,7 +237,9 @@ async function getAccessTokenFromLogin() {
         parsed?.jwt;
 
       const tokenMaybeParsed =
-        typeof tokenNode === "string" ? tryParseJson(tokenNode) || tokenNode : tokenNode;
+        typeof tokenNode === "string"
+          ? tryParseJson(tokenNode) || tokenNode
+          : tokenNode;
 
       const candidate = pickFirstString(
         tokenMaybeParsed?.access_token,
@@ -236,12 +250,12 @@ async function getAccessTokenFromLogin() {
         parsed?.access_token,
         parsed?.accessToken,
         parsed?.token,
-        parsed?.jwt
+        parsed?.jwt,
       );
 
       if (candidate) return stripBearer(candidate);
     }
-  } catch { }
+  } catch {}
 
   try {
     const raw = await SecureStore.getItemAsync(KEY_AUTH_TOKEN);
@@ -251,13 +265,19 @@ async function getAccessTokenFromLogin() {
         parsed?.access_token,
         parsed?.accessToken,
         parsed?.token,
-        typeof raw === "string" ? raw : null
+        typeof raw === "string" ? raw : null,
       );
       if (candidate) return stripBearer(candidate);
     }
-  } catch { }
+  } catch {}
 
-  const keysToTry = ["access_token", "ACCESS_TOKEN", "token", "authToken", "AUTH_TOKEN"];
+  const keysToTry = [
+    "access_token",
+    "ACCESS_TOKEN",
+    "token",
+    "authToken",
+    "AUTH_TOKEN",
+  ];
   for (const k of keysToTry) {
     try {
       const raw = await SecureStore.getItemAsync(k);
@@ -267,10 +287,10 @@ async function getAccessTokenFromLogin() {
         parsed?.access_token,
         parsed?.accessToken,
         parsed?.token,
-        typeof raw === "string" ? raw : null
+        typeof raw === "string" ? raw : null,
       );
       if (candidate) return stripBearer(candidate);
-    } catch { }
+    } catch {}
   }
 
   return null;
@@ -281,7 +301,10 @@ async function getAccessTokenFromLogin() {
 async function pickFromGallery() {
   const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!perm.granted) {
-    Alert.alert("Permission required", "Please allow photo access to choose an image.");
+    Alert.alert(
+      "Permission required",
+      "Please allow photo access to choose an image.",
+    );
     return null;
   }
   const res = await ImagePicker.launchImageLibraryAsync({
@@ -296,7 +319,10 @@ async function pickFromGallery() {
 async function pickFromCamera() {
   const perm = await ImagePicker.requestCameraPermissionsAsync();
   if (!perm.granted) {
-    Alert.alert("Permission required", "Please allow camera access to take a photo.");
+    Alert.alert(
+      "Permission required",
+      "Please allow camera access to take a photo.",
+    );
     return null;
   }
   const res = await ImagePicker.launchCameraAsync({
@@ -311,12 +337,15 @@ async function pickFromCamera() {
 /* ---------------- helper to convert comma string to JSON array ---------------- */
 const commaStringToJsonArray = (str) => {
   if (!str || !str.trim()) return null;
-  
+
   // Split by comma, trim each item, remove empty items
-  const items = str.split(',').map(item => item.trim()).filter(item => item.length > 0);
-  
+  const items = str
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
   if (items.length === 0) return null;
-  
+
   // Return as JSON string
   return JSON.stringify(items);
 };
@@ -324,12 +353,12 @@ const commaStringToJsonArray = (str) => {
 /* ---------------- helper to convert JSON array to comma string for display ---------------- */
 const jsonArrayToCommaString = (jsonStr) => {
   if (!jsonStr) return "";
-  
+
   try {
     // If it's already a JSON string, parse it
     const parsed = JSON.parse(jsonStr);
     if (Array.isArray(parsed)) {
-      return parsed.join(', ');
+      return parsed.join(", ");
     }
     return jsonStr;
   } catch {
@@ -356,7 +385,11 @@ const Input = ({ isFocused, onFocus, onBlur, multiline, style, ...props }) => (
 );
 
 const SelectRow = ({ value, onPress }) => (
-  <TouchableOpacity activeOpacity={0.9} onPress={onPress} style={styles.selectRow}>
+  <TouchableOpacity
+    activeOpacity={0.9}
+    onPress={onPress}
+    style={styles.selectRow}
+  >
     <Text style={styles.selectValue}>{value || "Select"}</Text>
     <Ionicons name="chevron-down" size={18} color="#0f172a" />
   </TouchableOpacity>
@@ -367,10 +400,14 @@ export default function EditBusinessDetails() {
   const route = useRoute();
   const insets = useSafeAreaInsets();
 
-  const businessId = route?.params?.business_id ?? route?.params?.businessId ?? null;
+  const businessId =
+    route?.params?.business_id ?? route?.params?.businessId ?? null;
   const initial = route?.params?.initial ?? null;
 
-  const detailsUrl = useMemo(() => buildDetailsUrl(BUSINESS_DETAILS, businessId), [businessId]);
+  const detailsUrl = useMemo(
+    () => buildDetailsUrl(BUSINESS_DETAILS, businessId),
+    [businessId],
+  );
 
   const [loading, setLoading] = useState(!initial);
   const [refreshing, setRefreshing] = useState(false);
@@ -382,7 +419,9 @@ export default function EditBusinessDetails() {
   const [focusedKey, setFocusedKey] = useState(null);
 
   // form state
-  const [business_name, setBusinessName] = useState(safeText(initial?.business_name));
+  const [business_name, setBusinessName] = useState(
+    safeText(initial?.business_name),
+  );
   const [address, setAddress] = useState(safeText(initial?.address));
   const [latitude, setLatitude] = useState(safeText(initial?.latitude));
   const [longitude, setLongitude] = useState(safeText(initial?.longitude));
@@ -403,17 +442,17 @@ export default function EditBusinessDetails() {
 
   const opening_time = useMemo(
     () => (openingClock ? `${openingClock} ${openingMeridiem}` : ""),
-    [openingClock, openingMeridiem]
+    [openingClock, openingMeridiem],
   );
   const closing_time = useMemo(
     () => (closingClock ? `${closingClock} ${closingMeridiem}` : ""),
-    [closingClock, closingMeridiem]
+    [closingClock, closingMeridiem],
   );
 
   const [delivery_option, setDeliveryOption] = useState(
-    safeText(initial?.delivery_option, "BOTH").toUpperCase()
+    safeText(initial?.delivery_option, "BOTH").toUpperCase(),
   );
-  
+
   // Handle holidays as comma-separated string for display, but store as JSON for backend
   const [holidaysDisplay, setHolidaysDisplay] = useState(() => {
     const val = initial?.holidays;
@@ -421,18 +460,21 @@ export default function EditBusinessDetails() {
     return jsonArrayToCommaString(val);
   });
 
-  const [min_amount_for_fd, setMinAmountForFD] = useState(safeText(initial?.min_amount_for_fd));
+  const [min_amount_for_fd, setMinAmountForFD] = useState(
+    safeText(initial?.min_amount_for_fd),
+  );
 
-  const [complementary, setComplementary] = useState(safeText(initial?.complementary));
+  const [complementary, setComplementary] = useState(
+    safeText(initial?.complementary),
+  );
   const [complementary_details, setComplementaryDetails] = useState(
-    safeText(initial?.complementary_details)
+    safeText(initial?.complementary_details),
   );
   const [special_celebration, setSpecialCelebration] = useState(
-    safeText(initial?.special_celebration)
+    safeText(initial?.special_celebration),
   );
-  const [special_celebration_discount_percentage, setCelebrationDiscount] = useState(
-    safeText(initial?.special_celebration_discount_percentage)
-  );
+  const [special_celebration_discount_percentage, setCelebrationDiscount] =
+    useState(safeText(initial?.special_celebration_discount_percentage));
 
   // images
   const [pickedLogo, setPickedLogo] = useState(null);
@@ -488,7 +530,7 @@ export default function EditBusinessDetails() {
       if (ampmTarget === "closing") setClosingMeridiem(val);
       closeAmPmModal();
     },
-    [ampmTarget, closeAmPmModal]
+    [ampmTarget, closeAmPmModal],
   );
 
   const displayLogoUrl = useMemo(() => {
@@ -528,7 +570,7 @@ export default function EditBusinessDetails() {
 
       const out = parts.join(", ").replace(/\s+/g, " ").trim();
       if (out) setAddress(out);
-    } catch { }
+    } catch {}
   }, []);
 
   const applyCoords = useCallback(
@@ -554,7 +596,7 @@ export default function EditBusinessDetails() {
         await reverseGeocodeToAddress(latNum, lngNum);
       }
     },
-    [reverseGeocodeToAddress]
+    [reverseGeocodeToAddress],
   );
 
   const useCurrentLocation = useCallback(async () => {
@@ -673,7 +715,8 @@ export default function EditBusinessDetails() {
         isRefresh ? setRefreshing(true) : setLoading(true);
 
         const accessToken = await getAccessTokenFromLogin();
-        if (!accessToken) throw new Error("Access token not found. Please login again.");
+        if (!accessToken)
+          throw new Error("Access token not found. Please login again.");
 
         const res = await fetch(detailsUrl, {
           method: "GET",
@@ -686,7 +729,8 @@ export default function EditBusinessDetails() {
 
         const json = await res.json().catch(() => null);
         if (!res.ok) {
-          const msg = json?.message || json?.error || `Request failed (${res.status})`;
+          const msg =
+            json?.message || json?.error || `Request failed (${res.status})`;
           throw new Error(msg);
         }
 
@@ -716,8 +760,10 @@ export default function EditBusinessDetails() {
         setClosingClock(c.time);
         setClosingMeridiem(c.meridiem);
 
-        setDeliveryOption(safeText(data?.delivery_option, "BOTH").toUpperCase());
-        
+        setDeliveryOption(
+          safeText(data?.delivery_option, "BOTH").toUpperCase(),
+        );
+
         // Handle holidays - convert from JSON to display string
         const holidayVal = data?.holidays;
         if (holidayVal) {
@@ -725,26 +771,31 @@ export default function EditBusinessDetails() {
         } else {
           setHolidaysDisplay("");
         }
-        
+
         setMinAmountForFD(safeText(data?.min_amount_for_fd));
         setComplementary(safeText(data?.complementary));
         setComplementaryDetails(safeText(data?.complementary_details));
         setSpecialCelebration(safeText(data?.special_celebration));
-        setCelebrationDiscount(safeText(data?.special_celebration_discount_percentage));
+        setCelebrationDiscount(
+          safeText(data?.special_celebration_discount_percentage),
+        );
       } catch (e) {
         Alert.alert("Error", String(e?.message || e));
       } finally {
         isRefresh ? setRefreshing(false) : setLoading(false);
       }
     },
-    [detailsUrl, businessId]
+    [detailsUrl, businessId],
   );
 
   useEffect(() => {
     if (!initial) loadDetails();
   }, [initial, loadDetails]);
 
-  const onRefresh = useCallback(() => loadDetails({ isRefresh: true }), [loadDetails]);
+  const onRefresh = useCallback(
+    () => loadDetails({ isRefresh: true }),
+    [loadDetails],
+  );
 
   const chooseFromGallery = useCallback(async () => {
     try {
@@ -775,8 +826,10 @@ export default function EditBusinessDetails() {
   const validate = useCallback(() => {
     if (!business_name.trim()) return "Business name is required";
     if (!delivery_option.trim()) return "Delivery option is required";
-    if (latitude && !Number.isFinite(Number(latitude))) return "Latitude must be a number";
-    if (longitude && !Number.isFinite(Number(longitude))) return "Longitude must be a number";
+    if (latitude && !Number.isFinite(Number(latitude)))
+      return "Latitude must be a number";
+    if (longitude && !Number.isFinite(Number(longitude)))
+      return "Longitude must be a number";
 
     if (min_amount_for_fd && !Number.isFinite(Number(min_amount_for_fd))) {
       return "Min amount for FD must be a number";
@@ -791,7 +844,7 @@ export default function EditBusinessDetails() {
     ) {
       return "Discount % must be a number";
     }
-    
+
     return "";
   }, [
     business_name,
@@ -819,13 +872,13 @@ export default function EditBusinessDetails() {
       "special_celebration_discount_percentage",
       "min_amount_for_fd",
     ],
-    []
+    [],
   );
 
   const buildPayload = useCallback(() => {
     // Convert holidays display string to JSON array for backend
     const holidaysJson = commaStringToJsonArray(holidaysDisplay);
-    
+
     const payload = {
       business_name: business_name.trim(),
       latitude: latitude.trim() || null,
@@ -838,7 +891,8 @@ export default function EditBusinessDetails() {
       closing_time: normalizeTime(closing_time),
       holidays: holidaysJson,
       special_celebration: special_celebration.trim() || null,
-      special_celebration_discount_percentage: special_celebration_discount_percentage.trim() || null,
+      special_celebration_discount_percentage:
+        special_celebration_discount_percentage.trim() || null,
       min_amount_for_fd: min_amount_for_fd.trim() || null,
     };
 
@@ -879,7 +933,7 @@ export default function EditBusinessDetails() {
       // Get the current value from display string
       const currentDisplay = holidaysDisplay;
       const currentJson = commaStringToJsonArray(currentDisplay);
-      
+
       // Get the original value from the object
       let originalJson = null;
       if (v) {
@@ -902,7 +956,7 @@ export default function EditBusinessDetails() {
           originalJson = JSON.stringify([String(v)]);
         }
       }
-      
+
       return (currentJson || "") === (originalJson || "");
     }
 
@@ -924,14 +978,15 @@ export default function EditBusinessDetails() {
     setSaving(true);
     try {
       const accessToken = await getAccessTokenFromLogin();
-      if (!accessToken) throw new Error("Access token not found. Please login again.");
+      if (!accessToken)
+        throw new Error("Access token not found. Please login again.");
 
       const hasFiles = !!pickedLogo?.uri || !!pickedLicense?.uri;
       const payload = buildPayload();
 
       const base = details || initial || {};
       const supportedChanged = BACKEND_KEYS.some(
-        (k) => valueForCompare(k, base) !== valueForCompare(k, payload)
+        (k) => valueForCompare(k, base) !== valueForCompare(k, payload),
       );
 
       if (!supportedChanged && !hasFiles) {
@@ -969,7 +1024,10 @@ export default function EditBusinessDetails() {
 
         res = await fetch(detailsUrl, {
           method: "PUT",
-          headers: { Accept: "application/json", Authorization: `Bearer ${accessToken}` },
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
           body: form,
         });
       } else {
@@ -991,9 +1049,12 @@ export default function EditBusinessDetails() {
 
       const json = await res.json().catch(() => null);
       if (!res.ok) {
-        const msg = json?.message || json?.error || `Update failed (${res.status})`;
+        const msg =
+          json?.message || json?.error || `Update failed (${res.status})`;
         if (res.status === 401 || /expired|invalid/i.test(msg)) {
-          throw new Error("Invalid or expired token. Please logout and login again.");
+          throw new Error(
+            "Invalid or expired token. Please logout and login again.",
+          );
         }
         throw new Error(msg);
       }
@@ -1035,23 +1096,40 @@ export default function EditBusinessDetails() {
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
       {/* ✅ FULLSCREEN MAP PICKER MODAL (user-friendly center pin) */}
-      <Modal visible={mapOpen} animationType="slide" onRequestClose={closeMapPicker}>
-        <SafeAreaView style={styles.mapFullSafe} edges={["top", "left", "right", "bottom"]}>
+      <Modal
+        visible={mapOpen}
+        animationType="slide"
+        onRequestClose={closeMapPicker}
+      >
+        <SafeAreaView
+          style={styles.mapFullSafe}
+          edges={["top", "left", "right", "bottom"]}
+        >
           <View style={styles.mapFullHeader}>
-            <TouchableOpacity onPress={closeMapPicker} style={styles.mapFullIconBtn} activeOpacity={0.8}>
+            <TouchableOpacity
+              onPress={closeMapPicker}
+              style={styles.mapFullIconBtn}
+              activeOpacity={0.8}
+            >
               <Ionicons name="arrow-back" size={22} color="#0f172a" />
             </TouchableOpacity>
 
             <Text style={styles.mapFullTitle}>Pick Location</Text>
 
-            <TouchableOpacity onPress={closeMapPicker} style={styles.mapFullIconBtn} activeOpacity={0.8}>
+            <TouchableOpacity
+              onPress={closeMapPicker}
+              style={styles.mapFullIconBtn}
+              activeOpacity={0.8}
+            >
               <Ionicons name="close" size={22} color="#0f172a" />
             </TouchableOpacity>
           </View>
 
           <View style={styles.mapFullHelpRow}>
             <Ionicons name="hand-left-outline" size={16} color="#475569" />
-            <Text style={styles.mapFullHelpText}>Move the map so the pin is on your exact location.</Text>
+            <Text style={styles.mapFullHelpText}>
+              Move the map so the pin is on your exact location.
+            </Text>
           </View>
 
           <View style={styles.mapFullMapWrap}>
@@ -1067,7 +1145,10 @@ export default function EditBusinessDetails() {
               }
               onRegionChangeComplete={(r) => setMapRegion(r)}
             >
-              <UrlTile urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maximumZ={19} />
+              <UrlTile
+                urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                maximumZ={19}
+              />
             </MapView>
 
             {/* Center Pin Overlay */}
@@ -1079,15 +1160,24 @@ export default function EditBusinessDetails() {
             {/* Bottom card */}
             <View style={styles.mapFullBottomCard}>
               <Text style={styles.mapFullBottomText} numberOfLines={1}>
-                Lat: {mapRegion?.latitude ? Number(mapRegion.latitude).toFixed(6) : latitude || "—"} • Lng:{" "}
-                {mapRegion?.longitude ? Number(mapRegion.longitude).toFixed(6) : longitude || "—"}
+                Lat:{" "}
+                {mapRegion?.latitude
+                  ? Number(mapRegion.latitude).toFixed(6)
+                  : latitude || "—"}{" "}
+                • Lng:{" "}
+                {mapRegion?.longitude
+                  ? Number(mapRegion.longitude).toFixed(6)
+                  : longitude || "—"}
               </Text>
 
               <View style={{ height: 10 }} />
 
               <View style={styles.mapFullBtnRow}>
                 <TouchableOpacity
-                  style={[styles.mapFullBtn, locating ? { opacity: 0.75 } : null]}
+                  style={[
+                    styles.mapFullBtn,
+                    locating ? { opacity: 0.75 } : null,
+                  ]}
                   onPress={useCurrentLocation}
                   activeOpacity={0.9}
                   disabled={locating}
@@ -1096,20 +1186,35 @@ export default function EditBusinessDetails() {
                     <ActivityIndicator />
                   ) : (
                     <>
-                      <Ionicons name="locate-outline" size={18} color="#0f172a" />
+                      <Ionicons
+                        name="locate-outline"
+                        size={18}
+                        color="#0f172a"
+                      />
                       <Text style={styles.mapFullBtnText}>Current</Text>
                     </>
                   )}
                 </TouchableOpacity>
 
-                <TouchableOpacity style={[styles.mapFullBtn, styles.mapFullBtnPrimary]} onPress={confirmMapSelection} activeOpacity={0.9}>
-                  <Ionicons name="checkmark-circle-outline" size={18} color="#fff" />
-                  <Text style={[styles.mapFullBtnText, { color: "#fff" }]}>Set Location</Text>
+                <TouchableOpacity
+                  style={[styles.mapFullBtn, styles.mapFullBtnPrimary]}
+                  onPress={confirmMapSelection}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons
+                    name="checkmark-circle-outline"
+                    size={18}
+                    color="#fff"
+                  />
+                  <Text style={[styles.mapFullBtnText, { color: "#fff" }]}>
+                    Set Location
+                  </Text>
                 </TouchableOpacity>
               </View>
 
               <Text style={styles.mapFullBottomHint} numberOfLines={2}>
-                Tip: zoom in for better accuracy. Address will auto-fill if available.
+                Tip: zoom in for better accuracy. Address will auto-fill if
+                available.
               </Text>
             </View>
           </View>
@@ -1117,9 +1222,14 @@ export default function EditBusinessDetails() {
       </Modal>
 
       {/* ✅ AM/PM dropdown modal */}
-      <Modal visible={ampmModalOpen} transparent animationType="fade" onRequestClose={closeAmPmModal}>
+      <Modal
+        visible={ampmModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={closeAmPmModal}
+      >
         <Pressable style={styles.modalBackdrop} onPress={closeAmPmModal}>
-          <Pressable style={styles.sourceCard} onPress={() => { }}>
+          <Pressable style={styles.sourceCard} onPress={() => {}}>
             <Text style={styles.sourceTitle}>Select AM / PM</Text>
 
             {["AM", "PM"].map((opt) => {
@@ -1135,12 +1245,18 @@ export default function EditBusinessDetails() {
                   activeOpacity={0.9}
                 >
                   <Text style={styles.sourceBtnText}>{opt}</Text>
-                  {active ? <Ionicons name="checkmark" size={18} color="#0f172a" /> : null}
+                  {active ? (
+                    <Ionicons name="checkmark" size={18} color="#0f172a" />
+                  ) : null}
                 </TouchableOpacity>
               );
             })}
 
-            <TouchableOpacity style={styles.sourceCancel} onPress={closeAmPmModal} activeOpacity={0.9}>
+            <TouchableOpacity
+              style={styles.sourceCancel}
+              onPress={closeAmPmModal}
+              activeOpacity={0.9}
+            >
               <Text style={styles.sourceCancelText}>Cancel</Text>
             </TouchableOpacity>
           </Pressable>
@@ -1154,8 +1270,11 @@ export default function EditBusinessDetails() {
         animationType="fade"
         onRequestClose={() => setDeliveryModalOpen(false)}
       >
-        <Pressable style={styles.modalBackdrop} onPress={() => setDeliveryModalOpen(false)}>
-          <Pressable style={styles.sourceCard} onPress={() => { }}>
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setDeliveryModalOpen(false)}
+        >
+          <Pressable style={styles.sourceCard} onPress={() => {}}>
             <Text style={styles.sourceTitle}>Delivery Option</Text>
 
             {["GRAB", "BOTH", "SELF"].map((opt) => (
@@ -1169,11 +1288,17 @@ export default function EditBusinessDetails() {
                 activeOpacity={0.9}
               >
                 <Text style={styles.sourceBtnText}>{opt}</Text>
-                {delivery_option === opt ? <Ionicons name="checkmark" size={18} color="#0f172a" /> : null}
+                {delivery_option === opt ? (
+                  <Ionicons name="checkmark" size={18} color="#0f172a" />
+                ) : null}
               </TouchableOpacity>
             ))}
 
-            <TouchableOpacity style={styles.sourceCancel} onPress={() => setDeliveryModalOpen(false)} activeOpacity={0.9}>
+            <TouchableOpacity
+              style={styles.sourceCancel}
+              onPress={() => setDeliveryModalOpen(false)}
+              activeOpacity={0.9}
+            >
               <Text style={styles.sourceCancelText}>Cancel</Text>
             </TouchableOpacity>
           </Pressable>
@@ -1181,39 +1306,69 @@ export default function EditBusinessDetails() {
       </Modal>
 
       {/* Image viewer modal */}
-      <Modal visible={imgModalOpen} transparent animationType="fade" onRequestClose={closeImageModal}>
+      <Modal
+        visible={imgModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={closeImageModal}
+      >
         <Pressable style={styles.modalBackdrop} onPress={closeImageModal}>
-          <Pressable style={styles.modalCard} onPress={() => { }}>
+          <Pressable style={styles.modalCard} onPress={() => {}}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle} numberOfLines={1}>
                 {imgModalTitle}
               </Text>
-              <TouchableOpacity onPress={closeImageModal} style={styles.modalCloseBtn} activeOpacity={0.8}>
+              <TouchableOpacity
+                onPress={closeImageModal}
+                style={styles.modalCloseBtn}
+                activeOpacity={0.8}
+              >
                 <Ionicons name="close" size={20} color="#0f172a" />
               </TouchableOpacity>
             </View>
-            <Image source={{ uri: imgModalUri }} style={styles.modalImage} resizeMode="contain" />
+            <Image
+              source={{ uri: imgModalUri }}
+              style={styles.modalImage}
+              resizeMode="contain"
+            />
           </Pressable>
         </Pressable>
       </Modal>
 
       {/* Source chooser modal */}
-      <Modal visible={sourceModalOpen} transparent animationType="fade" onRequestClose={closeSourceModal}>
+      <Modal
+        visible={sourceModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={closeSourceModal}
+      >
         <Pressable style={styles.modalBackdrop} onPress={closeSourceModal}>
-          <Pressable style={styles.sourceCard} onPress={() => { }}>
+          <Pressable style={styles.sourceCard} onPress={() => {}}>
             <Text style={styles.sourceTitle}>Choose image source</Text>
 
-            <TouchableOpacity style={styles.sourceBtn} onPress={chooseFromCamera} activeOpacity={0.9}>
+            <TouchableOpacity
+              style={styles.sourceBtn}
+              onPress={chooseFromCamera}
+              activeOpacity={0.9}
+            >
               <Ionicons name="camera-outline" size={18} color="#0f172a" />
               <Text style={styles.sourceBtnText}>Camera</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.sourceBtn} onPress={chooseFromGallery} activeOpacity={0.9}>
+            <TouchableOpacity
+              style={styles.sourceBtn}
+              onPress={chooseFromGallery}
+              activeOpacity={0.9}
+            >
               <Ionicons name="images-outline" size={18} color="#0f172a" />
               <Text style={styles.sourceBtnText}>Gallery</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.sourceCancel} onPress={closeSourceModal} activeOpacity={0.9}>
+            <TouchableOpacity
+              style={styles.sourceCancel}
+              onPress={closeSourceModal}
+              activeOpacity={0.9}
+            >
               <Text style={styles.sourceCancelText}>Cancel</Text>
             </TouchableOpacity>
           </Pressable>
@@ -1222,11 +1377,19 @@ export default function EditBusinessDetails() {
 
       {/* Header */}
       <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+          activeOpacity={0.7}
+        >
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Edit Business</Text>
-        <TouchableOpacity onPress={onRefresh} style={styles.iconBtn} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={onRefresh}
+          style={styles.iconBtn}
+          activeOpacity={0.7}
+        >
           <Ionicons name="refresh" size={20} color="#0f172a" />
         </TouchableOpacity>
       </View>
@@ -1239,10 +1402,17 @@ export default function EditBusinessDetails() {
       >
         <ScrollView
           style={{ flex: 1 }}
-          contentContainerStyle={[styles.scrollInner, { flexGrow: 1, paddingBottom: EXTRA_KB_SPACE }]}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          contentContainerStyle={[
+            styles.scrollInner,
+            { flexGrow: 1, paddingBottom: EXTRA_KB_SPACE },
+          ]}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
+          keyboardDismissMode={
+            Platform.OS === "ios" ? "interactive" : "on-drag"
+          }
           scrollIndicatorInsets={{ bottom: EXTRA_KB_SPACE }}
           contentInset={{ bottom: EXTRA_KB_SPACE }}
           contentInsetAdjustmentBehavior="always"
@@ -1255,11 +1425,18 @@ export default function EditBusinessDetails() {
             <View style={styles.imageRow}>
               <TouchableOpacity
                 activeOpacity={0.9}
-                onPress={() => displayLogoUrl && openImageModal("Business Logo", displayLogoUrl)}
+                onPress={() =>
+                  displayLogoUrl &&
+                  openImageModal("Business Logo", displayLogoUrl)
+                }
                 style={styles.imageBox}
               >
                 {displayLogoUrl ? (
-                  <Image source={{ uri: displayLogoUrl }} style={styles.image} resizeMode="cover" />
+                  <Image
+                    source={{ uri: displayLogoUrl }}
+                    style={styles.image}
+                    resizeMode="cover"
+                  />
                 ) : (
                   <View style={styles.imageEmpty}>
                     <Ionicons name="image-outline" size={22} color="#64748b" />
@@ -1269,14 +1446,30 @@ export default function EditBusinessDetails() {
               </TouchableOpacity>
 
               <View style={{ flex: 1, gap: 8 }}>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => openSourceModal("logo")} activeOpacity={0.9}>
-                  <Ionicons name="cloud-upload-outline" size={18} color="#0f172a" />
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={() => openSourceModal("logo")}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons
+                    name="cloud-upload-outline"
+                    size={18}
+                    color="#0f172a"
+                  />
                   <Text style={styles.actionText}>Change</Text>
                 </TouchableOpacity>
 
                 {pickedLogo?.uri ? (
-                  <TouchableOpacity style={styles.actionBtnSoft} onPress={() => setPickedLogo(null)} activeOpacity={0.9}>
-                    <Ionicons name="close-circle-outline" size={18} color="#0f172a" />
+                  <TouchableOpacity
+                    style={styles.actionBtnSoft}
+                    onPress={() => setPickedLogo(null)}
+                    activeOpacity={0.9}
+                  >
+                    <Ionicons
+                      name="close-circle-outline"
+                      size={18}
+                      color="#0f172a"
+                    />
                     <Text style={styles.actionText}>Remove selected</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -1289,29 +1482,50 @@ export default function EditBusinessDetails() {
             <View style={styles.imageRow}>
               <TouchableOpacity
                 activeOpacity={0.9}
-                onPress={() => displayLicenseUrl && openImageModal("License Image", displayLicenseUrl)}
+                onPress={() =>
+                  displayLicenseUrl &&
+                  openImageModal("License Image", displayLicenseUrl)
+                }
                 style={styles.imageBox}
               >
                 {displayLicenseUrl ? (
-                  <Image source={{ uri: displayLicenseUrl }} style={styles.image} resizeMode="cover" />
+                  <Image
+                    source={{ uri: displayLicenseUrl }}
+                    style={styles.image}
+                    resizeMode="cover"
+                  />
                 ) : (
                   <View style={styles.imageEmpty}>
-                    <Ionicons name="document-outline" size={22} color="#64748b" />
+                    <Ionicons
+                      name="document-outline"
+                      size={22}
+                      color="#64748b"
+                    />
                     <Text style={styles.emptyText}>No license</Text>
                   </View>
                 )}
               </TouchableOpacity>
 
               <View style={{ flex: 1, gap: 8 }}>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => openSourceModal("license")} activeOpacity={0.9}>
-                  <Ionicons name="cloud-upload-outline" size={18} color="#0f172a" />
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={() => openSourceModal("license")}
+                  activeOpacity={0.9}
+                >
+                  <Ionicons
+                    name="cloud-upload-outline"
+                    size={18}
+                    color="#0f172a"
+                  />
                   <Text style={styles.actionText}>Change</Text>
                 </TouchableOpacity>
 
                 {displayLicenseUrl ? (
                   <TouchableOpacity
                     style={styles.actionBtnSoft}
-                    onPress={() => openImageModal("License Image", displayLicenseUrl)}
+                    onPress={() =>
+                      openImageModal("License Image", displayLicenseUrl)
+                    }
                     activeOpacity={0.9}
                   >
                     <Ionicons name="eye-outline" size={18} color="#0f172a" />
@@ -1320,8 +1534,16 @@ export default function EditBusinessDetails() {
                 ) : null}
 
                 {pickedLicense?.uri ? (
-                  <TouchableOpacity style={styles.actionBtnSoft} onPress={() => setPickedLicense(null)} activeOpacity={0.9}>
-                    <Ionicons name="close-circle-outline" size={18} color="#0f172a" />
+                  <TouchableOpacity
+                    style={styles.actionBtnSoft}
+                    onPress={() => setPickedLicense(null)}
+                    activeOpacity={0.9}
+                  >
+                    <Ionicons
+                      name="close-circle-outline"
+                      size={18}
+                      color="#0f172a"
+                    />
                     <Text style={styles.actionText}>Remove selected</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -1344,7 +1566,10 @@ export default function EditBusinessDetails() {
             />
 
             <Label>Delivery Option</Label>
-            <SelectRow value={delivery_option} onPress={() => setDeliveryModalOpen(true)} />
+            <SelectRow
+              value={delivery_option}
+              onPress={() => setDeliveryModalOpen(true)}
+            />
 
             <Label>Min amount for FD</Label>
             <Input
@@ -1375,7 +1600,11 @@ export default function EditBusinessDetails() {
 
             {/* ✅ Removed Auto-fill (GPS) button */}
             <View style={styles.locActions}>
-              <TouchableOpacity style={styles.locBtnFull} onPress={openMapPicker} activeOpacity={0.9}>
+              <TouchableOpacity
+                style={styles.locBtnFull}
+                onPress={openMapPicker}
+                activeOpacity={0.9}
+              >
                 <Ionicons name="map-outline" size={18} color="#0f172a" />
                 <Text style={styles.locBtnText}>Pick on Map</Text>
               </TouchableOpacity>
@@ -1428,7 +1657,11 @@ export default function EditBusinessDetails() {
                       onBlur={() => setFocusedKey(null)}
                     />
                   </View>
-                  <TouchableOpacity style={styles.ampmBtn} onPress={() => openAmPmModal("opening")} activeOpacity={0.9}>
+                  <TouchableOpacity
+                    style={styles.ampmBtn}
+                    onPress={() => openAmPmModal("opening")}
+                    activeOpacity={0.9}
+                  >
                     <Text style={styles.ampmText}>{openingMeridiem}</Text>
                     <Ionicons name="chevron-down" size={16} color="#0f172a" />
                   </TouchableOpacity>
@@ -1449,7 +1682,11 @@ export default function EditBusinessDetails() {
                       onBlur={() => setFocusedKey(null)}
                     />
                   </View>
-                  <TouchableOpacity style={styles.ampmBtn} onPress={() => openAmPmModal("closing")} activeOpacity={0.9}>
+                  <TouchableOpacity
+                    style={styles.ampmBtn}
+                    onPress={() => openAmPmModal("closing")}
+                    activeOpacity={0.9}
+                  >
                     <Text style={styles.ampmText}>{closingMeridiem}</Text>
                     <Ionicons name="chevron-down" size={16} color="#0f172a" />
                   </TouchableOpacity>
@@ -1493,8 +1730,12 @@ export default function EditBusinessDetails() {
               onChangeText={setCelebrationDiscount}
               placeholder="10"
               keyboardType="numeric"
-              isFocused={focusedKey === "special_celebration_discount_percentage"}
-              onFocus={() => setFocusedKey("special_celebration_discount_percentage")}
+              isFocused={
+                focusedKey === "special_celebration_discount_percentage"
+              }
+              onFocus={() =>
+                setFocusedKey("special_celebration_discount_percentage")
+              }
               onBlur={() => setFocusedKey(null)}
             />
 
@@ -1559,13 +1800,37 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     backgroundColor: "#fff",
   },
-  backBtn: { height: 40, width: 40, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  iconBtn: { height: 40, width: 40, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  headerTitle: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "700", color: "#0f172a" },
+  backBtn: {
+    height: 40,
+    width: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iconBtn: {
+    height: 40,
+    width: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
 
   scrollInner: { padding: 18, paddingBottom: 28 },
 
-  centerWrap: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 24, backgroundColor: "#fff" },
+  centerWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+    backgroundColor: "#fff",
+  },
   muted: { marginTop: 10, color: "#475569" },
 
   card: {
@@ -1576,9 +1841,20 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 16,
   },
-  cardTitle: { fontSize: SCREEN_W > 400 ? 16 : 15, fontWeight: "800", color: "#0f172a", marginBottom: 10 },
+  cardTitle: {
+    fontSize: SCREEN_W > 400 ? 16 : 15,
+    fontWeight: "800",
+    color: "#0f172a",
+    marginBottom: 10,
+  },
 
-  label: { fontSize: 12, color: "#64748b", fontWeight: "700", marginTop: 10, marginBottom: 6 },
+  label: {
+    fontSize: 12,
+    color: "#64748b",
+    fontWeight: "700",
+    marginTop: 10,
+    marginBottom: 6,
+  },
 
   inputWrap: {
     backgroundColor: "#fff",
@@ -1589,7 +1865,12 @@ const styles = StyleSheet.create({
   inputWrapFocused: {
     borderColor: "#00b14f",
   },
-  input: { paddingHorizontal: 12, paddingVertical: 12, fontSize: SCREEN_W > 400 ? 16 : 14, color: "#0f172a" },
+  input: {
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    fontSize: SCREEN_W > 400 ? 16 : 14,
+    color: "#0f172a",
+  },
   inputMultiline: { minHeight: 90, textAlignVertical: "top" },
 
   grid2: { flexDirection: "row", gap: 10, marginTop: 4 },
@@ -1605,7 +1886,13 @@ const styles = StyleSheet.create({
     borderColor: "#e2e8f0",
   },
   image: { width: "100%", height: "100%" },
-  imageEmpty: { flex: 1, alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: "#f8fafc" },
+  imageEmpty: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "#f8fafc",
+  },
   emptyText: { fontSize: 12, color: "#64748b", fontWeight: "700" },
 
   actionBtn: {
@@ -1632,7 +1919,11 @@ const styles = StyleSheet.create({
   },
   actionText: { fontSize: 12, fontWeight: "700", color: "#0f172a" },
 
-  divider: { height: StyleSheet.hairlineWidth, backgroundColor: "#e5e7eb", marginVertical: 12 },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#e5e7eb",
+    marginVertical: 12,
+  },
 
   timeRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   ampmBtn: {
@@ -1658,7 +1949,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
   },
-  saveText: { color: "#fff", fontWeight: "700", fontSize: SCREEN_W > 400 ? 16 : 14 },
+  saveText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: SCREEN_W > 400 ? 16 : 14,
+  },
 
   modalBackdrop: {
     flex: 1,
@@ -1686,7 +1981,13 @@ const styles = StyleSheet.create({
     borderBottomColor: "#e5e7eb",
     backgroundColor: "#fff",
   },
-  modalTitle: { fontSize: 13, fontWeight: "800", color: "#0f172a", flex: 1, marginRight: 10 },
+  modalTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#0f172a",
+    flex: 1,
+    marginRight: 10,
+  },
   modalCloseBtn: {
     width: 34,
     height: 34,
@@ -1697,7 +1998,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e2e8f0",
   },
-  modalImage: { width: "100%", height: SCREEN_H * 0.55, backgroundColor: "#0f172a" },
+  modalImage: {
+    width: "100%",
+    height: SCREEN_H * 0.55,
+    backgroundColor: "#0f172a",
+  },
 
   sourceCard: {
     width: Math.min(SCREEN_W - 32, 360),
@@ -1707,7 +2012,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e2e8f0",
   },
-  sourceTitle: { fontSize: 15, fontWeight: "800", color: "#0f172a", marginBottom: 10 },
+  sourceTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0f172a",
+    marginBottom: 10,
+  },
   sourceBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1803,7 +2113,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     backgroundColor: "#fff",
   },
-  mapFullHelpText: { flex: 1, fontSize: 12, fontWeight: "700", color: "#475569" },
+  mapFullHelpText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#475569",
+  },
 
   mapFullMapWrap: { flex: 1, backgroundColor: "#fff" },
 
@@ -1857,13 +2172,18 @@ const styles = StyleSheet.create({
   },
   mapFullBtnText: { fontSize: 13, fontWeight: "900", color: "#0f172a" },
 
-  mapFullBottomHint: { marginTop: 10, fontSize: 11, color: "#64748b", fontWeight: "700" },
+  mapFullBottomHint: {
+    marginTop: 10,
+    fontSize: 11,
+    color: "#64748b",
+    fontWeight: "700",
+  },
 
   hintText: {
     fontSize: 11,
-    color: '#64748b',
+    color: "#64748b",
     marginTop: 4,
     marginLeft: 4,
-    fontWeight: '500',
+    fontWeight: "500",
   },
 });
