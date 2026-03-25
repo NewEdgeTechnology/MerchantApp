@@ -1053,6 +1053,7 @@ export default function OrderDetails() {
     return "self";
   });
 
+
   const isBothOption = deliveryOptionInitial === "BOTH";
   const isSelfSelected = deliveryChoice === "self";
   const isGrabSelected = deliveryChoice === "grab";

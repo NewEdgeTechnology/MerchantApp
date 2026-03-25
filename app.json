@@ -18,7 +18,21 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": false
+          "NSAllowsArbitraryLoads": true,
+          "NSExceptionDomains": {
+            "openstreetmap.org": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionAllowsInsecureHTTPLoads": false
+            },
+            "tile.openstreetmap.org": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionAllowsInsecureHTTPLoads": false
+            },
+            "router.project-osrm.org": {
+              "NSIncludesSubdomains": true,
+              "NSExceptionAllowsInsecureHTTPLoads": false
+            }
+          }
         },
         "NSLocationWhenInUseUsageDescription": "We need your location for business verification and nearby customer features.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "We need your location to provide location-based services.",
@@ -30,7 +44,6 @@
     "android": {
       "package": "com.newedge.tabdheymerchant",
       "versionCode": 1,
-      "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
@@ -57,12 +70,7 @@
       "expo-font",
       "expo-secure-store",
       [
-        "expo-build-properties",
-        {
-          "android": {
-            "usesCleartextTraffic": false
-          }
-        }
+        "expo-build-properties"
       ],
       [
         "expo-location",
@@ -84,12 +92,6 @@
         }
       ]
     ],
-    "updates": {
-      "enabled": false,
-      "checkAutomatically": "NEVER",
-      "fallbackToCacheTimeout": 0
-    },
-    "runtimeVersion": "1.0.0",
     "extra": {
       "eas": {
         "projectId": "39465596-f80e-4ebb-b661-e149cd200ad8"

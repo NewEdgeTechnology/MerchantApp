@@ -39,7 +39,7 @@ import {
 // Shared socket connector
 import { connectMerchantSocket } from "../realtime/merchantSocket";
 import { getExpoPushTokenAsync } from "../../utils/getExpoPushTokenAsync";
-import { getStableDeviceId } from "../../utils/deviceId";
+// import { getStableDeviceId } from "../../utils/deviceId";
 /* ===== Safe emitter (no-op if unavailable) ===== */
 const SafeDeviceEventEmitter =
   RNDeviceEventEmitter && typeof RNDeviceEventEmitter.emit === "function"
@@ -227,12 +227,17 @@ const LoginScreen = () => {
     fetchPushToken();
   }, []);
   useEffect(() => {
-    (async () => {
-      const id = await getStableDeviceId();
-      setDeviceId(id);
-      console.log("Stable device_id:", id);
-    })();
-  }, []);
+  const initDeviceId = async () => {
+    const token = await getExpoPushTokenAsync();
+
+    setPushToken(token);     // already used in your screen
+    setDeviceId(token);      // ✅ THIS becomes your device_id
+
+    console.log("Expo device_id:", token);
+  };
+
+  initDeviceId();
+}, []);
   /** Load saved creds (email-first; fallback to legacy username) */
   const loadSavedState = async () => {
     try {
@@ -437,160 +442,182 @@ const LoginScreen = () => {
   };
 
   const handleLogin = async () => {
-    if (!endpoint) {
-      Alert.alert(
-        "Configuration error",
-        "LOGIN_USERNAME_MERCHANT_ENDPOINT is not set in your .env file."
-      );
+  if (!endpoint) {
+    Alert.alert(
+      "Configuration error",
+      "LOGIN_USERNAME_MERCHANT_ENDPOINT is not set in your .env file."
+    );
+    return;
+  }
+
+  if (!(email && password)) return;
+
+  setErrorText("");
+  setLoading(true);
+
+  try {
+    // ✅ ALWAYS fetch fresh Expo token
+    const getValidExpoToken = async () => {
+      let token = await getExpoPushTokenAsync();
+
+      if (!token || !token.startsWith("ExponentPushToken")) {
+        await new Promise((res) => setTimeout(res, 1000));
+        token = await getExpoPushTokenAsync();
+      }
+
+      return token;
+    };
+
+    const expoToken = await getValidExpoToken();
+
+    if (!expoToken) {
+      Alert.alert("Error", "Unable to get device token. Please try again.");
       return;
     }
-    if (!(email && password && deviceId)) return;
 
-    setErrorText("");
-    setLoading(true);
-    console.log("Logging in with email:", email, "and push token:", pushToken);
+    console.log("LOGIN device_id (Expo):", expoToken);
 
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        email: String(email || "").trim().toLowerCase(),
+        password: String(password || ""),
+        device_id: expoToken,   // ✅ FIXED
+        push_token: expoToken,  // optional
+      }),
+    });
+
+    const txt = await res.text();
+    let data = {};
     try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          email: String(email || "").trim().toLowerCase(),
-          password: String(password || ""),
-          device_id: String(deviceId || ""),      // ✅ stable ID for login
-          push_token: String(pushToken || ""),    // ✅ keep push token separate (optional)
-        }),
-      });
-
-      const txt = await res.text();
-      let data = {};
-      try {
-        data = txt ? JSON.parse(txt) : {};
-      } catch {
-        data = {};
-      }
-
-      if (!res.ok) {
-        throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
-      }
-
-      // ✅ your response shape:
-      // { message, token:{access_token,refresh_token,...}, user:{user_id,business_id,...} }
-      const tokenObj = data?.token || {};
-      const userObj = data?.user || {};
-
-      const accessToken =
-        tokenObj?.access_token ||
-        tokenObj?.accessToken ||
-        data?.access_token ||
-        data?.accessToken ||
-        "";
-
-      const refreshToken =
-        tokenObj?.refresh_token ||
-        tokenObj?.refreshToken ||
-        data?.refresh_token ||
-        data?.refreshToken ||
-        "";
-
-      const user_id = userObj?.user_id ?? data?.user_id ?? data?.id ?? null;
-
-      const business_id = userObj?.business_id ?? data?.business_id ?? null;
-
-      if (!accessToken) {
-        throw new Error("Login succeeded but access_token missing.");
-      }
-
-      // ✅ Save tokens
-      await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
-      if (refreshToken) {
-        await SecureStore.setItemAsync(KEY_REFRESH_TOKEN, String(refreshToken));
-      }
-
-      // ✅ Always store last used email (so it pre-fills even without saving password)
-      const normalizedEmail = String(email || "").trim().toLowerCase();
-      await SecureStore.setItemAsync(KEY_LAST_LOGIN_EMAIL, normalizedEmail);
-
-      // ✅ Save / Clear "remember me" credentials
-      if (savePassword) {
-        await SecureStore.setItemAsync(KEY_SAVED_EMAIL, normalizedEmail);
-        await SecureStore.setItemAsync(KEY_SAVED_PASSWORD, String(password || ""));
-        setHasSavedSecret(true);
-      } else {
-        await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
-        await SecureStore.deleteItemAsync(KEY_SAVED_EMAIL);
-        const refreshTok = await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
-        setHasSavedSecret(!!refreshTok);
-      }
-
-      // ✅ Save user_id separately
-      if (user_id != null && String(user_id).trim()) {
-        await SecureStore.setItemAsync(KEY_USER_ID, String(user_id));
-      } else {
-        await SecureStore.deleteItemAsync(KEY_USER_ID);
-      }
-
-      // ✅ Save business_id separately (fixes chat list etc.)
-      if (business_id != null && String(business_id).trim()) {
-        const bid = String(business_id);
-        await SecureStore.setItemAsync(KEY_BUSINESS_ID, bid);
-
-        // optional compatibility keys
-        await SecureStore.setItemAsync("business_id", bid);
-        await SecureStore.setItemAsync("businessId", bid);
-      } else {
-        await SecureStore.deleteItemAsync(KEY_BUSINESS_ID);
-        await SecureStore.deleteItemAsync("business_id");
-        await SecureStore.deleteItemAsync("businessId");
-      }
-
-      // ✅ Save merchant_login JSON (contains user + business info)
-      await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(data));
-
-      // ✅ Optional: emit profile update if business info exists
-      try {
-        const business_name =
-          userObj?.business_name ??
-          userObj?.businessName ??
-          data?.business_name ??
-          "";
-        const rawLogo =
-          userObj?.business_logo ??
-          userObj?.businessLogo ??
-          userObj?.logo ??
-          data?.business_logo ??
-          "";
-        const business_logo = toAbsoluteUrl(rawLogo) || rawLogo || "";
-
-        SafeDeviceEventEmitter.emit("profile-updated", {
-          business_name,
-          business_logo,
-        });
-      } catch { }
-
-      // ✅ Optional: connect merchant socket using ids
-      try {
-        connectMerchantSocket?.({ user_id, business_id });
-      } catch { }
-
-      // ✅ Navigate home with business details
-      navigateHome({
-        business_id: business_id != null ? String(business_id) : "",
-        business_name: String(userObj?.business_name || ""),
-        business_logo: String(userObj?.business_logo || ""),
-        owner_type: String(userObj?.owner_type || ""),
-        auth_token: String(accessToken),
-        user_id: user_id != null ? String(user_id) : "",
-      });
-    } catch (err) {
-      Alert.alert("Login failed", String(err?.message || err));
-    } finally {
-      setLoading(false);
+      data = txt ? JSON.parse(txt) : {};
+    } catch {
+      data = {};
     }
-  };
+
+    if (!res.ok) {
+      throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+    }
+
+    const tokenObj = data?.token || {};
+    const userObj = data?.user || {};
+
+    const accessToken =
+      tokenObj?.access_token ||
+      tokenObj?.accessToken ||
+      data?.access_token ||
+      data?.accessToken ||
+      "";
+
+    const refreshToken =
+      tokenObj?.refresh_token ||
+      tokenObj?.refreshToken ||
+      data?.refresh_token ||
+      data?.refreshToken ||
+      "";
+
+    const user_id = userObj?.user_id ?? data?.user_id ?? data?.id ?? null;
+    const business_id = userObj?.business_id ?? data?.business_id ?? null;
+
+    if (!accessToken) {
+      throw new Error("Login succeeded but access_token missing.");
+    }
+
+    // ✅ Save tokens
+    await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
+    if (refreshToken) {
+      await SecureStore.setItemAsync(KEY_REFRESH_TOKEN, String(refreshToken));
+    }
+
+    // ✅ Save last email
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    await SecureStore.setItemAsync(KEY_LAST_LOGIN_EMAIL, normalizedEmail);
+
+    // ✅ Remember password logic
+    if (savePassword) {
+      await SecureStore.setItemAsync(KEY_SAVED_EMAIL, normalizedEmail);
+      await SecureStore.setItemAsync(KEY_SAVED_PASSWORD, String(password || ""));
+      setHasSavedSecret(true);
+    } else {
+      await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
+      await SecureStore.deleteItemAsync(KEY_SAVED_EMAIL);
+      const refreshTok = await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
+      setHasSavedSecret(!!refreshTok);
+    }
+
+    // ✅ Save IDs
+    if (user_id != null && String(user_id).trim()) {
+      await SecureStore.setItemAsync(KEY_USER_ID, String(user_id));
+    } else {
+      await SecureStore.deleteItemAsync(KEY_USER_ID);
+    }
+
+    if (business_id != null && String(business_id).trim()) {
+      const bid = String(business_id);
+      await SecureStore.setItemAsync(KEY_BUSINESS_ID, bid);
+      await SecureStore.setItemAsync("business_id", bid);
+      await SecureStore.setItemAsync("businessId", bid);
+    } else {
+      await SecureStore.deleteItemAsync(KEY_BUSINESS_ID);
+      await SecureStore.deleteItemAsync("business_id");
+      await SecureStore.deleteItemAsync("businessId");
+    }
+
+    // ✅ Save merchant login
+    const payload = {
+      ...data,
+      device_id: expoToken,
+      push_token: expoToken,
+    };
+
+    await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(payload));
+
+    // ✅ Emit profile update
+    try {
+      const business_name =
+        userObj?.business_name ?? data?.business_name ?? "";
+
+      const rawLogo =
+        userObj?.business_logo ??
+        userObj?.logo ??
+        data?.business_logo ??
+        "";
+
+      const business_logo = toAbsoluteUrl(rawLogo) || rawLogo || "";
+
+      SafeDeviceEventEmitter.emit("profile-updated", {
+        business_name,
+        business_logo,
+      });
+    } catch {}
+
+    // ✅ Connect socket
+    try {
+      connectMerchantSocket?.({ user_id, business_id });
+    } catch {}
+
+    // ✅ Navigate
+    navigateHome({
+      business_id: business_id != null ? String(business_id) : "",
+      business_name: String(userObj?.business_name || ""),
+      business_logo: String(userObj?.business_logo || ""),
+      owner_type: String(userObj?.owner_type || ""),
+      auth_token: String(accessToken),
+      user_id: user_id != null ? String(user_id) : "",
+      device_id: expoToken,           // ✅ important
+      expo_push_token: expoToken,     // ✅ optional
+    });
+
+  } catch (err) {
+    Alert.alert("Login failed", String(err?.message || err));
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <KeyboardAvoidingView style={styles.container}>

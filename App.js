@@ -276,7 +276,7 @@ export default function App() {
         } catch {
           data = {};
         }
-
+        
         console.log("⬅️ Boot: verify-session HTTP:", r.status, "ok:", r.ok);
         console.log("⬅️ Boot: verify-session body:", data);
 

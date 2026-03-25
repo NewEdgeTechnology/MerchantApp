@@ -1,23 +1,41 @@
 // services/food/GroupOrder/DriverBatchDetailsOverlayScreen.js
-// ✅ New page overlay for driver marker click
-// Shows: ride id, batch id, order count, list of orders, and a focused map
-// (No routing)
 
 import React, { useMemo, useCallback, useRef } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Platform } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  FlatList,
+  Platform,
+} from "react-native";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
-import MapView, { Marker, UrlTile, PROVIDER_DEFAULT } from "react-native-maps";
+
+// ✅ REPLACED MAP IMPORT
+import { MapView, Marker } from "expo-osm-sdk";
 
 const isDelivered = (status) => {
-  const s = String(status || "").toUpperCase().trim();
+  const s = String(status || "")
+    .toUpperCase()
+    .trim();
   return s === "DELIVERED" || s === "COMPLETED" || s === "COMPLETE";
 };
 
 const getOrderId = (order = {}) => {
   const base = order.raw || order;
-  const cand = [base.order_id, base.id, base.orderId, base.order_no, base.orderNo, base.order_code];
+  const cand = [
+    base.order_id,
+    base.id,
+    base.orderId,
+    base.order_no,
+    base.orderNo,
+    base.order_code,
+  ];
   for (const v of cand) {
     if (v != null && String(v).trim().length > 0) return String(v).trim();
   }
@@ -45,38 +63,31 @@ export default function DriverBatchDetailsOverlayScreen() {
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
+  // ✅ expo-osm-sdk uses center instead of region
   const initialRegion = useMemo(() => {
     const base = driverCoords || businessCoords || drops?.[0] || null;
     if (!base) return null;
     return {
       latitude: base.lat,
       longitude: base.lng,
-      latitudeDelta: 0.03,
-      longitudeDelta: 0.03,
+      zoom: 14,
     };
   }, [driverCoords, businessCoords, drops]);
 
+  // ❌ fitToCoordinates not supported → keep safe fallback
   const fitAll = useCallback(() => {
     if (!mapRef.current) return;
 
-    const pts = [];
-    if (businessCoords) pts.push({ latitude: businessCoords.lat, longitude: businessCoords.lng });
-    if (driverCoords) pts.push({ latitude: driverCoords.lat, longitude: driverCoords.lng });
-    for (const x of drops || []) pts.push({ latitude: x.lat, longitude: x.lng });
+    const base = driverCoords || businessCoords || drops?.[0];
+    if (!base) return;
 
-    if (!pts.length) return;
-
-    if (pts.length >= 2) {
-      mapRef.current.fitToCoordinates(pts, {
-        edgePadding: { top: 90, right: 60, bottom: 90, left: 60 },
-        animated: true,
-      });
-    } else {
-      mapRef.current.animateToRegion(
-        { latitude: pts[0].latitude, longitude: pts[0].longitude, latitudeDelta: 0.02, longitudeDelta: 0.02 },
-        250
-      );
-    }
+    mapRef.current.setCamera({
+      center: {
+        latitude: base.lat,
+        longitude: base.lng,
+      },
+      zoom: 14,
+    });
   }, [businessCoords, driverCoords, drops]);
 
   const renderOrder = ({ item }) => {
@@ -87,8 +98,15 @@ export default function DriverBatchDetailsOverlayScreen() {
     return (
       <View style={styles.row}>
         <Text style={styles.rowTitle}>#{id || "—"}</Text>
-        <View style={[styles.badge, done ? styles.badgeDone : styles.badgePending]}>
-          <Text style={[styles.badgeText, done ? styles.badgeTextDone : styles.badgeTextPending]}>
+        <View
+          style={[styles.badge, done ? styles.badgeDone : styles.badgePending]}
+        >
+          <Text
+            style={[
+              styles.badgeText,
+              done ? styles.badgeTextDone : styles.badgeTextPending,
+            ]}
+          >
             {st ? String(st).toUpperCase().replace(/_/g, " ") : "—"}
           </Text>
         </View>
@@ -99,7 +117,11 @@ export default function DriverBatchDetailsOverlayScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
       <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+          activeOpacity={0.7}
+        >
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
 
@@ -112,8 +134,12 @@ export default function DriverBatchDetailsOverlayScreen() {
           Ride #{rideId || "—"} · Batch #{batch_id ?? "—"}
         </Text>
         <Text style={styles.metaSub}>Business ID: {businessId ?? "—"}</Text>
-        {!!lastPing && <Text style={styles.metaSub}>Last update: {lastPing}</Text>}
-        <Text style={styles.metaSub}>Orders in view: {orders?.length ?? 0}</Text>
+        {!!lastPing && (
+          <Text style={styles.metaSub}>Last update: {lastPing}</Text>
+        )}
+        <Text style={styles.metaSub}>
+          Orders in view: {orders?.length ?? 0}
+        </Text>
       </View>
 
       <View style={styles.mapWrap}>
@@ -121,46 +147,23 @@ export default function DriverBatchDetailsOverlayScreen() {
           <MapView
             ref={mapRef}
             style={styles.map}
-            provider={PROVIDER_DEFAULT}
             initialRegion={initialRegion}
-            mapType="standard"
-            toolbarEnabled={false}
-            loadingEnabled
-            cacheEnabled={Platform.OS === "android"}
-            moveOnMarkerPress={false}
-            onMapReady={() => setTimeout(() => fitAll(), 180)}
-            zoomEnabled
-            scrollEnabled
-            rotateEnabled
-            pitchEnabled
-            zoomTapEnabled
-            scrollDuringRotateOrZoomEnabled
           >
-            <UrlTile
-              urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              maximumZ={19}
-              tileSize={256}
-              shouldReplaceMapContent={true}
-              zIndex={-1}
-            />
-
+            {/* BUSINESS */}
             {!!businessCoords && (
               <Marker
-                pinColor="#ef4444"
-                coordinate={{ latitude: businessCoords.lat, longitude: businessCoords.lng }}
+                latitude={businessCoords.lat}
+                longitude={businessCoords.lng}
                 title="Business"
-                description={`Business ID: ${businessId ?? "—"}`}
-                tracksViewChanges={false}
               />
             )}
 
+            {/* DRIVER */}
             {!!driverCoords && (
               <Marker
-                coordinate={{ latitude: driverCoords.lat, longitude: driverCoords.lng }}
-                title="Driver (Live)"
-                description={rideId ? `Ride #${rideId}` : "Live"}
-                tracksViewChanges={false}
-                anchor={{ x: 0.5, y: 0.5 }}
+                latitude={driverCoords.lat}
+                longitude={driverCoords.lng}
+                title="Driver"
               >
                 <View style={styles.carMarker}>
                   <Ionicons name="car" size={16} color="#ffffff" />
@@ -168,6 +171,7 @@ export default function DriverBatchDetailsOverlayScreen() {
               </Marker>
             )}
 
+            {/* DROPS */}
             {(drops || []).map((d, idx) => {
               const orderId = d?.key || null;
               const st = orderId ? statusMap?.[orderId] : null;
@@ -177,11 +181,8 @@ export default function DriverBatchDetailsOverlayScreen() {
                 return (
                   <Marker
                     key={orderId || `${d.lat},${d.lng},${idx}`}
-                    coordinate={{ latitude: d.lat, longitude: d.lng }}
-                    title={orderId ? `Order #${orderId}` : "Order"}
-                    description={rideId ? `Ride #${rideId}` : "Delivered"}
-                    tracksViewChanges={false}
-                    anchor={{ x: 0.5, y: 0.8 }}
+                    latitude={d.lat}
+                    longitude={d.lng}
                   >
                     <View style={styles.tickMarkerOuter}>
                       <View style={styles.tickMarkerInner}>
@@ -195,11 +196,8 @@ export default function DriverBatchDetailsOverlayScreen() {
               return (
                 <Marker
                   key={orderId || `${d.lat},${d.lng},${idx}`}
-                  pinColor="#f59e0b"
-                  coordinate={{ latitude: d.lat, longitude: d.lng }}
-                  title={orderId ? `Order #${orderId}` : "Order"}
-                  description={rideId ? `Ride #${rideId}` : "Pending delivery"}
-                  tracksViewChanges={false}
+                  latitude={d.lat}
+                  longitude={d.lng}
                 />
               );
             })}
@@ -213,10 +211,16 @@ export default function DriverBatchDetailsOverlayScreen() {
 
         <View style={styles.mapLegend}>
           <Text style={styles.mapLegendText}>
-            <Text style={styles.dotRed}>●</Text> Business · <Text style={styles.dotCar}>●</Text> Driver ·{" "}
-            <Text style={styles.dotOrange}>●</Text> Drops · <Text style={styles.dotGreen}>●</Text> Delivered ✓
+            <Text style={styles.dotRed}>●</Text> Business ·{" "}
+            <Text style={styles.dotCar}>●</Text> Driver ·{" "}
+            <Text style={styles.dotOrange}>●</Text> Drops ·{" "}
+            <Text style={styles.dotGreen}>●</Text> Delivered ✓
           </Text>
-          <TouchableOpacity style={styles.fitBtn} onPress={fitAll} activeOpacity={0.85}>
+          <TouchableOpacity
+            style={styles.fitBtn}
+            onPress={fitAll}
+            activeOpacity={0.85}
+          >
             <Ionicons name="scan-outline" size={16} color="#ffffff" />
             <Text style={styles.fitBtnText}>Fit</Text>
           </TouchableOpacity>
@@ -250,8 +254,20 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     backgroundColor: "#fff",
   },
-  backBtn: { height: 40, width: 40, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  headerTitle: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "700", color: "#0f172a" },
+  backBtn: {
+    height: 40,
+    width: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
 
   metaCard: {
     margin: 16,
@@ -332,7 +348,12 @@ const styles = StyleSheet.create({
   },
 
   noMap: { height: 260, alignItems: "center", justifyContent: "center" },
-  noMapText: { marginTop: 8, fontSize: 12, color: "#6b7280", fontWeight: "800" },
+  noMapText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: "#6b7280",
+    fontWeight: "800",
+  },
 
   listHeader: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
   listHeaderText: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
@@ -347,7 +368,12 @@ const styles = StyleSheet.create({
   },
   rowTitle: { fontSize: 13, fontWeight: "800", color: "#0f172a" },
 
-  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999, borderWidth: 1 },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
   badgeDone: { backgroundColor: "#ecfdf3", borderColor: "#bbf7d0" },
   badgePending: { backgroundColor: "#fff7ed", borderColor: "#fed7aa" },
   badgeText: { fontSize: 10, fontWeight: "800" },

@@ -53,7 +53,7 @@ export async function getExpoPushTokenAsync() {
 
     // ✅ Get Expo push token
     const response = await Notifications.getExpoPushTokenAsync({
-      projectId: "f5377050-a920-4fd2-9af2-9cd2bcc537d5", // required for EAS builds
+      projectId: "39465596-f80e-4ebb-b661-e149cd200ad8", // required for EAS builds
     });
 
     token = response?.data || null;
