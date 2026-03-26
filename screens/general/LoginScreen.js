@@ -1,6 +1,7 @@
 // screens/general/LoginScreen.js
 // ✅ Updated: Fingerprint/Biometrics removed (no LocalAuthentication import, no biometric state/helpers/UI)
 // ✅ Keeps everything else as-is (push token, remember me, save tokens, business_id/user_id storage, sockets, navigation)
+// ✅ Fixed: Login button enabling issue in production APK
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
@@ -39,12 +40,12 @@ import {
 // Shared socket connector
 import { connectMerchantSocket } from "../realtime/merchantSocket";
 import { getExpoPushTokenAsync } from "../../utils/getExpoPushTokenAsync";
-// import { getStableDeviceId } from "../../utils/deviceId";
+
 /* ===== Safe emitter (no-op if unavailable) ===== */
 const SafeDeviceEventEmitter =
   RNDeviceEventEmitter && typeof RNDeviceEventEmitter.emit === "function"
     ? RNDeviceEventEmitter
-    : { emit: () => { } }; // avoids “DeviceEventEmitter doesn’t exist” at runtime
+    : { emit: () => {} }; // avoids "DeviceEventEmitter doesn't exist" at runtime
 
 /* ===== Keys (email-first, with backward compatibility) ===== */
 const KEY_SAVED_EMAIL = "saved_email_v2";
@@ -75,6 +76,7 @@ const routeExists = (nav, name) => {
     return false;
   }
 };
+
 const tryResetTo = (nav, name) => {
   if (!nav) return false;
   if (routeExists(nav, name)) {
@@ -83,6 +85,7 @@ const tryResetTo = (nav, name) => {
   }
   return tryResetTo(nav.getParent?.(), name);
 };
+
 const goToWelcome = (navigation) => {
   if (tryResetTo(navigation, WELCOME_ROUTE)) return;
   if (routeExists(navigation, AUTH_STACK)) {
@@ -95,14 +98,14 @@ const goToWelcome = (navigation) => {
             state: { index: 0, routes: [{ name: WELCOME_ROUTE }] },
           },
         ],
-      })
+      }),
     );
     return;
   }
   try {
     navigation.dispatch(StackActions.replace(WELCOME_ROUTE));
     return;
-  } catch { }
+  } catch {}
   navigation.navigate(WELCOME_ROUTE);
 };
 /* ────────────────────────────────────── */
@@ -113,6 +116,7 @@ const DEFAULT_DEV_ORIGIN = Platform.select({
   ios: "http://localhost:3000",
   default: "http://localhost:3000",
 });
+
 const androidLoopback = (absUrl) => {
   if (!absUrl || Platform.OS !== "android") return absUrl;
   try {
@@ -124,6 +128,7 @@ const androidLoopback = (absUrl) => {
     return absUrl;
   }
 };
+
 const collapsePathSlashes = (url) => {
   try {
     const u = new URL(url);
@@ -133,6 +138,7 @@ const collapsePathSlashes = (url) => {
     return url;
   }
 };
+
 const getImageBaseOrigin = () => {
   const candidates = [
     PROFILE_ENDPOINT,
@@ -142,17 +148,18 @@ const getImageBaseOrigin = () => {
   for (const c of candidates) {
     try {
       return androidLoopback(new URL(c).origin);
-    } catch { }
+    } catch {}
   }
   return DEFAULT_DEV_ORIGIN;
 };
+
 const toAbsoluteUrl = (raw) => {
   if (!raw || typeof raw !== "string") return null;
   if (/^https?:\/\//i.test(raw))
     return collapsePathSlashes(androidLoopback(raw));
   const origin = getImageBaseOrigin();
   return collapsePathSlashes(
-    androidLoopback(`${origin}${raw.startsWith("/") ? "" : "/"}${raw}`)
+    androidLoopback(`${origin}${raw.startsWith("/") ? "" : "/"}${raw}`),
   );
 };
 
@@ -181,8 +188,10 @@ function useKeyboardGap(minGap = 8) {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setGap(minGap);
     };
-    const showEvt = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvt = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
     const s1 = Keyboard.addListener(showEvt, onShow);
     const s2 = Keyboard.addListener(hideEvt, onHide);
     return () => {
@@ -206,38 +215,63 @@ const LoginScreen = () => {
   const [errorText, setErrorText] = useState("");
   const [pushToken, setPushToken] = useState(null);
   const [deviceId, setDeviceId] = useState("");
+  const [deviceIdLoading, setDeviceIdLoading] = useState(true); // Track device ID loading state
 
   // ✅ kept because it was used by remember-me logic
   const [hasSavedSecret, setHasSavedSecret] = useState(false);
 
   const canSubmit =
-    email.length > 0 && password.length > 0 && !!deviceId && !loading;
+    email.length > 0 &&
+    password.length > 0 &&
+    !!deviceId &&
+    !loading &&
+    !deviceIdLoading;
   const bottomGap = useKeyboardGap(8);
 
   const emailRef = useRef(null);
   const pwdRef = useRef(null);
   const [pwdSelection, setPwdSelection] = useState({ start: 0, end: 0 });
 
+  // Improved device ID initialization with fallback
   useEffect(() => {
-    const fetchPushToken = async () => {
-      const token = await getExpoPushTokenAsync();
-      setPushToken(token);
-      console.log("Push token on login screen:", token);
+    const initDeviceId = async () => {
+      try {
+        console.log("Initializing device ID...");
+        let token = await getExpoPushTokenAsync();
+
+        // If token is not a valid Expo token, try again with delay
+        if (!token || !token.startsWith("ExponentPushToken")) {
+          console.log("Invalid Expo token, retrying...");
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          token = await getExpoPushTokenAsync();
+        }
+
+        if (token && token.startsWith("ExponentPushToken")) {
+          setPushToken(token);
+          setDeviceId(token);
+          console.log("✅ Device ID set successfully:", token);
+        } else {
+          // Fallback: generate a unique device ID if Expo token fails
+          console.warn("Expo token not available, using fallback device ID");
+          const fallbackId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          setDeviceId(fallbackId);
+          setPushToken(null);
+          console.log("Using fallback device ID:", fallbackId);
+        }
+      } catch (error) {
+        console.error("Failed to get device ID:", error);
+        // Last resort fallback
+        const fallbackId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        setDeviceId(fallbackId);
+        console.log("Using emergency fallback device ID:", fallbackId);
+      } finally {
+        setDeviceIdLoading(false);
+      }
     };
-    fetchPushToken();
+
+    initDeviceId();
   }, []);
-  useEffect(() => {
-  const initDeviceId = async () => {
-    const token = await getExpoPushTokenAsync();
 
-    setPushToken(token);     // already used in your screen
-    setDeviceId(token);      // ✅ THIS becomes your device_id
-
-    console.log("Expo device_id:", token);
-  };
-
-  initDeviceId();
-}, []);
   /** Load saved creds (email-first; fallback to legacy username) */
   const loadSavedState = async () => {
     try {
@@ -254,7 +288,11 @@ const LoginScreen = () => {
       ]);
 
       if (savedEmail || savedPwd) {
-        setEmail(String(savedEmail || "").trim().toLowerCase());
+        setEmail(
+          String(savedEmail || "")
+            .trim()
+            .toLowerCase(),
+        );
         setPassword(savedPwd || "");
         setSavePassword(!!savedPwd);
       } else {
@@ -267,7 +305,7 @@ const LoginScreen = () => {
       }
 
       setHasSavedSecret(!!(savedPwd || refreshTok));
-    } catch { }
+    } catch {}
   };
 
   useEffect(() => {
@@ -277,8 +315,8 @@ const LoginScreen = () => {
   useFocusEffect(
     React.useCallback(() => {
       loadSavedState();
-      return () => { };
-    }, [])
+      return () => {};
+    }, []),
   );
 
   useEffect(() => {
@@ -294,7 +332,7 @@ const LoginScreen = () => {
         try {
           const v = p();
           if (v !== undefined && v !== null && v !== "") return v;
-        } catch { }
+        } catch {}
       }
       return "";
     };
@@ -310,7 +348,7 @@ const LoginScreen = () => {
       () => data?.data?.type,
       () => data?.owner_type,
       () => data?.ownerType,
-      () => data?.type
+      () => data?.type,
     );
     const mapCodeToType = (x) => {
       if (x === 1 || x === "1") return "food";
@@ -323,7 +361,9 @@ const LoginScreen = () => {
   // Core login routine — EMAIL based
   // ✅ It saves access_token + refresh_token into SecureStore properly.
   const loginWithCredentials = async (emailVal, pwdVal) => {
-    const normalized = String(emailVal || "").trim().toLowerCase();
+    const normalized = String(emailVal || "")
+      .trim()
+      .toLowerCase();
     const variants = [{ val: normalized, _hint: "email" }];
 
     let tokenStr = "";
@@ -409,10 +449,16 @@ const LoginScreen = () => {
           null;
 
         if (accessTime != null) {
-          await SecureStore.setItemAsync("access_token_time", String(accessTime));
+          await SecureStore.setItemAsync(
+            "access_token_time",
+            String(accessTime),
+          );
         }
         if (refreshTime != null) {
-          await SecureStore.setItemAsync("refresh_token_time", String(refreshTime));
+          await SecureStore.setItemAsync(
+            "refresh_token_time",
+            String(refreshTime),
+          );
         }
 
         break;
@@ -437,187 +483,211 @@ const LoginScreen = () => {
             params: { openTab: "Home", nonce: Date.now(), ...extras },
           },
         ],
-      })
+      }),
     );
   };
 
   const handleLogin = async () => {
-  if (!endpoint) {
-    Alert.alert(
-      "Configuration error",
-      "LOGIN_USERNAME_MERCHANT_ENDPOINT is not set in your .env file."
-    );
-    return;
-  }
-
-  if (!(email && password)) return;
-
-  setErrorText("");
-  setLoading(true);
-
-  try {
-    // ✅ ALWAYS fetch fresh Expo token
-    const getValidExpoToken = async () => {
-      let token = await getExpoPushTokenAsync();
-
-      if (!token || !token.startsWith("ExponentPushToken")) {
-        await new Promise((res) => setTimeout(res, 1000));
-        token = await getExpoPushTokenAsync();
-      }
-
-      return token;
-    };
-
-    const expoToken = await getValidExpoToken();
-
-    if (!expoToken) {
-      Alert.alert("Error", "Unable to get device token. Please try again.");
+    if (!endpoint) {
+      Alert.alert(
+        "Configuration error",
+        "LOGIN_USERNAME_MERCHANT_ENDPOINT is not set in your .env file.",
+      );
       return;
     }
 
-    console.log("LOGIN device_id (Expo):", expoToken);
+    if (!(email && password)) return;
 
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        email: String(email || "").trim().toLowerCase(),
-        password: String(password || ""),
-        device_id: expoToken,   // ✅ FIXED
-        push_token: expoToken,  // optional
-      }),
-    });
+    setErrorText("");
+    setLoading(true);
 
-    const txt = await res.text();
-    let data = {};
     try {
-      data = txt ? JSON.parse(txt) : {};
-    } catch {
-      data = {};
-    }
+      // Get fresh Expo token or use existing deviceId
+      let expoToken = deviceId;
 
-    if (!res.ok) {
-      throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
-    }
+      // If deviceId is from fallback, try to get a real Expo token
+      if (!expoToken.startsWith("ExponentPushToken")) {
+        try {
+          const freshToken = await getExpoPushTokenAsync();
+          if (freshToken && freshToken.startsWith("ExponentPushToken")) {
+            expoToken = freshToken;
+            setDeviceId(freshToken);
+            setPushToken(freshToken);
+          }
+        } catch (e) {
+          console.warn("Could not get Expo token, using fallback:", e);
+        }
+      }
 
-    const tokenObj = data?.token || {};
-    const userObj = data?.user || {};
+      if (!expoToken) {
+        Alert.alert(
+          "Error",
+          "Unable to get device identifier. Please try again.",
+        );
+        setLoading(false);
+        return;
+      }
 
-    const accessToken =
-      tokenObj?.access_token ||
-      tokenObj?.accessToken ||
-      data?.access_token ||
-      data?.accessToken ||
-      "";
+      console.log("LOGIN device_id:", expoToken);
 
-    const refreshToken =
-      tokenObj?.refresh_token ||
-      tokenObj?.refreshToken ||
-      data?.refresh_token ||
-      data?.refreshToken ||
-      "";
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({
+          email: String(email || "")
+            .trim()
+            .toLowerCase(),
+          password: String(password || ""),
+          device_id: expoToken,
+          push_token: expoToken,
+        }),
+      });
 
-    const user_id = userObj?.user_id ?? data?.user_id ?? data?.id ?? null;
-    const business_id = userObj?.business_id ?? data?.business_id ?? null;
+      const txt = await res.text();
+      let data = {};
+      try {
+        data = txt ? JSON.parse(txt) : {};
+      } catch {
+        data = {};
+      }
 
-    if (!accessToken) {
-      throw new Error("Login succeeded but access_token missing.");
-    }
+      if (!res.ok) {
+        throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+      }
 
-    // ✅ Save tokens
-    await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
-    if (refreshToken) {
-      await SecureStore.setItemAsync(KEY_REFRESH_TOKEN, String(refreshToken));
-    }
+      const tokenObj = data?.token || {};
+      const userObj = data?.user || {};
 
-    // ✅ Save last email
-    const normalizedEmail = String(email || "").trim().toLowerCase();
-    await SecureStore.setItemAsync(KEY_LAST_LOGIN_EMAIL, normalizedEmail);
-
-    // ✅ Remember password logic
-    if (savePassword) {
-      await SecureStore.setItemAsync(KEY_SAVED_EMAIL, normalizedEmail);
-      await SecureStore.setItemAsync(KEY_SAVED_PASSWORD, String(password || ""));
-      setHasSavedSecret(true);
-    } else {
-      await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
-      await SecureStore.deleteItemAsync(KEY_SAVED_EMAIL);
-      const refreshTok = await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
-      setHasSavedSecret(!!refreshTok);
-    }
-
-    // ✅ Save IDs
-    if (user_id != null && String(user_id).trim()) {
-      await SecureStore.setItemAsync(KEY_USER_ID, String(user_id));
-    } else {
-      await SecureStore.deleteItemAsync(KEY_USER_ID);
-    }
-
-    if (business_id != null && String(business_id).trim()) {
-      const bid = String(business_id);
-      await SecureStore.setItemAsync(KEY_BUSINESS_ID, bid);
-      await SecureStore.setItemAsync("business_id", bid);
-      await SecureStore.setItemAsync("businessId", bid);
-    } else {
-      await SecureStore.deleteItemAsync(KEY_BUSINESS_ID);
-      await SecureStore.deleteItemAsync("business_id");
-      await SecureStore.deleteItemAsync("businessId");
-    }
-
-    // ✅ Save merchant login
-    const payload = {
-      ...data,
-      device_id: expoToken,
-      push_token: expoToken,
-    };
-
-    await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(payload));
-
-    // ✅ Emit profile update
-    try {
-      const business_name =
-        userObj?.business_name ?? data?.business_name ?? "";
-
-      const rawLogo =
-        userObj?.business_logo ??
-        userObj?.logo ??
-        data?.business_logo ??
+      const accessToken =
+        tokenObj?.access_token ||
+        tokenObj?.accessToken ||
+        data?.access_token ||
+        data?.accessToken ||
         "";
 
-      const business_logo = toAbsoluteUrl(rawLogo) || rawLogo || "";
+      const refreshToken =
+        tokenObj?.refresh_token ||
+        tokenObj?.refreshToken ||
+        data?.refresh_token ||
+        data?.refreshToken ||
+        "";
 
-      SafeDeviceEventEmitter.emit("profile-updated", {
-        business_name,
-        business_logo,
+      const user_id = userObj?.user_id ?? data?.user_id ?? data?.id ?? null;
+      const business_id = userObj?.business_id ?? data?.business_id ?? null;
+
+      if (!accessToken) {
+        throw new Error("Login succeeded but access_token missing.");
+      }
+
+      // ✅ Save tokens
+      await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
+      if (refreshToken) {
+        await SecureStore.setItemAsync(KEY_REFRESH_TOKEN, String(refreshToken));
+      }
+
+      // ✅ Save last email
+      const normalizedEmail = String(email || "")
+        .trim()
+        .toLowerCase();
+      await SecureStore.setItemAsync(KEY_LAST_LOGIN_EMAIL, normalizedEmail);
+
+      // ✅ Remember password logic
+      if (savePassword) {
+        await SecureStore.setItemAsync(KEY_SAVED_EMAIL, normalizedEmail);
+        await SecureStore.setItemAsync(
+          KEY_SAVED_PASSWORD,
+          String(password || ""),
+        );
+        setHasSavedSecret(true);
+      } else {
+        await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
+        await SecureStore.deleteItemAsync(KEY_SAVED_EMAIL);
+        const refreshTok = await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
+        setHasSavedSecret(!!refreshTok);
+      }
+
+      // ✅ Save IDs
+      if (user_id != null && String(user_id).trim()) {
+        await SecureStore.setItemAsync(KEY_USER_ID, String(user_id));
+      } else {
+        await SecureStore.deleteItemAsync(KEY_USER_ID);
+      }
+
+      if (business_id != null && String(business_id).trim()) {
+        const bid = String(business_id);
+        await SecureStore.setItemAsync(KEY_BUSINESS_ID, bid);
+        await SecureStore.setItemAsync("business_id", bid);
+        await SecureStore.setItemAsync("businessId", bid);
+      } else {
+        await SecureStore.deleteItemAsync(KEY_BUSINESS_ID);
+        await SecureStore.deleteItemAsync("business_id");
+        await SecureStore.deleteItemAsync("businessId");
+      }
+
+      // ✅ Save merchant login
+      const payload = {
+        ...data,
+        device_id: expoToken,
+        push_token: expoToken,
+      };
+
+      await SecureStore.setItemAsync(
+        KEY_MERCHANT_LOGIN,
+        JSON.stringify(payload),
+      );
+
+      // ✅ Emit profile update
+      try {
+        const business_name =
+          userObj?.business_name ?? data?.business_name ?? "";
+
+        const rawLogo =
+          userObj?.business_logo ?? userObj?.logo ?? data?.business_logo ?? "";
+
+        const business_logo = toAbsoluteUrl(rawLogo) || rawLogo || "";
+
+        SafeDeviceEventEmitter.emit("profile-updated", {
+          business_name,
+          business_logo,
+        });
+      } catch {}
+
+      // ✅ Connect socket
+      try {
+        connectMerchantSocket?.({ user_id, business_id });
+      } catch {}
+
+      // ✅ Navigate
+      navigateHome({
+        business_id: business_id != null ? String(business_id) : "",
+        business_name: String(userObj?.business_name || ""),
+        business_logo: String(userObj?.business_logo || ""),
+        owner_type: String(userObj?.owner_type || ""),
+        auth_token: String(accessToken),
+        user_id: user_id != null ? String(user_id) : "",
+        device_id: expoToken,
+        expo_push_token: expoToken,
       });
-    } catch {}
+    } catch (err) {
+      console.error("Login error:", err);
+      Alert.alert("Login failed", String(err?.message || err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    // ✅ Connect socket
-    try {
-      connectMerchantSocket?.({ user_id, business_id });
-    } catch {}
-
-    // ✅ Navigate
-    navigateHome({
-      business_id: business_id != null ? String(business_id) : "",
-      business_name: String(userObj?.business_name || ""),
-      business_logo: String(userObj?.business_logo || ""),
-      owner_type: String(userObj?.owner_type || ""),
-      auth_token: String(accessToken),
-      user_id: user_id != null ? String(user_id) : "",
-      device_id: expoToken,           // ✅ important
-      expo_push_token: expoToken,     // ✅ optional
-    });
-
-  } catch (err) {
-    Alert.alert("Login failed", String(err?.message || err));
-  } finally {
-    setLoading(false);
+  // Show loading indicator while device ID is being initialized
+  if (deviceIdLoading) {
+    return (
+      <View style={[styles.container, styles.centerContent]}>
+        <ActivityIndicator size="large" color="#00b14f" />
+        <Text style={styles.loadingText}>Initializing...</Text>
+      </View>
+    );
   }
-};
 
   return (
     <KeyboardAvoidingView style={styles.container}>
@@ -677,7 +747,11 @@ const LoginScreen = () => {
                 value={email}
                 editable={!loading}
                 onChangeText={(t) => {
-                  setEmail(String(t || "").trim().toLowerCase());
+                  setEmail(
+                    String(t || "")
+                      .trim()
+                      .toLowerCase(),
+                  );
                   setErrorText("");
                 }}
                 onFocus={() => setIsEmailFocused(true)}
@@ -736,7 +810,9 @@ const LoginScreen = () => {
                 autoCorrect={false}
                 textContentType="password"
                 selection={pwdSelection}
-                onSelectionChange={(e) => setPwdSelection(e.nativeEvent.selection)}
+                onSelectionChange={(e) =>
+                  setPwdSelection(e.nativeEvent.selection)
+                }
               />
               <TouchableOpacity
                 onPress={() => {
@@ -775,9 +851,8 @@ const LoginScreen = () => {
                   if (!v) {
                     await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
                     await SecureStore.deleteItemAsync(KEY_SAVED_EMAIL);
-                    const refreshTok = await SecureStore.getItemAsync(
-                      KEY_REFRESH_TOKEN
-                    );
+                    const refreshTok =
+                      await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
                     setHasSavedSecret(!!refreshTok);
                   }
                 }}
@@ -810,7 +885,9 @@ const LoginScreen = () => {
           >
             <Text
               style={
-                canSubmit ? styles.loginButtonText : styles.loginButtonTextDisabled
+                canSubmit
+                  ? styles.loginButtonText
+                  : styles.loginButtonTextDisabled
               }
             >
               Log In
@@ -849,7 +926,15 @@ const styles = StyleSheet.create({
     color: "#1A1D1F",
     marginRight: 180,
   },
-
+  centerContent: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: "#666",
+  },
   form: { flexGrow: 1, padding: 8 },
   label: { marginBottom: 6, fontSize: 14, color: "#333" },
   tip: { marginTop: -4, marginBottom: 10, fontSize: 12, color: "#6B7280" },
@@ -883,7 +968,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     height: 50,
   },
-  passwordInput: { flex: 1, fontSize: 14, paddingVertical: 10, paddingRight: 8 },
+  passwordInput: {
+    flex: 1,
+    fontSize: 14,
+    paddingVertical: 10,
+    paddingRight: 8,
+  },
   eyeIcon: { padding: 4 },
   inlineError: {
     color: "#DC2626",
