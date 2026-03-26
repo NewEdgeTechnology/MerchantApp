@@ -1,6 +1,6 @@
 // services/food/GroupOrder/TrackBatchOrdersScreen.js
-// ✅ UPDATED with correct OSMView API usage
-// ✅ Using MarkerConfig and PolylineConfig as per expo-osm-sdk types
+// ✅ UPDATED with OSMView patterns from MapRouteScreen.jsx
+// ✅ Improved markers, polylines, zoom heuristics, loading overlay, and map fit logic
 
 import React, {
   useCallback,
@@ -22,6 +22,7 @@ import {
   Pressable,
   ActivityIndicator,
   Dimensions,
+  Platform,
 } from "react-native";
 import {
   SafeAreaView,
@@ -42,14 +43,17 @@ import {
   DRIVER_DETAILS_ENDPOINT as ENV_DRIVER_DETAILS_ENDPOINT,
 } from "@env";
 
-// Import socket utility functions
 import {
   initSocket,
   setCurrentRide,
   onDriverLocation as listenToDriverLocation,
 } from "./socket";
 
-/* ---------------- helpers ---------------- */
+const { height: SCREEN_H } = Dimensions.get("window");
+
+/* ============================================================
+   HELPERS
+============================================================ */
 
 const safeStr = (v) => (v == null ? "" : String(v)).trim();
 
@@ -91,13 +95,10 @@ const getNumericOrderId = (order = {}) => {
 const getAllOrderKeys = (order = {}) => {
   const base = order.raw || order;
   const keys = [];
-
   const code = getOrderId(base);
   if (code) keys.push(String(code));
-
   const numeric = getNumericOrderId(base);
   if (numeric) keys.push(String(numeric));
-
   const extra = [
     base.order_id,
     base.id,
@@ -112,12 +113,10 @@ const getAllOrderKeys = (order = {}) => {
     base.orderIdNumeric,
     base.order_id_numeric,
   ];
-
   for (const v of extra) {
     const s = safeStr(v);
     if (s) keys.push(s);
   }
-
   return [...new Set(keys)];
 };
 
@@ -126,11 +125,9 @@ const sameOrderKey = (a, b) => {
   const B = safeStr(b);
   if (!A || !B) return false;
   if (A === B) return true;
-
   const na = Number(A);
   const nb = Number(B);
   if (Number.isFinite(na) && Number.isFinite(nb) && na === nb) return true;
-
   const strip = (s) =>
     String(s)
       .replace(/^ORD[-_]?/i, "")
@@ -147,7 +144,6 @@ const filterOrdersByBatchIds = (allOrders = [], batchOrderIds = []) => {
   const ids = normalizeOrderIdsList(batchOrderIds);
   if (!ids.length) return [];
   const idSet = new Set(ids);
-
   return (Array.isArray(allOrders) ? allOrders : []).filter((o) => {
     const keys = getAllOrderKeys(o);
     for (const k of keys) {
@@ -214,14 +210,12 @@ const buildGroupedOrdersUrl = (businessId) => {
   if (!businessId) return null;
   const tmpl = String(ENV_ORDER_ENDPOINT || "").trim();
   if (!tmpl) return null;
-
   if (tmpl.includes("{businessId}"))
     return tmpl.replace("{businessId}", encodeURIComponent(businessId));
   if (tmpl.includes(":businessId"))
     return tmpl.replace(":businessId", encodeURIComponent(businessId));
   if (tmpl.includes(":business_id"))
     return tmpl.replace(":business_id", encodeURIComponent(businessId));
-
   return `${tmpl.replace(/\/+$/, "")}/${encodeURIComponent(businessId)}`;
 };
 
@@ -229,7 +223,6 @@ const buildBusinessDetailsUrl = (businessId) => {
   if (!businessId) return null;
   const tmpl = String(ENV_BUSINESS_DETAILS || "").trim();
   if (!tmpl) return null;
-
   if (tmpl.includes("{businessId}"))
     return tmpl.replace("{businessId}", encodeURIComponent(businessId));
   if (tmpl.includes(":businessId"))
@@ -238,7 +231,6 @@ const buildBusinessDetailsUrl = (businessId) => {
     return tmpl.replace(":business_id", encodeURIComponent(businessId));
   if (tmpl.includes("{business_id}"))
     return tmpl.replace("{business_id}", encodeURIComponent(businessId));
-
   return `${tmpl.replace(/\/+$/, "")}/${encodeURIComponent(businessId)}`;
 };
 
@@ -246,12 +238,10 @@ const buildDeliveryRideUrl = (batchId) => {
   if (!batchId) return null;
   const tmpl = String(ENV_DELIVERY_RIDE_ID_ENDPOINT || "").trim();
   if (!tmpl) return null;
-
   if (tmpl.includes("{batch_id}"))
     return tmpl.replace("{batch_id}", encodeURIComponent(String(batchId)));
   if (tmpl.includes("{batchId}"))
     return tmpl.replace("{batchId}", encodeURIComponent(String(batchId)));
-
   const base = tmpl.replace(/\/+$/, "");
   const join = base.includes("?") ? "&" : "?";
   return `${base}${join}delivery_batch_id=${encodeURIComponent(String(batchId))}`;
@@ -262,12 +252,10 @@ const buildDriverDetailsUrl = (driverId) => {
   if (!id) return null;
   const tmpl = String(ENV_DRIVER_DETAILS_ENDPOINT || "").trim();
   if (!tmpl) return null;
-
   if (tmpl.includes("{driverId}"))
     return tmpl.replace("{driverId}", encodeURIComponent(id));
   if (tmpl.includes(":driverId"))
     return tmpl.replace(":driverId", encodeURIComponent(id));
-
   const base = tmpl.replace(/\/+$/, "");
   const join = base.includes("?") ? "&" : "?";
   return `${base}${join}driverId=${encodeURIComponent(id)}`;
@@ -291,8 +279,7 @@ const haversineMeters = (a, b) => {
   const x =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
-  return R * c;
+  return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 };
 
 const pickRideIdFromResponse = (json) => {
@@ -340,8 +327,7 @@ const normalizeRideIdFromParams = (params) => {
   return "";
 };
 
-/* ---------------- OSRM routing ---------------- */
-
+/* ---- OSRM routing ---- */
 const OSRM_ROUTE_BASE = "https://router.project-osrm.org/route/v1/driving";
 
 const fetchOsrmRoute2 = async (a, b) => {
@@ -353,8 +339,7 @@ const fetchOsrmRoute2 = async (a, b) => {
   return line.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
 };
 
-/* ---------------- Items helpers ---------------- */
-
+/* ---- Items helpers ---- */
 const pickItemName = (it) =>
   safeStr(
     it?.item_name ??
@@ -420,19 +405,16 @@ const extractDriverId = (p) => {
   return "";
 };
 
-/* ---------------- Location grouping ---------------- */
-
+/* ---- Location grouping ---- */
 const groupDropsByDistance = (orders = [], distanceMeters = 12) => {
   const groups = [];
   for (const o of orders || []) {
     const base = o?.raw || o || {};
     const coords = extractOrderDropCoords(base);
     if (!coords) continue;
-
     const orderId =
       getOrderId(base) || getOrderId(o) || safeStr(base?.id) || "";
     if (!orderId) continue;
-
     let placed = false;
     for (const g of groups) {
       const d = haversineMeters({ lat: g.lat, lng: g.lng }, coords);
@@ -443,7 +425,6 @@ const groupDropsByDistance = (orders = [], distanceMeters = 12) => {
         break;
       }
     }
-
     if (!placed) {
       groups.push({
         lat: coords.lat,
@@ -453,7 +434,6 @@ const groupDropsByDistance = (orders = [], distanceMeters = 12) => {
       });
     }
   }
-
   return groups.map((g, idx) => ({
     ...g,
     key: `${g.lat.toFixed(5)},${g.lng.toFixed(5)}_${idx}`,
@@ -461,23 +441,44 @@ const groupDropsByDistance = (orders = [], distanceMeters = 12) => {
   }));
 };
 
-/* ---------------- SecureStore keys ---------------- */
-
+/* ---- SecureStore keys ---- */
 const sanitizeKeyPart = (v) => {
   const s = v == null ? "" : String(v).trim();
-  const cleaned = s.replace(/[^a-zA-Z0-9._-]/g, "_");
-  return cleaned || "global";
+  return s.replace(/[^a-zA-Z0-9._-]/g, "_") || "global";
 };
 
-const keyBatchId = (businessId) =>
-  `cluster_last_batch_id_${sanitizeKeyPart(businessId)}`;
-const keyRideId = (businessId) =>
-  `cluster_last_ride_id_${sanitizeKeyPart(businessId)}`;
-const keyDriver = (businessId) =>
-  `cluster_last_driver_${sanitizeKeyPart(businessId)}`;
-const keyDriverRating = (businessId) =>
-  `cluster_last_driver_rating_${sanitizeKeyPart(businessId)}`;
+const keyBatchId = (b) => `cluster_last_batch_id_${sanitizeKeyPart(b)}`;
+const keyRideId = (b) => `cluster_last_ride_id_${sanitizeKeyPart(b)}`;
+const keyDriver = (b) => `cluster_last_driver_${sanitizeKeyPart(b)}`;
+const keyDriverRating = (b) =>
+  `cluster_last_driver_rating_${sanitizeKeyPart(b)}`;
 
+/* ============================================================
+   ✅ NEW: zoom heuristic (ported from MapRouteScreen)
+   Given a set of lat/lng points, compute a sensible initial zoom.
+============================================================ */
+const computeZoomForPoints = (points = []) => {
+  if (points.length < 2) return 14;
+  let minLat = Infinity,
+    maxLat = -Infinity;
+  let minLng = Infinity,
+    maxLng = -Infinity;
+  for (const p of points) {
+    minLat = Math.min(minLat, p.lat ?? p.latitude);
+    maxLat = Math.max(maxLat, p.lat ?? p.latitude);
+    minLng = Math.min(minLng, p.lng ?? p.longitude);
+    maxLng = Math.max(maxLng, p.lng ?? p.longitude);
+  }
+  const maxDiff = Math.max(maxLat - minLat, maxLng - minLng);
+  if (maxDiff < 0.01) return 15;
+  if (maxDiff < 0.05) return 13;
+  if (maxDiff < 0.1) return 11;
+  return 10;
+};
+
+/* ============================================================
+   COMPONENT
+============================================================ */
 export default function TrackBatchOrdersScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -501,8 +502,7 @@ export default function TrackBatchOrdersScreen() {
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
-  /* ---------------- IDs state ---------------- */
-
+  /* ---------- IDs ---------- */
   const [batchId, setBatchId] = useState(() =>
     normalizeBatchIdFromParams(params),
   );
@@ -511,8 +511,7 @@ export default function TrackBatchOrdersScreen() {
   );
   const [restoredIds, setRestoredIds] = useState(false);
 
-  /* ---------------- Driver details ---------------- */
-
+  /* ---------- Driver ---------- */
   const [driverInfo, setDriverInfo] = useState(driverDetailsFromParams || null);
   const [driverRating, setDriverRating] = useState(
     driverRatingFromParams || null,
@@ -523,8 +522,7 @@ export default function TrackBatchOrdersScreen() {
     if (p) return p;
     const fromDetails = extractDriverId(driverDetailsFromParams);
     if (fromDetails) return fromDetails;
-    const fromParams = extractDriverId(params);
-    return safeStr(fromParams);
+    return safeStr(extractDriverId(params));
   }, [driver_id, driverIdParam, driverDetailsFromParams, params]);
 
   const [driverId, setDriverId] = useState(initialDriverId);
@@ -533,12 +531,10 @@ export default function TrackBatchOrdersScreen() {
   useEffect(() => {
     if (driverRatingFromParams) setDriverRating(driverRatingFromParams);
   }, [driverRatingFromParams]);
-
   useEffect(() => {
     const pid = safeStr(driver_id || driverIdParam);
     if (pid) setDriverId(pid);
   }, [driver_id, driverIdParam]);
-
   useEffect(() => {
     const dn = safeStr(driverNameFromParams);
     if (!dn) return;
@@ -547,7 +543,6 @@ export default function TrackBatchOrdersScreen() {
       user_name: safeStr(prev?.user_name ?? prev?.name) || dn,
     }));
   }, [driverNameFromParams]);
-
   useEffect(() => {
     if (driverDetailsFromParams) {
       setDriverInfo((prev) => ({
@@ -560,60 +555,44 @@ export default function TrackBatchOrdersScreen() {
     }
   }, [driverDetailsFromParams, driver_id, driverIdParam]);
 
-  /* ---------------- batch order ids ---------------- */
-
+  /* ---------- Batch order ids ---------- */
   const batchOrderIds = useMemo(
     () => normalizeOrderIdsList(batchOrderIdsFromParams),
     [batchOrderIdsFromParams],
   );
-
-  /* ---------------- orders for this batch ---------------- */
 
   const [batchOrders, setBatchOrders] = useState(() => {
     const passedOrders = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
     if (
       Array.isArray(batchOrderIdsFromParams) &&
       batchOrderIdsFromParams.length
-    ) {
+    )
       return filterOrdersByBatchIds(passedOrders, batchOrderIdsFromParams);
-    }
     const initialBid = normalizeBatchIdFromParams(params);
     if (initialBid) return filterOrdersByBatchField(passedOrders, initialBid);
     return [];
   });
-
   const [batchOrdersLoading, setBatchOrdersLoading] = useState(false);
 
-  /* ---------------- Restore from SecureStore ---------------- */
-
+  /* ---------- SecureStore restore ---------- */
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const bKey = keyBatchId(businessId);
-        const rKey = keyRideId(businessId);
-        const dKey = keyDriver(businessId);
-        const drKey = keyDriverRating(businessId);
-
         const [savedBatch, savedRide, savedDriverJson, savedDriverRatingJson] =
           await Promise.all([
-            SecureStore.getItemAsync(bKey),
-            SecureStore.getItemAsync(rKey),
-            SecureStore.getItemAsync(dKey),
-            SecureStore.getItemAsync(drKey),
+            SecureStore.getItemAsync(keyBatchId(businessId)),
+            SecureStore.getItemAsync(keyRideId(businessId)),
+            SecureStore.getItemAsync(keyDriver(businessId)),
+            SecureStore.getItemAsync(keyDriverRating(businessId)),
           ]);
-
         if (cancelled) return;
-
-        if (!batchId && savedBatch && String(savedBatch).trim())
-          setBatchId(String(savedBatch).trim());
-        if (!deliveryRideId && savedRide && String(savedRide).trim())
-          setDeliveryRideId(String(savedRide).trim());
-
+        if (!batchId && savedBatch?.trim()) setBatchId(savedBatch.trim());
+        if (!deliveryRideId && savedRide?.trim())
+          setDeliveryRideId(savedRide.trim());
         const hasExplicitDriverParam = Boolean(
           safeStr(driver_id || driverIdParam),
         );
-
         if (!driverInfo && savedDriverJson) {
           try {
             const parsed = JSON.parse(savedDriverJson);
@@ -625,7 +604,6 @@ export default function TrackBatchOrdersScreen() {
             }
           } catch {}
         }
-
         if (!driverRating && savedDriverRatingJson) {
           try {
             const parsed = JSON.parse(savedDriverRatingJson);
@@ -643,44 +621,41 @@ export default function TrackBatchOrdersScreen() {
     };
   }, [businessId]);
 
-  /* ---------------- Save to SecureStore ---------------- */
-
+  /* ---------- SecureStore save ---------- */
   useEffect(() => {
     (async () => {
       try {
-        const bKey = keyBatchId(businessId);
-        const rKey = keyRideId(businessId);
-        const dKey = keyDriver(businessId);
-        const drKey = keyDriverRating(businessId);
-
-        if (batchId) await SecureStore.setItemAsync(bKey, String(batchId));
+        if (batchId)
+          await SecureStore.setItemAsync(
+            keyBatchId(businessId),
+            String(batchId),
+          );
         if (deliveryRideId)
-          await SecureStore.setItemAsync(rKey, String(deliveryRideId));
-        if (driverInfo) {
-          try {
-            await SecureStore.setItemAsync(dKey, JSON.stringify(driverInfo));
-          } catch {}
-        }
-        if (driverRating) {
-          try {
-            await SecureStore.setItemAsync(drKey, JSON.stringify(driverRating));
-          } catch {}
-        }
+          await SecureStore.setItemAsync(
+            keyRideId(businessId),
+            String(deliveryRideId),
+          );
+        if (driverInfo)
+          await SecureStore.setItemAsync(
+            keyDriver(businessId),
+            JSON.stringify(driverInfo),
+          );
+        if (driverRating)
+          await SecureStore.setItemAsync(
+            keyDriverRating(businessId),
+            JSON.stringify(driverRating),
+          );
       } catch (e) {
         console.log("[SecureStore] save error:", e?.message || e);
       }
     })();
   }, [businessId, batchId, deliveryRideId, driverInfo, driverRating]);
 
-  /* ---------------- Fetch ride id ---------------- */
-
+  /* ---------- Fetch ride id ---------- */
   const fetchDeliveryRideId = useCallback(async () => {
-    if (!batchId) return;
-    if (deliveryRideId) return;
-
+    if (!batchId || deliveryRideId) return;
     const url = buildDeliveryRideUrl(batchId);
     if (!url) return;
-
     try {
       const res = await fetch(url);
       const text = await res.text();
@@ -697,8 +672,7 @@ export default function TrackBatchOrdersScreen() {
   }, [batchId, deliveryRideId]);
 
   useEffect(() => {
-    if (!restoredIds) return;
-    fetchDeliveryRideId();
+    if (restoredIds) fetchDeliveryRideId();
   }, [restoredIds, fetchDeliveryRideId]);
 
   const effectiveRideIds = useMemo(() => {
@@ -714,8 +688,7 @@ export default function TrackBatchOrdersScreen() {
     return Array.from(set);
   }, [deliveryRideId, rideIds]);
 
-  /* ---------------- state ---------------- */
-
+  /* ---------- Map & route state ---------- */
   const [refreshing, setRefreshing] = useState(false);
   const [statusMap, setStatusMap] = useState({});
   const [itemsMap, setItemsMap] = useState({});
@@ -724,8 +697,10 @@ export default function TrackBatchOrdersScreen() {
   const [loadingLocation, setLoadingLocation] = useState(true);
   const [locationError, setLocationError] = useState(null);
 
-  const [driversByRideId, setDriversByRideId] = useState({});
+  // ✅ NEW: separate route loading state (from MapRouteScreen pattern)
+  const [routeLoading, setRouteLoading] = useState(false);
 
+  const [driversByRideId, setDriversByRideId] = useState({});
   const [routeDriverToBiz, setRouteDriverToBiz] = useState([]);
   const [routeBizToCustomers, setRouteBizToCustomers] = useState([]);
 
@@ -744,12 +719,10 @@ export default function TrackBatchOrdersScreen() {
   const didFitOnceRef = useRef(false);
   const lastMarkerPressTsRef = useRef(0);
 
-  /* ---------------- seed initial driver coords ---------------- */
-
+  /* ---------- Seed initial driver coords ---------- */
   useEffect(() => {
     const seed = extractLatLng(driverInfo);
     if (!seed) return;
-
     setDriversByRideId((prev) => {
       const rid = String(
         deliveryRideId || effectiveRideIds?.[0] || "driver",
@@ -764,8 +737,7 @@ export default function TrackBatchOrdersScreen() {
     });
   }, [driverInfo]);
 
-  /* ---------------- batch orders loading ---------------- */
-
+  /* ---------- Batch orders loading ---------- */
   useEffect(() => {
     const passedOrders = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
     if (batchOrderIds.length) {
@@ -782,12 +754,10 @@ export default function TrackBatchOrdersScreen() {
   const fetchAllGroupedOrdersFlat = useCallback(async () => {
     const url = buildGroupedOrdersUrl(businessId);
     if (!url) return [];
-
     try {
       const token = await SecureStore.getItemAsync("auth_token");
       const headers = { Accept: "application/json" };
       if (token) headers.Authorization = `Bearer ${token}`;
-
       const res = await fetch(url, { headers });
       const text = await res.text();
       let json = null;
@@ -795,10 +765,8 @@ export default function TrackBatchOrdersScreen() {
         json = text ? JSON.parse(text) : null;
       } catch {}
       if (!res.ok) return [];
-
       const rawData = Array.isArray(json?.data) ? json.data : json;
       const collected = [];
-
       if (Array.isArray(rawData)) {
         for (const block of rawData) {
           if (block && Array.isArray(block.orders)) {
@@ -821,17 +789,13 @@ export default function TrackBatchOrdersScreen() {
     if (!businessId) return;
     if (!batchOrderIds.length && !batchId) return;
     if (Array.isArray(batchOrders) && batchOrders.length) return;
-
     setBatchOrdersLoading(true);
     try {
       const all = await fetchAllGroupedOrdersFlat();
       if (!all.length) return;
-
-      let picked = [];
-      if (batchOrderIds.length)
-        picked = filterOrdersByBatchIds(all, batchOrderIds);
-      else picked = filterOrdersByBatchField(all, batchId);
-
+      let picked = batchOrderIds.length
+        ? filterOrdersByBatchIds(all, batchOrderIds)
+        : filterOrdersByBatchField(all, batchId);
       if (picked.length) setBatchOrders(picked);
     } finally {
       setBatchOrdersLoading(false);
@@ -848,30 +812,25 @@ export default function TrackBatchOrdersScreen() {
     loadBatchOrders();
   }, [loadBatchOrders]);
 
-  /* ---------------- fetch statuses/items ---------------- */
-
+  /* ---------- Fetch statuses/items ---------- */
   const fetchGroupedStatusesItems = useCallback(async () => {
     const url = buildGroupedOrdersUrl(businessId);
     if (!url) {
       setLoaded(true);
       return;
     }
-
     try {
       const token = await SecureStore.getItemAsync("auth_token");
       const headers = { Accept: "application/json" };
       if (token) headers.Authorization = `Bearer ${token}`;
-
       const res = await fetch(url, { headers });
       if (!res.ok) {
         setLoaded(true);
         return;
       }
       const json = await res.json();
-
       const nextStatusMap = {};
       const nextItemsMap = {};
-
       const rawData = Array.isArray(json?.data) ? json.data : json;
       if (Array.isArray(rawData)) {
         for (const block of rawData) {
@@ -897,7 +856,6 @@ export default function TrackBatchOrdersScreen() {
           }
         }
       }
-
       setStatusMap(nextStatusMap);
       setItemsMap(nextItemsMap);
       setLoaded(true);
@@ -908,47 +866,30 @@ export default function TrackBatchOrdersScreen() {
 
   const fetchBusinessLocation = useCallback(async () => {
     const url = buildBusinessDetailsUrl(businessId);
-    console.log("[BUSINESS] Fetching location from URL:", url);
-
     if (!url) {
-      console.log("[BUSINESS] No URL - businessId missing:", businessId);
       setLoadingLocation(false);
       return;
     }
-
     try {
       const token = await SecureStore.getItemAsync("auth_token");
       const headers = { Accept: "application/json" };
       if (token) headers.Authorization = `Bearer ${token}`;
-
       const res = await fetch(url, { headers });
       if (!res.ok) {
-        console.log("[BUSINESS] Failed to fetch business details");
         setLoadingLocation(false);
         return;
       }
-
       const json = await res.json();
       const base = json?.data || json || {};
-
       const coords =
         extractLatLng(base) ||
         extractLatLng(base?.business) ||
         extractLatLng(base?.restaurant) ||
         extractLatLng(base?.shop) ||
         extractLatLng(base?.location);
-
-      console.log("[BUSINESS] Extracted coordinates:", coords);
-
-      if (coords) {
-        setBusinessCoords(coords);
-        console.log("[BUSINESS] ✅ Coordinates set:", coords);
-      } else {
-        console.log("[BUSINESS] ❌ No coordinates found in response");
-      }
+      if (coords) setBusinessCoords(coords);
       setLoadingLocation(false);
     } catch (error) {
-      console.log("[BUSINESS] Error fetching location:", error);
       setLocationError(error.message);
       setLoadingLocation(false);
     }
@@ -958,37 +899,29 @@ export default function TrackBatchOrdersScreen() {
     async (id, opts = { force: false }) => {
       const driverIdClean = safeStr(id);
       if (!driverIdClean) return;
-
       const url = buildDriverDetailsUrl(driverIdClean);
       if (!url) return;
-
       const now = Date.now();
-      const minGap = 10_000;
-      if (!opts?.force && now - lastDriverDetailsFetchMsRef.current < minGap)
+      if (!opts?.force && now - lastDriverDetailsFetchMsRef.current < 10_000)
         return;
       lastDriverDetailsFetchMsRef.current = now;
-
       try {
         const token = await SecureStore.getItemAsync("auth_token");
         const headers = { Accept: "application/json" };
         if (token) headers.Authorization = `Bearer ${token}`;
-
         const res = await fetch(url, { headers });
         const text = await res.text();
         let json = null;
         try {
           json = text ? JSON.parse(text) : null;
         } catch {}
-
         if (!res.ok) return;
-
         const details =
           json?.details || json?.data?.details || json?.data || json || null;
         if (!details || typeof details !== "object") return;
-
         setDriverInfo((prev) => {
           const next = { ...(prev || {}) };
-          if (details.user_id != null) next.user_id = details.user_id;
+          if (details.user_id) next.user_id = details.user_id;
           if (details.user_name) next.user_name = details.user_name;
           if (details.phone) next.phone = details.phone;
           if (details.email) next.email = details.email;
@@ -996,7 +929,6 @@ export default function TrackBatchOrdersScreen() {
           if (details.role) next.role = details.role;
           return next;
         });
-
         const extracted = extractDriverId(details);
         if (extracted) setDriverId(extracted);
       } catch (e) {
@@ -1057,12 +989,9 @@ export default function TrackBatchOrdersScreen() {
     fetchDriverDetailsById,
   ]);
 
-  /* ---------------- SOCKET ---------------- */
-
+  /* ---------- SOCKET ---------- */
   const onDriverLocation = useCallback(
     (p) => {
-      console.log("[SOCKET] 🔵 RAW driver location event received");
-
       const now = Date.now();
       if (now - lastDriverUpdateMsRef.current < 800) return;
       lastDriverUpdateMsRef.current = now;
@@ -1075,7 +1004,6 @@ export default function TrackBatchOrdersScreen() {
             : p?.driver_lat && p?.driver_lng
               ? { lat: p.driver_lat, lng: p.driver_lng }
               : extractLatLng(p);
-
       if (!coords) return;
 
       const ridFromPayload =
@@ -1093,9 +1021,7 @@ export default function TrackBatchOrdersScreen() {
         setDriverId(pid);
         const missingName =
           !safeStr(driverInfo?.user_name) && !safeStr(driverInfo?.name);
-        if (missingName) {
-          fetchDriverDetailsById(pid, { force: true });
-        }
+        if (missingName) fetchDriverDetailsById(pid, { force: true });
       }
 
       const maybeDriver = {
@@ -1103,7 +1029,6 @@ export default function TrackBatchOrdersScreen() {
         phone: p?.driver_phone || p?.driverPhone,
         ...(coords && { lat: coords.lat, lng: coords.lng }),
       };
-
       if (maybeDriver.user_name || maybeDriver.phone) {
         setDriverInfo((prev) => ({ ...(prev || {}), ...maybeDriver }));
       }
@@ -1124,58 +1049,29 @@ export default function TrackBatchOrdersScreen() {
     [effectiveRideIds, batchId, fetchDriverDetailsById, driverInfo],
   );
 
-  // Set up socket connection
   useEffect(() => {
-    if (initializedRef.current) return;
-    if (!restoredIds) return;
-    if (!effectiveRideIds.length) return;
-
+    if (initializedRef.current || !restoredIds || !effectiveRideIds.length)
+      return;
     initializedRef.current = true;
-
     const socket = initSocket({});
     if (!socket) return;
-
-    if (effectiveRideIds[0]) {
-      setCurrentRide(effectiveRideIds[0]);
-    }
-
-    const joinPromises = effectiveRideIds.map((rid) => {
-      return new Promise((resolve) => {
-        const joinRide = () => {
-          socket.emit("joinRide", { rideId: String(rid) }, (response) => {
-            resolve(response);
-          });
-        };
-        if (socket.connected) {
-          joinRide();
-        } else {
-          socket.once("connect", () => {
-            joinRide();
-          });
-        }
-      });
+    if (effectiveRideIds[0]) setCurrentRide(effectiveRideIds[0]);
+    effectiveRideIds.forEach((rid) => {
+      const join = () =>
+        socket.emit("joinRide", { rideId: String(rid) }, () => {});
+      socket.connected ? join() : socket.once("connect", join);
     });
-
-    const unsubscribe = listenToDriverLocation((locationData) => {
-      onDriverLocation(locationData);
-    });
-
+    const unsubscribe = listenToDriverLocation((locationData) =>
+      onDriverLocation(locationData),
+    );
     unsubscribeRef.current = unsubscribe;
-
-    socket.on("connect_error", (error) => {
-      console.log("[SOCKET] Connection error:", error.message);
-    });
-
     return () => {
-      if (unsubscribeRef.current) {
-        unsubscribeRef.current();
-      }
+      if (unsubscribeRef.current) unsubscribeRef.current();
       initializedRef.current = false;
     };
   }, [restoredIds, effectiveRideIds, onDriverLocation]);
 
-  /* ---------------- UI derived ---------------- */
-
+  /* ---------- Derived ---------- */
   const title = useMemo(() => {
     const c = batchOrders.length;
     const base = c === 1 ? "1 order" : `${c} orders`;
@@ -1236,7 +1132,6 @@ export default function TrackBatchOrdersScreen() {
     const mid = safeStr(businessId);
     if (!mid) return Alert.alert("Chat", "Merchant ID is missing.");
     const dname = safeStr(driverName) || "Driver";
-
     navigation.navigate("Chat", {
       requestId: String(rid),
       rideId: String(rid),
@@ -1255,53 +1150,61 @@ export default function TrackBatchOrdersScreen() {
     driverName,
   ]);
 
-  // Map region with fallback coordinates
-  const mapInitialCenter = useMemo(() => {
-    if (businessCoords) {
-      console.log("Using business coords:", businessCoords);
-      return { latitude: businessCoords.lat, longitude: businessCoords.lng };
-    }
-    const anyDriver = Object.values(driversByRideId || {})[0]?.coords || null;
-    if (anyDriver) {
-      console.log("Using driver coords:", anyDriver);
-      return { latitude: anyDriver.lat, longitude: anyDriver.lng };
-    }
-    console.log("Using fallback coordinates (Thimphu, Bhutan)");
-    return { latitude: 27.4728, longitude: 89.639 };
-  }, [businessCoords, driversByRideId]);
-
-  /* ---------------- Grouped customer points ---------------- */
-
   const groupedDropPoints = useMemo(
     () => groupDropsByDistance(batchOrders, 12),
     [batchOrders],
   );
+  const { initialMapCenter, initialZoom } = useMemo(() => {
+    const pts = [];
 
-  /* ---------------- Fit helpers for OSMView ---------------- */
+    if (businessCoords)
+      pts.push({ lat: businessCoords.lat, lng: businessCoords.lng });
 
+    Object.values(driversByRideId || {}).forEach((d) => {
+      if (d?.coords) pts.push(d.coords);
+    });
+
+    groupedDropPoints.forEach((g) => pts.push({ lat: g.lat, lng: g.lng }));
+
+    if (pts.length >= 2) {
+      const lats = pts.map((p) => p.lat);
+      const lngs = pts.map((p) => p.lng);
+
+      return {
+        initialMapCenter: {
+          latitude: (Math.min(...lats) + Math.max(...lats)) / 2,
+          longitude: (Math.min(...lngs) + Math.max(...lngs)) / 2,
+        },
+        initialZoom: 13,
+      };
+    }
+
+    return {
+      initialMapCenter: { latitude: 27.4728, longitude: 89.639 },
+      initialZoom: 12,
+    };
+  }, [businessCoords, driversByRideId, groupedDropPoints]);
+
+  /* ============================================================
+     ✅ IMPROVED: Fit helper using animateCamera (from MapRouteScreen)
+  ============================================================ */
   const fitToPoints = useCallback(
     async (ref) => {
       if (!ref?.current) return;
-
       const pts = [];
       if (businessCoords)
         pts.push({
           latitude: businessCoords.lat,
           longitude: businessCoords.lng,
         });
-
       for (const rid of Object.keys(driversByRideId || {})) {
         const c = driversByRideId?.[rid]?.coords;
         if (c) pts.push({ latitude: c.lat, longitude: c.lng });
       }
-
-      for (const g of groupedDropPoints) {
+      for (const g of groupedDropPoints)
         pts.push({ latitude: g.lat, longitude: g.lng });
-      }
-
       if (!pts.length) return;
 
-      // Calculate bounds
       let minLat = Infinity,
         maxLat = -Infinity;
       let minLng = Infinity,
@@ -1317,13 +1220,16 @@ export default function TrackBatchOrdersScreen() {
       const centerLng = (minLng + maxLng) / 2;
       const latDelta = Math.max(0.01, maxLat - minLat + 0.02);
       const lngDelta = Math.max(0.01, maxLng - minLng + 0.02);
-      const zoom = Math.floor(14 - Math.log2(Math.max(latDelta, lngDelta)));
+      const zoom = Math.min(
+        18,
+        Math.max(10, Math.floor(14 - Math.log2(Math.max(latDelta, lngDelta)))),
+      );
 
       try {
         await ref.current.animateCamera({
           latitude: centerLat,
           longitude: centerLng,
-          zoom: Math.min(18, Math.max(10, zoom)),
+          zoom,
         });
       } catch (err) {
         console.log("Fit error:", err);
@@ -1344,86 +1250,86 @@ export default function TrackBatchOrdersScreen() {
     setOverlayOpen(true);
   }, []);
 
-  /* ---------------- ROUTES ---------------- */
-
   const computeMultiRoutes = useCallback(async () => {
     const firstDriverKey = Object.keys(driversByRideId || {})[0];
     const driver = firstDriverKey
       ? driversByRideId?.[firstDriverKey]?.coords
       : null;
+
     const biz = businessCoords;
 
     const targets = (groupedDropPoints || []).filter((g) => {
-      const allDelivered =
-        Array.isArray(g?.orderIds) &&
-        g.orderIds.length > 0 &&
-        g.orderIds.every((oid) => isDelivered(statusMap?.[oid]));
-      return !allDelivered;
+      return !g.orderIds?.every((oid) => isDelivered(statusMap?.[oid]));
     });
 
-    const key = [
-      driver
-        ? `${driver.lat.toFixed(5)},${driver.lng.toFixed(5)}`
-        : "no-driver",
-      biz ? `${biz.lat.toFixed(5)},${biz.lng.toFixed(5)}` : "no-biz",
-      targets.map((t) => `${t.lat.toFixed(5)},${t.lng.toFixed(5)}`).join(";") ||
-        "no-targets",
-    ].join("|");
+    // 🔥 Stable key (prevents unnecessary recalculation)
+    const key = JSON.stringify({
+      driver,
+      biz,
+      targets: targets.map((t) => [t.lat, t.lng]),
+    });
 
     const now = Date.now();
-    const changed = key !== lastRouteKeyRef.current;
-    if (!changed && now - lastRouteAtMsRef.current < 6000) return;
+
+    if (
+      key === lastRouteKeyRef.current &&
+      now - lastRouteAtMsRef.current < 5000
+    ) {
+      return;
+    }
 
     lastRouteKeyRef.current = key;
     lastRouteAtMsRef.current = now;
 
-    if (!driver || !biz) setRouteDriverToBiz([]);
-    if (!biz || !targets.length) setRouteBizToCustomers([]);
+    setRouteLoading(true);
 
-    if (driver && biz) {
-      try {
-        const coords = await fetchOsrmRoute2(driver, biz);
-        setRouteDriverToBiz(coords);
-      } catch {
-        setRouteDriverToBiz([
-          { latitude: driver.lat, longitude: driver.lng },
-          { latitude: biz.lat, longitude: biz.lng },
-        ]);
+    try {
+      // DRIVER → BUSINESS
+      if (driver && biz) {
+        try {
+          const coords = await fetchOsrmRoute2(driver, biz);
+          setRouteDriverToBiz(coords);
+        } catch {
+          setRouteDriverToBiz([
+            { latitude: driver.lat, longitude: driver.lng },
+            { latitude: biz.lat, longitude: biz.lng },
+          ]);
+        }
       }
-    }
 
-    if (biz && targets.length) {
-      const out = await Promise.all(
-        targets.map(async (t) => {
-          try {
-            const coords = await fetchOsrmRoute2(biz, {
-              lat: t.lat,
-              lng: t.lng,
-            });
-            return { key: t.key, coords };
-          } catch {
-            return {
-              key: t.key,
-              coords: [
-                { latitude: biz.lat, longitude: biz.lng },
-                { latitude: t.lat, longitude: t.lng },
-              ],
-            };
-          }
-        }),
-      );
-      setRouteBizToCustomers(
-        out.filter((x) => Array.isArray(x?.coords) && x.coords.length >= 2),
-      );
+      // BUSINESS → CUSTOMERS
+      if (biz && targets.length) {
+        const results = await Promise.all(
+          targets.map(async (t) => {
+            try {
+              const coords = await fetchOsrmRoute2(biz, {
+                lat: t.lat,
+                lng: t.lng,
+              });
+              return { key: t.key, coords };
+            } catch {
+              return {
+                key: t.key,
+                coords: [
+                  { latitude: biz.lat, longitude: biz.lng },
+                  { latitude: t.lat, longitude: t.lng },
+                ],
+              };
+            }
+          }),
+        );
+
+        setRouteBizToCustomers(results);
+      }
+    } finally {
+      setRouteLoading(false);
     }
   }, [driversByRideId, businessCoords, groupedDropPoints, statusMap]);
-
   useEffect(() => {
     computeMultiRoutes();
   }, [computeMultiRoutes]);
 
-  /* ---------------- Expandable items dropdown ---------------- */
-
+  /* ---------- Expandable items ---------- */
   const [expandedMap, setExpandedMap] = useState({});
   const toggleExpanded = useCallback((orderId) => {
     const id = String(orderId || "");
@@ -1440,7 +1346,6 @@ export default function TrackBatchOrdersScreen() {
     setSelectedGroup(group);
     setLocationModalOpen(true);
   }, []);
-
   const closeGroupModal = useCallback(() => {
     setLocationModalOpen(false);
     setSelectedGroup(null);
@@ -1469,8 +1374,6 @@ export default function TrackBatchOrdersScreen() {
   };
 
   const getMarkerDescription = (type, g) => {
-    if (type === "business") return "";
-    if (type === "driver") return "";
     if (type === "customer") {
       const count = g?.count || 1;
       return count > 1
@@ -1481,14 +1384,82 @@ export default function TrackBatchOrdersScreen() {
   };
 
   const handleMarkerPress = (type, g) => {
-    if (type === "customer" && g) {
-      openGroupModal(g);
-    }
+    if (type === "customer" && g) openGroupModal(g);
     lastMarkerPressTsRef.current = Date.now();
   };
+  const markers = useMemo(() => {
+    const list = [];
 
-  /* ---------------- Render order list row ---------------- */
+    if (businessCoords) {
+      list.push({
+        id: "business",
+        coordinate: {
+          latitude: businessCoords.lat,
+          longitude: businessCoords.lng,
+        },
+        icon: { name: "store", color: "#ef4444", size: 32 },
+        zIndex: 20,
+      });
+    }
 
+    Object.keys(driversByRideId || {}).forEach((rid) => {
+      const c = driversByRideId[rid]?.coords;
+      if (!c) return;
+
+      list.push({
+        id: `driver-${rid}`,
+        coordinate: { latitude: c.lat, longitude: c.lng },
+        icon: { name: "car", color: "#2563eb", size: 34 },
+        zIndex: 15,
+      });
+    });
+
+    groupedDropPoints.forEach((g) => {
+      const delivered = g.orderIds?.every((oid) =>
+        isDelivered(statusMap?.[oid]),
+      );
+
+      list.push({
+        id: `cust-${g.key}`,
+        coordinate: { latitude: g.lat, longitude: g.lng },
+        icon: {
+          name: "location",
+          color: delivered ? "#22c55e" : "#f97316",
+          size: 28,
+        },
+        zIndex: 10,
+      });
+    });
+
+    return list;
+  }, [businessCoords, driversByRideId, groupedDropPoints, statusMap]);
+  const polylines = useMemo(() => {
+    const lines = [];
+
+    if (routeDriverToBiz?.length > 1) {
+      lines.push({
+        id: "driver-biz",
+        coordinates: routeDriverToBiz,
+        strokeColor: "#2563eb",
+        strokeWidth: 5,
+      });
+    }
+
+    routeBizToCustomers.forEach((r) => {
+      if (r?.coords?.length > 1) {
+        lines.push({
+          id: `cust-${r.key}`,
+          coordinates: r.coords,
+          strokeColor: "#60a5fa",
+          strokeWidth: 4,
+        });
+      }
+    });
+
+    return lines;
+  }, [routeDriverToBiz, routeBizToCustomers]);
+
+  /* ---------- Render order row ---------- */
   const renderRow = ({ item }) => {
     const base = item.raw || item || {};
     const id = getOrderId(base) || getOrderId(item) || item.id;
@@ -1506,7 +1477,6 @@ export default function TrackBatchOrdersScreen() {
     const itemsBase = Array.isArray(base.items) ? base.items : null;
     const items = itemsFromMap || itemsBase || [];
     const hasItems = Array.isArray(items) && items.length > 0;
-
     const expanded = !!expandedMap?.[String(id || "")];
 
     return (
@@ -1589,96 +1559,12 @@ export default function TrackBatchOrdersScreen() {
   const chatDisabled =
     !safeStr(driverId) || !safeStr(deliveryRideId || effectiveRideIds?.[0]);
 
-  // ✅ MARKERS for OSMView (MarkerConfig format)
-  const markers = useMemo(() => {
-    const list = [];
-
-    // BUSINESS
-    if (businessCoords) {
-      list.push({
-        id: "business",
-        coordinate: {
-          latitude: businessCoords.lat,
-          longitude: businessCoords.lng,
-        },
-        title: getMarkerTitle("business"),
-        description: "Business location",
-        icon: { name: "store", color: "#ef4444", size: 30 },
-      });
-    }
-
-    // DRIVER
-    Object.keys(driversByRideId || {}).forEach((rid) => {
-      const entry = driversByRideId[rid];
-      if (!entry?.coords) return;
-      list.push({
-        id: `driver-${rid}`,
-        coordinate: {
-          latitude: entry.coords.lat,
-          longitude: entry.coords.lng,
-        },
-        title: getMarkerTitle("driver"),
-        description: `Last updated: ${new Date(entry.lastPing).toLocaleTimeString()}`,
-        icon: { name: "car", color: "#3b82f6", size: 30 },
-      });
-    });
-
-    // CUSTOMERS (grouped)
-    groupedDropPoints.forEach((g) => {
-      const deliveredAll = g.orderIds?.every((oid) =>
-        isDelivered(statusMap?.[oid]),
-      );
-      list.push({
-        id: `cust-${g.key}`,
-        coordinate: {
-          latitude: g.lat,
-          longitude: g.lng,
-        },
-        title: getMarkerTitle("customer", g, deliveredAll),
-        description: getMarkerDescription("customer", g),
-        icon: {
-          name: "location",
-          color: deliveredAll ? "#22c55e" : "#f97316",
-          size: 25,
-        },
-      });
-    });
-
-    return list;
-  }, [businessCoords, driversByRideId, groupedDropPoints, statusMap]);
-
-  // ✅ POLYLINES for OSMView (PolylineConfig format)
-  const polylines = useMemo(() => {
-    const lines = [];
-
-    // Driver -> Business
-    if (routeDriverToBiz?.length >= 2) {
-      lines.push({
-        id: "driver-biz",
-        coordinates: routeDriverToBiz,
-        strokeColor: "#2563eb",
-        strokeWidth: 4,
-      });
-    }
-
-    // Business -> Customers
-    routeBizToCustomers.forEach((r) => {
-      if (r?.coords?.length >= 2) {
-        lines.push({
-          id: `biz-cust-${r.key}`,
-          coordinates: r.coords,
-          strokeColor: "#60a5fa",
-          strokeWidth: 4,
-        });
-      }
-    });
-
-    return lines;
-  }, [routeDriverToBiz, routeBizToCustomers]);
-
+  /* ============================================================
+     RENDER
+  ============================================================ */
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
-      {/* LOCATION -> ORDERS MODAL */}
+      {/* LOCATION GROUP MODAL */}
       <Modal
         visible={locationModalOpen}
         transparent
@@ -1689,8 +1575,8 @@ export default function TrackBatchOrdersScreen() {
           <Pressable style={styles.modalCard} onPress={() => {}}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                Orders at this location{" "}
-                {selectedGroup?.count > 1 ? `(${selectedGroup.count})` : ""}
+                Orders at this location
+                {selectedGroup?.count > 1 ? ` (${selectedGroup.count})` : ""}
               </Text>
               <Pressable onPress={closeGroupModal} style={styles.modalCloseBtn}>
                 <Ionicons name="close" size={18} color="#0f172a" />
@@ -1753,10 +1639,11 @@ export default function TrackBatchOrdersScreen() {
             <OSMView
               ref={overlayMapRef}
               style={{ flex: 1 }}
-              initialCenter={mapInitialCenter}
-              initialZoom={14}
+              initialCenter={initialMapCenter}
+              initialZoom={initialZoom}
               markers={markers}
               polylines={polylines}
+              styleUrl="https://tiles.openfreemap.org/styles/liberty"
               onMapReady={() => {
                 if (overlayDidFitOnceRef.current) return;
                 overlayDidFitOnceRef.current = true;
@@ -1769,6 +1656,13 @@ export default function TrackBatchOrdersScreen() {
                 if (g) handleMarkerPress("customer", g);
               }}
             />
+            {/* ✅ Route loading overlay (from MapRouteScreen) */}
+            {routeLoading && (
+              <View style={styles.mapLoadingOverlay}>
+                <ActivityIndicator size="large" color="#16a34a" />
+                <Text style={styles.mapLoadingText}>Calculating routes…</Text>
+              </View>
+            )}
             <View style={styles.overlayActions}>
               <TouchableOpacity
                 style={styles.fitBtn}
@@ -1806,8 +1700,8 @@ export default function TrackBatchOrdersScreen() {
         )}
         {!!rideMessage && <Text style={styles.summarySub}>{rideMessage}</Text>}
         <Text style={styles.summarySub}>
-          Restored: {restoredIds ? "Yes" : "No"} · Batch: {batchId || "—"} ·
-          Ride: {effectiveRideIds.length ? effectiveRideIds.join(", ") : "—"}
+          Batch: {batchId || "—"} · Ride:{" "}
+          {effectiveRideIds.length ? effectiveRideIds.join(", ") : "—"}
         </Text>
         {batchOrdersLoading && (
           <View
@@ -1821,70 +1715,19 @@ export default function TrackBatchOrdersScreen() {
         )}
       </View>
 
-      {/* DEBUG INFO */}
-      <View
-        style={{
-          paddingHorizontal: 16,
-          paddingVertical: 8,
-          backgroundColor: "#fef3c7",
-          marginBottom: 8,
-        }}
-      >
-        <Text style={{ fontSize: 12, fontWeight: "bold", color: "#92400e" }}>
-          🔍 Debug Info:
-        </Text>
-        <Text style={{ fontSize: 11, color: "#92400e" }}>
-          Business ID: {businessId || "—"}
-        </Text>
-        <Text style={{ fontSize: 11, color: "#92400e" }}>
-          Business Coords:{" "}
-          {businessCoords
-            ? `${businessCoords.lat.toFixed(4)}, ${businessCoords.lng.toFixed(4)}`
-            : "❌ Not loaded"}
-        </Text>
-        <Text style={{ fontSize: 11, color: "#92400e" }}>
-          Driver Coords:{" "}
-          {Object.keys(driversByRideId).length > 0 ? "✅ Available" : "❌ None"}
-        </Text>
-        <Text style={{ fontSize: 11, color: "#92400e" }}>
-          Loading Location: {loadingLocation ? "⏳" : "✅"}
-        </Text>
-        {locationError && (
-          <Text style={{ fontSize: 11, color: "#dc2626" }}>
-            Error: {locationError}
-          </Text>
-        )}
-        <Text style={{ fontSize: 11, color: "#92400e" }}>
-          Batch Orders: {batchOrders.length}
-        </Text>
-        <Text style={{ fontSize: 11, color: "#92400e" }}>
-          Markers Count: {markers.length}
-        </Text>
-        <Text style={{ fontSize: 11, color: "#92400e" }}>
-          Polylines Count: {polylines.length}
-        </Text>
-        <Text style={{ fontSize: 11, color: "#92400e" }}>
-          Using:{" "}
-          {businessCoords
-            ? "Business Coords"
-            : driversByRideId
-              ? "Driver Coords"
-              : "Fallback (Thimphu)"}
-        </Text>
-      </View>
-
-      {/* MAP */}
+      {/* MAP CARD */}
       <View style={styles.mapCard}>
         <View style={styles.mapWrap}>
+          {/* ✅ IMPROVED OSMView – uses initialZoom heuristic & styleUrl (from MapRouteScreen) */}
           <OSMView
             ref={mapRef}
             style={styles.map}
-            initialCenter={mapInitialCenter}
-            initialZoom={14}
+            initialCenter={initialMapCenter}
+            initialZoom={initialZoom}
             markers={markers}
             polylines={polylines}
+            styleUrl="https://tiles.openfreemap.org/styles/liberty"
             onMapReady={() => {
-              console.log("✅ Map ready! Markers:", markers.length);
               if (didFitOnceRef.current) return;
               didFitOnceRef.current = true;
               setTimeout(() => {
@@ -1892,7 +1735,6 @@ export default function TrackBatchOrdersScreen() {
               }, 500);
             }}
             onMarkerPress={(markerId) => {
-              console.log("Marker pressed:", markerId);
               const g = groupedDropPoints.find(
                 (x) => `cust-${x.key}` === markerId,
               );
@@ -1900,6 +1742,31 @@ export default function TrackBatchOrdersScreen() {
             }}
             onPress={() => openOverlay()}
           />
+
+          {/* ✅ Route loading overlay (from MapRouteScreen pattern) */}
+          {routeLoading && (
+            <View style={styles.mapLoadingOverlay}>
+              <ActivityIndicator size="large" color="#16a34a" />
+              <Text style={styles.mapLoadingText}>Calculating routes…</Text>
+            </View>
+          )}
+
+          {/* ✅ Map legend (new – helps distinguish route colors) */}
+          <View style={styles.mapLegend}>
+            <View style={styles.legendRow}>
+              <View
+                style={[styles.legendDot, { backgroundColor: "#2563eb" }]}
+              />
+              <Text style={styles.legendText}>Driver → Store</Text>
+            </View>
+            <View style={styles.legendRow}>
+              <View
+                style={[styles.legendDot, { backgroundColor: "#60a5fa" }]}
+              />
+              <Text style={styles.legendText}>Store → Customer</Text>
+            </View>
+          </View>
+
           <View style={styles.mapActions}>
             <TouchableOpacity
               style={styles.fitBtn}
@@ -1983,6 +1850,7 @@ export default function TrackBatchOrdersScreen() {
         </View>
       </View>
 
+      {/* ORDER LIST */}
       <View style={styles.listHeader}>
         <Text style={styles.listHeaderText}>Orders in this batch</Text>
         {!!batchOrderIds.length && (
@@ -2014,8 +1882,12 @@ export default function TrackBatchOrdersScreen() {
   );
 }
 
+/* ============================================================
+   STYLES
+============================================================ */
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
+
   headerBar: {
     minHeight: 52,
     paddingHorizontal: 12,
@@ -2040,6 +1912,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0f172a",
   },
+
   summaryBox: {
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -2049,6 +1922,8 @@ const styles = StyleSheet.create({
   },
   summaryMain: { fontSize: 14, fontWeight: "800", color: "#0f172a" },
   summarySub: { marginTop: 3, fontSize: 12, color: "#6b7280" },
+
+  /* ---- Map ---- */
   mapCard: { paddingHorizontal: 16, paddingTop: 12 },
   mapWrap: {
     borderRadius: 14,
@@ -2058,12 +1933,37 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   map: { height: 260, width: "100%" },
-  attribTextSmall: {
-    marginTop: 4,
-    fontSize: 10,
-    color: "#6b7280",
-    fontWeight: "700",
+
+  // ✅ NEW: loading overlay (from MapRouteScreen)
+  mapLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(255,255,255,0.82)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 9,
   },
+  mapLoadingText: {
+    color: "#16a34a",
+    marginTop: 8,
+    fontWeight: "600",
+    fontSize: 13,
+  },
+
+  // ✅ NEW: map legend
+  mapLegend: {
+    position: "absolute",
+    left: 10,
+    bottom: 14,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    borderRadius: 10,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  legendRow: { flexDirection: "row", alignItems: "center", marginBottom: 4 },
+  legendDot: { width: 10, height: 10, borderRadius: 5, marginRight: 6 },
+  legendText: { fontSize: 11, color: "#374151", fontWeight: "600" },
+
   mapActions: { position: "absolute", right: 10, bottom: 14 },
   fitBtn: {
     flexDirection: "row",
@@ -2092,6 +1992,15 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   fitBtnText: { marginLeft: 6, color: "#fff", fontSize: 12, fontWeight: "900" },
+
+  attribTextSmall: {
+    marginTop: 4,
+    fontSize: 10,
+    color: "#6b7280",
+    fontWeight: "700",
+  },
+
+  /* ---- Driver card ---- */
   driverCard: {
     borderRadius: 14,
     borderWidth: 1,
@@ -2168,6 +2077,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e5e7eb",
   },
+
+  /* ---- Order list ---- */
   listHeader: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
   listHeaderText: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
   orderRow: {
@@ -2225,21 +2136,8 @@ const styles = StyleSheet.create({
   },
   qtyText: { fontSize: 11, fontWeight: "900", color: "#111827" },
   noItemsText: { fontSize: 12, color: "#6b7280", fontWeight: "800" },
-  noMap: {
-    height: 260,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#fff",
-  },
-  noMapText: {
-    marginTop: 8,
-    fontSize: 12,
-    color: "#6b7280",
-    fontWeight: "800",
-  },
+
+  /* ---- Overlay ---- */
   overlaySafe: { flex: 1, backgroundColor: "#fff" },
   overlayHeader: {
     height: 54,
@@ -2266,12 +2164,8 @@ const styles = StyleSheet.create({
   },
   overlayMapWrap: { flex: 1, backgroundColor: "#fff" },
   overlayActions: { position: "absolute", right: 14, top: 70 },
-  noMapFull: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#fff",
-  },
+
+  /* ---- Location modal ---- */
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",

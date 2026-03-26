@@ -6,6 +6,7 @@
 //         last phone, saved phone/password when checkbox enabled)
 // ✅ FIX: include owner_type in merchant_login + navigation params (so food/mart loads correctly)
 // ✅ FIX (REQUESTED): show backend message properly when login fails (supports {message} or {error})
+// ✅ FIX: Login button enabling issue in production APK
 
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
@@ -38,13 +39,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LOGIN_MERCHANT_ENDPOINT } from "@env";
 import { connectMerchantSocket } from "../realtime/merchantSocket";
 import { getExpoPushTokenAsync } from "../../utils/getExpoPushTokenAsync";
-// import { getStableDeviceId } from "../../utils/deviceId";
 
 /* ===== Safe emitter (no-op if unavailable) ===== */
 const SafeDeviceEventEmitter =
   RNDeviceEventEmitter && typeof RNDeviceEventEmitter.emit === "function"
     ? RNDeviceEventEmitter
-    : { emit: () => { } };
+    : { emit: () => {} };
 
 /* ───────── Navigation helpers (same as LoginScreen) ───────── */
 const WELCOME_ROUTE = "WelcomeScreen";
@@ -76,14 +76,14 @@ const goToWelcome = (navigation) => {
             state: { index: 0, routes: [{ name: WELCOME_ROUTE }] },
           },
         ],
-      })
+      }),
     );
     return;
   }
   try {
     navigation.dispatch(StackActions.replace(WELCOME_ROUTE));
     return;
-  } catch { }
+  } catch {}
   navigation.navigate(WELCOME_ROUTE);
 };
 
@@ -192,12 +192,13 @@ async function getOrCreateLocalDeviceId() {
   await SecureStore.setItemAsync(KEY_LOCAL_DEVICE_ID, fresh);
   return fresh;
 }
+
 async function printPushIdOnLoginClick(pushToken) {
   console.log("[DEVICE] Expo push token (device_id):", pushToken || "");
   return { expo_push_token: pushToken || "", device_id: pushToken || "" };
 }
 
-/* ✅ NEW: robust error message extraction */
+/* ✅ robust error message extraction */
 function extractErrorMessage(out) {
   // out: { res, data, raw }
   const fallback = "Login failed. Please try again.";
@@ -251,6 +252,8 @@ export default function MobileLoginScreen() {
   const [errorText, setErrorText] = useState("");
   const [pushToken, setPushToken] = useState(null);
   const [deviceId, setDeviceId] = useState("");
+  const [deviceIdLoading, setDeviceIdLoading] = useState(true); // Track device ID loading state
+
   // ✅ remember-me checkbox
   const [savePassword, setSavePassword] = useState(false);
 
@@ -265,25 +268,57 @@ export default function MobileLoginScreen() {
   }, [phoneDigits]);
 
   const canSubmit =
-    !hasPhoneError && password.trim().length >= 6 && !!deviceId && !loading;
+    !hasPhoneError &&
+    password.trim().length >= 6 &&
+    !!deviceId &&
+    !loading &&
+    !deviceIdLoading;
+
+  // Improved device ID initialization with fallback
   useEffect(() => {
-    const fetchPushToken = async () => {
-      const token = await getExpoPushTokenAsync();
-      setPushToken(token);
-      console.log("Push token on mobile login screen:", token);
+    const initDeviceId = async () => {
+      try {
+        console.log("Initializing device ID for MobileLogin...");
+        let token = await getValidExpoPushToken();
+
+        // If token is not a valid Expo token, try again with delay
+        if (!token || !token.startsWith("ExponentPushToken")) {
+          console.log("Invalid Expo token, retrying...");
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          token = await getValidExpoPushToken();
+        }
+
+        if (token && token.startsWith("ExponentPushToken")) {
+          setPushToken(token);
+          setDeviceId(token);
+          console.log("✅ Device ID set successfully for MobileLogin:", token);
+        } else {
+          // Fallback: generate a unique device ID if Expo token fails
+          console.warn(
+            "Expo token not available, using fallback device ID for MobileLogin",
+          );
+          const fallbackId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          setDeviceId(fallbackId);
+          setPushToken(null);
+          console.log("Using fallback device ID for MobileLogin:", fallbackId);
+        }
+      } catch (error) {
+        console.error("Failed to get device ID for MobileLogin:", error);
+        // Last resort fallback
+        const fallbackId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        setDeviceId(fallbackId);
+        console.log(
+          "Using emergency fallback device ID for MobileLogin:",
+          fallbackId,
+        );
+      } finally {
+        setDeviceIdLoading(false);
+      }
     };
-    fetchPushToken();
-  }, []);
-  useEffect(() => {
-  (async () => {
-    const token = await getValidExpoPushToken();
 
-    setPushToken(token);
-    setDeviceId(token);
-
-    console.log("Expo Push Token (used as device_id):", token);
-  })();
+    initDeviceId();
   }, []);
+
   // ✅ load saved phone/password or last phone
   useEffect(() => {
     const loadSaved = async () => {
@@ -301,7 +336,7 @@ export default function MobileLoginScreen() {
         } else if (lastPhone) {
           setPhoneDigits(String(lastPhone || ""));
         }
-      } catch { }
+      } catch {}
     };
     loadSaved();
   }, []);
@@ -323,234 +358,257 @@ export default function MobileLoginScreen() {
             params: { openTab: "Home", nonce: Date.now(), ...extras },
           },
         ],
-      })
+      }),
     );
   };
 
   const handleLogin = async () => {
-  setTouched(true);
-  setErrorText("");
+    setTouched(true);
+    setErrorText("");
 
-  const base = (LOGIN_MERCHANT_ENDPOINT || "").trim();
-  if (!base) {
-    Alert.alert(
-      "Configuration error",
-      "LOGIN_MERCHANT_ENDPOINT is not configured in .env"
-    );
-    return;
-  }
-
-  const digits = phoneDigits;
-  const prefix = digits.slice(0, 2);
-  const okPrefix = ALLOWED_PREFIXES.includes(prefix);
-
-  if (!(digits.length === 8 && okPrefix) || password.trim().length < 6) {
-    const msg =
-      "Please enter a valid mobile number (77/17/16 + 8 digits) and a password (min 6 chars).";
-    setErrorText(msg);
-    return;
-  }
-
-  // ✅ ALWAYS fetch fresh Expo Push Token here
-  const getValidExpoToken = async () => {
-    let token = await getExpoPushTokenAsync();
-
-    if (!token || !token.startsWith("ExponentPushToken")) {
-      await new Promise((res) => setTimeout(res, 1000));
-      token = await getExpoPushTokenAsync();
-    }
-
-    return token;
-  };
-
-  const deviceId = await getValidExpoToken();
-
-  if (!deviceId) {
-    Alert.alert("Error", "Unable to get device token. Please try again.");
-    return;
-  }
-
-  console.log("LOGIN device_id (Expo):", deviceId);
-
-  const payload = {
-    phone: `${COUNTRY.dial}${digits}`,
-    password: password.trim(),
-    device_id: deviceId,      // ✅ Expo token used as device_id
-    push_token: deviceId,     // optional (same value)
-  };
-
-  setLoading(true);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
-
-  try {
-    const out = await postJson(base, payload, controller.signal);
-
-    if (!out.res.ok) {
-      console.log("Login failed response:", out.res.status, out.raw);
-
-      const msg = extractErrorMessage(out);
-      setErrorText(msg);
-      Alert.alert("Login failed", msg);
+    const base = (LOGIN_MERCHANT_ENDPOINT || "").trim();
+    if (!base) {
+      Alert.alert(
+        "Configuration error",
+        "LOGIN_MERCHANT_ENDPOINT is not configured in .env",
+      );
       return;
     }
 
-    const data = out.data || {};
+    const digits = phoneDigits;
+    const prefix = digits.slice(0, 2);
+    const okPrefix = ALLOWED_PREFIXES.includes(prefix);
 
-    // ✅ token extraction
-    const tokenObj = data?.token || data?.data?.token || {};
-    const accessToken =
-      (typeof data?.token === "string" && data.token) ||
-      tokenObj?.access_token ||
-      tokenObj?.accessToken ||
-      data?.access_token ||
-      data?.accessToken ||
-      "";
-
-    const refreshToken =
-      tokenObj?.refresh_token ||
-      tokenObj?.refreshToken ||
-      data?.refresh_token ||
-      data?.refreshToken ||
-      "";
-
-    if (accessToken) {
-      await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
-    }
-    if (refreshToken) {
-      await SecureStore.setItemAsync(KEY_REFRESH_TOKEN, String(refreshToken));
+    if (!(digits.length === 8 && okPrefix) || password.trim().length < 6) {
+      const msg =
+        "Please enter a valid mobile number (77/17/16 + 8 digits) and a password (min 6 chars).";
+      setErrorText(msg);
+      return;
     }
 
-    const userInfo =
-      data?.merchant ||
-      data?.user ||
-      data?.data?.merchant ||
-      data?.data?.user ||
-      data ||
-      {};
+    // Get fresh Expo token or use existing deviceId
+    let expoToken = deviceId;
 
-    const user_id =
-      userInfo?.user_id ?? userInfo?.id ?? data?.user_id ?? data?.id ?? null;
-
-    const business_id =
-      userInfo?.business_id ??
-      userInfo?.businessId ??
-      data?.business_id ??
-      data?.id ??
-      "";
-
-    const business_name =
-      userInfo?.business_name ??
-      userInfo?.businessName ??
-      data?.business_name ??
-      "";
-
-    const business_logo =
-      userInfo?.business_logo ?? userInfo?.businessLogo ?? userInfo?.logo ?? "";
-
-    const business_address =
-      userInfo?.business_address ??
-      userInfo?.businessAddress ??
-      userInfo?.address ??
-      "";
-
-    const owner_type = String(
-      userInfo?.owner_type ??
-      userInfo?.ownerType ??
-      data?.owner_type ??
-      data?.ownerType ??
-      "food"
-    )
-      .trim()
-      .toLowerCase();
-
-    // ✅ Save user_id
-    if (user_id != null && String(user_id).trim()) {
-      await SecureStore.setItemAsync(KEY_USER_ID, String(user_id));
-    } else {
-      await SecureStore.deleteItemAsync(KEY_USER_ID);
+    // If deviceId is from fallback, try to get a real Expo token
+    if (!expoToken.startsWith("ExponentPushToken")) {
+      try {
+        const freshToken = await getValidExpoPushToken();
+        if (freshToken && freshToken.startsWith("ExponentPushToken")) {
+          expoToken = freshToken;
+          setDeviceId(freshToken);
+          setPushToken(freshToken);
+        }
+      } catch (e) {
+        console.warn(
+          "Could not get Expo token for MobileLogin, using fallback:",
+          e,
+        );
+      }
     }
 
-    // ✅ Save business_id
-    if (business_id != null && String(business_id).trim()) {
-      const bid = String(business_id);
-      await SecureStore.setItemAsync(KEY_BUSINESS_ID, bid);
-      await SecureStore.setItemAsync("business_id", bid);
-      await SecureStore.setItemAsync("businessId", bid);
-    } else {
-      await SecureStore.deleteItemAsync(KEY_BUSINESS_ID);
-      await SecureStore.deleteItemAsync("business_id");
-      await SecureStore.deleteItemAsync("businessId");
+    if (!expoToken) {
+      Alert.alert(
+        "Error",
+        "Unable to get device identifier. Please try again.",
+      );
+      setLoading(false);
+      return;
     }
 
-    // ✅ Save merchant login payload
-    const userPayload = {
-      user_id,
-      business_id,
-      business_name,
-      business_logo,
-      business_address,
+    console.log("MobileLogin device_id:", expoToken);
+
+    const payload = {
       phone: `${COUNTRY.dial}${digits}`,
-      device_id: deviceId,   // ✅ Expo token stored
-      push_token: deviceId,
-      owner_type,
+      password: password.trim(),
+      device_id: expoToken,
+      push_token: expoToken,
     };
 
-    await SecureStore.setItemAsync(
-      KEY_MERCHANT_LOGIN,
-      JSON.stringify(userPayload)
-    );
-
-    // ✅ store last phone
-    await SecureStore.setItemAsync(KEY_LAST_LOGIN_PHONE, String(digits));
-
-    // ✅ remember password
-    if (savePassword) {
-      await SecureStore.setItemAsync(KEY_SAVED_PHONE, String(digits));
-      await SecureStore.setItemAsync(
-        KEY_SAVED_PHONE_PASSWORD,
-        String(password || "")
-      );
-    } else {
-      await SecureStore.deleteItemAsync(KEY_SAVED_PHONE);
-      await SecureStore.deleteItemAsync(KEY_SAVED_PHONE_PASSWORD);
-    }
-
-    SafeDeviceEventEmitter.emit("profile-updated", {
-      business_name,
-      business_logo,
-    });
+    setLoading(true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
 
     try {
-      connectMerchantSocket({ user_id, business_id });
-    } catch {}
+      const out = await postJson(base, payload, controller.signal);
 
-    // ✅ Navigate
-    navigateHome({
-      business_name,
-      business_logo,
-      business_address,
-      business_id,
-      auth_token: accessToken,
-      user_id: user_id != null ? String(user_id) : "",
-      owner_type,
-      ownerType: owner_type,
-      expo_push_token: deviceId,
-      device_id: deviceId,
-    });
+      if (!out.res.ok) {
+        console.log("Login failed response:", out.res.status, out.raw);
 
-  } catch (e) {
-    const msg =
-      e?.name === "AbortError"
-        ? "Request timeout. Please try again."
-        : "Network error. Please try again.";
-    setErrorText(msg);
-    Alert.alert("Login failed", msg);
-  } finally {
-    clearTimeout(timer);
-    setLoading(false);
+        const msg = extractErrorMessage(out);
+        setErrorText(msg);
+        Alert.alert("Login failed", msg);
+        return;
+      }
+
+      const data = out.data || {};
+
+      // ✅ token extraction
+      const tokenObj = data?.token || data?.data?.token || {};
+      const accessToken =
+        (typeof data?.token === "string" && data.token) ||
+        tokenObj?.access_token ||
+        tokenObj?.accessToken ||
+        data?.access_token ||
+        data?.accessToken ||
+        "";
+
+      const refreshToken =
+        tokenObj?.refresh_token ||
+        tokenObj?.refreshToken ||
+        data?.refresh_token ||
+        data?.refreshToken ||
+        "";
+
+      if (accessToken) {
+        await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
+      }
+      if (refreshToken) {
+        await SecureStore.setItemAsync(KEY_REFRESH_TOKEN, String(refreshToken));
+      }
+
+      const userInfo =
+        data?.merchant ||
+        data?.user ||
+        data?.data?.merchant ||
+        data?.data?.user ||
+        data ||
+        {};
+
+      const user_id =
+        userInfo?.user_id ?? userInfo?.id ?? data?.user_id ?? data?.id ?? null;
+
+      const business_id =
+        userInfo?.business_id ??
+        userInfo?.businessId ??
+        data?.business_id ??
+        data?.id ??
+        "";
+
+      const business_name =
+        userInfo?.business_name ??
+        userInfo?.businessName ??
+        data?.business_name ??
+        "";
+
+      const business_logo =
+        userInfo?.business_logo ??
+        userInfo?.businessLogo ??
+        userInfo?.logo ??
+        "";
+
+      const business_address =
+        userInfo?.business_address ??
+        userInfo?.businessAddress ??
+        userInfo?.address ??
+        "";
+
+      const owner_type = String(
+        userInfo?.owner_type ??
+          userInfo?.ownerType ??
+          data?.owner_type ??
+          data?.ownerType ??
+          "food",
+      )
+        .trim()
+        .toLowerCase();
+
+      // ✅ Save user_id
+      if (user_id != null && String(user_id).trim()) {
+        await SecureStore.setItemAsync(KEY_USER_ID, String(user_id));
+      } else {
+        await SecureStore.deleteItemAsync(KEY_USER_ID);
+      }
+
+      // ✅ Save business_id
+      if (business_id != null && String(business_id).trim()) {
+        const bid = String(business_id);
+        await SecureStore.setItemAsync(KEY_BUSINESS_ID, bid);
+        await SecureStore.setItemAsync("business_id", bid);
+        await SecureStore.setItemAsync("businessId", bid);
+      } else {
+        await SecureStore.deleteItemAsync(KEY_BUSINESS_ID);
+        await SecureStore.deleteItemAsync("business_id");
+        await SecureStore.deleteItemAsync("businessId");
+      }
+
+      // ✅ Save merchant login payload
+      const userPayload = {
+        user_id,
+        business_id,
+        business_name,
+        business_logo,
+        business_address,
+        phone: `${COUNTRY.dial}${digits}`,
+        device_id: expoToken,
+        push_token: expoToken,
+        owner_type,
+      };
+
+      await SecureStore.setItemAsync(
+        KEY_MERCHANT_LOGIN,
+        JSON.stringify(userPayload),
+      );
+
+      // ✅ store last phone
+      await SecureStore.setItemAsync(KEY_LAST_LOGIN_PHONE, String(digits));
+
+      // ✅ remember password
+      if (savePassword) {
+        await SecureStore.setItemAsync(KEY_SAVED_PHONE, String(digits));
+        await SecureStore.setItemAsync(
+          KEY_SAVED_PHONE_PASSWORD,
+          String(password || ""),
+        );
+      } else {
+        await SecureStore.deleteItemAsync(KEY_SAVED_PHONE);
+        await SecureStore.deleteItemAsync(KEY_SAVED_PHONE_PASSWORD);
+      }
+
+      SafeDeviceEventEmitter.emit("profile-updated", {
+        business_name,
+        business_logo,
+      });
+
+      try {
+        connectMerchantSocket({ user_id, business_id });
+      } catch {}
+
+      // ✅ Navigate
+      navigateHome({
+        business_name,
+        business_logo,
+        business_address,
+        business_id,
+        auth_token: accessToken,
+        user_id: user_id != null ? String(user_id) : "",
+        owner_type,
+        ownerType: owner_type,
+        expo_push_token: expoToken,
+        device_id: expoToken,
+      });
+    } catch (e) {
+      console.error("MobileLogin error:", e);
+      const msg =
+        e?.name === "AbortError"
+          ? "Request timeout. Please try again."
+          : "Network error. Please try again.";
+      setErrorText(msg);
+      Alert.alert("Login failed", msg);
+    } finally {
+      clearTimeout(timer);
+      setLoading(false);
+    }
+  };
+
+  // Show loading indicator while device ID is being initialized
+  if (deviceIdLoading) {
+    return (
+      <View style={[styles.container, styles.centerContent]}>
+        <ActivityIndicator size="large" color="#00b14f" />
+        <Text style={styles.loadingText}>Initializing...</Text>
+      </View>
+    );
   }
-};
 
   return (
     <KeyboardAvoidingView style={styles.container}>
@@ -673,10 +731,10 @@ export default function MobileLoginScreen() {
                   if (!v) {
                     try {
                       await SecureStore.deleteItemAsync(
-                        KEY_SAVED_PHONE_PASSWORD
+                        KEY_SAVED_PHONE_PASSWORD,
                       );
                       await SecureStore.deleteItemAsync(KEY_SAVED_PHONE);
-                    } catch { }
+                    } catch {}
                   }
                 }}
                 disabled={loading}
@@ -700,9 +758,7 @@ export default function MobileLoginScreen() {
             Forgot your{" "}
             <Text
               style={styles.link}
-              onPress={() =>
-                !loading && navigation.navigate("ForgotPassword")
-              }
+              onPress={() => !loading && navigation.navigate("ForgotPassword")}
             >
               password
             </Text>
@@ -743,7 +799,15 @@ export default function MobileLoginScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
   inner: { flex: 1, padding: 20, paddingTop: 40 },
-
+  centerContent: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: "#666",
+  },
   header: {
     flexDirection: "row",
     alignItems: "center",
