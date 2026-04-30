@@ -44,7 +44,7 @@ export default function WelcomeScreen() {
 
       <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
         <Text style={styles.logo}>
-          <Text style={{ color: '#00b14f', fontWeight: 'bold' }}>Grab</Text>
+          <Text style={{ color: '#00b14f', fontWeight: 'bold' }}>Tabdhey</Text>
           <Text style={{ color: '#00b14f' }}>Merchant</Text>
         </Text>
 

@@ -1,6 +1,7 @@
 // screens/food/NearbyOrdersScreen.js
 // ✅ UPDATE: Track orders button is clickable ONLY if batch exists in GET_BATCH_RIDE_ID_ENDPOINT
 // ✅ UPDATE: On Track orders press -> navigates to BatchRidesScreen with { batches, businessId }
+// ✅ UPDATE: Green highlight for cluster containing focusOrderId (from OrderDetails)
 // ✅ Keeps your existing clustering + filters + responsive UI
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -318,7 +319,7 @@ const buildOrdersUrl = (bizId, ownerType, overrideBase) => {
   return url;
 };
 
-/* ✅ NEW: Build GET_BATCH_RIDE_ID_ENDPOINT url */
+/* ✅ Build GET_BATCH_RIDE_ID_ENDPOINT url */
 const buildGetBatchRideUrl = (bizId) => {
   const rawId = bizId != null ? String(bizId).trim() : "";
   const tpl = (ENV_GET_BATCH_RIDE_ID_ENDPOINT || "").trim();
@@ -332,7 +333,6 @@ const buildGetBatchRideUrl = (bizId) => {
     .replace(":business_id", encId)
     .replace(":businessId", encId);
 
-  // If template didn't have placeholder, append query param
   if (url === tpl) {
     const sep = url.includes("?") ? "&" : "?";
     url = `${url}${sep}business_id=${encId}`;
@@ -506,6 +506,12 @@ const applyUniqueLabels = (clusters) => {
   });
 };
 
+/* ✅ Helper: Check if cluster contains the focus order */
+const clusterContainsFocusOrder = (cluster, focusOrderId) => {
+  if (!focusOrderId || !cluster?.orders) return false;
+  return cluster.orders.some(order => String(order.id) === String(focusOrderId));
+};
+
 /* ---------------- screen ---------------- */
 function NearbyOrdersScreen() {
   const navigation = useNavigation();
@@ -523,6 +529,9 @@ function NearbyOrdersScreen() {
   const thresholdKm = 2;
   const batchListScreen = route?.params?.batchListScreen || "BatchRidesScreen";
 
+  // ✅ Extract focusOrderId from params (passed from OrderDetails)
+  const focusOrderId = route?.params?.focusOrderId || route?.params?.focus_order_id || null;
+
   const [deliveryOption, setDeliveryOption] = useState(null);
   const [bizId, setBizId] = useState(businessIdFromParams || null);
 
@@ -530,7 +539,7 @@ function NearbyOrdersScreen() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // ✅ NEW: batches from GET_BATCH_RIDE_ID_ENDPOINT
+  // ✅ batches from GET_BATCH_RIDE_ID_ENDPOINT
   const [batchRides, setBatchRides] = useState([]);
   const [batchLoading, setBatchLoading] = useState(false);
 
@@ -659,7 +668,7 @@ function NearbyOrdersScreen() {
     }
   }, [bizId, buildUrl]);
 
-  // ✅ NEW: fetch batches for business
+  // ✅ fetch batches for business
   const fetchBatchRides = useCallback(async () => {
     if (!bizId) return;
 
@@ -692,7 +701,6 @@ function NearbyOrdersScreen() {
       }
 
       const arr = Array.isArray(json?.data) ? json.data : [];
-      // keep only batches that look valid
       const cleaned = arr
         .map((x) => ({
           batch_id: x?.batch_id ?? x?.batchId ?? null,
@@ -750,7 +758,7 @@ function NearbyOrdersScreen() {
     return labeled;
   }, [clusterEligibleOrders, thresholdKm]);
 
-  /* (kept) your trackable list */
+  /* trackable list */
   const trackableAll = useMemo(() => {
     const src = Array.isArray(orders) ? orders : [];
     return src
@@ -759,8 +767,7 @@ function NearbyOrdersScreen() {
       .filter((o) => isGrabChosenForOrder(o?.raw));
   }, [orders]);
 
-  // ✅ REQUIRED CHANGE:
-  // Track button clickable ONLY if there is at least one batch from GET_BATCH_RIDE_ID_ENDPOINT
+  // Track button clickable ONLY if there is at least one batch
   const batchCount = batchRides.length;
   const trackDisabled = batchCount === 0;
 
@@ -771,11 +778,7 @@ function NearbyOrdersScreen() {
       businessId: bizId,
       bizId,
       merchant_id: bizId,
-
-      // ✅ pass batches (your BatchRidesScreen can use this to show list)
       batches: batchRides,
-
-      // keep these for convenience / backward compat
       orders: trackableAll,
       ownerType,
       delivery_option: deliveryOption,
@@ -847,11 +850,15 @@ function NearbyOrdersScreen() {
               clusterOrders?.[0]?.delivery_address ||
               "—";
 
+            // ✅ Check if this cluster contains the focused order
+            const isHighlighted = focusOrderId && clusterContainsFocusOrder(item, focusOrderId);
+
             return (
               <TouchableOpacity
                 style={[
                   styles.clusterCard,
                   { padding: S(16), borderRadius: S(14) },
+                  isHighlighted && styles.clusterCardHighlight,
                 ]}
                 activeOpacity={0.9}
                 onPress={() => {
@@ -875,6 +882,9 @@ function NearbyOrdersScreen() {
 
                     delivery_option: deliveryOption,
                     deliveryOption,
+
+                    // ✅ Pass focusOrderId to next screen if needed
+                    focusOrderId,
                   });
                 }}
               >
@@ -907,13 +917,20 @@ function NearbyOrdersScreen() {
                     {clusterOrders.length} orders
                   </Text>
                 </View>
+
+                {/* ✅ Show "Current Order" badge on highlighted cluster */}
+                {isHighlighted && (
+                  <View style={styles.highlightBadge}>
+                    <Text style={styles.highlightBadgeText}>Current Order</Text>
+                  </View>
+                )}
               </TouchableOpacity>
             );
           }}
         />
       )}
 
-      {/* ✅ ONE global Track button (enabled only when batches exist) */}
+      {/* ✅ Global Track button (enabled only when batches exist) */}
       <View style={[styles.fabWrapper, { paddingHorizontal: S(16), paddingBottom: bottomFabPad }]}>
         <TouchableOpacity
           style={[
@@ -971,6 +988,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e2e8f0",
   },
+  
+  // ✅ Green highlight style (same as BatchRidesScreen)
+  clusterCardHighlight: {
+    borderColor: "#86efac",
+    backgroundColor: "#f0fdf4",
+    borderWidth: 2,
+  },
+  
   clusterHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -992,6 +1017,23 @@ const styles = StyleSheet.create({
   clusterBadgeText: {
     fontWeight: "700",
     color: "#16a34a",
+  },
+
+  // ✅ Badge for current order highlight
+  highlightBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: '#16a34a',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  
+  highlightBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
   },
 
   fabWrapper: {

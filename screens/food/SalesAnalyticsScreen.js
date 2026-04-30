@@ -1,4 +1,4 @@
-// screens/food/SalesAnalyticsScreen.js
+// screens/food/SalesAnalyticsScreen.js - FINAL WORKING VERSION
 import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import {
   View,
@@ -13,6 +13,7 @@ import {
   Dimensions,
   Modal,
   ScrollView,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
@@ -27,21 +28,23 @@ import {
   Stop,
   Rect,
 } from "react-native-svg";
+import { File, Paths } from "expo-file-system";
+import * as Sharing from "expo-sharing";
+import * as XLSX from "xlsx";
+import { TOTAL_SALES_ENDPOINT } from "@env";
 
 /* ===========================
    CONFIG
    =========================== */
 
-// ✅ Endpoint you provided
-const TOTAL_SALES_URL = (businessId) =>
-  `https://grab.newedge.bt/merchant/api/merchant-earnings/business/${encodeURIComponent(
-    businessId
-  )}`;
+const getTotalSalesUrl = (businessId) => {
+  return TOTAL_SALES_ENDPOINT.replace("{business_id}", businessId);
+};
 
 const CACHE_TTL = 60 * 1000;
 
 /* ===========================
-   THEME (no external import)
+   THEME
    =========================== */
 const COLORS = {
   GRAB_GREEN: "#00B14F",
@@ -53,14 +56,14 @@ const BORDER = "#E5E7EB";
 const FILL = "#F9FAFB";
 
 /* ===========================
-   DATE HELPERS (Mon week)
+   DATE HELPERS
    =========================== */
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const endOfDay = (d) =>
   new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59);
 
 const startOfWeek = (d) => {
-  const day = (d.getDay() + 6) % 7; // Mon=0..Sun=6
+  const day = (d.getDay() + 6) % 7;
   const s = new Date(d);
   s.setDate(d.getDate() - day);
   return startOfDay(s);
@@ -76,7 +79,6 @@ const startOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
 const endOfMonth = (d) =>
   endOfDay(new Date(d.getFullYear(), d.getMonth() + 1, 0));
 
-/** Local YYYY-MM-DD (no UTC conversion) */
 const toYMDLocal = (d) => {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -109,10 +111,9 @@ const parseRowDate = (row) => {
 };
 
 /* ===========================
-   AUTH (token + user)
+   AUTH
    =========================== */
 async function getAccessTokenFromSecureStore() {
-  // ✅ aligns with your app keys: merchant_login -> token.access_token OR token
   const tryMerchantLogin = async () => {
     try {
       const raw = await SecureStore.getItemAsync("merchant_login");
@@ -152,9 +153,8 @@ async function getAccessTokenFromSecureStore() {
 }
 
 async function getUserInfoFallback() {
-  // ✅ tries many keys so you don't depend on ../utils/authToken
   const keys = [
-    "merchant_login", // IMPORTANT: contains business_id in your app
+    "merchant_login",
     "userInfo",
     "USER_INFO",
     "user",
@@ -179,7 +179,7 @@ async function getUserInfoFallback() {
 }
 
 /* ===========================
-   SVG LINE CHART (like EarningsScreen)
+   SVG LINE CHART
    =========================== */
 const LineChart = ({
   data = [],
@@ -228,18 +228,15 @@ const LineChart = ({
     <View style={styles.chartCard}>
       <Svg height={H} width={width}>
         <Rect x="0" y="0" width={width} height={H} fill="#fff" />
-
         <Defs>
           <LinearGradient id="gradSales" x1="0" y1="0" x2="0" y2="1">
             <Stop offset="0" stopColor={color} stopOpacity="0.25" />
             <Stop offset="1" stopColor={color} stopOpacity="0" />
           </LinearGradient>
         </Defs>
-
         {points.length >= 2 && (
           <Polyline points={areaPoints} fill="url(#gradSales)" stroke="none" />
         )}
-
         {points.length >= 2 && (
           <Polyline
             points={polyPoints}
@@ -248,7 +245,6 @@ const LineChart = ({
             strokeWidth="2.5"
           />
         )}
-
         {points.map((p, idx) => (
           <Circle
             key={`dot-${idx}`}
@@ -261,7 +257,6 @@ const LineChart = ({
           />
         ))}
       </Svg>
-
       <View style={[styles.xLabelsRow, { width }]}>
         {points.map((p, i) => (
           <Text
@@ -273,7 +268,6 @@ const LineChart = ({
           </Text>
         ))}
       </View>
-
       <View style={styles.legendRow}>
         <View style={[styles.legendDot, { backgroundColor: color }]} />
         <Text style={styles.legendText}>{legendLabel}</Text>
@@ -335,7 +329,8 @@ function buildMonthChart(ordersInRange, anchorDate) {
     const d = new Date(o.ts);
     if (d.getFullYear() !== year || d.getMonth() !== month) continue;
     const idx = d.getDate() - 1;
-    if (idx >= 0 && idx < buckets.length) buckets[idx].total += Number(o.amount || 0);
+    if (idx >= 0 && idx < buckets.length)
+      buckets[idx].total += Number(o.amount || 0);
   }
 
   const target = 8;
@@ -358,26 +353,24 @@ function buildMonthChart(ordersInRange, anchorDate) {
 export default function SalesAnalyticsScreen(props) {
   const route = useRoute();
 
-  const [tab, setTab] = useState("Day"); // Day | Week | Month
+  const [tab, setTab] = useState("Day");
   const [anchorDate, setAnchorDate] = useState(new Date());
   const [showPicker, setShowPicker] = useState(false);
-
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
-
   const [summary, setSummary] = useState({
     total_amount: 0,
     orders_count: 0,
     rows_count: 0,
   });
-
   const [orders, setOrders] = useState([]);
   const [chart, setChart] = useState([]);
   const [showInfo, setShowInfo] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
   const cacheRef = useRef(new Map());
-  const androidPad = Platform.OS === "android" ? StatusBar.currentHeight || 0 : 0;
 
   const formatNu = (n) => {
     const x = Number(n || 0);
@@ -386,67 +379,56 @@ export default function SalesAnalyticsScreen(props) {
   };
 
   const { start, end } = useMemo(() => {
-    if (tab === "Week") {
+    if (tab === "Week")
       return { start: startOfWeek(anchorDate), end: endOfWeek(anchorDate) };
-    }
-    if (tab === "Month") {
+    if (tab === "Month")
       return { start: startOfMonth(anchorDate), end: endOfMonth(anchorDate) };
-    }
     return { start: startOfDay(anchorDate), end: endOfDay(anchorDate) };
   }, [tab, anchorDate]);
 
-  // ✅ UPDATED: supports props (tab embedding) + route params + SecureStore
   const resolveBusinessId = useCallback(async () => {
     const p = route?.params || {};
-
     const fromProps =
       props?.business_id ??
       props?.businessId ??
       props?.business?.business_id ??
       props?.business?.id ??
       null;
-
-    if (fromProps != null && String(fromProps).trim() !== "") return Number(fromProps);
-
+    if (fromProps != null && String(fromProps).trim() !== "")
+      return Number(fromProps);
     const direct =
       p.business_id ??
       p.businessId ??
       p?.business?.business_id ??
       p?.business?.id ??
       null;
-
     if (direct != null && String(direct).trim() !== "") return Number(direct);
-
     const user = await getUserInfoFallback();
-    const userObj = user?.user ?? user; // merchant_login keeps user under user
+    const userObj = user?.user ?? user;
     const fromUser =
       userObj?.business_id ??
       userObj?.businessId ??
       userObj?.business?.business_id ??
       userObj?.business?.id ??
       null;
-
-    if (fromUser != null && String(fromUser).trim() !== "") return Number(fromUser);
-
-    throw new Error("No business id (pass business_id in route params or props)");
+    if (fromUser != null && String(fromUser).trim() !== "")
+      return Number(fromUser);
+    throw new Error("No business id");
   }, [route?.params, props]);
 
   const deriveForRange = useCallback(
     (allOrders, rangeStart, rangeEnd) => {
       const sTs = rangeStart.getTime();
       const eTs = rangeEnd.getTime();
-
       const inRange = (allOrders || [])
-        .filter((o) => typeof o?.ts === "number" && o.ts >= sTs && o.ts <= eTs)
+        .filter((o) => o?.ts && o.ts >= sTs && o.ts <= eTs)
         .sort((a, b) => b.ts - a.ts);
-
       const total = inRange.reduce((acc, o) => acc + Number(o.amount || 0), 0);
-
       let nextChart = [];
       if (tab === "Day") nextChart = buildDayChart(inRange);
-      else if (tab === "Week") nextChart = buildWeekChart(inRange, anchorDate);
+      else if (tab === "Week")
+        nextChart = buildWeekChart(inRange, anchorDate);
       else nextChart = buildMonthChart(inRange, anchorDate);
-
       return {
         summary: {
           total_amount: Math.round(total * 100) / 100,
@@ -465,10 +447,8 @@ export default function SalesAnalyticsScreen(props) {
       try {
         setError("");
         setLoading(true);
-
         const business_id = await resolveBusinessId();
         const key = `biz:${business_id}:all`;
-
         if (!force) {
           const cached = cacheRef.current.get(key);
           if (cached && Date.now() - cached.ts < CACHE_TTL) {
@@ -480,10 +460,7 @@ export default function SalesAnalyticsScreen(props) {
             return;
           }
         }
-
-        const url = TOTAL_SALES_URL(business_id);
-        // console.log("[sales] GET", url);
-
+        const url = getTotalSalesUrl(business_id);
         const token = await getAccessTokenFromSecureStore();
         const res = await fetch(url, {
           headers: {
@@ -492,12 +469,10 @@ export default function SalesAnalyticsScreen(props) {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
         });
-
         const json = await res.json().catch(() => null);
-        if (!res.ok || !json?.success) {
+        if (!res.ok || !json?.success)
           throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
-        }
-
+        
         const rows = Array.isArray(json?.rows) ? json.rows : [];
         const allOrders = rows
           .map((r, idx) => {
@@ -512,16 +487,15 @@ export default function SalesAnalyticsScreen(props) {
             };
           })
           .filter((o) => o.ts > 0);
-
+        
         cacheRef.current.set(key, { allOrders, ts: Date.now() });
-
         const derived = deriveForRange(allOrders, start, end);
         setSummary(derived.summary);
         setOrders(derived.orders);
         setChart(derived.chart);
       } catch (e) {
         console.warn("[sales] fetch failed:", e?.message);
-        setError("Couldn’t load sales. Pull to retry.");
+        setError("Couldn't load sales. Pull to retry.");
       } finally {
         setLoading(false);
       }
@@ -577,17 +551,14 @@ export default function SalesAnalyticsScreen(props) {
   };
 
   const onPick = (event, picked) => {
-    if (Platform.OS === "android") {
-      if (event?.type === "dismissed") {
-        setShowPicker(false);
-        return;
-      }
+    if (Platform.OS === "android" && event?.type === "dismissed") {
       setShowPicker(false);
+      return;
     }
+    setShowPicker(false);
     if (picked) setAnchorDate(picked);
   };
 
-  // re-derive when changing tab/date (from cache if exists)
   useEffect(() => {
     (async () => {
       try {
@@ -606,8 +577,170 @@ export default function SalesAnalyticsScreen(props) {
         fetchAllSales(false);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, anchorDate]);
+
+  // Generate Excel data
+  const generateExcelData = () => {
+    const periodRange = rangeText(tab, anchorDate);
+    const periodType = tab;
+    
+    // Calculate totals
+    const dailyTotals = new Map();
+    orders.forEach((order) => {
+      const date = new Date(order.ts);
+      const dateKey = date.toLocaleDateString();
+      const current = dailyTotals.get(dateKey) || { amount: 0, count: 0 };
+      current.amount += order.amount;
+      current.count += 1;
+      dailyTotals.set(dateKey, current);
+    });
+
+    let totalSales = 0;
+    let totalOrders = 0;
+    const dailyBreakdown = [];
+
+    Array.from(dailyTotals.entries())
+      .sort((a, b) => new Date(a[0]) - new Date(b[0]))
+      .forEach(([date, data]) => {
+        dailyBreakdown.push({
+          Date: date,
+          "Order Count": data.count,
+          "Total Amount (Nu)": data.amount.toFixed(2),
+          "Average Order (Nu)": (data.amount / data.count).toFixed(2),
+        });
+        totalSales += data.amount;
+        totalOrders += data.count;
+      });
+
+    // Create workbook
+    const workbook = XLSX.utils.book_new();
+
+    // SUMMARY SHEET
+    const summarySheetData = [
+      ["SALES ANALYTICS REPORT"],
+      [""],
+      [`Report Period: ${periodRange}`],
+      [`Report Type: ${periodType}`],
+      [`Generated: ${new Date().toLocaleString()}`],
+      [""],
+      ["SUMMARY"],
+      [`Total Sales: Nu ${totalSales.toFixed(2)}`],
+      [`Total Orders: ${totalOrders}`],
+      [`Average Order Value: Nu ${(totalSales / totalOrders).toFixed(2)}`],
+      [""],
+      ["DAILY BREAKDOWN"],
+      [""],
+      ["Date", "Order Count", "Total Amount (Nu)", "Average Order (Nu)"],
+    ];
+
+    dailyBreakdown.forEach(day => {
+      summarySheetData.push([
+        day.Date,
+        day["Order Count"],
+        day["Total Amount (Nu)"],
+        day["Average Order (Nu)"]
+      ]);
+    });
+
+    summarySheetData.push([""]);
+    summarySheetData.push(["TOTAL", totalOrders, `Nu ${totalSales.toFixed(2)}`, `Nu ${(totalSales / totalOrders).toFixed(2)}`]);
+
+    const wsSummary = XLSX.utils.aoa_to_sheet(summarySheetData);
+    wsSummary['!cols'] = [
+      { wch: 15 }, { wch: 12 }, { wch: 18 }, { wch: 18 }
+    ];
+    XLSX.utils.book_append_sheet(workbook, wsSummary, "Summary");
+
+    // ORDER DETAILS SHEET
+    const ordersSheetData = [
+      ["ORDER DETAILS REPORT"],
+      [""],
+      [`Period: ${periodRange}`],
+      [`Generated: ${new Date().toLocaleString()}`],
+      [""],
+      ["#", "Order ID", "Date", "Time", "Amount (Nu)", "Status"],
+    ];
+
+    orders.forEach((order, index) => {
+      const date = new Date(order.ts);
+      ordersSheetData.push([
+        (index + 1).toString(),
+        order.id,
+        date.toLocaleDateString(),
+        date.toLocaleTimeString(),
+        order.amount.toFixed(2),
+        order.raw?.status || "Completed"
+      ]);
+    });
+
+    ordersSheetData.push([""]);
+    ordersSheetData.push(["TOTAL", "", "", "", `Nu ${totalSales.toFixed(2)}`, ""]);
+
+    const wsOrders = XLSX.utils.aoa_to_sheet(ordersSheetData);
+    wsOrders['!cols'] = [
+      { wch: 5 }, { wch: 15 }, { wch: 12 }, { wch: 10 }, { wch: 15 }, { wch: 12 }
+    ];
+    XLSX.utils.book_append_sheet(workbook, wsOrders, "Order Details");
+
+    // CHART DATA SHEET
+    const chartSheetData = [
+      [`${periodType} BREAKDOWN CHART DATA`],
+      [""],
+      ["Period", "Sales Amount (Nu)"],
+    ];
+
+    chart.forEach((point) => {
+      chartSheetData.push([point.label, point.value.toFixed(2)]);
+    });
+
+    const wsChart = XLSX.utils.aoa_to_sheet(chartSheetData);
+    wsChart['!cols'] = [{ wch: 10 }, { wch: 18 }];
+    XLSX.utils.book_append_sheet(workbook, wsChart, "Chart Data");
+
+    return { workbook, fileName: `sales_report_${tab}_${toYMDLocal(anchorDate)}.xlsx` };
+  };
+
+  // EXPORT FUNCTION USING NEW FileSystem API
+  const exportAndShare = async () => {
+    if (orders.length === 0) {
+      Alert.alert("No Data", "No orders available to export for the selected period.");
+      return;
+    }
+
+    setExporting(true);
+    setShowExportMenu(false);
+
+    try {
+      const { workbook, fileName } = generateExcelData();
+      
+      // Write Excel file to binary string
+      const wbout = XLSX.write(workbook, { type: "binary", bookType: "xlsx" });
+      
+      // Convert binary string to base64
+      const base64Data = btoa(wbout);
+      
+      // Create a new file in the document directory using the new API
+      const file = new File(Paths.document, fileName);
+      
+      // Write base64 content to file
+      await file.write(base64Data);
+      
+      // Share the file
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(file.uri, {
+          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          dialogTitle: "Export Sales Report",
+        });
+      } else {
+        Alert.alert("File Saved", `File saved to: ${file.uri}\n\nYou can find it in your device's file manager.`);
+      }
+    } catch (error) {
+      console.error("Export error:", error);
+      Alert.alert("Export Failed", "Failed to export data.\n\nError: " + error.message);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const renderOrder = ({ item }) => (
     <View style={styles.tripRow}>
@@ -625,25 +758,26 @@ export default function SalesAnalyticsScreen(props) {
 
   return (
     <View style={[styles.safe, { paddingTop: 12 }]}>
-      {/* Header */}
       <View style={styles.headerRow}>
         <Text style={styles.headerTitle}>Sales Analytics</Text>
-
-        <Pressable
-          onPress={() => setShowInfo(true)}
-          hitSlop={8}
-          android_ripple={{ color: "#E5E7EB", borderless: true }}
-          style={{ padding: 4 }}
-        >
-          <Ionicons
-            name="information-circle-outline"
-            size={24}
-            color={COLORS.MID}
-          />
-        </Pressable>
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <Pressable
+            onPress={() => setShowExportMenu(true)}
+            hitSlop={8}
+            style={{ padding: 4 }}
+          >
+            <Ionicons name="download-outline" size={24} color={COLORS.GRAB_GREEN} />
+          </Pressable>
+          <Pressable
+            onPress={() => setShowInfo(true)}
+            hitSlop={8}
+            style={{ padding: 4 }}
+          >
+            <Ionicons name="information-circle-outline" size={24} color={COLORS.MID} />
+          </Pressable>
+        </View>
       </View>
 
-      {/* Tabs */}
       <View style={styles.tabsRow}>
         {["Day", "Week", "Month"].map((t) => {
           const active = tab === t;
@@ -651,7 +785,6 @@ export default function SalesAnalyticsScreen(props) {
             <Pressable
               key={t}
               onPress={() => setTab(t)}
-              android_ripple={{ color: "#E5E7EB" }}
               style={[styles.tab, active && styles.tabActive]}
             >
               <Text style={[styles.tabText, active && styles.tabTextActive]}>
@@ -662,35 +795,19 @@ export default function SalesAnalyticsScreen(props) {
         })}
       </View>
 
-      {/* Date range row */}
       <View style={styles.rangeRow}>
-        <Pressable
-          onPress={shiftLeft}
-          style={styles.iconBtn}
-          android_ripple={{ color: "#E5E7EB" }}
-        >
+        <Pressable onPress={shiftLeft} style={styles.iconBtn}>
           <Ionicons name="chevron-back" size={18} color={COLORS.DARK} />
         </Pressable>
-
-        <Pressable
-          onPress={() => setShowPicker(true)}
-          style={styles.rangeCenter}
-          android_ripple={{ color: "#E5E7EB" }}
-        >
+        <Pressable onPress={() => setShowPicker(true)} style={styles.rangeCenter}>
           <Ionicons name="calendar-outline" size={16} color={COLORS.MID} />
           <Text style={styles.rangeText}>{rangeText(tab, anchorDate)}</Text>
         </Pressable>
-
-        <Pressable
-          onPress={shiftRight}
-          style={styles.iconBtn}
-          android_ripple={{ color: "#E5E7EB" }}
-        >
+        <Pressable onPress={shiftRight} style={styles.iconBtn}>
           <Ionicons name="chevron-forward" size={18} color={COLORS.DARK} />
         </Pressable>
       </View>
 
-      {/* Calendar card */}
       {showPicker && (
         <View style={styles.pickerWrap}>
           <View style={styles.pickerHeader}>
@@ -698,13 +815,11 @@ export default function SalesAnalyticsScreen(props) {
             <Pressable
               onPress={() => setShowPicker(false)}
               hitSlop={8}
-              android_ripple={{ color: "#E5E7EB", borderless: true }}
               style={{ padding: 4 }}
             >
               <Ionicons name="close" size={18} color={COLORS.MID} />
             </Pressable>
           </View>
-
           <DateTimePicker
             value={anchorDate}
             mode="date"
@@ -714,33 +829,25 @@ export default function SalesAnalyticsScreen(props) {
         </View>
       )}
 
-      {/* Summary */}
       <View style={styles.summaryStrip}>
         <View style={styles.summaryBlock}>
           <Text style={styles.summaryLabel}>
             {tab === "Day" ? "Today" : tab === "Week" ? "This week" : "This month"}
           </Text>
-          <Text style={styles.summaryValue}>
-            Nu {formatNu(summary.total_amount ?? 0)}
-          </Text>
+          <Text style={styles.summaryValue}>Nu {formatNu(summary.total_amount ?? 0)}</Text>
         </View>
-
         <View style={styles.vDivider} />
-
         <View style={styles.summaryBlock}>
           <Text style={styles.summaryLabel}>Orders</Text>
           <Text style={styles.summaryValue}>{summary.orders_count ?? 0}</Text>
         </View>
-
         <View style={styles.vDivider} />
-
         <View style={styles.summaryBlock}>
           <Text style={styles.summaryLabel}>Rows</Text>
           <Text style={styles.summaryValue}>{summary.rows_count ?? 0}</Text>
         </View>
       </View>
 
-      {/* Line chart (SVG like EarningsScreen) */}
       <View style={{ marginTop: 12, marginHorizontal: 16 }}>
         {loading && chart.length === 0 ? (
           <View
@@ -748,7 +855,6 @@ export default function SalesAnalyticsScreen(props) {
               alignItems: "center",
               justifyContent: "center",
               height: 120,
-              width: "100%",
               backgroundColor: "#fff",
               borderWidth: 1,
               borderColor: BORDER,
@@ -763,19 +869,11 @@ export default function SalesAnalyticsScreen(props) {
       </View>
 
       {!!error && (
-        <Text
-          style={{
-            color: "#EF4444",
-            fontSize: 11,
-            marginTop: 6,
-            marginLeft: 16,
-          }}
-        >
+        <Text style={{ color: "#EF4444", fontSize: 11, marginTop: 6, marginLeft: 16 }}>
           {error}
         </Text>
       )}
 
-      {/* Orders */}
       <Text style={styles.sectionTitle}>Orders</Text>
       <FlatList
         data={orders}
@@ -783,7 +881,6 @@ export default function SalesAnalyticsScreen(props) {
         renderItem={renderOrder}
         contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 80 }}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
-        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -803,7 +900,54 @@ export default function SalesAnalyticsScreen(props) {
         }
       />
 
-      {/* ===================== INFO MODAL ===================== */}
+      {/* Export Menu Modal */}
+      <Modal
+        visible={showExportMenu}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowExportMenu(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Export Report</Text>
+              <Pressable onPress={() => setShowExportMenu(false)} hitSlop={8}>
+                <Ionicons name="close" size={22} color={COLORS.MID} />
+              </Pressable>
+            </View>
+            <ScrollView style={{ maxHeight: 420 }}>
+              <Pressable
+                style={styles.exportOption}
+                onPress={exportAndShare}
+                disabled={exporting}
+              >
+                <Ionicons name="share-social-outline" size={24} color={COLORS.GRAB_GREEN} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.exportOptionTitle}>Export & Share Excel Report</Text>
+                  <Text style={styles.exportOptionDesc}>
+                    Generate Excel file and share via Email, WhatsApp, or save to device
+                  </Text>
+                </View>
+              </Pressable>
+
+              {exporting && (
+                <View style={{ alignItems: "center", marginTop: 16 }}>
+                  <ActivityIndicator color={COLORS.GRAB_GREEN} />
+                  <Text style={{ marginTop: 8, color: COLORS.MID }}>Generating report...</Text>
+                </View>
+              )}
+            </ScrollView>
+            <Pressable
+              style={[styles.primaryBtn, { backgroundColor: COLORS.MID, marginTop: 10 }]}
+              onPress={() => setShowExportMenu(false)}
+            >
+              <Text style={styles.primaryBtnText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Info Modal */}
       <Modal
         visible={showInfo}
         transparent
@@ -818,57 +962,55 @@ export default function SalesAnalyticsScreen(props) {
                 <Ionicons name="close" size={22} color={COLORS.MID} />
               </Pressable>
             </View>
-
-            <ScrollView
-              style={{ maxHeight: 420 }}
-              contentContainerStyle={{ paddingBottom: 8 }}
-              showsVerticalScrollIndicator={false}
-            >
+            <ScrollView style={{ maxHeight: 420 }}>
               <Text style={styles.modalPara}>
                 This screen shows your <Text style={styles.bold}>total sales</Text>{" "}
                 for the selected period (Day / Week / Month).
               </Text>
-
               <View style={styles.hr} />
-
               <View style={styles.bullet}>
                 <Text style={styles.bulletDot}>•</Text>
                 <Text style={styles.bulletText}>
-                  <Text style={styles.bold}>Total</Text>: sum of order amounts in the
-                  selected range.
+                  <Text style={styles.bold}>Total</Text>: sum of order amounts in the selected range.
                 </Text>
               </View>
-
               <View style={styles.bullet}>
                 <Text style={styles.bulletDot}>•</Text>
                 <Text style={styles.bulletText}>
-                  <Text style={styles.bold}>Orders</Text>: number of orders found
-                  within the range.
+                  <Text style={styles.bold}>Orders</Text>: number of orders found within the range.
                 </Text>
               </View>
-
               <View style={styles.bullet}>
                 <Text style={styles.bulletDot}>•</Text>
                 <Text style={styles.bulletText}>
-                  <Text style={styles.bold}>Chart</Text>: Day shows last few orders;
-                  Week groups by day (Mon–Sun); Month groups across the month.
+                  <Text style={styles.bold}>Chart</Text>: Day shows last few orders; Week groups by day (Mon–Sun); Month groups across the month.
                 </Text>
               </View>
-
               <View style={styles.hr} />
-
               <Text style={styles.modalPara}>
-                Pull down to refresh and fetch the latest data from the server.
+                <Text style={styles.bold}>Export:</Text> Click the share button to generate an Excel report that you can:
               </Text>
+              <View style={styles.bullet}>
+                <Text style={styles.bulletDot}>•</Text>
+                <Text style={styles.bulletText}>Send via Email or WhatsApp</Text>
+              </View>
+              <View style={styles.bullet}>
+                <Text style={styles.bulletDot}>•</Text>
+                <Text style={styles.bulletText}>Save to Google Drive / iCloud</Text>
+              </View>
+              <View style={styles.bullet}>
+                <Text style={styles.bulletDot}>•</Text>
+                <Text style={styles.bulletText}>Save to device storage (using "Save to Files" option)</Text>
+              </View>
+              <View style={styles.hr} />
+              <Text style={styles.modalPara}>Pull down to refresh and fetch the latest data from the server.</Text>
             </ScrollView>
-
             <Pressable style={styles.primaryBtn} onPress={() => setShowInfo(false)}>
               <Text style={styles.primaryBtnText}>Got it</Text>
             </Pressable>
           </View>
         </View>
       </Modal>
-      {/* =================== /INFO MODAL =================== */}
     </View>
   );
 }
@@ -878,7 +1020,6 @@ export default function SalesAnalyticsScreen(props) {
    =========================== */
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
-
   headerRow: {
     paddingTop: Platform.OS === "ios" ? 56 : 12,
     paddingBottom: 10,
@@ -888,12 +1029,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   headerTitle: { color: COLORS.DARK, fontWeight: "600", fontSize: 18 },
-
-  tabsRow: {
-    flexDirection: "row",
-    paddingHorizontal: 16,
-    marginBottom: 8,
-  },
+  tabsRow: { flexDirection: "row", paddingHorizontal: 16, marginBottom: 8 },
   tab: {
     flex: 1,
     height: 34,
@@ -911,7 +1047,6 @@ const styles = StyleSheet.create({
   },
   tabText: { color: COLORS.MID, fontWeight: "800", fontSize: 11 },
   tabTextActive: { color: "#fff" },
-
   rangeRow: {
     marginHorizontal: 16,
     marginBottom: 10,
@@ -942,7 +1077,6 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   rangeText: { fontSize: 12, color: COLORS.DARK, fontWeight: "800" },
-
   pickerWrap: {
     marginHorizontal: 16,
     marginBottom: 10,
@@ -951,9 +1085,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BORDER,
     overflow: "hidden",
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
   },
   pickerHeader: {
     flexDirection: "row",
@@ -964,14 +1095,8 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
     borderBottomWidth: 2,
     borderBottomColor: "#F3F4F6",
-    width: "100%",
   },
-  pickerTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: COLORS.MID,
-  },
-
+  pickerTitle: { fontSize: 12, fontWeight: "700", color: COLORS.MID },
   summaryStrip: {
     marginHorizontal: 16,
     backgroundColor: FILL,
@@ -995,21 +1120,15 @@ const styles = StyleSheet.create({
     backgroundColor: BORDER,
     marginHorizontal: 10,
   },
-
   chartCard: {
     backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: BORDER,
     borderRadius: 10,
     paddingVertical: 6,
-    paddingHorizontal: 0,
     overflow: "hidden",
   },
-  xLabelsRow: {
-    position: "relative",
-    height: 20,
-    marginTop: -2,
-  },
+  xLabelsRow: { position: "relative", height: 20, marginTop: -2 },
   xLabel: {
     position: "absolute",
     width: 40,
@@ -1026,17 +1145,8 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     paddingTop: 2,
   },
-  legendDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 6,
-  },
-  legendText: {
-    fontSize: 11,
-    color: COLORS.MID,
-    fontWeight: "800",
-  },
-
+  legendDot: { width: 10, height: 10, borderRadius: 6 },
+  legendText: { fontSize: 11, color: COLORS.MID, fontWeight: "800" },
   sectionTitle: {
     marginTop: 14,
     marginBottom: 6,
@@ -1045,12 +1155,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     fontSize: 14,
   },
-  tripRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 10,
-  },
+  tripRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10 },
   tripRoute: {
     fontSize: 12,
     fontWeight: "600",
@@ -1060,8 +1165,6 @@ const styles = StyleSheet.create({
   tripMeta: { fontSize: 11, color: COLORS.MUTED, marginTop: 2 },
   tripAmt: { fontSize: 13, fontWeight: "800", color: COLORS.DARK },
   separator: { height: 1, backgroundColor: "#F3F4F6" },
-
-  // Modal shared
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.28)",
@@ -1084,12 +1187,7 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 16, fontWeight: "900", color: COLORS.DARK },
   modalPara: { fontSize: 12, color: COLORS.DARK, marginTop: 6 },
   bullet: { flexDirection: "row", alignItems: "flex-start", marginTop: 6 },
-  bulletDot: {
-    width: 16,
-    textAlign: "center",
-    color: COLORS.MID,
-    marginTop: -2,
-  },
+  bulletDot: { width: 16, textAlign: "center", color: COLORS.MID, marginTop: -2 },
   bulletText: { flex: 1, fontSize: 12, color: COLORS.DARK },
   bold: { fontWeight: "900" },
   hr: { height: 1, backgroundColor: BORDER, marginVertical: 10 },
@@ -1101,4 +1199,17 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   primaryBtnText: { color: "#fff", fontWeight: "900" },
+  exportOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 12,
+    marginVertical: 4,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: BORDER,
+    borderRadius: 10,
+    backgroundColor: "#fff",
+  },
+  exportOptionTitle: { fontSize: 14, fontWeight: "700", color: COLORS.DARK },
+  exportOptionDesc: { fontSize: 11, color: COLORS.MUTED, marginTop: 2 },
 });

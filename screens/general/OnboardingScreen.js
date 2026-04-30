@@ -29,7 +29,7 @@ const OnboardingScreen = () => {
     },
     {
       title: "Set up your store",
-      description: "Manage how your store will look like on Grab: Upload store banners, manage menu, and more. Make sure it stands out!"
+      description: "Manage how your store will look like on Tabdhey: Upload store banners, manage menu, and more. Make sure it stands out!"
     },
     {
       title: "Sign your contract",
@@ -59,8 +59,8 @@ const OnboardingScreen = () => {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.content}>
-          <Text style={styles.headerTitle}>Reach out to more customers with Grab</Text>
-          <Text style={styles.subHeader}>Complete these steps to get your business on Grab</Text>
+          <Text style={styles.headerTitle}>Reach out to more customers with Tabdhey</Text>
+          <Text style={styles.subHeader}>Complete these steps to get your business on Tabdhey</Text>
           
           {steps.map((step, index) => (
             <View key={index} style={styles.stepContainer}>

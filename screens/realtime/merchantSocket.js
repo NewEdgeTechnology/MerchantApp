@@ -4,7 +4,7 @@ import io from 'socket.io-client/dist/socket.io.js';
 
 let socket = null;
 
-const BASE_URL = 'https://grab.newedge.bt';
+const BASE_URL = 'https://backend.tabdhey.bt';
 const PATH = '/orders/socket.io';
 
 export function connectMerchantSocket({ user_id, business_id }) {

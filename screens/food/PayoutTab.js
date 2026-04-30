@@ -1,5 +1,5 @@
 // ✅ Drop-in update for PayoutTab.js:
-// - Fetch wallet using: WALLET_ENDPOINT=https://grab.newedge.bt/wallet/wallet/getbyuser/{user_id}
+// - Fetch wallet using: WALLET_ENDPOINT=https://backend.tabdhey.bt/wallet/wallet/getbyuser/{user_id}
 // - Your wallet response is: { success:true, data:{ wallet_id:"NET000003", ... } }
 // - So walletId must be read from json.data.wallet_id (and fallback to other keys)
 
@@ -249,7 +249,7 @@ export default function PayoutTab({
     let currentWalletId = walletId;
 
     if (!currentWalletId && resolvedUserId && ENV_WALLET) {
-      // WALLET_ENDPOINT=https://grab.newedge.bt/wallet/wallet/getbyuser/{user_id}
+      // WALLET_ENDPOINT=https://backend.tabdhey.bt/wallet/wallet/getbyuser/{user_id}
       const walletUrl = buildUrl(ENV_WALLET, { user_id: resolvedUserId });
 
       const wJson = await fetchJSON(walletUrl, { headers });

@@ -1,6 +1,7 @@
 // services/food/GroupOrder/TrackBatchOrdersScreen.js
-// ✅ UPDATED with OSMView patterns from MapRouteScreen.jsx
-// ✅ Improved markers, polylines, zoom heuristics, loading overlay, and map fit logic
+// ✅ FIXED VERSION FOR APK - Working marker popups with Alert dialogs
+// ✅ Differentiated markers: Business (Red colored marker), Driver (PNG), Customers (PNG)
+// ✅ Added console logs for locations and marker colors
 
 import React, {
   useCallback,
@@ -23,6 +24,7 @@ import {
   ActivityIndicator,
   Dimensions,
   Platform,
+  Image,
 } from "react-native";
 import {
   SafeAreaView,
@@ -49,12 +51,57 @@ import {
   onDriverLocation as listenToDriverLocation,
 } from "./socket";
 
-const { height: SCREEN_H } = Dimensions.get("window");
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
+
+// Import custom marker images for driver and customer only
+const DRIVER_MARKER = require("../../../assets/driver.png");
+const CUSTOMER_MARKER = require("../../../assets/customer.png");
+
+// Color constants for business marker
+const COLORS = {
+  BUSINESS: "#e71414",
+};
+
+/* ============================================================
+   ERROR BOUNDARY COMPONENT
+============================================================ */
+class OSMViewErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("OSMView crashed:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={styles.mapErrorContainer}>
+          <Ionicons name="map-outline" size={48} color="#ef4444" />
+          <Text style={styles.mapErrorText}>Map failed to load</Text>
+          <Text style={styles.mapErrorSubtext}>Tap to retry</Text>
+          <TouchableOpacity
+            style={styles.mapRetryBtn}
+            onPress={() => this.setState({ hasError: false })}
+          >
+            <Text style={styles.mapRetryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 /* ============================================================
    HELPERS
 ============================================================ */
-
 const safeStr = (v) => (v == null ? "" : String(v)).trim();
 
 const getOrderId = (order = {}) => {
@@ -330,13 +377,24 @@ const normalizeRideIdFromParams = (params) => {
 /* ---- OSRM routing ---- */
 const OSRM_ROUTE_BASE = "https://router.project-osrm.org/route/v1/driving";
 
-const fetchOsrmRoute2 = async (a, b) => {
+const fetchOsrmRoute2 = async (a, b, timeoutMs = 5000) => {
   const url = `${OSRM_ROUTE_BASE}/${a.lng},${a.lat};${b.lng},${b.lat}?geometries=geojson&overview=full`;
-  const res = await fetch(url);
-  const json = await res.json();
-  const line = json?.routes?.[0]?.geometry?.coordinates;
-  if (!Array.isArray(line) || line.length < 2) return [];
-  return line.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    const json = await res.json();
+    const line = json?.routes?.[0]?.geometry?.coordinates;
+    if (!Array.isArray(line) || line.length < 2) return [];
+    return line.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
+  } catch (error) {
+    console.log("OSRM route fetch timeout or error:", error.message);
+    return [];
+  } finally {
+    clearTimeout(timeoutId);
+  }
 };
 
 /* ---- Items helpers ---- */
@@ -452,10 +510,10 @@ const keyRideId = (b) => `cluster_last_ride_id_${sanitizeKeyPart(b)}`;
 const keyDriver = (b) => `cluster_last_driver_${sanitizeKeyPart(b)}`;
 const keyDriverRating = (b) =>
   `cluster_last_driver_rating_${sanitizeKeyPart(b)}`;
+const keyMapCenter = (b) => `map_center_${sanitizeKeyPart(b)}`;
 
 /* ============================================================
-   ✅ NEW: zoom heuristic (ported from MapRouteScreen)
-   Given a set of lat/lng points, compute a sensible initial zoom.
+   Zoom heuristic
 ============================================================ */
 const computeZoomForPoints = (points = []) => {
   if (points.length < 2) return 14;
@@ -464,16 +522,23 @@ const computeZoomForPoints = (points = []) => {
   let minLng = Infinity,
     maxLng = -Infinity;
   for (const p of points) {
-    minLat = Math.min(minLat, p.lat ?? p.latitude);
-    maxLat = Math.max(maxLat, p.lat ?? p.latitude);
-    minLng = Math.min(minLng, p.lng ?? p.longitude);
-    maxLng = Math.max(maxLng, p.lng ?? p.longitude);
+    const lat = p.lat ?? p.latitude;
+    const lng = p.lng ?? p.longitude;
+    if (lat && lng) {
+      minLat = Math.min(minLat, lat);
+      maxLat = Math.max(maxLat, lat);
+      minLng = Math.min(minLng, lng);
+      maxLng = Math.max(maxLng, lng);
+    }
   }
-  const maxDiff = Math.max(maxLat - minLat, maxLng - minLng);
+  const latDiff = maxLat - minLat;
+  const lngDiff = maxLng - minLng;
+  const maxDiff = Math.max(latDiff, lngDiff);
   if (maxDiff < 0.01) return 15;
   if (maxDiff < 0.05) return 13;
   if (maxDiff < 0.1) return 11;
-  return 10;
+  if (maxDiff < 0.5) return 10;
+  return 9;
 };
 
 /* ============================================================
@@ -579,13 +644,19 @@ export default function TrackBatchOrdersScreen() {
     let cancelled = false;
     (async () => {
       try {
-        const [savedBatch, savedRide, savedDriverJson, savedDriverRatingJson] =
-          await Promise.all([
-            SecureStore.getItemAsync(keyBatchId(businessId)),
-            SecureStore.getItemAsync(keyRideId(businessId)),
-            SecureStore.getItemAsync(keyDriver(businessId)),
-            SecureStore.getItemAsync(keyDriverRating(businessId)),
-          ]);
+        const [
+          savedBatch,
+          savedRide,
+          savedDriverJson,
+          savedDriverRatingJson,
+          savedMapCenter,
+        ] = await Promise.all([
+          SecureStore.getItemAsync(keyBatchId(businessId)),
+          SecureStore.getItemAsync(keyRideId(businessId)),
+          SecureStore.getItemAsync(keyDriver(businessId)),
+          SecureStore.getItemAsync(keyDriverRating(businessId)),
+          SecureStore.getItemAsync(keyMapCenter(businessId)),
+        ]);
         if (cancelled) return;
         if (!batchId && savedBatch?.trim()) setBatchId(savedBatch.trim());
         if (!deliveryRideId && savedRide?.trim())
@@ -696,9 +767,11 @@ export default function TrackBatchOrdersScreen() {
   const [businessCoords, setBusinessCoords] = useState(null);
   const [loadingLocation, setLoadingLocation] = useState(true);
   const [locationError, setLocationError] = useState(null);
-
-  // ✅ NEW: separate route loading state (from MapRouteScreen pattern)
+  const [mapError, setMapError] = useState(false);
   const [routeLoading, setRouteLoading] = useState(false);
+  const [showLoader, setShowLoader] = useState(true);
+  const [mapInitAttempts, setMapInitAttempts] = useState(0);
+  const [mapKey, setMapKey] = useState(Date.now());
 
   const [driversByRideId, setDriversByRideId] = useState({});
   const [routeDriverToBiz, setRouteDriverToBiz] = useState([]);
@@ -718,6 +791,61 @@ export default function TrackBatchOrdersScreen() {
   const lastDriverUpdateMsRef = useRef(0);
   const didFitOnceRef = useRef(false);
   const lastMarkerPressTsRef = useRef(0);
+  const [cachedMapCenter, setCachedMapCenter] = useState(null);
+
+  // Force hide loader after 5 seconds
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (showLoader) {
+        console.log("Force hiding loader after timeout");
+        setShowLoader(false);
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Retry map initialization
+  useEffect(() => {
+    if (mapInitAttempts < 3 && showLoader && mapInitAttempts > 0) {
+      const retryTimer = setTimeout(() => {
+        console.log(
+          `Retrying map initialization (attempt ${mapInitAttempts + 1})`,
+        );
+        setMapKey(Date.now());
+      }, 2000);
+      return () => clearTimeout(retryTimer);
+    }
+  }, [mapInitAttempts, showLoader]);
+
+  // Network connectivity check
+  useEffect(() => {
+    const checkNetworkConnectivity = async () => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+        const response = await fetch(
+          "https://tiles.openfreemap.org/styles/liberty",
+          {
+            signal: controller.signal,
+            method: "HEAD",
+          },
+        );
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          console.warn("Cannot reach OpenFreemap servers");
+        } else {
+          console.log("OpenFreemap servers reachable");
+        }
+      } catch (error) {
+        console.error("Network connectivity check failed:", error);
+      }
+    };
+
+    checkNetworkConnectivity();
+  }, []);
 
   /* ---------- Seed initial driver coords ---------- */
   useEffect(() => {
@@ -735,7 +863,8 @@ export default function TrackBatchOrdersScreen() {
       };
       return next;
     });
-  }, [driverInfo]);
+    console.log(`[LOCATION][DRIVER] Coords: ${seed.lat}, ${seed.lng}`);
+  }, [driverInfo, deliveryRideId, effectiveRideIds, batchId]);
 
   /* ---------- Batch orders loading ---------- */
   useEffect(() => {
@@ -887,9 +1016,18 @@ export default function TrackBatchOrdersScreen() {
         extractLatLng(base?.restaurant) ||
         extractLatLng(base?.shop) ||
         extractLatLng(base?.location);
-      if (coords) setBusinessCoords(coords);
+      if (coords) {
+        console.log("Business coordinates found:", coords);
+        console.log(
+          `[LOCATION][BUSINESS] Coords: ${coords.lat}, ${coords.lng} | Marker Color: ${COLORS.BUSINESS}`,
+        );
+        setBusinessCoords(coords);
+      } else {
+        console.log("No business coordinates found");
+      }
       setLoadingLocation(false);
     } catch (error) {
+      console.error("Error fetching business location:", error);
       setLocationError(error.message);
       setLoadingLocation(false);
     }
@@ -1045,6 +1183,9 @@ export default function TrackBatchOrdersScreen() {
         };
         return next;
       });
+      console.log(
+        `[LOCATION][DRIVER] Update via socket: ${coords.lat}, ${coords.lng}`,
+      );
     },
     [effectiveRideIds, batchId, fetchDriverDetailsById, driverInfo],
   );
@@ -1154,31 +1295,48 @@ export default function TrackBatchOrdersScreen() {
     () => groupDropsByDistance(batchOrders, 12),
     [batchOrders],
   );
+
+  // Calculate map center and zoom
   const { initialMapCenter, initialZoom } = useMemo(() => {
-    const pts = [];
+    const points = [];
 
-    if (businessCoords)
-      pts.push({ lat: businessCoords.lat, lng: businessCoords.lng });
-
-    Object.values(driversByRideId || {}).forEach((d) => {
-      if (d?.coords) pts.push(d.coords);
-    });
-
-    groupedDropPoints.forEach((g) => pts.push({ lat: g.lat, lng: g.lng }));
-
-    if (pts.length >= 2) {
-      const lats = pts.map((p) => p.lat);
-      const lngs = pts.map((p) => p.lng);
-
-      return {
-        initialMapCenter: {
-          latitude: (Math.min(...lats) + Math.max(...lats)) / 2,
-          longitude: (Math.min(...lngs) + Math.max(...lngs)) / 2,
-        },
-        initialZoom: 13,
-      };
+    if (businessCoords && businessCoords.lat && businessCoords.lng) {
+      points.push({ lat: businessCoords.lat, lng: businessCoords.lng });
     }
 
+    Object.values(driversByRideId || {}).forEach((d) => {
+      if (d?.coords?.lat && d?.coords?.lng) points.push(d.coords);
+    });
+
+    groupedDropPoints.forEach((g) => {
+      if (g.lat && g.lng) points.push({ lat: g.lat, lng: g.lng });
+    });
+
+    console.log("Map points for center calculation:", points.length);
+
+    if (points.length > 0) {
+      let minLat = Infinity,
+        maxLat = -Infinity;
+      let minLng = Infinity,
+        maxLng = -Infinity;
+      points.forEach((p) => {
+        minLat = Math.min(minLat, p.lat);
+        maxLat = Math.max(maxLat, p.lat);
+        minLng = Math.min(minLng, p.lng);
+        maxLng = Math.max(maxLng, p.lng);
+      });
+
+      const center = {
+        latitude: (minLat + maxLat) / 2,
+        longitude: (minLng + maxLng) / 2,
+      };
+
+      const zoom = computeZoomForPoints(points);
+      console.log("Computed map center:", center, "zoom:", zoom);
+      return { initialMapCenter: center, initialZoom: zoom };
+    }
+
+    console.log("Using fallback coordinates (Thimphu)");
     return {
       initialMapCenter: { latitude: 27.4728, longitude: 89.639 },
       initialZoom: 12,
@@ -1186,30 +1344,41 @@ export default function TrackBatchOrdersScreen() {
   }, [businessCoords, driversByRideId, groupedDropPoints]);
 
   /* ============================================================
-     ✅ IMPROVED: Fit helper using animateCamera (from MapRouteScreen)
+     Fit helper
   ============================================================ */
   const fitToPoints = useCallback(
     async (ref) => {
       if (!ref?.current) return;
-      const pts = [];
-      if (businessCoords)
-        pts.push({
+
+      const points = [];
+
+      if (businessCoords && businessCoords.lat && businessCoords.lng) {
+        points.push({
           latitude: businessCoords.lat,
           longitude: businessCoords.lng,
         });
+      }
+
       for (const rid of Object.keys(driversByRideId || {})) {
         const c = driversByRideId?.[rid]?.coords;
-        if (c) pts.push({ latitude: c.lat, longitude: c.lng });
+        if (c?.lat && c?.lng) {
+          points.push({ latitude: c.lat, longitude: c.lng });
+        }
       }
-      for (const g of groupedDropPoints)
-        pts.push({ latitude: g.lat, longitude: g.lng });
-      if (!pts.length) return;
+
+      for (const g of groupedDropPoints) {
+        if (g.lat && g.lng) {
+          points.push({ latitude: g.lat, longitude: g.lng });
+        }
+      }
+
+      if (points.length === 0) return;
 
       let minLat = Infinity,
         maxLat = -Infinity;
       let minLng = Infinity,
         maxLng = -Infinity;
-      pts.forEach((p) => {
+      points.forEach((p) => {
         minLat = Math.min(minLat, p.latitude);
         maxLat = Math.max(maxLat, p.latitude);
         minLng = Math.min(minLng, p.longitude);
@@ -1218,12 +1387,14 @@ export default function TrackBatchOrdersScreen() {
 
       const centerLat = (minLat + maxLat) / 2;
       const centerLng = (minLng + maxLng) / 2;
-      const latDelta = Math.max(0.01, maxLat - minLat + 0.02);
-      const lngDelta = Math.max(0.01, maxLng - minLng + 0.02);
-      const zoom = Math.min(
-        18,
-        Math.max(10, Math.floor(14 - Math.log2(Math.max(latDelta, lngDelta)))),
-      );
+      const maxDelta = Math.max(maxLat - minLat, maxLng - minLng);
+
+      let zoom = 12;
+      if (maxDelta < 0.01) zoom = 16;
+      else if (maxDelta < 0.05) zoom = 14;
+      else if (maxDelta < 0.1) zoom = 12;
+      else if (maxDelta < 0.5) zoom = 10;
+      else zoom = 8;
 
       try {
         await ref.current.animateCamera({
@@ -1262,7 +1433,6 @@ export default function TrackBatchOrdersScreen() {
       return !g.orderIds?.every((oid) => isDelivered(statusMap?.[oid]));
     });
 
-    // 🔥 Stable key (prevents unnecessary recalculation)
     const key = JSON.stringify({
       driver,
       biz,
@@ -1273,7 +1443,7 @@ export default function TrackBatchOrdersScreen() {
 
     if (
       key === lastRouteKeyRef.current &&
-      now - lastRouteAtMsRef.current < 5000
+      now - lastRouteAtMsRef.current < 10000
     ) {
       return;
     }
@@ -1284,12 +1454,11 @@ export default function TrackBatchOrdersScreen() {
     setRouteLoading(true);
 
     try {
-      // DRIVER → BUSINESS
       if (driver && biz) {
-        try {
-          const coords = await fetchOsrmRoute2(driver, biz);
+        const coords = await fetchOsrmRoute2(driver, biz, 5000);
+        if (coords.length) {
           setRouteDriverToBiz(coords);
-        } catch {
+        } else {
           setRouteDriverToBiz([
             { latitude: driver.lat, longitude: driver.lng },
             { latitude: biz.lat, longitude: biz.lng },
@@ -1297,37 +1466,45 @@ export default function TrackBatchOrdersScreen() {
         }
       }
 
-      // BUSINESS → CUSTOMERS
       if (biz && targets.length) {
+        const limitedTargets = targets.slice(0, 5);
         const results = await Promise.all(
-          targets.map(async (t) => {
-            try {
-              const coords = await fetchOsrmRoute2(biz, {
+          limitedTargets.map(async (t) => {
+            const coords = await fetchOsrmRoute2(
+              biz,
+              {
                 lat: t.lat,
                 lng: t.lng,
-              });
+              },
+              5000,
+            );
+            if (coords.length) {
               return { key: t.key, coords };
-            } catch {
-              return {
-                key: t.key,
-                coords: [
-                  { latitude: biz.lat, longitude: biz.lng },
-                  { latitude: t.lat, longitude: t.lng },
-                ],
-              };
             }
+            return {
+              key: t.key,
+              coords: [
+                { latitude: biz.lat, longitude: biz.lng },
+                { latitude: t.lat, longitude: t.lng },
+              ],
+            };
           }),
         );
-
         setRouteBizToCustomers(results);
       }
     } finally {
       setRouteLoading(false);
     }
   }, [driversByRideId, businessCoords, groupedDropPoints, statusMap]);
+
   useEffect(() => {
-    computeMultiRoutes();
-  }, [computeMultiRoutes]);
+    if (businessCoords && !routeLoading) {
+      const timer = setTimeout(() => {
+        computeMultiRoutes();
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [businessCoords, computeMultiRoutes]);
 
   /* ---------- Expandable items ---------- */
   const [expandedMap, setExpandedMap] = useState({});
@@ -1361,78 +1538,194 @@ export default function TrackBatchOrdersScreen() {
     });
   }, [selectedGroup, statusMap]);
 
-  const getMarkerTitle = (type, g, deliveredAll) => {
-    if (type === "business") return `Business (ID: ${businessId || "—"})`;
-    if (type === "driver") return deliveredByText;
-    if (type === "customer") {
-      const count = g?.count || 1;
-      return count > 1
-        ? `Customer (${count} orders)`
-        : `Order #${g?.orderIds?.[0] || "—"}`;
-    }
-    return "";
-  };
+  /* ============================================================
+     MARKER POPUP HANDLER FOR APK
+  ============================================================ */
+  const handleMarkerPress = useCallback(
+    (markerId, markerData) => {
+      console.log(
+        "Marker pressed:",
+        markerId,
+        markerData?.popupData?.type || markerData?.type,
+      );
 
-  const getMarkerDescription = (type, g) => {
-    if (type === "customer") {
-      const count = g?.count || 1;
-      return count > 1
-        ? `Orders: ${g?.orderIds?.join(", ") || ""}`
-        : `Status: ${g?.orderIds?.map((oid) => statusMap?.[oid] || "Pending").join(", ") || "Pending"}`;
-    }
-    return "";
-  };
+      if (!markerData) {
+        Alert.alert("Location", "Tap for more details", [{ text: "OK" }]);
+        return;
+      }
 
-  const handleMarkerPress = (type, g) => {
-    if (type === "customer" && g) openGroupModal(g);
-    lastMarkerPressTsRef.current = Date.now();
-  };
+      // Check for popupData (APK compatible)
+      const popup = markerData.popupData || markerData;
+
+      if (popup.type === "business") {
+        Alert.alert(
+          popup.title || "Business Location",
+          popup.details ||
+            "Your business pickup point.\nAll deliveries start from here.",
+          [{ text: "OK" }],
+        );
+      } else if (popup.type === "driver") {
+        Alert.alert(
+          popup.title || "Driver Information",
+          popup.details ||
+            `Driver: ${driverName || "N/A"}\nID: ${driverId || "N/A"}`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: popup.button1Text || "Call Driver",
+              onPress: () => {
+                if (popup.button1Action === "call") onCallDriver();
+                else onCallDriver();
+              },
+            },
+            {
+              text: popup.button2Text || "Chat",
+              onPress: () => {
+                if (popup.button2Action === "chat") onChatDriver();
+                else onChatDriver();
+              },
+            },
+          ],
+        );
+      } else if (popup.type === "customer") {
+        if (
+          popup.button1Action === "viewOrders" &&
+          popup.orderIds?.length > 1
+        ) {
+          // Find the group and show the modal
+          const group = groupedDropPoints.find((g) => g.key === popup.groupKey);
+          if (group) {
+            openGroupModal(group);
+          } else {
+            Alert.alert(popup.title || "Orders", popup.details, [
+              { text: "OK" },
+            ]);
+          }
+        } else {
+          Alert.alert(popup.title || "Order Details", popup.details, [
+            { text: "OK" },
+          ]);
+        }
+      } else {
+        // Fallback
+        Alert.alert(
+          markerData.title || "Location",
+          markerData.description || "Tap for more details",
+          [{ text: "OK" }],
+        );
+      }
+    },
+    [
+      driverName,
+      driverId,
+      onCallDriver,
+      onChatDriver,
+      groupedDropPoints,
+      openGroupModal,
+    ],
+  );
+
   const markers = useMemo(() => {
     const list = [];
 
-    if (businessCoords) {
+    // Business marker - Regular marker with color (not PNG) - RED (#e71414)
+    if (businessCoords && businessCoords.lat && businessCoords.lng) {
+      console.log(
+        `[MARKER][BUSINESS] Adding marker at ${businessCoords.lat}, ${businessCoords.lng} with color ${COLORS.BUSINESS}`,
+      );
       list.push({
         id: "business",
         coordinate: {
           latitude: businessCoords.lat,
           longitude: businessCoords.lng,
         },
-        icon: { name: "store", color: "#ef4444", size: 32 },
+        title: "Business",
+        description: `${businessCoords.lat.toFixed(6)}, ${businessCoords.lng.toFixed(6)}`,
+        icon: {
+          color: COLORS.BUSINESS,
+          size: 45,
+        },
         zIndex: 20,
+        popupData: {
+          type: "business",
+          title: "🏪 Business Location",
+          details: `Your business pickup point\n\nCoordinates: ${businessCoords.lat.toFixed(6)}, ${businessCoords.lng.toFixed(6)}\nAll deliveries start from here.`,
+          buttonText: "OK",
+        },
       });
     }
 
+    // Driver markers - PNG image
     Object.keys(driversByRideId || {}).forEach((rid) => {
       const c = driversByRideId[rid]?.coords;
-      if (!c) return;
-
-      list.push({
-        id: `driver-${rid}`,
-        coordinate: { latitude: c.lat, longitude: c.lng },
-        icon: { name: "car", color: "#2563eb", size: 34 },
-        zIndex: 15,
-      });
+      if (c?.lat && c?.lng) {
+        console.log(
+          `[MARKER][DRIVER] Adding marker for ride ${rid} at ${c.lat}, ${c.lng} with PNG image`,
+        );
+        list.push({
+          id: `driver-${rid}`,
+          coordinate: { latitude: c.lat, longitude: c.lng },
+          title: "Driver",
+          description: `${driverId || "N/A"}`,
+          icon: {
+            uri: Image.resolveAssetSource(DRIVER_MARKER).uri,
+            size: 50,
+          },
+          zIndex: 15,
+          popupData: {
+            type: "driver",
+            title: "🚗 Driver Information",
+            details: `Driver Name: ${driverName || "N/A"}\nDriver ID: ${driverId || "N/A"}\nRide ID: ${rid}`,
+            button1Text: "📞 Call Driver",
+            button1Action: "call",
+            button2Text: "💬 Chat",
+            button2Action: "chat",
+          },
+        });
+      }
     });
 
-    groupedDropPoints.forEach((g) => {
-      const delivered = g.orderIds?.every((oid) =>
-        isDelivered(statusMap?.[oid]),
-      );
-
-      list.push({
-        id: `cust-${g.key}`,
-        coordinate: { latitude: g.lat, longitude: g.lng },
-        icon: {
-          name: "location",
-          color: delivered ? "#22c55e" : "#f97316",
-          size: 28,
-        },
-        zIndex: 10,
-      });
+    // Customer markers - PNG image
+    groupedDropPoints.slice(0, 15).forEach((g, idx) => {
+      if (g.lat && g.lng) {
+        console.log(
+          `[MARKER][CUSTOMER] Adding marker group ${g.key} at ${g.lat}, ${g.lng} with PNG image (${g.count} orders)`,
+        );
+        list.push({
+          id: `cust-${g.key}`,
+          coordinate: { latitude: g.lat, longitude: g.lng },
+          title: `${g.count} Orders`,
+          description: `${g.count} customers`,
+          icon: {
+            uri: Image.resolveAssetSource(CUSTOMER_MARKER).uri,
+            size: 45,
+          },
+          zIndex: 10,
+          popupData: {
+            type: "customer",
+            title: `📦 ${g.count} Orders at this Location`,
+            details: `Customer location for these orders. Orders: ${g.orderIds.join(", ")}`,
+            button1Text: "View Orders",
+            button1Action: "viewOrders",
+            groupKey: g.key,
+            orderIds: g.orderIds,
+          },
+        });
+      }
     });
 
     return list;
-  }, [businessCoords, driversByRideId, groupedDropPoints, statusMap]);
+  }, [
+    businessCoords,
+    driversByRideId,
+    groupedDropPoints,
+    driverName,
+    driverId,
+  ]);
+
+  /* ============================================================
+     POLYLINES
+  ============================================================ */
   const polylines = useMemo(() => {
     const lines = [];
 
@@ -1441,7 +1734,8 @@ export default function TrackBatchOrdersScreen() {
         id: "driver-biz",
         coordinates: routeDriverToBiz,
         strokeColor: "#2563eb",
-        strokeWidth: 5,
+        strokeWidth: 4,
+        zIndex: 5,
       });
     }
 
@@ -1451,11 +1745,13 @@ export default function TrackBatchOrdersScreen() {
           id: `cust-${r.key}`,
           coordinates: r.coords,
           strokeColor: "#60a5fa",
-          strokeWidth: 4,
+          strokeWidth: 3,
+          zIndex: 5,
         });
       }
     });
 
+    console.log("Polylines created:", lines.length);
     return lines;
   }, [routeDriverToBiz, routeBizToCustomers]);
 
@@ -1517,11 +1813,10 @@ export default function TrackBatchOrdersScreen() {
         {expanded && (
           <View style={styles.itemsDropdown}>
             {hasItems ? (
-              items.map((it, idx) => {
+              items.slice(0, 5).map((it, idx) => {
                 const title = pickItemName(it);
                 const qty = pickItemQty(it);
                 const price = pickItemPrice(it);
-                const lineTotal = price != null ? price * qty : null;
                 return (
                   <View key={`${id}-it-${idx}`} style={styles.itemRow}>
                     <View style={{ flex: 1, paddingRight: 8 }}>
@@ -1530,25 +1825,17 @@ export default function TrackBatchOrdersScreen() {
                       </Text>
                       {price != null ? (
                         <Text style={styles.itemSub}>
-                          Price: {formatMoney(price)}
-                          {lineTotal != null
-                            ? ` · Total: ${formatMoney(lineTotal)}`
-                            : ""}
+                          {formatMoney(price)} x{qty}
                         </Text>
                       ) : (
-                        <Text style={styles.itemSub}>Price: —</Text>
+                        <Text style={styles.itemSub}>x{qty}</Text>
                       )}
-                    </View>
-                    <View style={styles.qtyPill}>
-                      <Text style={styles.qtyText}>x{qty}</Text>
                     </View>
                   </View>
                 );
               })
             ) : (
-              <Text style={styles.noItemsText}>
-                No item details found for this order.
-              </Text>
+              <Text style={styles.noItemsText}>No items</Text>
             )}
           </View>
         )}
@@ -1582,34 +1869,77 @@ export default function TrackBatchOrdersScreen() {
                 <Ionicons name="close" size={18} color="#0f172a" />
               </Pressable>
             </View>
-            <View style={{ marginTop: 10 }}>
+            <View style={{ marginTop: 10, maxHeight: 400 }}>
               {selectedGroupRows.length ? (
-                selectedGroupRows.map((r) => (
-                  <View key={`loc-${r.orderId}`} style={styles.modalRow}>
-                    <View
-                      style={{ flexDirection: "row", alignItems: "center" }}
-                    >
-                      <Text style={styles.modalOrderId}>#{r.orderId}</Text>
-                      {r.delivered && (
-                        <View style={styles.modalDeliveredPill}>
-                          <Ionicons
-                            name="checkmark"
-                            size={14}
-                            color="#16a34a"
-                          />
-                          <Text style={styles.modalDeliveredText}>
-                            Delivered
+                selectedGroupRows.map((r) => {
+                  const order = batchOrders.find((o) => {
+                    const id = getOrderId(o);
+                    return id === r.orderId;
+                  });
+                  const customerName =
+                    order?.customer_name || order?.user_name || "Unknown";
+                  const items = order?.items || [];
+                  const itemCount = items.length;
+
+                  return (
+                    <View key={`loc-${r.orderId}`} style={styles.modalRow}>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                        }}
+                      >
+                        <View>
+                          <Text style={styles.modalOrderId}>#{r.orderId}</Text>
+                          <Text
+                            style={{
+                              fontSize: 11,
+                              color: "#6b7280",
+                              marginTop: 2,
+                            }}
+                          >
+                            {customerName}
                           </Text>
                         </View>
-                      )}
+                        {r.delivered && (
+                          <View style={styles.modalDeliveredPill}>
+                            <Ionicons
+                              name="checkmark-circle"
+                              size={14}
+                              color="#16a34a"
+                            />
+                            <Text style={styles.modalDeliveredText}>
+                              Delivered
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          justifyContent: "space-between",
+                          marginTop: 8,
+                        }}
+                      >
+                        <Text style={styles.modalStatus}>{r.status}</Text>
+                        <Text style={{ fontSize: 11, color: "#6b7280" }}>
+                          {itemCount} {itemCount === 1 ? "item" : "items"}
+                        </Text>
+                      </View>
                     </View>
-                    <Text style={styles.modalStatus}>{r.status}</Text>
-                  </View>
-                ))
+                  );
+                })
               ) : (
                 <Text style={styles.modalEmpty}>No orders found.</Text>
               )}
             </View>
+            <TouchableOpacity
+              style={{ marginTop: 16, alignSelf: "center" }}
+              onPress={closeGroupModal}
+            >
+              <Text style={{ color: "#16a34a", fontWeight: "600" }}>Close</Text>
+            </TouchableOpacity>
           </Pressable>
         </Pressable>
       </Modal>
@@ -1636,33 +1966,38 @@ export default function TrackBatchOrdersScreen() {
             <View style={{ width: 40 }} />
           </View>
           <View style={styles.overlayMapWrap}>
-            <OSMView
-              ref={overlayMapRef}
-              style={{ flex: 1 }}
-              initialCenter={initialMapCenter}
-              initialZoom={initialZoom}
-              markers={markers}
-              polylines={polylines}
-              styleUrl="https://tiles.openfreemap.org/styles/liberty"
-              onMapReady={() => {
-                if (overlayDidFitOnceRef.current) return;
-                overlayDidFitOnceRef.current = true;
-                setTimeout(() => fitOverlay(), 500);
-              }}
-              onMarkerPress={(markerId) => {
-                const g = groupedDropPoints.find(
-                  (x) => `cust-${x.key}` === markerId,
-                );
-                if (g) handleMarkerPress("customer", g);
-              }}
-            />
-            {/* ✅ Route loading overlay (from MapRouteScreen) */}
-            {routeLoading && (
-              <View style={styles.mapLoadingOverlay}>
-                <ActivityIndicator size="large" color="#16a34a" />
-                <Text style={styles.mapLoadingText}>Calculating routes…</Text>
-              </View>
-            )}
+            <OSMViewErrorBoundary>
+              <OSMView
+                ref={overlayMapRef}
+                style={{ flex: 1 }}
+                initialCenter={initialMapCenter}
+                initialZoom={initialZoom}
+                markers={markers}
+                polylines={polylines}
+                styleUrl="https://tiles.openfreemap.org/styles/liberty"
+                onMapReady={() => {
+                  console.log("Overlay map ready");
+                  if (overlayDidFitOnceRef.current) return;
+                  overlayDidFitOnceRef.current = true;
+                  setTimeout(() => fitOverlay(), 300);
+                }}
+                onError={(error) => {
+                  console.error("Overlay map error:", error);
+                }}
+                onMarkerPress={(event) => {
+                  const markerId =
+                    event?.nativeEvent?.markerId ||
+                    event?.markerId ||
+                    event?.id;
+                  const markerData = markers.find((m) => m.id === markerId);
+                  if (markerId && markerData) {
+                    handleMarkerPress(markerId, markerData);
+                  }
+                }}
+                cacheEnabled={true}
+                cacheSize={50}
+              />
+            </OSMViewErrorBoundary>
             <View style={styles.overlayActions}>
               <TouchableOpacity
                 style={styles.fitBtn}
@@ -1703,69 +2038,99 @@ export default function TrackBatchOrdersScreen() {
           Batch: {batchId || "—"} · Ride:{" "}
           {effectiveRideIds.length ? effectiveRideIds.join(", ") : "—"}
         </Text>
-        {batchOrdersLoading && (
-          <View
-            style={{ flexDirection: "row", alignItems: "center", marginTop: 8 }}
-          >
-            <ActivityIndicator size="small" />
-            <Text style={[styles.summarySub, { marginTop: 0, marginLeft: 8 }]}>
-              Loading batch orders…
-            </Text>
-          </View>
-        )}
       </View>
 
       {/* MAP CARD */}
       <View style={styles.mapCard}>
         <View style={styles.mapWrap}>
-          {/* ✅ IMPROVED OSMView – uses initialZoom heuristic & styleUrl (from MapRouteScreen) */}
-          <OSMView
-            ref={mapRef}
-            style={styles.map}
-            initialCenter={initialMapCenter}
-            initialZoom={initialZoom}
-            markers={markers}
-            polylines={polylines}
-            styleUrl="https://tiles.openfreemap.org/styles/liberty"
-            onMapReady={() => {
-              if (didFitOnceRef.current) return;
-              didFitOnceRef.current = true;
-              setTimeout(() => {
-                if (markers.length > 0) fitAll();
-              }, 500);
-            }}
-            onMarkerPress={(markerId) => {
-              const g = groupedDropPoints.find(
-                (x) => `cust-${x.key}` === markerId,
-              );
-              if (g) handleMarkerPress("customer", g);
-            }}
-            onPress={() => openOverlay()}
-          />
-
-          {/* ✅ Route loading overlay (from MapRouteScreen pattern) */}
-          {routeLoading && (
-            <View style={styles.mapLoadingOverlay}>
-              <ActivityIndicator size="large" color="#16a34a" />
-              <Text style={styles.mapLoadingText}>Calculating routes…</Text>
+          {!mapError ? (
+            <OSMViewErrorBoundary>
+              <OSMView
+                key={mapKey}
+                ref={mapRef}
+                style={styles.map}
+                initialCenter={initialMapCenter}
+                  initialZoom={initialZoom}
+                markers={markers}
+                polylines={polylines}
+                styleUrl="https://tiles.openfreemap.org/styles/liberty"
+                onMapReady={() => {
+                  console.log("✅ MAIN MAP READY!");
+                  setShowLoader(false);
+                  setMapInitAttempts(0);
+                  if (didFitOnceRef.current) return;
+                  didFitOnceRef.current = true;
+                  setTimeout(() => {
+                    if (markers.length > 0) {
+                      console.log("Fitting map to", markers.length, "markers");
+                      fitAll();
+                    }
+                  }, 500);
+                }}
+                onError={(error) => {
+                  console.error("❌ OSMView error:", error);
+                  setMapInitAttempts((prev) => prev + 1);
+                  if (mapInitAttempts >= 2) {
+                    setShowLoader(false);
+                    setMapError(true);
+                  }
+                }}
+                onPress={() => openOverlay()}
+                onMarkerPress={(event) => {
+                  console.log("Marker press event:", event);
+                  const markerId =
+                    event?.nativeEvent?.markerId ||
+                    event?.markerId ||
+                    event?.id;
+                  const markerData = markers.find((m) => m.id === markerId);
+                  if (markerId && markerData) {
+                    handleMarkerPress(markerId, markerData);
+                  }
+                }}
+                cacheEnabled={true}
+                cacheSize={100}
+                userAgent="YourApp/1.0"
+                renderToHardwareTextureAndroid={true}
+              />
+            </OSMViewErrorBoundary>
+          ) : (
+            <View style={styles.mapErrorContainer}>
+              <Ionicons name="map-outline" size={48} color="#ef4444" />
+              <Text style={styles.mapErrorText}>Unable to load map</Text>
+              <Text style={styles.mapErrorSubtext}>
+                Check your internet connection
+              </Text>
+              <TouchableOpacity
+                style={styles.mapRetryBtn}
+                onPress={() => {
+                  setMapError(false);
+                  setMapInitAttempts(0);
+                  setMapKey(Date.now());
+                  setShowLoader(true);
+                }}
+              >
+                <Text style={styles.mapRetryText}>Retry</Text>
+              </TouchableOpacity>
             </View>
           )}
 
-          {/* ✅ Map legend (new – helps distinguish route colors) */}
-          <View style={styles.mapLegend}>
-            <View style={styles.legendRow}>
-              <View
-                style={[styles.legendDot, { backgroundColor: "#2563eb" }]}
-              />
-              <Text style={styles.legendText}>Driver → Store</Text>
+          {/* Loading indicator */}
+          {showLoader && !mapError && (
+            <View style={styles.mapLoadingOverlay}>
+              <ActivityIndicator size="large" color="#16a34a" />
+              <Text style={styles.mapLoadingText}>Loading map...</Text>
+              <Text style={styles.mapLoadingSubtext}>
+                {businessCoords
+                  ? "📍 Found location"
+                  : "Waiting for location..."}
+              </Text>
+              {mapInitAttempts > 0 && (
+                <Text style={styles.mapLoadingSubtext}>
+                  Retry attempt {mapInitAttempts}/3
+                </Text>
+              )}
             </View>
-            <View style={styles.legendRow}>
-              <View
-                style={[styles.legendDot, { backgroundColor: "#60a5fa" }]}
-              />
-              <Text style={styles.legendText}>Store → Customer</Text>
-            </View>
-          </View>
+          )}
 
           <View style={styles.mapActions}>
             <TouchableOpacity
@@ -1774,7 +2139,7 @@ export default function TrackBatchOrdersScreen() {
               activeOpacity={0.85}
             >
               <Ionicons name="scan-outline" size={16} color="#ffffff" />
-              <Text style={styles.fitBtnText}>Fit</Text>
+              <Text style={styles.fitBtnText}>Fit All</Text>
             </TouchableOpacity>
             <View style={{ height: 8 }} />
             <TouchableOpacity
@@ -1783,7 +2148,7 @@ export default function TrackBatchOrdersScreen() {
               activeOpacity={0.85}
             >
               <Ionicons name="expand-outline" size={16} color="#ffffff" />
-              <Text style={styles.fitBtnText}>Open</Text>
+              <Text style={styles.fitBtnText}>Fullscreen</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1923,48 +2288,109 @@ const styles = StyleSheet.create({
   summaryMain: { fontSize: 14, fontWeight: "800", color: "#0f172a" },
   summarySub: { marginTop: 3, fontSize: 12, color: "#6b7280" },
 
-  /* ---- Map ---- */
   mapCard: { paddingHorizontal: 16, paddingTop: 12 },
   mapWrap: {
     borderRadius: 14,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    backgroundColor: "#fff",
+    backgroundColor: "#f0f0f0",
+    height: 260,
+    position: "relative",
   },
-  map: { height: 260, width: "100%" },
+  map: { flex: 1, width: "100%", height: "100%" },
 
-  // ✅ NEW: loading overlay (from MapRouteScreen)
   mapLoadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(255,255,255,0.82)",
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255,255,255,0.95)",
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 9,
+    zIndex: 10,
   },
   mapLoadingText: {
+    marginTop: 12,
+    fontSize: 14,
     color: "#16a34a",
-    marginTop: 8,
     fontWeight: "600",
-    fontSize: 13,
+  },
+  mapLoadingSubtext: {
+    marginTop: 4,
+    fontSize: 11,
+    color: "#6b7280",
+  },
+  mapErrorContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f9fafb",
+  },
+  mapErrorText: {
+    marginTop: 12,
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  mapErrorSubtext: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#6b7280",
+  },
+  mapRetryBtn: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    backgroundColor: "#16a34a",
+    borderRadius: 8,
+  },
+  mapRetryText: {
+    color: "#fff",
+    fontWeight: "600",
   },
 
-  // ✅ NEW: map legend
   mapLegend: {
     position: "absolute",
     left: 10,
     bottom: 14,
-    backgroundColor: "rgba(255,255,255,0.92)",
+    backgroundColor: "rgba(255,255,255,0.95)",
     borderRadius: 10,
     padding: 8,
     borderWidth: 1,
     borderColor: "#e5e7eb",
+    zIndex: 5,
+    minWidth: 150,
+  },
+  legendSection: {
+    marginBottom: 6,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+  },
+  legendTitle: {
+    fontSize: 11,
+    fontWeight: "bold",
+    color: "#0f172a",
   },
   legendRow: { flexDirection: "row", alignItems: "center", marginBottom: 4 },
-  legendDot: { width: 10, height: 10, borderRadius: 5, marginRight: 6 },
-  legendText: { fontSize: 11, color: "#374151", fontWeight: "600" },
+  legendDot: { width: 12, height: 12, borderRadius: 6, marginRight: 6 },
+  legendText: { fontSize: 10, color: "#374151", fontWeight: "500" },
+  legendDivider: {
+    height: 1,
+    backgroundColor: "#e5e7eb",
+    marginVertical: 4,
+  },
+  legendNote: {
+    fontSize: 9,
+    color: "#6b7280",
+    marginTop: 4,
+    textAlign: "center",
+    fontStyle: "italic",
+  },
 
-  mapActions: { position: "absolute", right: 10, bottom: 14 },
+  mapActions: { position: "absolute", right: 10, bottom: 14, zIndex: 5 },
   fitBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1991,7 +2417,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 3 },
     elevation: 3,
   },
-  fitBtnText: { marginLeft: 6, color: "#fff", fontSize: 12, fontWeight: "900" },
+  fitBtnText: { marginLeft: 6, color: "#fff", fontSize: 11, fontWeight: "900" },
 
   attribTextSmall: {
     marginTop: 4,
@@ -2000,7 +2426,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  /* ---- Driver card ---- */
   driverCard: {
     borderRadius: 14,
     borderWidth: 1,
@@ -2078,7 +2503,6 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
   },
 
-  /* ---- Order list ---- */
   listHeader: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
   listHeaderText: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
   orderRow: {
@@ -2124,20 +2548,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#f3f4f6",
   },
-  itemName: { fontSize: 12, color: "#111827", fontWeight: "800" },
-  itemSub: { marginTop: 3, fontSize: 11, color: "#6b7280", fontWeight: "700" },
-  qtyPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "#f3f4f6",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  qtyText: { fontSize: 11, fontWeight: "900", color: "#111827" },
-  noItemsText: { fontSize: 12, color: "#6b7280", fontWeight: "800" },
+  itemName: { fontSize: 12, color: "#111827", fontWeight: "800", flex: 1 },
+  itemSub: { marginTop: 2, fontSize: 10, color: "#6b7280" },
+  noItemsText: { fontSize: 12, color: "#6b7280", textAlign: "center" },
 
-  /* ---- Overlay ---- */
   overlaySafe: { flex: 1, backgroundColor: "#fff" },
   overlayHeader: {
     height: 54,
@@ -2162,10 +2576,9 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: "#0f172a",
   },
-  overlayMapWrap: { flex: 1, backgroundColor: "#fff" },
-  overlayActions: { position: "absolute", right: 14, top: 70 },
+  overlayMapWrap: { flex: 1, backgroundColor: "#f0f0f0", position: "relative" },
+  overlayActions: { position: "absolute", right: 14, top: 70, zIndex: 10 },
 
-  /* ---- Location modal ---- */
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.35)",

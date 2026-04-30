@@ -13,7 +13,7 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "bundleIdentifier": "com.newedge.tabdheymerchant",
+      "bundleIdentifier": "com.tabdhey.tabdhey_merchant",
       "buildNumber": "1",
       "supportsTablet": true,
       "infoPlist": {
@@ -42,7 +42,8 @@
       }
     },
     "android": {
-      "package": "com.newedge.tabdheymerchant",
+      "package": "com.tabdhey.tabdhey_merchant",
+      "googleServicesFile": "./google-services.json",
       "versionCode": 1,
       "permissions": [
         "android.permission.INTERNET",
@@ -69,9 +70,7 @@
     "plugins": [
       "expo-font",
       "expo-secure-store",
-      [
-        "expo-build-properties"
-      ],
+      ["expo-build-properties"],
       [
         "expo-location",
         {
@@ -95,7 +94,8 @@
     "extra": {
       "eas": {
         "projectId": "39465596-f80e-4ebb-b661-e149cd200ad8"
-      }
+      },
+      "VERIFY_SESSION_ENDPOINT": "https://backend.tabdhey.bt/driver/api/verify-session"
     },
     "owner": "chospa"
   }

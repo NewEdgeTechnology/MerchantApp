@@ -1,3 +1,6 @@
+// screens/merchant/MerchantExtrasScreen.js
+// ✅ FIXED - Single merchant marker that can be updated by tapping on map
+
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   View,
@@ -16,12 +19,48 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
-import MapView, { Marker, UrlTile } from "react-native-maps";
+import { OSMView } from "expo-osm-sdk";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import HeaderWithSteps from "./HeaderWithSteps";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const NEXT_ROUTE = "BankPaymentInfoScreen";
+
+/* ============================================================
+   ERROR BOUNDARY COMPONENT FOR MAP
+============================================================ */
+class OSMViewErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("OSMView crashed in MerchantExtrasScreen:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={styles.mapErrorContainer}>
+          <Text style={styles.mapErrorText}>⚠️ Map failed to load</Text>
+          <Text style={styles.mapErrorSubtext}>Tap to retry</Text>
+          <TouchableOpacity
+            style={styles.mapRetryBtn}
+            onPress={() => this.setState({ hasError: false })}
+          >
+            <Text style={styles.mapRetryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export default function MerchantExtrasScreen() {
   const navigation = useNavigation();
@@ -35,7 +74,7 @@ export default function MerchantExtrasScreen() {
     initialCategory = "",
     initialAddress = "",
     initialRegNo = "",
-    initialPickedCoord = null, // { latitude, longitude }
+    initialPickedCoord = null,
     initialLogo = null,
     initialLicenseFile = null,
     deliveryOption = null,
@@ -46,37 +85,68 @@ export default function MerchantExtrasScreen() {
   } = route.params ?? {};
 
   const effectiveOwnerType = String(
-    owner_type ?? incomingMerchant?.owner_type ?? serviceType ?? "food"
+    owner_type ?? incomingMerchant?.owner_type ?? serviceType ?? "food",
   )
     .trim()
     .toLowerCase();
 
   // files
-  const [licenseFile, setLicenseFile] = useState(null); // OPTIONAL
-  const [logo, setLogo] = useState(null); // REQUIRED
+  const [licenseFile, setLicenseFile] = useState(null);
+  const [logo, setLogo] = useState(null);
 
   // address + map
   const [address, setAddress] = useState("");
   const [locationModalVisible, setLocationModalVisible] = useState(false);
-  const [pickedCoord, setPickedCoord] = useState(null); // { latitude, longitude }
-  const [mapRegion, setMapRegion] = useState({
+  const [pickedCoord, setPickedCoord] = useState(null);
+  const [mapCenter, setMapCenter] = useState({
     latitude: 27.4728,
     longitude: 89.639,
-    latitudeDelta: 0.05,
-    longitudeDelta: 0.05,
   });
+  const [mapZoom, setMapZoom] = useState(14);
+  // ✅ SINGLE MARKER - only one marker for merchant location
+  const [mapMarkers, setMapMarkers] = useState([]);
 
-  // Business License number (OPTIONAL now)
+  // Map error handling states
+  const [mapError, setMapError] = useState(false);
+  const [mapInitAttempts, setMapInitAttempts] = useState(0);
+  const [mapKey, setMapKey] = useState(Date.now());
+  const [mapLoading, setMapLoading] = useState(true);
+
   const [regNo, setRegNo] = useState("");
-
-  // ID card number (REQUIRED, numeric, EXACT 11 digits)
   const [idCardNo, setIdCardNo] = useState("");
 
   const [focusedField, setFocusedField] = useState(null);
   const [pickingLicense, setPickingLicense] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  // ---- Prefill from merchant, or fall back to initial* params when editing ----
+  const mapRef = useRef(null);
+
+  // Map loader timeout
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (mapLoading) {
+        console.log("Force hiding map loader after timeout");
+        setMapLoading(false);
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Retry map initialization
+  useEffect(() => {
+    if (mapInitAttempts < 3 && mapLoading && mapInitAttempts > 0) {
+      const retryTimer = setTimeout(() => {
+        console.log(
+          `Retrying map initialization (attempt ${mapInitAttempts + 1})`,
+        );
+        setMapKey(Date.now());
+        setMapError(false);
+      }, 2000);
+      return () => clearTimeout(retryTimer);
+    }
+  }, [mapInitAttempts, mapLoading]);
+
+  // Prefill from merchant
   useEffect(() => {
     if (incomingMerchant) {
       if (incomingMerchant.registration_no)
@@ -95,7 +165,18 @@ export default function MerchantExtrasScreen() {
       if (typeof lat === "number" && typeof lng === "number") {
         const coord = { latitude: lat, longitude: lng };
         setPickedCoord(coord);
-        setMapRegion((r) => ({ ...r, latitude: lat, longitude: lng }));
+        setMapCenter({ latitude: lat, longitude: lng });
+        setMapZoom(15);
+        // ✅ SINGLE MERCHANT MARKER - RED pin
+        setMapMarkers([
+          {
+            id: "merchant",
+            coordinate: coord,
+            title: "🏪 MERCHANT LOCATION",
+            description: `Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}`,
+            pinColor: "#EF4444", // Bright RED for merchant
+          },
+        ]);
       }
 
       const normalizeImg = (img, fallback) => {
@@ -115,7 +196,8 @@ export default function MerchantExtrasScreen() {
         setLicenseFile(normalizeImg(incomingMerchant.license, "license"));
     }
 
-    if (!incomingMerchant?.address && initialAddress) setAddress(initialAddress);
+    if (!incomingMerchant?.address && initialAddress)
+      setAddress(initialAddress);
 
     if (!incomingMerchant?.registration_no && initialRegNo)
       setRegNo(String(initialRegNo));
@@ -126,11 +208,21 @@ export default function MerchantExtrasScreen() {
       initialPickedCoord
     ) {
       setPickedCoord(initialPickedCoord);
-      setMapRegion((r) => ({
-        ...r,
+      setMapCenter({
         latitude: initialPickedCoord.latitude,
         longitude: initialPickedCoord.longitude,
-      }));
+      });
+      setMapZoom(15);
+      // ✅ SINGLE MERCHANT MARKER - RED pin
+      setMapMarkers([
+        {
+          id: "merchant",
+          coordinate: initialPickedCoord,
+          title: "🏪 MERCHANT LOCATION",
+          description: `Lat: ${initialPickedCoord.latitude.toFixed(6)}, Lng: ${initialPickedCoord.longitude.toFixed(6)}`,
+          pinColor: "#EF4444", // Bright RED for merchant
+        },
+      ]);
     }
 
     if (!incomingMerchant?.logo && initialLogo) setLogo(initialLogo);
@@ -159,26 +251,53 @@ export default function MerchantExtrasScreen() {
     };
   }, []);
 
-  // regNo is optional; idCardNo is required & EXACTLY 11 digits
   const validate = () => {
     if (!toSafeString(address).trim()) return false;
     if (!logo?.uri) return false;
-    if (!idCardNo || idCardNo.trim().length !== 11) return false; // ✅ exact 11
+    if (!idCardNo || idCardNo.trim().length !== 11) return false;
     return true;
   };
 
-  // ===== Map picking (full screen modal) =====
-  const openMapPicker = () => setLocationModalVisible(true);
+  // ===== Map picking =====
+  const openMapPicker = () => {
+    setMapError(false);
+    setMapLoading(true);
+    setMapInitAttempts(0);
+    setLocationModalVisible(true);
+  };
   const closeMapPicker = () => setLocationModalVisible(false);
 
-  const onMapLongPress = useCallback((e) => {
-    const { latitude, longitude } = e.nativeEvent.coordinate;
-    setPickedCoord({ latitude, longitude });
+  // ✅ FIXED: Update SINGLE merchant marker when tapping on map
+  const handleMapPress = useCallback((event) => {
+    if (event?.coordinate) {
+      const coord = {
+        latitude: event.coordinate.latitude,
+        longitude: event.coordinate.longitude,
+      };
+      // Update the picked coordinates
+      setPickedCoord(coord);
+      // Center map on new location
+      setMapCenter(coord);
+      setMapZoom(16);
+      // ✅ UPDATE THE SINGLE MARKER (replaces the old one)
+      setMapMarkers([
+        {
+          id: "merchant",
+          coordinate: coord,
+          title: "🏪 MERCHANT LOCATION",
+          description: `Lat: ${coord.latitude.toFixed(6)}, Lng: ${coord.longitude.toFixed(6)}`,
+          pinColor: "#EF4444", // Keep it RED
+        },
+      ]);
+    }
   }, []);
 
   const reverseGeocode = async (latitude, longitude) => {
     try {
-      const results = await Location.reverseGeocodeAsync({ latitude, longitude });
+      const results = await Location.reverseGeocodeAsync({
+        latitude,
+        longitude,
+      });
       if (results?.length) {
         const r = results[0];
         const line = [
@@ -200,50 +319,43 @@ export default function MerchantExtrasScreen() {
   };
 
   const confirmPickedLocation = async () => {
-    if (!pickedCoord) {
-      Alert.alert("Pick a location", "Long-press on the map to drop a pin.");
-      return;
-    }
-    const line = await reverseGeocode(pickedCoord.latitude, pickedCoord.longitude);
+    // if (!pickedCoord) {
+    //   Alert.alert("Pick a location", "Tap on the map to drop a pin.");
+    //   return;
+    // }
+    const line = await reverseGeocode(
+      pickedCoord.latitude,
+      pickedCoord.longitude,
+    );
     setAddress(
       line ||
         `Located at: ${pickedCoord.latitude.toFixed(
-          5
-        )}, ${pickedCoord.longitude.toFixed(5)}`
+          5,
+        )}, ${pickedCoord.longitude.toFixed(5)}`,
     );
-    setMapRegion((r) => ({
-      ...r,
-      latitude: pickedCoord.latitude,
-      longitude: pickedCoord.longitude,
-    }));
+    setMapZoom(15);
     closeMapPicker();
   };
 
-  // ===== CURRENT LOCATION (INSIDE MODAL ONLY) =====
+  // ===== CURRENT LOCATION =====
   const [modalLocLoading, setModalLocLoading] = useState(false);
   const [modalLocError, setModalLocError] = useState("");
-  const mapRef = useRef(null);
 
   const animateTo = (latitude, longitude) => {
-    const region = {
-      latitude,
-      longitude,
-      latitudeDelta: 0.01,
-      longitudeDelta: 0.01,
-    };
-    setMapRegion((r) => ({ ...r, ...region }));
-    if (mapRef.current?.animateToRegion) {
-      mapRef.current.animateToRegion(region, 600);
-    }
+    setMapCenter({ latitude, longitude });
+    setMapZoom(16);
   };
 
+  // ✅ Use current location to update merchant marker
   const useCurrentLocationInModal = async () => {
     setModalLocError("");
     setModalLocLoading(true);
     try {
       const svc = await Location.hasServicesEnabledAsync();
       if (!svc) {
-        setModalLocError("Location services are turned off. Please enable GPS.");
+        setModalLocError(
+          "Location services are turned off. Please enable GPS.",
+        );
         return;
       }
       let { status } = await Location.getForegroundPermissionsAsync();
@@ -267,8 +379,20 @@ export default function MerchantExtrasScreen() {
         return;
       }
 
-      setPickedCoord({ latitude, longitude }); // drop/update pin
-      animateTo(latitude, longitude); // recenter/zoom map
+      const coord = { latitude, longitude };
+      // Update picked coordinates with current location
+      setPickedCoord(coord);
+      // ✅ UPDATE SINGLE MERCHANT MARKER
+      setMapMarkers([
+        {
+          id: "merchant",
+          coordinate: coord,
+          title: "🏪 MERCHANT LOCATION",
+          description: `Lat: ${latitude.toFixed(6)}, Lng: ${longitude.toFixed(6)}`,
+          pinColor: "#EF4444",
+        },
+      ]);
+      animateTo(latitude, longitude);
     } catch {
       setModalLocError("Unable to fetch current location. Try again.");
     } finally {
@@ -276,15 +400,16 @@ export default function MerchantExtrasScreen() {
     }
   };
 
-  // ===== Upload: License (Image only) — OPTIONAL
+  // ===== Upload: License =====
   const onPickLicense = async () => {
     try {
       setPickingLicense(true);
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const { status } =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
         Alert.alert(
           "Permission needed",
-          "Allow photo access to upload your business license."
+          "Allow photo access to upload your business license.",
         );
         return;
       }
@@ -311,11 +436,14 @@ export default function MerchantExtrasScreen() {
 
   const onRemoveLicense = () => setLicenseFile(null);
 
-  // ===== Submit → Redirect to BankPaymentInfoScreen =====
+  // ===== Submit =====
   const onSubmit = async () => {
     if (!validate()) {
       if (!logo?.uri) {
-        Alert.alert("Missing required field", "Please upload your business logo.");
+        Alert.alert(
+          "Missing required field",
+          "Please upload your business logo.",
+        );
         return;
       }
       if (!toSafeString(address).trim()) {
@@ -325,12 +453,15 @@ export default function MerchantExtrasScreen() {
       if (!idCardNo || idCardNo.trim().length === 0) {
         Alert.alert(
           "Missing ID number",
-          "Please enter your 11-digit ID card number."
+          "Please enter your 11-digit ID card number.",
         );
         return;
       }
       if (idCardNo.trim().length !== 11) {
-        Alert.alert("Invalid ID number", "ID card number must be exactly 11 digits.");
+        Alert.alert(
+          "Invalid ID number",
+          "ID card number must be exactly 11 digits.",
+        );
         return;
       }
       return;
@@ -340,14 +471,16 @@ export default function MerchantExtrasScreen() {
       setSubmitting(true);
 
       const normalizedCategoryIds = normalizeCategoryIds(
-        (incomingMerchant && incomingMerchant.category) ?? initialCategory
+        (incomingMerchant && incomingMerchant.category) ?? initialCategory,
       );
 
       const normalizedRegNo = toSafeString(regNo).trim();
-      const maybeRegNo = normalizedRegNo.length > 0 ? normalizedRegNo : undefined;
+      const maybeRegNo =
+        normalizedRegNo.length > 0 ? normalizedRegNo : undefined;
 
       const normalizedIdCard = toSafeString(idCardNo).trim();
-      const maybeIdCard = normalizedIdCard.length > 0 ? normalizedIdCard : undefined;
+      const maybeIdCard =
+        normalizedIdCard.length > 0 ? normalizedIdCard : undefined;
 
       const mergedMerchant = {
         ...(incomingMerchant ?? {}),
@@ -356,14 +489,18 @@ export default function MerchantExtrasScreen() {
         password: incomingMerchant?.password ?? undefined,
         phone: incomingMerchant?.phone ?? phoneNumber ?? undefined,
 
-        full_name: toSafeString(incomingMerchant?.full_name ?? initialFullName).trim(),
+        full_name: toSafeString(
+          incomingMerchant?.full_name ?? initialFullName,
+        ).trim(),
         business_name: toSafeString(
-          incomingMerchant?.business_name ?? initialBusinessName
+          incomingMerchant?.business_name ?? initialBusinessName,
         ).trim(),
 
         category: normalizedCategoryIds,
         categories:
-          incomingMerchant?.categories ?? route.params?.merchant?.categories ?? [],
+          incomingMerchant?.categories ??
+          route.params?.merchant?.categories ??
+          [],
 
         ...(maybeRegNo !== undefined ? { registration_no: maybeRegNo } : {}),
 
@@ -373,20 +510,16 @@ export default function MerchantExtrasScreen() {
         latitude: pickedCoord?.latitude ?? null,
         longitude: pickedCoord?.longitude ?? null,
 
-        logo, // REQUIRED
-        license: licenseFile, // OPTIONAL
+        logo,
+        license: licenseFile,
 
         owner_type: effectiveOwnerType,
       };
 
-      // ✅ IMPORTANT: Pass idCardNo directly to next screen as well
       navigation.navigate(NEXT_ROUTE, {
         ...(route.params ?? {}),
         merchant: mergedMerchant,
-
-        // ✅ new param
         idCardNo: maybeIdCard ?? null,
-
         serviceType: serviceType ?? "food",
         owner_type: effectiveOwnerType,
         initialDeliveryOption: deliveryOption ?? null,
@@ -424,31 +557,50 @@ export default function MerchantExtrasScreen() {
           >
             {/* ===== Business location (map) ===== */}
             <Text style={[styles.label, { marginTop: 6 }]}>
-              Business location (map) — optional
+              Business location (map) — tap to update
             </Text>
 
             <View style={{ marginBottom: 8 }}>
-              <TouchableOpacity style={styles.btnSecondary} onPress={openMapPicker}>
-                <Text style={styles.btnSecondaryText}>Select on full map</Text>
+              <TouchableOpacity
+                style={styles.btnSecondary}
+                onPress={openMapPicker}
+              >
+                <Text style={styles.btnSecondaryText}>
+                  📍 Select on full map
+                </Text>
               </TouchableOpacity>
             </View>
 
             {pickedCoord ? (
               <>
                 <View style={styles.mapPreviewWrapperLarge}>
-                  <MapView
-                    style={styles.mapPreview}
-                    region={mapRegion}
-                    pointerEvents="none"
-                  >
-                    {/* OpenStreetMap tiles */}
-                    <UrlTile
-                      urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                      maximumZ={19}
-                      flipY={false}
+                  <OSMViewErrorBoundary>
+                    <OSMView
+                      key={mapKey}
+                      style={styles.mapPreview}
+                      initialCenter={mapCenter}
+                      initialZoom={mapZoom}
+                      markers={mapMarkers}
+                      styleUrl="https://tiles.openfreemap.org/styles/liberty"
+                      onPress={handleMapPress}
+                      onMapReady={() => {
+                        console.log("Map preview ready");
+                        setMapLoading(false);
+                        setMapInitAttempts(0);
+                      }}
+                      onError={(error) => {
+                        console.error("Map preview error:", error);
+                        setMapInitAttempts((prev) => prev + 1);
+                        if (mapInitAttempts >= 2) {
+                          setMapError(true);
+                          setMapLoading(false);
+                        }
+                      }}
+                      cacheEnabled={true}
+                      cacheSize={50}
+                      renderToHardwareTextureAndroid={true}
                     />
-                    <Marker coordinate={pickedCoord} />
-                  </MapView>
+                  </OSMViewErrorBoundary>
                   <TouchableOpacity
                     accessible
                     accessibilityRole="button"
@@ -457,31 +609,40 @@ export default function MerchantExtrasScreen() {
                     style={styles.previewOverlay}
                     onPress={openMapPicker}
                   >
-                    <Text style={styles.previewOverlayText}>Tap to edit on map</Text>
+                    <Text style={styles.previewOverlayText}>
+                      ✏️ Tap to edit on map
+                    </Text>
                   </TouchableOpacity>
                 </View>
 
                 <View style={styles.coordsBlock}>
-                  <Text style={styles.coordsLabel}>Latitude</Text>
-                  <Text style={styles.coordsValue}>
-                    {pickedCoord.latitude.toFixed(6)}
-                  </Text>
-                  <Text style={[styles.coordsLabel, { marginTop: 6 }]}>
-                    Longitude
-                  </Text>
-                  <Text style={styles.coordsValue}>
-                    {pickedCoord.longitude.toFixed(6)}
-                  </Text>
+                  <View style={styles.coordsRow}>
+                    <Text style={styles.coordsLabel}>📍 Latitude:</Text>
+                    <Text style={styles.coordsValue}>
+                      {pickedCoord.latitude.toFixed(6)}
+                    </Text>
+                  </View>
+                  <View style={styles.coordsRow}>
+                    <Text style={styles.coordsLabel}>📍 Longitude:</Text>
+                    <Text style={styles.coordsValue}>
+                      {pickedCoord.longitude.toFixed(6)}
+                    </Text>
+                  </View>
                 </View>
               </>
             ) : (
-              <Text style={styles.fileName}>
-                No location selected yet. Tap “Select on full map” to drop a pin, then
-                Confirm.
-              </Text>
+              <View style={styles.noLocationCard}>
+                <Text style={styles.noLocationIcon}>🗺️</Text>
+                <Text style={styles.noLocationText}>
+                  No location selected yet.
+                </Text>
+                <Text style={styles.noLocationSubtext}>
+                  Tap "Select on full map" to drop a pin, then Confirm.
+                </Text>
+              </View>
             )}
 
-            {/* ===== Business Address (text) ===== */}
+            {/* ===== Business Address ===== */}
             <Field
               label={
                 <Text>
@@ -494,16 +655,20 @@ export default function MerchantExtrasScreen() {
               onFocus={() => setFocusedField("address")}
               onBlur={() => setFocusedField(null)}
               isFocused={focusedField === "address"}
-              hint={pickedCoord ? "Auto-filled from GPS/map; you can edit." : undefined}
+              hint={
+                pickedCoord
+                  ? "📍 Auto-filled from GPS/map; you can edit."
+                  : undefined
+              }
             />
 
-            {/* ===== Logo Upload (REQUIRED) ===== */}
+            {/* ===== Logo Upload ===== */}
             <Text style={styles.label}>
               Business logo <Text style={{ color: "red" }}>*</Text>
             </Text>
             <LogoUploader value={logo} onChange={setLogo} />
 
-            {/* ===== ID Card number (REQUIRED, numeric, EXACT 11 digits) ===== */}
+            {/* ===== ID Card number ===== */}
             <Field
               label={
                 <Text>
@@ -513,18 +678,18 @@ export default function MerchantExtrasScreen() {
               placeholder="Enter 11-digit ID number"
               value={idCardNo}
               onChangeText={(text) => {
-                const cleaned = text.replace(/[^0-9]/g, "").slice(0, 11); // ✅ digits only + limit 11
+                const cleaned = text.replace(/[^0-9]/g, "").slice(0, 11);
                 setIdCardNo(cleaned);
               }}
               keyboardType="numeric"
-              maxLength={11} // ✅ hard cap at 11
+              maxLength={11}
               onFocus={() => setFocusedField("idCardNo")}
               onBlur={() => setFocusedField(null)}
               isFocused={focusedField === "idCardNo"}
-              hint="Only numbers allowed, exactly 11 digits."
+              hint="🆔 Only numbers allowed, exactly 11 digits."
             />
 
-            {/* ===== Business License number (OPTIONAL) ===== */}
+            {/* ===== Business License number ===== */}
             <Field
               label={<Text>Business License number</Text>}
               placeholder="e.g., BRN-12345"
@@ -535,20 +700,23 @@ export default function MerchantExtrasScreen() {
               isFocused={focusedField === "regNo"}
             />
 
-            {/* ===== License Upload (OPTIONAL) ===== */}
+            {/* ===== License Upload ===== */}
             <Text style={styles.label}>
               Business license / registration document (optional)
             </Text>
             <View style={styles.row}>
               <TouchableOpacity
-                style={[styles.btnSecondary, pickingLicense && styles.btnDisabled]}
+                style={[
+                  styles.btnSecondary,
+                  pickingLicense && styles.btnDisabled,
+                ]}
                 onPress={onPickLicense}
                 disabled={pickingLicense}
               >
                 {pickingLicense ? (
                   <ActivityIndicator />
                 ) : (
-                  <Text style={styles.btnSecondaryText}>Choose File</Text>
+                  <Text style={styles.btnSecondaryText}>📄 Choose File</Text>
                 )}
               </TouchableOpacity>
               <View style={{ flex: 1 }}>
@@ -558,10 +726,11 @@ export default function MerchantExtrasScreen() {
                       {licenseFile.name}
                     </Text>
                     <Text style={styles.metaText}>
-                      {(licenseFile.mimeType || "file")} · {formatSize(licenseFile.size)}
+                      {licenseFile.mimeType || "file"} ·{" "}
+                      {formatSize(licenseFile.size)}
                     </Text>
                     <TouchableOpacity onPress={onRemoveLicense}>
-                      <Text style={styles.removeText}>Remove</Text>
+                      <Text style={styles.removeText}>❌ Remove</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
@@ -574,11 +743,16 @@ export default function MerchantExtrasScreen() {
           </ScrollView>
 
           {/* Bottom bar: Submit */}
-          <View pointerEvents="box-none" style={[styles.fabWrap, { bottom: kbHeight }]}>
+          <View
+            pointerEvents="box-none"
+            style={[styles.fabWrap, { bottom: kbHeight }]}
+          >
             <View style={styles.submitContainer}>
               <TouchableOpacity
                 style={
-                  isFormValid && !submitting ? styles.btnPrimary : styles.btnPrimaryDisabled
+                  isFormValid && !submitting
+                    ? styles.btnPrimary
+                    : styles.btnPrimaryDisabled
                 }
                 onPress={onSubmit}
                 disabled={!isFormValid || submitting}
@@ -587,9 +761,13 @@ export default function MerchantExtrasScreen() {
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <Text
-                    style={isFormValid ? styles.btnPrimaryText : styles.btnPrimaryTextDisabled}
+                    style={
+                      isFormValid
+                        ? styles.btnPrimaryText
+                        : styles.btnPrimaryTextDisabled
+                    }
                   >
-                    Submit
+                    ✓ Submit
                   </Text>
                 )}
               </TouchableOpacity>
@@ -598,7 +776,7 @@ export default function MerchantExtrasScreen() {
         </View>
       </KeyboardAvoidingView>
 
-      {/* ===== Map Picker Modal (OpenStreetMap) ===== */}
+      {/* ===== Map Picker Modal - SINGLE MERCHANT MARKER that can be updated ===== */}
       <Modal
         visible={locationModalVisible}
         onRequestClose={closeMapPicker}
@@ -607,35 +785,77 @@ export default function MerchantExtrasScreen() {
       >
         <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Select Location</Text>
+            <Text style={styles.modalTitle}>📍 Select Merchant Location</Text>
             <TouchableOpacity onPress={closeMapPicker}>
-              <Text style={styles.modalClose}>Close</Text>
+              <Text style={styles.modalClose}>✕ Close</Text>
             </TouchableOpacity>
           </View>
 
-          {/* Map with floating "Use Current Location" button */}
+          {/* Map with single marker that updates on tap */}
           <View style={{ flex: 1 }}>
-            <MapView
-              ref={mapRef}
-              style={{ flex: 1 }}
-              initialRegion={mapRegion}
-              onRegionChangeComplete={setMapRegion}
-              onLongPress={onMapLongPress}
-            >
-              {/* OpenStreetMap tiles */}
-              <UrlTile
-                urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                maximumZ={19}
-                flipY={false}
-              />
-              {pickedCoord && (
-                <Marker
-                  coordinate={pickedCoord}
-                  draggable
-                  onDragEnd={(e) => setPickedCoord(e.nativeEvent.coordinate)}
+            {!mapError ? (
+              <OSMViewErrorBoundary>
+                <OSMView
+                  ref={mapRef}
+                  key={mapKey}
+                  style={{ flex: 1 }}
+                  initialCenter={mapCenter}
+                  initialZoom={mapZoom}
+                  markers={mapMarkers}
+                  styleUrl="https://tiles.openfreemap.org/styles/liberty"
+                  onPress={handleMapPress}
+                  onMapReady={() => {
+                    console.log("Map ready in MerchantExtrasScreen");
+                    setMapLoading(false);
+                    setMapInitAttempts(0);
+                  }}
+                  onError={(error) => {
+                    console.error("Map error:", error);
+                    setMapInitAttempts((prev) => prev + 1);
+                    if (mapInitAttempts >= 2) {
+                      setMapError(true);
+                      setMapLoading(false);
+                    }
+                  }}
+                  cacheEnabled={true}
+                  cacheSize={100}
+                  userAgent="YourApp/1.0"
+                  renderToHardwareTextureAndroid={true}
                 />
-              )}
-            </MapView>
+              </OSMViewErrorBoundary>
+            ) : (
+              <View style={styles.mapErrorContainerFull}>
+                <Text style={styles.mapErrorTextFull}>
+                  ⚠️ Unable to load map
+                </Text>
+                <Text style={styles.mapErrorSubtextFull}>
+                  Check your internet connection
+                </Text>
+                <TouchableOpacity
+                  style={styles.mapRetryBtnFull}
+                  onPress={() => {
+                    setMapError(false);
+                    setMapInitAttempts(0);
+                    setMapKey(Date.now());
+                    setMapLoading(true);
+                  }}
+                >
+                  <Text style={styles.mapRetryTextFull}>⟳ Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {mapLoading && !mapError && (
+              <View style={styles.mapLoadingOverlay}>
+                <ActivityIndicator size="large" color="#00b14f" />
+                <Text style={styles.mapLoadingText}>Loading map...</Text>
+                {mapInitAttempts > 0 && (
+                  <Text style={styles.mapLoadingSubtext}>
+                    Retry attempt {mapInitAttempts}/3
+                  </Text>
+                )}
+              </View>
+            )}
 
             <View style={styles.modalFloatWrap}>
               <TouchableOpacity
@@ -646,43 +866,55 @@ export default function MerchantExtrasScreen() {
                 accessibilityLabel="Use current location"
               >
                 {modalLocLoading ? (
-                  <ActivityIndicator />
+                  <ActivityIndicator color="#fff" />
                 ) : (
-                  <Text style={styles.modalFloatBtnText}>Use Current Location</Text>
+                  <Text style={styles.modalFloatBtnText}>
+                    📍 Use Current Location
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>
           </View>
 
           {!!modalLocError && (
-            <Text style={[styles.locError, { marginHorizontal: 16 }]}>{modalLocError}</Text>
+            <Text style={[styles.locError, { marginHorizontal: 16 }]}>
+              ⚠️ {modalLocError}
+            </Text>
           )}
 
-          <View style={styles.modalFooter}>
+          {/* <View style={styles.modalFooter}>
             <Text style={styles.modalHint}>
-              Long-press to drop a pin. Drag to adjust. Press Confirm when done.
+              👆 Tap on the map to move the merchant pin. Press Confirm when
+              done.
             </Text>
-            <TouchableOpacity style={styles.btnPrimary} onPress={confirmPickedLocation}>
-              <Text style={styles.btnPrimaryText}>Confirm</Text>
+            <TouchableOpacity
+              style={styles.btnPrimary}
+              onPress={confirmPickedLocation}
+            >
+              <Text style={styles.btnPrimaryText}>✓ Confirm Location</Text>
             </TouchableOpacity>
-          </View>
+          </View> */}
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
   );
 }
 
-/** ---------------- Logo Uploader Component ---------------- */
+// ========== LogoUploader Component ==========
 function LogoUploader({ value, onChange }) {
   const [busy, setBusy] = useState(false);
-  const maxBytes = 5 * 1024 * 1024; // 5MB
+  const maxBytes = 5 * 1024 * 1024;
 
   const pickFromGallery = async () => {
     try {
       setBusy(true);
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const { status } =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission needed", "Allow photo access to upload a logo.");
+        Alert.alert(
+          "Permission needed",
+          "Allow photo access to upload a logo.",
+        );
         return;
       }
       const img = await ImagePicker.launchImageLibraryAsync({
@@ -716,7 +948,10 @@ function LogoUploader({ value, onChange }) {
       setBusy(true);
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== "granted") {
-        Alert.alert("Permission needed", "Allow camera access to take a logo photo.");
+        Alert.alert(
+          "Permission needed",
+          "Allow camera access to take a logo photo.",
+        );
         return;
       }
       const img = await ImagePicker.launchCameraAsync({
@@ -750,16 +985,30 @@ function LogoUploader({ value, onChange }) {
   if (!value) {
     return (
       <View style={styles.logoCard}>
-        <Text style={styles.logoCardIcon}>＋</Text>
+        <Text style={styles.logoCardIcon}>➕</Text>
         <Text style={styles.logoCardTitle}>Upload logo</Text>
-        <Text style={styles.logoCardHint}>Square image works best (1:1). Max 5MB.</Text>
+        <Text style={styles.logoCardHint}>
+          Square image works best (1:1). Max 5MB.
+        </Text>
 
         <View style={styles.logoActionsRow}>
-          <TouchableOpacity style={styles.actionBtn} onPress={pickFromGallery} disabled={busy}>
-            {busy ? <ActivityIndicator /> : <Text style={styles.actionBtnText}>Choose Image</Text>}
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={pickFromGallery}
+            disabled={busy}
+          >
+            {busy ? (
+              <ActivityIndicator />
+            ) : (
+              <Text style={styles.actionBtnText}>📁 Choose Image</Text>
+            )}
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtnGhost} onPress={takePhoto} disabled={busy}>
-            <Text style={styles.actionBtnGhostText}>Take Photo</Text>
+          <TouchableOpacity
+            style={styles.actionBtnGhost}
+            onPress={takePhoto}
+            disabled={busy}
+          >
+            <Text style={styles.actionBtnGhostText}>📷 Take Photo</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -781,18 +1030,30 @@ function LogoUploader({ value, onChange }) {
       </View>
 
       <View style={styles.logoActionsRow}>
-        <TouchableOpacity style={styles.actionBtn} onPress={pickFromGallery} disabled={busy}>
-          {busy ? <ActivityIndicator /> : <Text style={styles.actionBtnText}>Change</Text>}
+        <TouchableOpacity
+          style={styles.actionBtn}
+          onPress={pickFromGallery}
+          disabled={busy}
+        >
+          {busy ? (
+            <ActivityIndicator />
+          ) : (
+            <Text style={styles.actionBtnText}>🔄 Change</Text>
+          )}
         </TouchableOpacity>
-        <TouchableOpacity style={styles.actionBtnGhost} onPress={remove} disabled={busy}>
-          <Text style={styles.actionBtnGhostText}>Remove</Text>
+        <TouchableOpacity
+          style={styles.actionBtnGhost}
+          onPress={remove}
+          disabled={busy}
+        >
+          <Text style={styles.actionBtnGhostText}>❌ Remove</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 }
 
-/** ---------------- Field ---------------- */
+// ========== Field Component ==========
 function Field({
   label,
   value,
@@ -809,7 +1070,12 @@ function Field({
   return (
     <View style={{ marginBottom: 16 }}>
       <Text style={styles.label}>{label}</Text>
-      <View style={[styles.inputWrapper, { borderColor: isFocused ? "#00b14f" : "#ccc" }]}>
+      <View
+        style={[
+          styles.inputWrapper,
+          { borderColor: isFocused ? "#00b14f" : "#ccc" },
+        ]}
+      >
         <TextInput
           style={styles.inputField}
           placeholder={placeholder}
@@ -829,7 +1095,7 @@ function Field({
   );
 }
 
-// === helpers ===
+// ========== Helpers ==========
 function formatSize(bytes = 0) {
   if (!bytes || bytes <= 0) return "—";
   const kb = bytes / 1024;
@@ -848,7 +1114,6 @@ const toSafeString = (v) => {
   return "";
 };
 
-// Normalize category to an array of **IDs** (strings)
 const normalizeCategoryIds = (v) => {
   if (!v) return [];
   if (Array.isArray(v)) {
@@ -875,9 +1140,8 @@ const normalizeCategoryIds = (v) => {
   return [];
 };
 
-/* ===== Styles ===== */
+// ========== Styles ==========
 const styles = StyleSheet.create({
-  /* Header */
   fixedTitle: {
     backgroundColor: "#fff",
     paddingHorizontal: 20,
@@ -889,21 +1153,20 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#1A1D1F",
   },
-
-  /* Layout */
   container: {
     paddingHorizontal: 20,
     paddingVertical: 20,
   },
-
-  /* Typography */
-  label: { fontSize: 14, marginBottom: 6, color: "#333" },
+  label: { fontSize: 14, marginBottom: 6, color: "#333", fontWeight: "600" },
   fileName: { fontSize: 13, color: "#374151" },
   metaText: { fontSize: 12, color: "#6b7280", marginTop: 2 },
-  removeText: { marginTop: 4, fontSize: 12, color: "#ef4444", fontWeight: "600" },
+  removeText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#ef4444",
+    fontWeight: "600",
+  },
   hint: { marginTop: 6, fontSize: 12, color: "#DC2626" },
-
-  /* Inputs */
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
@@ -915,8 +1178,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   inputField: { flex: 1, fontSize: 14, paddingVertical: 10 },
-
-  /* Buttons */
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -927,21 +1188,19 @@ const styles = StyleSheet.create({
     backgroundColor: "#f3f4f6",
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 12,
   },
-  btnSecondaryText: { fontWeight: "700" },
+  btnSecondaryText: { fontWeight: "700", fontSize: 14 },
   btnDisabled: { opacity: 0.6 },
-
-  /* Location preview */
   mapPreviewWrapperLarge: {
     borderRadius: 12,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#ccc",
-    height: 180,
-    marginBottom: 8,
+    borderWidth: 2,
+    borderColor: "#00b14f",
+    height: 200,
+    marginBottom: 12,
     position: "relative",
     marginTop: 8,
   },
@@ -950,26 +1209,52 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     justifyContent: "flex-end",
-    paddingBottom: 8,
+    paddingBottom: 12,
     backgroundColor: "rgba(0,0,0,0.0)",
   },
   previewOverlayText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: "700",
-    backgroundColor: "rgba(17,24,39,0.6)",
+    backgroundColor: "rgba(0,177,79,0.85)",
     color: "#fff",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
     overflow: "hidden",
   },
-
-  /* Coords block */
-  coordsBlock: { paddingVertical: 6 },
-  coordsLabel: { fontSize: 12, color: "#6B7280" },
-  coordsValue: { fontSize: 14, color: "#111827", fontWeight: "600" },
-
-  /* Logo Uploader */
+  coordsBlock: {
+    backgroundColor: "#f8fafc",
+    padding: 12,
+    borderRadius: 12,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+  },
+  coordsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  coordsLabel: { fontSize: 12, color: "#6B7280", fontWeight: "600" },
+  coordsValue: { fontSize: 13, color: "#111827", fontWeight: "700" },
+  noLocationCard: {
+    backgroundColor: "#fef3c7",
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: "#fde68a",
+  },
+  noLocationIcon: { fontSize: 32, marginBottom: 8 },
+  noLocationText: { fontSize: 14, fontWeight: "700", color: "#92400e" },
+  noLocationSubtext: {
+    fontSize: 12,
+    color: "#b45309",
+    marginTop: 4,
+    textAlign: "center",
+  },
   logoCard: {
     borderWidth: 1.5,
     borderStyle: "dashed",
@@ -982,7 +1267,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#fafafa",
   },
   logoCardIcon: { fontSize: 32, lineHeight: 32, color: "#9ca3af" },
-  logoCardTitle: { marginTop: 8, fontSize: 15, fontWeight: "700", color: "#111827" },
+  logoCardTitle: {
+    marginTop: 8,
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111827",
+  },
   logoCardHint: { marginTop: 4, fontSize: 12, color: "#6b7280" },
   logoActionsRow: { marginTop: 12, flexDirection: "row", gap: 10 },
   actionBtn: {
@@ -1001,7 +1291,6 @@ const styles = StyleSheet.create({
     borderColor: "#e5e7eb",
   },
   actionBtnGhostText: { color: "#111827", fontWeight: "700" },
-
   logoSelectedWrap: { marginBottom: 12, alignItems: "center" },
   logoPreviewLargeWrap: {
     width: 128,
@@ -1013,8 +1302,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   logoPreviewLarge: { width: "100%", height: "100%", resizeMode: "cover" },
-
-  /* Floating bottom bar + Submit */
   fabWrap: { position: "absolute", left: 0, right: 0 },
   submitContainer: {
     height: 100,
@@ -1029,7 +1316,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -2 },
     elevation: 6,
   },
-
   btnPrimary: {
     backgroundColor: "#00b14f",
     paddingVertical: 14,
@@ -1057,8 +1343,6 @@ const styles = StyleSheet.create({
   },
   btnPrimaryText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   btnPrimaryTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
-
-  /* Map modal */
   modalHeader: {
     paddingHorizontal: 16,
     paddingTop: 8,
@@ -1078,8 +1362,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   modalHint: { fontSize: 12, color: "#6B7280", marginBottom: 8 },
-
-  // Floating button over the map (modal)
   modalFloatWrap: {
     position: "absolute",
     top: 12,
@@ -1106,5 +1388,83 @@ const styles = StyleSheet.create({
     color: "#ef4444",
     marginTop: 6,
     marginBottom: 4,
+  },
+  mapErrorContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f9fafb",
+    borderRadius: 12,
+  },
+  mapErrorText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  mapErrorSubtext: {
+    marginTop: 4,
+    fontSize: 11,
+    color: "#6b7280",
+  },
+  mapRetryBtn: {
+    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    backgroundColor: "#00b14f",
+    borderRadius: 8,
+  },
+  mapRetryText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 12,
+  },
+  mapErrorContainerFull: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f9fafb",
+  },
+  mapErrorTextFull: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  mapErrorSubtextFull: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#6b7280",
+  },
+  mapRetryBtnFull: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    backgroundColor: "#00b14f",
+    borderRadius: 8,
+  },
+  mapRetryTextFull: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+  mapLoadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+  },
+  mapLoadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: "#00b14f",
+    fontWeight: "600",
+  },
+  mapLoadingSubtext: {
+    marginTop: 4,
+    fontSize: 11,
+    color: "#6b7280",
   },
 });

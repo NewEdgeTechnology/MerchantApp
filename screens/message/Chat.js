@@ -39,9 +39,9 @@ const G = {
 };
 
 const TYPING_IDLE_MS = 4000;
-const SOCKET_ORIGIN = "https://grab.newedge.bt";
+const SOCKET_ORIGIN = "https://backend.tabdhey.bt";
 const SOCKET_PATH = "/grablike/socket.io";
-const HTTP_BASE = "https://grab.newedge.bt/grablike";
+const HTTP_BASE = "https://backend.tabdhey.bt/grablike";
 const BASE_ORIGIN = SOCKET_ORIGIN;
 
 /* ---------------- base + socket helpers ---------------- */

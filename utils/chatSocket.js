@@ -2,7 +2,7 @@
 import { io } from "socket.io-client";
 
 /**
- * Your API works on: https://grab.newedge.bt/chat/chat/...
+ * Your API works on: https://backend.tabdhey.bt/chat/chat/...
  * Socket path also needs the same prefix:
  *   ✅ /chat/chat/socket.io
  *   ❌ /chat/socket.io  (404)
@@ -10,7 +10,7 @@ import { io } from "socket.io-client";
  * This file auto-detects and uses the correct one.
  */
 
-const CHAT_ORIGIN = "https://grab.newedge.bt";
+const CHAT_ORIGIN = "https://backend.tabdhey.bt";
 
 /** Try these in order */
 const PATH_CANDIDATES = ["/chat/chat/socket.io", "/chat/socket.io", "/socket.io"];

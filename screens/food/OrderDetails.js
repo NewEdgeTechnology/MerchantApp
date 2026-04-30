@@ -15,8 +15,16 @@
 // - Remove Deliver in group completely.
 // - When user selects GRAB, directly redirect to NearbyOrdersScreen (cluster list).
 // - No alert popup. No "Use Deliver in group" message.
+// ✅ CHANGE (LATEST):
+// - Delivery options only shown after order is READY (status === "READY" or "OUT_FOR_DELIVERY")
 
-import React, { useMemo, useState, useCallback, useEffect, useRef } from "react";
+import React, {
+  useMemo,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
 import {
   View,
   Text,
@@ -40,7 +48,10 @@ import {
 import { createOrGetOrderConversationFromOrderDetails } from "../../utils/chatApi";
 
 import { Ionicons } from "@expo/vector-icons";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import * as SecureStore from "expo-secure-store";
 import io from "socket.io-client";
 
@@ -119,7 +130,8 @@ const toSafeKeyPart = (v, fallback = "0") => {
   const asNum = Number(v);
   if (Number.isFinite(asNum)) {
     const intish = Math.trunc(asNum);
-    const raw = Math.abs(asNum - intish) < 1e-9 ? String(intish) : String(asNum);
+    const raw =
+      Math.abs(asNum - intish) < 1e-9 ? String(intish) : String(asNum);
     return raw.replace(/[^A-Za-z0-9._-]/g, "_") || fallback;
   }
 
@@ -136,7 +148,9 @@ const keyRideId = (businessId) =>
    status normalizer
    =========================== */
 const normalizeStatus = (v) => {
-  const s = String(v || "").trim().toUpperCase();
+  const s = String(v || "")
+    .trim()
+    .toUpperCase();
   if (!s) return "PENDING";
 
   if (s === "ACCEPTED") return "CONFIRMED";
@@ -186,11 +200,11 @@ const normalizeDeliveryAddress = (v) => {
     return {
       address: String(
         v.address ??
-        v.full_address ??
-        v.location ??
-        v.formatted ??
-        v.label ??
-        ""
+          v.full_address ??
+          v.location ??
+          v.formatted ??
+          v.label ??
+          "",
       ).trim(),
       lat: v.lat ?? v.latitude ?? null,
       lng: v.lng ?? v.lon ?? v.longitude ?? null,
@@ -222,7 +236,7 @@ const pickExistingRouteName = (nav, candidates = []) => {
       chain.push(n);
       n = n.getParent?.();
     }
-  } catch { }
+  } catch {}
 
   for (const raw of candidates.map(clean).filter(Boolean)) {
     for (const n of chain) {
@@ -248,7 +262,7 @@ const findNavigatorOwningRoute = (nav, routeName) => {
       if (existsIn(n, routeName)) return n;
       n = n.getParent?.();
     }
-  } catch { }
+  } catch {}
   return null;
 };
 
@@ -279,7 +293,8 @@ const getOrderTotalsSnapshot = (src = {}, fallback = {}) => {
   const a = src || {};
   const b = fallback || {};
 
-  const aTotals = a.totals || a.total_breakdown || a.breakdown || a.pricing || null;
+  const aTotals =
+    a.totals || a.total_breakdown || a.breakdown || a.pricing || null;
   const aBizTotals =
     a.totals_for_business ||
     a.totalsForBusiness ||
@@ -287,7 +302,8 @@ const getOrderTotalsSnapshot = (src = {}, fallback = {}) => {
     a.businessTotals ||
     null;
 
-  const bTotals = b.totals || b.total_breakdown || b.breakdown || b.pricing || null;
+  const bTotals =
+    b.totals || b.total_breakdown || b.breakdown || b.pricing || null;
   const bBizTotals =
     b.totals_for_business ||
     b.totalsForBusiness ||
@@ -311,7 +327,7 @@ const getOrderTotalsSnapshot = (src = {}, fallback = {}) => {
     bBizTotals?.platform_fee,
     bBizTotals?.platformFee,
     b.fees?.platform_fee,
-    b.charges?.platform_fee
+    b.charges?.platform_fee,
   );
 
   const discount_amount = pickMoney(
@@ -336,7 +352,7 @@ const getOrderTotalsSnapshot = (src = {}, fallback = {}) => {
     bBizTotals?.discountAmount,
     bBizTotals?.discount,
     bTotals?.total_discount,
-    bBizTotals?.total_discount
+    bBizTotals?.total_discount,
   );
 
   const delivery_fee = pickMoney(
@@ -355,7 +371,7 @@ const getOrderTotalsSnapshot = (src = {}, fallback = {}) => {
     bBizTotals?.delivery_fee,
     bBizTotals?.deliveryFee,
     b.fees?.delivery_fee,
-    b.charges?.delivery_fee
+    b.charges?.delivery_fee,
   );
 
   const merchant_delivery_fee = pickMoney(
@@ -374,7 +390,7 @@ const getOrderTotalsSnapshot = (src = {}, fallback = {}) => {
     bBizTotals?.merchant_delivery_fee,
     bBizTotals?.merchantDeliveryFee,
     b.fees?.merchant_delivery_fee,
-    b.charges?.merchant_delivery_fee
+    b.charges?.merchant_delivery_fee,
   );
 
   return { platform_fee, discount_amount, delivery_fee, merchant_delivery_fee };
@@ -401,10 +417,17 @@ const getItemName = (it) =>
   "";
 
 const getItemImage = (it) =>
-  it?.item_image ?? it?.image ?? it?.image_url ?? it?.photo ?? it?.thumbnail ?? null;
+  it?.item_image ??
+  it?.image ??
+  it?.image_url ??
+  it?.photo ??
+  it?.thumbnail ??
+  null;
 
 const getItemQty = (it) => {
-  const q = Number(it?.qty ?? it?.quantity ?? it?.quantity_ordered ?? it?.order_qty ?? 1);
+  const q = Number(
+    it?.qty ?? it?.quantity ?? it?.quantity_ordered ?? it?.order_qty ?? 1,
+  );
   return Number.isFinite(q) && q > 0 ? q : 1;
 };
 
@@ -421,7 +444,12 @@ const getItemUnitPrice = (it) => {
   if (p != null) return p;
 
   const n = Number(
-    it?.price ?? it?.unit_price ?? it?.item_price ?? it?.rate ?? it?.selling_price ?? 0
+    it?.price ??
+      it?.unit_price ??
+      it?.item_price ??
+      it?.rate ??
+      it?.selling_price ??
+      0,
   );
   return Number.isFinite(n) ? n : 0;
 };
@@ -434,7 +462,7 @@ const getItemLineTotal = (it) => {
     it?.lineTotal,
     it?.total,
     it?.amount,
-    it?.final_amount
+    it?.final_amount,
   );
   if (direct != null) return direct;
 
@@ -464,7 +492,10 @@ const buildUnavailableChanges = ({
   const replaced = [];
 
   const itemByKey = new Map(
-    (items || []).map((it) => [String(it?._key ?? getItemMenuId(it) ?? ""), it])
+    (items || []).map((it) => [
+      String(it?._key ?? getItemMenuId(it) ?? ""),
+      it,
+    ]),
   );
 
   if (String(mode).toUpperCase() === "REMOVE") {
@@ -544,7 +575,12 @@ const extractStatusFromPayload = (payload) => {
   for (const c of containers) {
     if (!c) continue;
     const v =
-      c.status ?? c.order_status ?? c.current_status ?? c.orderStatus ?? c.job_status ?? null;
+      c.status ??
+      c.order_status ??
+      c.current_status ??
+      c.orderStatus ??
+      c.job_status ??
+      null;
     if (v) return v;
   }
 
@@ -597,7 +633,12 @@ const extractOrderIdFromPayload = (payload) => {
     null;
   if (Array.isArray(drops) && drops.length) {
     const first = drops[0];
-    const ov = first?.order_id ?? first?.orderId ?? first?.order_code ?? first?.orderCode ?? null;
+    const ov =
+      first?.order_id ??
+      first?.orderId ??
+      first?.order_code ??
+      first?.orderCode ??
+      null;
     if (ov != null) return String(ov);
   }
 
@@ -633,7 +674,12 @@ const extractOrderIdFromPayload = (payload) => {
     const cdrops = c.drops ?? null;
     if (Array.isArray(cdrops) && cdrops.length) {
       const first = cdrops[0];
-      const ov = first?.order_id ?? first?.orderId ?? first?.order_code ?? first?.orderCode ?? null;
+      const ov =
+        first?.order_id ??
+        first?.orderId ??
+        first?.order_code ??
+        first?.orderCode ??
+        null;
       if (ov != null) return String(ov);
     }
   }
@@ -702,13 +748,15 @@ export default function OrderDetails() {
     (routeOrderId && String(routeOrderId).startsWith("SCH-"));
 
   const ownerType = params.ownerType ?? params.owner_type ?? null;
-  const deliveryOptionFromParamsRaw = params.delivery_option ?? params.deliveryOption ?? null;
+  const deliveryOptionFromParamsRaw =
+    params.delivery_option ?? params.deliveryOption ?? null;
 
   // ✅ ensure id + order_code always exist
   const [order, setOrder] = useState(() => {
     const o = orderProp || {};
     const idRaw = o?.id ?? o?.order_id ?? o?.order_code ?? routeOrderId ?? null;
-    const codeRaw = o?.order_code ?? o?.order_id ?? o?.id ?? routeOrderId ?? null;
+    const codeRaw =
+      o?.order_code ?? o?.order_id ?? o?.id ?? routeOrderId ?? null;
 
     const feeSnap = getOrderTotalsSnapshot(o, null);
 
@@ -719,16 +767,20 @@ export default function OrderDetails() {
       order_code: codeRaw != null ? normalizeOrderCode(codeRaw) : undefined,
       status: normalizeStatus(o?.status),
       delivery_address: normalizeDeliveryAddress(
-        o?.delivery_address ?? o?.address ?? o?.deliver_to
+        o?.delivery_address ?? o?.address ?? o?.deliver_to,
       ),
 
       __user: o?.__user ?? o?.user ?? null,
 
       platform_fee: feeSnap.platform_fee ?? toMoneyNumber(o?.platform_fee) ?? 0,
-      discount_amount: feeSnap.discount_amount ?? toMoneyNumber(o?.discount_amount) ?? 0,
-      delivery_fee: feeSnap.delivery_fee ?? toMoneyNumber(o?.delivery_fee) ?? null,
+      discount_amount:
+        feeSnap.discount_amount ?? toMoneyNumber(o?.discount_amount) ?? 0,
+      delivery_fee:
+        feeSnap.delivery_fee ?? toMoneyNumber(o?.delivery_fee) ?? null,
       merchant_delivery_fee:
-        feeSnap.merchant_delivery_fee ?? toMoneyNumber(o?.merchant_delivery_fee) ?? null,
+        feeSnap.merchant_delivery_fee ??
+        toMoneyNumber(o?.merchant_delivery_fee) ??
+        null,
     };
   });
 
@@ -797,7 +849,10 @@ export default function OrderDetails() {
       });
 
       const conversationId =
-        resp?.conversation_id ?? resp?.data?.conversation_id ?? resp?.conversationId ?? null;
+        resp?.conversation_id ??
+        resp?.data?.conversation_id ??
+        resp?.conversationId ??
+        null;
 
       if (!conversationId) throw new Error("No conversation_id returned");
 
@@ -877,7 +932,7 @@ export default function OrderDetails() {
       "FoodNearbyOrders",
       "NearbyOrdersList",
     ],
-    []
+    [],
   );
 
   const resolvedNearbyListRouteName = useMemo(() => {
@@ -888,7 +943,10 @@ export default function OrderDetails() {
       null;
 
     return (
-      pickExistingRouteName(navigation, [preferred, ...NEARBY_LIST_ROUTE_CANDIDATES]) || null
+      pickExistingRouteName(navigation, [
+        preferred,
+        ...NEARBY_LIST_ROUTE_CANDIDATES,
+      ]) || null
     );
   }, [
     navigation,
@@ -920,14 +978,20 @@ export default function OrderDetails() {
       const parent = navigation.getParent?.();
       const names = parent?.getState?.()?.routeNames ?? [];
       const target =
-        names.find((n) => /^(Orders|OrderTab|OrdersTab|MartOrders|FoodOrders)$/i.test(n)) ||
-        names.find((n) => /Order/i.test(n));
+        names.find((n) =>
+          /^(Orders|OrderTab|OrdersTab|MartOrders|FoodOrders)$/i.test(n),
+        ) || names.find((n) => /Order/i.test(n));
       if (parent && target) {
         parent.navigate(target);
         return;
       }
-    } catch { }
-    navigation.dispatch(CommonActions.navigate({ name: "MainTabs", params: { screen: "Orders" } }));
+    } catch {}
+    navigation.dispatch(
+      CommonActions.navigate({
+        name: "MainTabs",
+        params: { screen: "Orders" },
+      }),
+    );
   }, [navigation]);
 
   useFocusEffect(
@@ -938,7 +1002,7 @@ export default function OrderDetails() {
       };
       const sub = BackHandler.addEventListener("hardwareBackPress", onBack);
       return () => sub.remove();
-    }, [goBackToOrders])
+    }, [goBackToOrders]),
   );
 
   const saveRideId = useCallback(
@@ -957,7 +1021,7 @@ export default function OrderDetails() {
         console.log("[OrderDetails] saveRideId error:", e?.message || e);
       }
     },
-    [businessId]
+    [businessId],
   );
 
   // ✅ restore saved ride_id (batch removed)
@@ -969,11 +1033,19 @@ export default function OrderDetails() {
         if (!safeBiz) return;
 
         const savedRide = await SecureStore.getItemAsync(keyRideId(safeBiz));
-        if (!cancelled && savedRide && String(savedRide).trim() && !rideIdRef.current) {
+        if (
+          !cancelled &&
+          savedRide &&
+          String(savedRide).trim() &&
+          !rideIdRef.current
+        ) {
           setRideId(String(savedRide).trim());
         }
       } catch (e) {
-        console.log("[OrderDetails] restore saved ride error:", e?.message || e);
+        console.log(
+          "[OrderDetails] restore saved ride error:",
+          e?.message || e,
+        );
       }
     })();
     return () => {
@@ -999,7 +1071,7 @@ export default function OrderDetails() {
               j?.user?.id ||
               null;
             if (finalBizId) setBusinessId(finalBizId);
-          } catch { }
+          } catch {}
         }
       }
 
@@ -1010,8 +1082,18 @@ export default function OrderDetails() {
         const nOpt = opt ? String(opt).toUpperCase() : "UNKNOWN";
         setMerchantDeliveryOpt(nOpt);
 
-        const latRaw = bd.latitude ?? bd.lat ?? bd.business_latitude ?? bd.business_lat ?? null;
-        const lngRaw = bd.longitude ?? bd.lng ?? bd.business_longitude ?? bd.business_lng ?? null;
+        const latRaw =
+          bd.latitude ??
+          bd.lat ??
+          bd.business_latitude ??
+          bd.business_lat ??
+          null;
+        const lngRaw =
+          bd.longitude ??
+          bd.lng ??
+          bd.business_longitude ??
+          bd.business_lng ??
+          null;
 
         const latNum = latRaw != null ? Number(latRaw) : NaN;
         const lngNum = lngRaw != null ? Number(lngRaw) : NaN;
@@ -1021,7 +1103,10 @@ export default function OrderDetails() {
         }
       }
     } catch (e) {
-      console.log("[OrderDetails] BUSINESS_DETAILS fetch error:", e?.message || e);
+      console.log(
+        "[OrderDetails] BUSINESS_DETAILS fetch error:",
+        e?.message || e,
+      );
     }
   }, [businessId, paramBusinessId]);
 
@@ -1030,18 +1115,22 @@ export default function OrderDetails() {
   }, [loadBusinessDetails]);
 
   /* ---------- Normalize fulfillment ---------- */
-  const fulfillment = useMemo(() => resolveFulfillmentType({ ...order, params }), [order, params]);
+  const fulfillment = useMemo(
+    () => resolveFulfillmentType({ ...order, params }),
+    [order, params],
+  );
   const isPickupFulfillment = useMemo(
     () => (fulfillment || "").toLowerCase() === "pickup",
-    [fulfillment]
+    [fulfillment],
   );
   const orderDeliveryHint = useMemo(
     () => resolveDeliveryOptionFromOrder({ ...order, params }),
-    [order, params]
+    [order, params],
   );
 
   const deliveryOptionInitial = useMemo(() => {
-    if (deliveryOptionFromParamsRaw) return String(deliveryOptionFromParamsRaw).toUpperCase();
+    if (deliveryOptionFromParamsRaw)
+      return String(deliveryOptionFromParamsRaw).toUpperCase();
     const m = merchantDeliveryOpt;
     if (m !== "UNKNOWN") return m;
     return orderDeliveryHint || "";
@@ -1052,7 +1141,6 @@ export default function OrderDetails() {
     if (p === "GRAB") return "grab";
     return "self";
   });
-
 
   const isBothOption = deliveryOptionInitial === "BOTH";
   const isSelfSelected = deliveryChoice === "self";
@@ -1071,7 +1159,7 @@ export default function OrderDetails() {
       isPickupFulfillment
         ? ["PENDING", "CONFIRMED", "READY"]
         : ["PENDING", "CONFIRMED", "READY", "OUT_FOR_DELIVERY", "COMPLETED"],
-    [isPickupFulfillment]
+    [isPickupFulfillment],
   );
 
   const isTerminalNegative = TERMINAL_NEGATIVE.has(status);
@@ -1104,7 +1192,12 @@ export default function OrderDetails() {
       if (idx === -1) return "CONFIRMED";
       return STATUS_SEQUENCE[idx + 1] || null;
     },
-    [STATUS_SEQUENCE, shouldBlockAtReady, isPickupFulfillment, isDriverAssigned]
+    [
+      STATUS_SEQUENCE,
+      shouldBlockAtReady,
+      isPickupFulfillment,
+      isDriverAssigned,
+    ],
   );
 
   const stepIndex = findStepIndex(status, STATUS_SEQUENCE);
@@ -1177,14 +1270,14 @@ export default function OrderDetails() {
               null;
             if (bizId && !businessId) setBusinessId(bizId);
           }
-        } catch { }
+        } catch {}
       }
 
       let groupedUrlFinal = baseRaw;
       if (bizId)
         groupedUrlFinal = groupedUrlFinal.replace(
           /\{businessId\}/gi,
-          encodeURIComponent(String(bizId))
+          encodeURIComponent(String(bizId)),
         );
 
       const token = await SecureStore.getItemAsync("auth_token");
@@ -1200,10 +1293,15 @@ export default function OrderDetails() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch { }
-      if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+      } catch {}
+      if (!res.ok)
+        throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
-      const groups = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
+      const groups = Array.isArray(json?.data)
+        ? json.data
+        : Array.isArray(json)
+          ? json
+          : [];
 
       // ✅ IMPORTANT: keep block.user as __user (cluster style)
       let allOrders = [];
@@ -1218,7 +1316,11 @@ export default function OrderDetails() {
             blockUser?.full_name ??
             "";
           const userPhone =
-            g.phone ?? blockUser?.phone ?? blockUser?.phone_number ?? blockUser?.mobile ?? "";
+            g.phone ??
+            blockUser?.phone ??
+            blockUser?.phone_number ??
+            blockUser?.mobile ??
+            "";
 
           for (const o of g.orders) {
             allOrders.push({
@@ -1236,21 +1338,29 @@ export default function OrderDetails() {
       }
 
       const match = allOrders.find((o) =>
-        sameOrder(o?.id ?? o?.order_id ?? o?.order_code, routeOrderId)
+        sameOrder(o?.id ?? o?.order_id ?? o?.order_code, routeOrderId),
       );
       if (!match) return;
 
       const matchStatus = normalizeStatus(match?.status ?? "PENDING");
       const localStatus = normalizeStatus(order?.status ?? "PENDING");
-      const finalStatus = isHigherOrEqualStatus(localStatus, matchStatus) ? localStatus : matchStatus;
+      const finalStatus = isHigherOrEqualStatus(localStatus, matchStatus)
+        ? localStatus
+        : matchStatus;
 
       const feeSnap = getOrderTotalsSnapshot(match, order);
 
       const normalizedFromMatch = {
         ...match,
-        id: String(match?.id ?? match?.order_id ?? match?.order_code ?? routeOrderId),
-        order_id: String(match?.order_id ?? match?.id ?? match?.order_code ?? routeOrderId),
-        order_code: normalizeOrderCode(match?.order_code ?? match?.id ?? routeOrderId),
+        id: String(
+          match?.id ?? match?.order_id ?? match?.order_code ?? routeOrderId,
+        ),
+        order_id: String(
+          match?.order_id ?? match?.id ?? match?.order_code ?? routeOrderId,
+        ),
+        order_code: normalizeOrderCode(
+          match?.order_code ?? match?.id ?? routeOrderId,
+        ),
 
         __user: match?.__user ?? match?.user ?? null,
 
@@ -1260,10 +1370,11 @@ export default function OrderDetails() {
           match?.user?.user_name ??
           match?.user?.name ??
           "",
-        customer_phone: match?.customer_phone ?? match?.phone ?? match?.user?.phone ?? "",
+        customer_phone:
+          match?.customer_phone ?? match?.phone ?? match?.user?.phone ?? "",
         payment_method: match?.payment_method ?? match?.payment ?? "",
         delivery_address: normalizeDeliveryAddress(
-          match?.delivery_address ?? match?.address ?? match?.deliver_to
+          match?.delivery_address ?? match?.address ?? match?.deliver_to,
         ),
         raw_items: Array.isArray(match?.raw_items)
           ? match.raw_items
@@ -1272,19 +1383,33 @@ export default function OrderDetails() {
             : [],
         total: match?.total ?? match?.total_amount ?? order?.total ?? 0,
         status: finalStatus,
-        type: match?.type ?? match?.fulfillment_type ?? match?.delivery_type ?? order?.type ?? "",
-        delivery_option: match?.delivery_option ?? match?.delivery_by ?? order?.delivery_option ?? "",
-        status_timestamps: match?.status_timestamps ?? order?.status_timestamps ?? {},
+        type:
+          match?.type ??
+          match?.fulfillment_type ??
+          match?.delivery_type ??
+          order?.type ??
+          "",
+        delivery_option:
+          match?.delivery_option ??
+          match?.delivery_by ??
+          order?.delivery_option ??
+          "",
+        status_timestamps:
+          match?.status_timestamps ?? order?.status_timestamps ?? {},
         if_unavailable: match?.if_unavailable ?? order?.if_unavailable ?? "",
         estimated_arrivial_time:
-          match?.estimated_arrivial_time ?? match?.eta_minutes ?? order?.estimated_arrivial_time ?? null,
+          match?.estimated_arrivial_time ??
+          match?.eta_minutes ??
+          order?.estimated_arrivial_time ??
+          null,
 
         delivery_fee: feeSnap.delivery_fee ?? null,
         merchant_delivery_fee: feeSnap.merchant_delivery_fee ?? null,
         platform_fee: feeSnap.platform_fee ?? 0,
         discount_amount: feeSnap.discount_amount ?? 0,
 
-        totals_for_business: match?.totals_for_business ?? order?.totals_for_business ?? null,
+        totals_for_business:
+          match?.totals_for_business ?? order?.totals_for_business ?? null,
         totals: match?.totals ?? order?.totals ?? null,
       };
 
@@ -1293,25 +1418,35 @@ export default function OrderDetails() {
         ...normalizedFromMatch,
         status: normalizeStatus(normalizedFromMatch.status),
         delivery_address: normalizeDeliveryAddress(
-          normalizedFromMatch?.delivery_address ?? prev?.delivery_address ?? prev?.address
+          normalizedFromMatch?.delivery_address ??
+            prev?.delivery_address ??
+            prev?.address,
         ),
         __user: normalizedFromMatch.__user ?? prev.__user ?? prev.user ?? null,
       }));
     } catch (e) {
       console.warn("[OrderDetails] hydrate error:", e?.message);
     }
-  }, [ordersGroupedUrl, routeOrderId, order?.status, businessId, paramBusinessId, isScheduledOrder]);
+  }, [
+    ordersGroupedUrl,
+    routeOrderId,
+    order?.status,
+    businessId,
+    paramBusinessId,
+    isScheduledOrder,
+  ]);
 
   // ✅ FIX: do not return Promise from useFocusEffect
   useFocusEffect(
     useCallback(() => {
       hydrateFromGrouped();
       return undefined;
-    }, [hydrateFromGrouped])
+    }, [hydrateFromGrouped]),
   );
 
   const debounceHydrateFromGrouped = useCallback(() => {
-    if (socketHydrateTimerRef.current) clearTimeout(socketHydrateTimerRef.current);
+    if (socketHydrateTimerRef.current)
+      clearTimeout(socketHydrateTimerRef.current);
     socketHydrateTimerRef.current = setTimeout(() => {
       socketHydrateTimerRef.current = null;
       hydrateFromGrouped();
@@ -1320,7 +1455,8 @@ export default function OrderDetails() {
 
   useFocusEffect(
     useCallback(() => {
-      if (liveRefreshTimerRef.current) clearInterval(liveRefreshTimerRef.current);
+      if (liveRefreshTimerRef.current)
+        clearInterval(liveRefreshTimerRef.current);
 
       if (!isScheduledOrder && !isTerminalNegative && !isTerminalSuccess) {
         hydrateFromGrouped();
@@ -1338,7 +1474,12 @@ export default function OrderDetails() {
           liveRefreshTimerRef.current = null;
         }
       };
-    }, [hydrateFromGrouped, isScheduledOrder, isTerminalNegative, isTerminalSuccess])
+    }, [
+      hydrateFromGrouped,
+      isScheduledOrder,
+      isTerminalNegative,
+      isTerminalSuccess,
+    ]),
   );
 
   /* ---------- Pull-to-refresh ---------- */
@@ -1360,8 +1501,8 @@ export default function OrderDetails() {
 
   const refCoords = useMemo(() => {
     const addr = order?.delivery_address;
-    const addrLat = addr ? addr.lat ?? addr.latitude : null;
-    const addrLng = addr ? addr.lng ?? addr.lon ?? addr.longitude : null;
+    const addrLat = addr ? (addr.lat ?? addr.latitude) : null;
+    const addrLng = addr ? (addr.lng ?? addr.lon ?? addr.longitude) : null;
 
     const lat =
       (addrLat != null ? addrLat : null) ??
@@ -1382,10 +1523,16 @@ export default function OrderDetails() {
     const cityId =
       order?.city_id ??
       order?.city ??
-      (typeof addr === "object" ? addr.city ?? addr.town ?? addr.dzongkhag : null) ??
+      (typeof addr === "object"
+        ? (addr.city ?? addr.town ?? addr.dzongkhag)
+        : null) ??
       "thimphu";
 
-    return { lat: Number(lat), lng: Number(lng), cityId: String(cityId || "thimphu").toLowerCase() };
+    return {
+      lat: Number(lat),
+      lng: Number(lng),
+      cityId: String(cityId || "thimphu").toLowerCase(),
+    };
   }, [order]);
 
   useEffect(() => {
@@ -1432,10 +1579,16 @@ export default function OrderDetails() {
   }, [businessCoords, refCoords.lat, refCoords.lng, fulfillment]);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener("similar-item-chosen", ({ itemKey, replacement }) => {
-      if (!itemKey || !replacement) return;
-      setItemReplacementMap((prev) => ({ ...prev, [String(itemKey)]: replacement }));
-    });
+    const sub = DeviceEventEmitter.addListener(
+      "similar-item-chosen",
+      ({ itemKey, replacement }) => {
+        if (!itemKey || !replacement) return;
+        setItemReplacementMap((prev) => ({
+          ...prev,
+          [String(itemKey)]: replacement,
+        }));
+      },
+    );
     return () => sub?.remove?.();
   }, []);
 
@@ -1450,7 +1603,7 @@ export default function OrderDetails() {
       COMPLETED: "Order delivered",
       DECLINED: "Order declined by merchant",
     }),
-    []
+    [],
   );
 
   /* ===========================
@@ -1473,7 +1626,8 @@ export default function OrderDetails() {
 
       setOrder((prev) => {
         const prevStatus = normalizeStatus(prev?.status || "PENDING");
-        if (isHigherOrEqualStatus(prevStatus, norm)) return { ...prev, ...extraPatch };
+        if (isHigherOrEqualStatus(prevStatus, norm))
+          return { ...prev, ...extraPatch };
 
         const patch = { ...extraPatch, status: norm };
         const next = { ...prev, ...patch };
@@ -1489,7 +1643,7 @@ export default function OrderDetails() {
       lastSocketAppliedStatusRef.current = norm;
       if (willAdvance) debounceHydrateFromGrouped();
     },
-    [routeOrderId, order?.status, debounceHydrateFromGrouped]
+    [routeOrderId, order?.status, debounceHydrateFromGrouped],
   );
 
   /* ---------------- Items ---------------- */
@@ -1497,14 +1651,17 @@ export default function OrderDetails() {
     const raw = Array.isArray(order?.raw_items) ? order.raw_items : [];
     return raw.map((it, idx) => ({
       ...it,
-      _key: String(it.item_id || it.menu_id || it.id || it.itemId || it.menuId || idx),
+      _key: String(
+        it.item_id || it.menu_id || it.id || it.itemId || it.menuId || idx,
+      ),
     }));
   }, [order?.raw_items]);
 
   const originalItemsTotal = useMemo(() => sumItemsTotal(items), [items]);
 
   const computedItemsTotal = useMemo(() => {
-    if (ifUnavailableMode !== "REMOVE" && ifUnavailableMode !== "REPLACE") return originalItemsTotal;
+    if (ifUnavailableMode !== "REMOVE" && ifUnavailableMode !== "REPLACE")
+      return originalItemsTotal;
 
     let total = 0;
 
@@ -1522,7 +1679,8 @@ export default function OrderDetails() {
 
       const repl = itemReplacementMap[key];
       if (repl) {
-        const newUnitPrice = toMoneyNumber(repl?.price) ?? getItemUnitPrice(repl);
+        const newUnitPrice =
+          toMoneyNumber(repl?.price) ?? getItemUnitPrice(repl);
         total += qty * (Number(newUnitPrice) || 0);
       } else {
         total += oldLineTotal;
@@ -1530,9 +1688,18 @@ export default function OrderDetails() {
     });
 
     return total;
-  }, [items, ifUnavailableMode, itemUnavailableMap, itemReplacementMap, originalItemsTotal]);
+  }, [
+    items,
+    ifUnavailableMode,
+    itemUnavailableMap,
+    itemReplacementMap,
+    originalItemsTotal,
+  ]);
 
-  const feeSnapForUi = useMemo(() => getOrderTotalsSnapshot(order, null), [order]);
+  const feeSnapForUi = useMemo(
+    () => getOrderTotalsSnapshot(order, null),
+    [order],
+  );
 
   const displayGrandTotal = useMemo(() => {
     const df = feeSnapForUi.delivery_fee ?? 0;
@@ -1540,13 +1707,19 @@ export default function OrderDetails() {
     const disc = feeSnapForUi.discount_amount ?? 0;
 
     const raw =
-      Number(computedItemsTotal || 0) + Number(df || 0) + Number(mdf || 0) - Number(disc || 0);
+      Number(computedItemsTotal || 0) +
+      Number(df || 0) +
+      Number(mdf || 0) -
+      Number(disc || 0);
     return Math.round(raw * 100) / 100;
   }, [computedItemsTotal, feeSnapForUi]);
 
   const { effectiveTotalLabel, effectiveItemsCount } = useMemo(() => {
     const count = items.reduce((sum, it) => sum + getItemQty(it), 0);
-    return { effectiveTotalLabel: money(displayGrandTotal), effectiveItemsCount: count };
+    return {
+      effectiveTotalLabel: money(displayGrandTotal),
+      effectiveItemsCount: count,
+    };
   }, [items, displayGrandTotal]);
 
   const handleToggleUnavailable = useCallback(
@@ -1554,7 +1727,7 @@ export default function OrderDetails() {
       if (normalizeStatus(status) !== "PENDING") return;
       setItemUnavailableMap((prev) => ({ ...prev, [key]: !prev[key] }));
     },
-    [status]
+    [status],
   );
 
   const handleOpenSimilarCatalog = useCallback(
@@ -1577,7 +1750,14 @@ export default function OrderDetails() {
         owner_type: ownerType,
       });
     },
-    [ifUnavailableMode, navigation, businessId, paramBusinessId, order, ownerType]
+    [
+      ifUnavailableMode,
+      navigation,
+      businessId,
+      paramBusinessId,
+      order,
+      ownerType,
+    ],
   );
 
   /* ===========================
@@ -1613,7 +1793,9 @@ export default function OrderDetails() {
         status_reason: reason,
         reason,
         ...(deliveryBy ? { delivery_option: deliveryBy } : {}),
-        ...(extraPayload && typeof extraPayload === "object" ? extraPayload : {}),
+        ...(extraPayload && typeof extraPayload === "object"
+          ? extraPayload
+          : {}),
       };
 
       try {
@@ -1626,7 +1808,11 @@ export default function OrderDetails() {
           token,
         });
 
-        const patch = { status: newStatus, status_reason: reason, ...extraPatch };
+        const patch = {
+          status: newStatus,
+          status_reason: reason,
+          ...extraPatch,
+        };
 
         setOrder((prev) => ({
           ...prev,
@@ -1640,13 +1826,19 @@ export default function OrderDetails() {
         });
 
         if (showSuccessAlert) {
-          Alert.alert("Status updated", `Order marked as ${String(newStatus).replace(/_/g, " ")}`);
+          Alert.alert(
+            "Status updated",
+            `Order marked as ${String(newStatus).replace(/_/g, " ")}`,
+          );
         }
 
         debounceHydrateFromGrouped();
         return true;
       } catch (e) {
-        console.log("[OrderDetails] updateSingleStatusLikeCluster error:", e?.message || e);
+        console.log(
+          "[OrderDetails] updateSingleStatusLikeCluster error:",
+          e?.message || e,
+        );
         Alert.alert("Update failed", String(e?.message || e));
         hydrateFromGrouped();
         return false;
@@ -1661,7 +1853,7 @@ export default function OrderDetails() {
       DEFAULT_REASON,
       debounceHydrateFromGrouped,
       hydrateFromGrouped,
-    ]
+    ],
   );
 
   /* ===========================
@@ -1673,7 +1865,10 @@ export default function OrderDetails() {
       const newStatus = normalizeStatus(newStatusRaw);
 
       if (isDriverAssigned) {
-        Alert.alert("Driver controlled", "Driver will update the status for Grab delivery.");
+        Alert.alert(
+          "Driver controlled",
+          "Driver will update the status for Grab delivery.",
+        );
         return;
       }
 
@@ -1691,7 +1886,7 @@ export default function OrderDetails() {
           setDeclineOpen(true);
           Alert.alert(
             "Reason required",
-            "Please provide at least 3 characters explaining why the order is declined."
+            "Please provide at least 3 characters explaining why the order is declined.",
           );
           return;
         }
@@ -1715,8 +1910,11 @@ export default function OrderDetails() {
             "Before accepting, ensure unavailable items are marked (Remove) or replaced (Replace).",
             [
               { text: "Go back", style: "cancel" },
-              { text: "Accept", onPress: () => doUpdate("CONFIRMED", opts, true) },
-            ]
+              {
+                text: "Accept",
+                onPress: () => doUpdate("CONFIRMED", opts, true),
+              },
+            ],
           );
           return;
         }
@@ -1725,7 +1923,7 @@ export default function OrderDetails() {
         if (!Number.isFinite(prepVal) || prepVal <= 0) {
           Alert.alert(
             "Time required",
-            "Please enter the time to prepare (in minutes) before accepting the order."
+            "Please enter the time to prepare (in minutes) before accepting the order.",
           );
           return;
         }
@@ -1748,13 +1946,13 @@ export default function OrderDetails() {
         const unavailable_changes =
           modeUpper === "REMOVE" || modeUpper === "REPLACE"
             ? buildUnavailableChanges({
-              mode: modeUpper,
-              items,
-              unavailableMap: itemUnavailableMap,
-              replacementMap: itemReplacementMap,
-              businessId: bizId,
-              businessName: bizName,
-            })
+                mode: modeUpper,
+                items,
+                unavailableMap: itemUnavailableMap,
+                replacementMap: itemReplacementMap,
+                businessId: bizId,
+                businessName: bizName,
+              })
             : { removed: [], replaced: [] };
 
         const hasChanges =
@@ -1783,7 +1981,8 @@ export default function OrderDetails() {
           Number(final_merchant_delivery_fee || 0) -
           Number(final_discount_amount || 0);
 
-        const final_total_amount = Math.round(final_total_amount_raw * 100) / 100;
+        const final_total_amount =
+          Math.round(final_total_amount_raw * 100) / 100;
 
         await updateSingleStatusLikeCluster({
           newStatus: "CONFIRMED",
@@ -1845,24 +2044,34 @@ export default function OrderDetails() {
       isDriverAssigned,
       updateSingleStatusLikeCluster,
       DEFAULT_REASON,
-    ]
+    ],
   );
 
   const next = nextFor(status);
   const primaryLabel =
-    status === "PENDING" ? "Accept" : next ? STATUS_META[next]?.label || "Next" : null;
+    status === "PENDING"
+      ? "Accept"
+      : next
+        ? STATUS_META[next]?.label || "Next"
+        : null;
 
   const onPrimaryAction = useCallback(() => {
     if (!next || updating) return;
     doUpdate(next);
   }, [next, updating, doUpdate]);
 
-  const canDecline = useMemo(() => String(declineReason).trim().length >= 3, [declineReason]);
+  const canDecline = useMemo(
+    () => String(declineReason).trim().length >= 3,
+    [declineReason],
+  );
 
   const confirmDecline = useCallback(() => {
     const r = String(declineReason).trim();
     if (r.length < 3) {
-      Alert.alert("Reason required", "Please type a brief reason (min 3 characters).");
+      Alert.alert(
+        "Reason required",
+        "Please type a brief reason (min 3 characters).",
+      );
       return;
     }
     setDeclineOpen(false);
@@ -1927,7 +2136,12 @@ export default function OrderDetails() {
     if (hasDelivery) return `ETA ~${Math.round(deliveryVal)} min`;
 
     return "ETA not available";
-  }, [order?.eta_minutes, order?.estimated_arrivial_time, manualPrepMin, routeInfo]);
+  }, [
+    order?.eta_minutes,
+    order?.estimated_arrivial_time,
+    manualPrepMin,
+    routeInfo,
+  ]);
 
   /* ---------- Driver rating fetch ---------- */
   const fetchDriverRating = useCallback(async (driverId) => {
@@ -1937,21 +2151,28 @@ export default function OrderDetails() {
 
       let finalUrl = base;
       if (base.includes("{driver_id}")) {
-        finalUrl = base.replace("{driver_id}", encodeURIComponent(String(driverId)));
+        finalUrl = base.replace(
+          "{driver_id}",
+          encodeURIComponent(String(driverId)),
+        );
       } else {
         const sep = base.includes("?") ? "&" : "?";
         finalUrl = `${base}${sep}driver_id=${encodeURIComponent(String(driverId))}`;
       }
 
-      const res = await fetch(finalUrl, { method: "GET", headers: { Accept: "application/json" } });
+      const res = await fetch(finalUrl, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
 
       const text = await res.text();
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch { }
+      } catch {}
 
-      if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+      if (!res.ok)
+        throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
       let avg = null;
       let count = null;
@@ -1961,7 +2182,8 @@ export default function OrderDetails() {
       if (Array.isArray(d) && d.length > 0) {
         const first = d[0];
         avg = first.avg_rating ?? first.average_rating ?? first.rating ?? null;
-        count = first.total_ratings ?? first.count ?? first.rating_count ?? null;
+        count =
+          first.total_ratings ?? first.count ?? first.rating_count ?? null;
       } else if (d && typeof d === "object") {
         avg = d.avg_rating ?? d.average_rating ?? d.rating ?? null;
         count = d.total_ratings ?? d.count ?? d.rating_count ?? null;
@@ -1969,7 +2191,10 @@ export default function OrderDetails() {
 
       setDriverRating({ average: avg, count });
     } catch (err) {
-      console.log("[OrderDetails] Failed to fetch driver rating:", err?.message || err);
+      console.log(
+        "[OrderDetails] Failed to fetch driver rating:",
+        err?.message || err,
+      );
     }
   }, []);
 
@@ -1982,44 +2207,60 @@ export default function OrderDetails() {
 
         let finalUrl = base;
         if (base.includes("{driverId}")) {
-          finalUrl = base.replace("{driverId}", encodeURIComponent(String(driverId)));
+          finalUrl = base.replace(
+            "{driverId}",
+            encodeURIComponent(String(driverId)),
+          );
         } else {
           const sep = base.includes("?") ? "&" : "?";
           finalUrl = `${base}${sep}driverId=${encodeURIComponent(String(driverId))}`;
         }
 
-        const res = await fetch(finalUrl, { method: "GET", headers: { Accept: "application/json" } });
+        const res = await fetch(finalUrl, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+        });
 
         const text = await res.text();
         let json = null;
         try {
           json = text ? JSON.parse(text) : null;
-        } catch { }
+        } catch {}
 
-        if (!res.ok) throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+        if (!res.ok)
+          throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
 
         const drv = json?.details || json?.data || json?.driver || json;
 
         setDriverDetails(drv);
         await fetchDriverRating(driverId);
       } catch (err) {
-        console.log("[OrderDetails] Failed to fetch driver details:", err?.message || err);
+        console.log(
+          "[OrderDetails] Failed to fetch driver details:",
+          err?.message || err,
+        );
       }
     },
-    [fetchDriverRating]
+    [fetchDriverRating],
   );
 
   const driverSummaryText = useMemo(() => {
     if (!driverDetails) return "";
 
-    const name = driverDetails.user_name ?? driverDetails.name ?? driverDetails.full_name ?? "";
+    const name =
+      driverDetails.user_name ??
+      driverDetails.name ??
+      driverDetails.full_name ??
+      "";
     const phone = driverDetails.phone ?? driverDetails.mobile ?? "";
 
     const avg = driverRating?.average;
     const count = driverRating?.count;
 
     const ratingPart =
-      avg != null ? `Rating: ${Number(avg).toFixed(1)}${count != null ? ` (${count})` : ""}` : null;
+      avg != null
+        ? `Rating: ${Number(avg).toFixed(1)}${count != null ? ` (${count})` : ""}`
+        : null;
 
     const parts = [];
     if (name) parts.push(name);
@@ -2036,14 +2277,20 @@ export default function OrderDetails() {
      =========================== */
   const redirectToNearbyOrders = useCallback(async () => {
     const biz =
-      businessId ?? paramBusinessId ?? order?.business_id ?? order?.merchant_id ?? null;
+      businessId ??
+      paramBusinessId ??
+      order?.business_id ??
+      order?.merchant_id ??
+      null;
 
     if (!biz) return;
 
     const targetRoute = resolvedNearbyListRouteName;
     if (!targetRoute) return;
 
-    const focusOrderId = normalizeOrderCode(order?.order_code || order?.id || routeOrderId);
+    const focusOrderId = normalizeOrderCode(
+      order?.order_code || order?.id || routeOrderId,
+    );
 
     const payload = {
       businessId: biz,
@@ -2067,10 +2314,14 @@ export default function OrderDetails() {
 
     const ownerNav = findNavigatorOwningRoute(navigation, targetRoute);
     if (ownerNav && ownerNav !== navigation) {
-      ownerNav.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+      ownerNav.dispatch(
+        CommonActions.navigate({ name: targetRoute, params: payload }),
+      );
       return;
     }
-    navigation.dispatch(CommonActions.navigate({ name: targetRoute, params: payload }));
+    navigation.dispatch(
+      CommonActions.navigate({ name: targetRoute, params: payload }),
+    );
   }, [
     businessId,
     paramBusinessId,
@@ -2100,13 +2351,16 @@ export default function OrderDetails() {
 
     const payloadMatchesThisOrder = (payload) => {
       try {
-        const thisOrderCode = normalizeKey(order?.order_code || order?.id || routeOrderId);
+        const thisOrderCode = normalizeKey(
+          order?.order_code || order?.id || routeOrderId,
+        );
 
         // match by order id/code
         if (!thisOrderCode) return true;
 
         const extracted = extractOrderIdFromPayload(payload);
-        if (extracted && sameOrder(String(extracted), thisOrderCode)) return true;
+        if (extracted && sameOrder(String(extracted), thisOrderCode))
+          return true;
 
         // scan drops[] for matching order
         const drops =
@@ -2117,7 +2371,12 @@ export default function OrderDetails() {
           null;
         if (Array.isArray(drops)) {
           for (const d of drops) {
-            const oid = d?.order_id ?? d?.orderId ?? d?.order_code ?? d?.orderCode ?? null;
+            const oid =
+              d?.order_id ??
+              d?.orderId ??
+              d?.order_code ??
+              d?.orderCode ??
+              null;
             if (oid && sameOrder(String(oid), thisOrderCode)) return true;
           }
         }
@@ -2192,8 +2451,10 @@ export default function OrderDetails() {
       applySocketStatusToUi(st);
 
       const norm = normalizeStatus(st);
-      if (norm === "OUT_FOR_DELIVERY") setRideMessage("Driver is on the way (Out for delivery).");
-      else if (norm === "COMPLETED") setRideMessage("Order delivered (Delivery complete).");
+      if (norm === "OUT_FOR_DELIVERY")
+        setRideMessage("Driver is on the way (Out for delivery).");
+      else if (norm === "COMPLETED")
+        setRideMessage("Order delivered (Delivery complete).");
     };
 
     (async () => {
@@ -2212,7 +2473,7 @@ export default function OrderDetails() {
               j?.user?.id ||
               null;
           }
-        } catch { }
+        } catch {}
       }
 
       if (!merchantId || !isMounted) return;
@@ -2236,9 +2497,11 @@ export default function OrderDetails() {
 
         // join order room
         try {
-          const oid = normalizeKey(order?.order_code || order?.id || routeOrderId);
-          if (oid) socket.emit("joinOrder", { orderId: String(oid) }, () => { });
-        } catch { }
+          const oid = normalizeKey(
+            order?.order_code || order?.id || routeOrderId,
+          );
+          if (oid) socket.emit("joinOrder", { orderId: String(oid) }, () => {});
+        } catch {}
       });
 
       const safe = (fn) => (payload) => {
@@ -2246,13 +2509,19 @@ export default function OrderDetails() {
         fn(payload);
       };
 
-      ["deliveryAccepted", "delivery:accepted", "delivery_accept", "accepted"].forEach((ev) =>
-        socket.on(ev, safe(handleAccepted))
-      );
+      [
+        "deliveryAccepted",
+        "delivery:accepted",
+        "delivery_accept",
+        "accepted",
+      ].forEach((ev) => socket.on(ev, safe(handleAccepted)));
 
-      ["delivery:driver_arrived", "deliveryDriverArrived", "delivery:arrived", "arrived"].forEach((ev) =>
-        socket.on(ev, safe(handleArrived))
-      );
+      [
+        "delivery:driver_arrived",
+        "deliveryDriverArrived",
+        "delivery:arrived",
+        "arrived",
+      ].forEach((ev) => socket.on(ev, safe(handleArrived)));
 
       [
         "deliveryStatusUpdate",
@@ -2307,12 +2576,16 @@ export default function OrderDetails() {
   ]);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener("order-updated", ({ id, patch }) => {
-      if (String(id) !== String(order?.id || routeOrderId)) return;
-      const nextPatch = patch || {};
-      if (nextPatch.status) nextPatch.status = normalizeStatus(nextPatch.status);
-      setOrder((prev) => ({ ...prev, ...nextPatch }));
-    });
+    const sub = DeviceEventEmitter.addListener(
+      "order-updated",
+      ({ id, patch }) => {
+        if (String(id) !== String(order?.id || routeOrderId)) return;
+        const nextPatch = patch || {};
+        if (nextPatch.status)
+          nextPatch.status = normalizeStatus(nextPatch.status);
+        setOrder((prev) => ({ ...prev, ...nextPatch }));
+      },
+    );
     return () => sub?.remove?.();
   }, [routeOrderId, order?.id]);
 
@@ -2342,17 +2615,26 @@ export default function OrderDetails() {
 
       await redirectToNearbyOrders();
     },
-    [redirectToNearbyOrders]
+    [redirectToNearbyOrders],
   );
 
   const isCancelledByCustomer = useMemo(() => {
     const rawStatus = normalizeStatus(order?.status);
     const reasonRaw =
-      order?.status_reason ?? order?.cancel_reason ?? order?.cancellation_reason ?? "";
+      order?.status_reason ??
+      order?.cancel_reason ??
+      order?.cancellation_reason ??
+      "";
     const reason = String(reasonRaw || "").toLowerCase();
-    const cancelledBy = String(order?.cancelled_by || order?.canceled_by || "").toLowerCase();
+    const cancelledBy = String(
+      order?.cancelled_by || order?.canceled_by || "",
+    ).toLowerCase();
 
-    if (cancelledBy && (cancelledBy.includes("customer") || cancelledBy.includes("user"))) return true;
+    if (
+      cancelledBy &&
+      (cancelledBy.includes("customer") || cancelledBy.includes("user"))
+    )
+      return true;
 
     if (rawStatus.includes("CANCEL")) {
       if (!reason) return true;
@@ -2389,7 +2671,11 @@ export default function OrderDetails() {
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
       {/* Header */}
       <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
-        <Pressable onPress={goBackToOrders} style={styles.backBtn} hitSlop={hit(S(8))}>
+        <Pressable
+          onPress={goBackToOrders}
+          style={styles.backBtn}
+          hitSlop={hit(S(8))}
+        >
           <Ionicons name="arrow-back" size={S(22)} color="#0f172a" />
         </Pressable>
 
@@ -2418,7 +2704,11 @@ export default function OrderDetails() {
             }}
             hitSlop={hit(S(8))}
           >
-            <Ionicons name="chatbubble-ellipses-outline" size={S(18)} color="#00B14F" />
+            <Ionicons
+              name="chatbubble-ellipses-outline"
+              size={S(18)}
+              color="#00B14F"
+            />
           </Pressable>
 
           <ActivityIndicator animating={refreshing} size="small" />
@@ -2427,13 +2717,19 @@ export default function OrderDetails() {
 
       <ScrollView
         contentContainerStyle={{ padding: S(16), paddingBottom: S(24) }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
       >
         <View style={styles.card}>
           <View style={styles.idRow}>
             <Text style={styles.orderId}>#{order?.id || routeOrderId}</Text>
             <View>
-              <ActivityIndicator animating={false} size="small" color="transparent" />
+              <ActivityIndicator
+                animating={false}
+                size="small"
+                color="transparent"
+              />
             </View>
           </View>
 
@@ -2465,26 +2761,31 @@ export default function OrderDetails() {
 
         {!isScheduledOrder && (
           <>
-            <View style={{ marginTop: S(8) }}>
-              <DeliveryMethodChooser
-                status={status}
-                isBothOption={isBothOption}
-                isTerminalNegative={isTerminalNegative}
-                isTerminalSuccess={isTerminalSuccess}
-                isSelfSelected={isSelfSelected}
-                isGrabSelected={isGrabSelected}
-                sendingGrab={false}
-                rideMessage={rideMessage}
-                driverSummaryText={driverSummaryText}
-                driverAccepted={driverAccepted}
-                setDeliveryChoice={onSetDeliveryChoice}
-                stopGrabLoop={() => { }}
-                startGrabLoop={() => { }} // ✅ no popup
-                // ✅ deliver-in-group removed
-                showDeliverInGroup={false}
-                onDeliverInGroup={() => { }}
-              />
-            </View>
+            {/* ✅ Only show delivery options after order is READY and not terminal */}
+            {(status === "READY" || status === "OUT_FOR_DELIVERY") &&
+              !isTerminalNegative &&
+              !isTerminalSuccess && (
+                <View style={{ marginTop: S(8) }}>
+                  <DeliveryMethodChooser
+                    status={status}
+                    isBothOption={isBothOption}
+                    isTerminalNegative={isTerminalNegative}
+                    isTerminalSuccess={isTerminalSuccess}
+                    isSelfSelected={isSelfSelected}
+                    isGrabSelected={isGrabSelected}
+                    sendingGrab={false}
+                    rideMessage={rideMessage}
+                    driverSummaryText={driverSummaryText}
+                    driverAccepted={driverAccepted}
+                    setDeliveryChoice={onSetDeliveryChoice}
+                    stopGrabLoop={() => {}}
+                    startGrabLoop={() => {}} // ✅ no popup
+                    // ✅ deliver-in-group removed
+                    showDeliverInGroup={false}
+                    onDeliverInGroup={() => {}}
+                  />
+                </View>
+              )}
 
             {/* ✅ Show "Update status" ONLY for SELF */}
             {isSelfSelected && (
@@ -2507,7 +2808,6 @@ export default function OrderDetails() {
                 />
               </View>
             )}
-
           </>
         )}
 
@@ -2521,7 +2821,10 @@ export default function OrderDetails() {
           onOpenSimilarCatalog={handleOpenSimilarCatalog}
         />
 
-        <TotalsBlock itemsCount={effectiveItemsCount || 0} totalLabel={effectiveTotalLabel} />
+        <TotalsBlock
+          itemsCount={effectiveItemsCount || 0}
+          totalLabel={effectiveTotalLabel}
+        />
       </ScrollView>
 
       <DeclineModal

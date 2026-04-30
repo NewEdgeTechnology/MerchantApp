@@ -38,11 +38,11 @@ const GrabFoodScreen = () => {
         </View>
 
         <View style={styles.content}>
-          <Text style={styles.title}>GrabFood</Text>
+          <Text style={styles.title}>TabdheyFood</Text>
           <Text style={styles.description}>
             Suitable if you have ready-to-eat food and beverages. For other
             items such as packaged drinks, alcoholic beverages and raw or dry
-            ingredients, please select GrabMart instead.
+            ingredients, please select TabdheyMart instead.
           </Text>
 
           <Text style={styles.subheading}>Commission rate</Text>

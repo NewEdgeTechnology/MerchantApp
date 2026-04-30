@@ -234,7 +234,7 @@
     <header>
       <div>Chat (LIVE • PROD • Socket Fix)</div>
       <div style="margin-left:auto;font-size:12px;color:#9fb0d0">
-        Images base: https://grab.newedge.bt/chat
+        Images base: https://backend.tabdhey.bt/chat
       </div>
     </header>
 
@@ -250,7 +250,7 @@
 
           <div class="cfg">
             <div class="full">
-              <label>Origin</label><input id="custOrigin" value="https://grab.newedge.bt" />
+              <label>Origin</label><input id="custOrigin" value="https://backend.tabdhey.bt" />
             </div>
             <div>
               <label>Customer user_id</label><input id="custId" value="59" />
@@ -317,7 +317,7 @@
 
           <div class="cfg">
             <div class="full">
-              <label>Origin</label><input id="merchOrigin" value="https://grab.newedge.bt" />
+              <label>Origin</label><input id="merchOrigin" value="https://backend.tabdhey.bt" />
             </div>
             <div>
               <label>Merchant user_id</label><input id="merchId" value="58" />
@@ -378,11 +378,11 @@
 
     <script>
       // Avatar prefixes (same as your old file)
-      const USER_PREFIX = "https://grab.newedge.bt/driver/";
-      const MERCH_PREFIX = "https://grab.newedge.bt/merchant/";
+      const USER_PREFIX = "https://backend.tabdhey.bt/driver/";
+      const MERCH_PREFIX = "https://backend.tabdhey.bt/merchant/";
 
       // For displaying message images (your requirement)
-      const CHAT_PUBLIC_BASE = "https://grab.newedge.bt/chat";
+      const CHAT_PUBLIC_BASE = "https://backend.tabdhey.bt/chat";
 
       const $ = (id) => document.getElementById(id);
 
@@ -475,7 +475,7 @@
             if (!raw || raw.startsWith("http")) return;
             img.onerror = null;
             const p = raw.startsWith("/") ? raw : `/${raw}`;
-            img.src = `https://grab.newedge.bt${p}`;
+            img.src = `https://backend.tabdhey.bt${p}`;
           };
 
           img.onclick = () => window.open(img.src, "_blank");

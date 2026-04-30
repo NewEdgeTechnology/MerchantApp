@@ -62,12 +62,12 @@ function getReasonFromNote(note) {
 
 /* ========= endpoints ========= */
 const GET_WALLET_BY_USER = (userId) =>
-  `https://grab.newedge.bt/wallet/wallet/getbyuser/${userId}`;
-const CREATE_WALLET_URL = "https://grab.newedge.bt/wallet/wallet/create";
+  `https://backend.tabdhey.bt/wallet/wallet/getbyuser/${userId}`;
+const CREATE_WALLET_URL = "https://backend.tabdhey.bt/wallet/wallet/create";
 const TX_BY_WALLET = (walletId) =>
-  `https://grab.newedge.bt/wallet/transactions/wallet/${walletId}`;
+  `https://backend.tabdhey.bt/wallet/transactions/wallet/${walletId}`;
 const HAS_TPIN_URL = (userId) =>
-  `https://grab.newedge.bt/wallet/wallet/${userId}/has-tpin`;
+  `https://backend.tabdhey.bt/wallet/wallet/${userId}/has-tpin`;
 
 /* ========= SecureStore MPIN key helper ========= */
 const mpinKeyForWallet = (walletId) => {

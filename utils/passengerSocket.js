@@ -2,9 +2,9 @@ import { io } from "socket.io-client";
 import { MY_LOCAL_URL, RIDE_REQUEST_ENDPOINT } from "@env";
 
 // prod socket base + path
-const PROD_ORIGIN = "https://grab.newedge.bt";
+const PROD_ORIGIN = "https://backend.tabdhey.bt";
 const PROD_PATH = "/grablike/socket.io";
-const PROD_HTTP_BASE = "https://grab.newedge.bt/grablike";
+const PROD_HTTP_BASE = "https://backend.tabdhey.bt/grablike";
 
 function resolveSocketConfig() {
   return { origin: PROD_ORIGIN, path: PROD_PATH };

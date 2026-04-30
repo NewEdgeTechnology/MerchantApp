@@ -72,7 +72,7 @@ const ForgotUsername = () => {
           <View style={styles.content}>
             <Text style={styles.title}>Forgot your username?</Text>
             <Text style={styles.subtitle}>
-              Enter the email address you signed up for Grab with to retrieve it.
+              Enter the email address you signed up for Tabdhey with to retrieve it.
             </Text>
 
             {/* Email Input */}

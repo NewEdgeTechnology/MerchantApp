@@ -4,10 +4,10 @@ import { AppState } from "react-native";
 import * as SecureStore from "expo-secure-store";
 
 // // From your .env, the correct endpoint is:
-// const SOCKET_URL = "https://grab.newedge.bt";
+// const SOCKET_URL = "https://backend.tabdhey.bt";
 // const SOCKET_PATH = "/grablike/socket.io";
 
-const SOCKET_URL = "https://grab.newedge.bt";
+const SOCKET_URL = "https://backend.tabdhey.bt";
 const SOCKET_PATH = "/grablike/socket.io";
 
 let socket = null;

@@ -4,7 +4,7 @@ import { io } from "socket.io-client";
 
 // Backend:
 // new Server(server, { path: "/socket.io", transports:["websocket"] })
-const SOCKET_BASE_URL = "https://grab.newedge.bt";
+const SOCKET_BASE_URL = "https://backend.tabdhey.bt";
 const SOCKET_PATH = "/socket.io";
 
 let socket = null;

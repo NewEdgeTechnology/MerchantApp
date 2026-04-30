@@ -535,7 +535,7 @@ const normalizeDriverDetailsResponse = (json) => {
 const resolveSocketConfig = () => {
   const raw = String(ENV_RIDE_SOCKET || '').trim();
 
-  if (!raw) return { origin: 'https://grab.newedge.bt', path: '/grablike/socket.io' };
+  if (!raw) return { origin: 'https://backend.tabdhey.bt', path: '/grablike/socket.io' };
 
   try {
     const u = new URL(raw);
@@ -544,7 +544,7 @@ const resolveSocketConfig = () => {
     return { origin, path };
   } catch (e) {
     const path = raw.startsWith('/') ? raw : `/${raw}`;
-    return { origin: 'https://grab.newedge.bt', path };
+    return { origin: 'https://backend.tabdhey.bt', path };
   }
 };
 
@@ -1527,7 +1527,7 @@ if (Number.isFinite(uidNum)) setMerchantUserId(uidNum);
     try {
       const broadcastUrl = String(ENV_BROADCAST || '').trim();
       if (!broadcastUrl) {
-        Alert.alert('Grab delivery not configured', 'BATCH_ORDER_BROADCAST_ENDPOINT is missing in .env');
+        Alert.alert('Tabdhey delivery not configured', 'BATCH_ORDER_BROADCAST_ENDPOINT is missing in .env');
         return;
       }
       if (!businessId) {
@@ -1589,7 +1589,7 @@ if (Number.isFinite(uidNum)) setMerchantUserId(uidNum);
       armResendAfterOneMinute();
     } catch (e) {
       setRideMessage('');
-      Alert.alert('Grab delivery failed', String(e?.message || e));
+      Alert.alert('Tabdhey delivery failed', String(e?.message || e));
     } finally {
       setSendingGrab(false);
     }
@@ -1899,7 +1899,7 @@ if (Number.isFinite(uidNum)) setMerchantUserId(uidNum);
 
   const onBulkOutForDeliveryPress = async () => {
     if (!selectedMethod) {
-      Alert.alert('Choose delivery method', 'Please select Self delivery or Grab delivery first.');
+      Alert.alert('Choose delivery method', 'Please select Self delivery or Tabdhey delivery first.');
       return;
     }
     if (selectedMethod === 'GRAB' && bulkPhase === 'READY' && !rideAccepted) {
@@ -2198,8 +2198,8 @@ if (Number.isFinite(uidNum)) setMerchantUserId(uidNum);
             onPress={onSelectGrab}
           >
             <Ionicons name="bicycle-outline" size={28} color="#2563eb" />
-            <Text style={styles.optionTitle}>Grab delivery</Text>
-            <Text style={styles.optionHint}>Broadcast batch request to Grab riders for all ready orders.</Text>
+            <Text style={styles.optionTitle}>Tabdhey delivery</Text>
+            <Text style={styles.optionHint}>Broadcast batch request to Tabdhey riders for all ready orders.</Text>
 
             {sendingGrab && (
               <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>

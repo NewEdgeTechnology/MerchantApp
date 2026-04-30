@@ -3,8 +3,7 @@ import * as Device from "expo-device";
 import { Platform } from "react-native";
 
 /**
- * ✅ Configure how notifications behave when app is in foreground
- * Put this once (top-level) in your app.
+ * Configure how notifications behave when app is in foreground
  */
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -14,53 +13,65 @@ Notifications.setNotificationHandler({
   }),
 });
 
-/**
- * Change this to your backend endpoint that saves push tokens.
- * Example (you should create this backend route):
- *   POST https://grab.newedge.bt/realtime/api/push-token
- */
-const SAVE_PUSH_TOKEN_URL = "https://grab.newedge.bt/realtime/api/push-token";
+const SAVE_PUSH_TOKEN_URL = "https://backend.tabdhey.bt/realtime/api/push-token";
 
 /**
- * ✅ Get Expo Push Token (your existing function, improved)
- * - Works on physical device only
- * - Requests permissions if needed
- * - Sets Android channel
+ * Get Expo Push Token with option to skip permission request
+ * @param {Object} options
+ * @param {boolean} options.skipPermissionRequest - Set to true for auto-login boot
  */
-export async function getExpoPushTokenAsync() {
+export async function getExpoPushTokenAsync({
+  skipPermissionRequest = false,
+} = {}) {
   let token = null;
 
   try {
     if (!Device.isDevice) {
-      alert("Must use physical device for Push Notifications");
+      if (!skipPermissionRequest) {
+        alert("Must use physical device for Push Notifications");
+      } else {
+        console.log(
+          "📲 Not a physical device, skipping push token for auto-login",
+        );
+      }
       return null;
     }
 
     // Get existing permissions
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    const { status: existingStatus } =
+      await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
 
-    // Request permission if not granted
+    // Only request permission if not granted and not skipping
     if (existingStatus !== "granted") {
+      if (skipPermissionRequest) {
+        console.log(
+          "⚠️ Skipping permission request for auto-login, will request later",
+        );
+        return null;
+      }
+
       const { status } = await Notifications.requestPermissionsAsync();
       finalStatus = status;
     }
 
     if (finalStatus !== "granted") {
-      alert("Failed to get push token for push notification!");
+      if (!skipPermissionRequest) {
+        alert("Failed to get push token for push notification!");
+      }
       return null;
     }
 
-    // ✅ Get Expo push token
+    // Get Expo push token
     const response = await Notifications.getExpoPushTokenAsync({
-      projectId: "f5377050-a920-4fd2-9af2-9cd2bcc537d5", // required for EAS builds
+      projectId: "39465596-f80e-4ebb-b661-e149cd200ad8",
     });
 
     token = response?.data || null;
-    console.log("✅ Expo Push Token:", token);
+    console.log("✅ Expo Push Token:", token ? "Obtained" : "Not obtained");
 
-    // ✅ Android channel (required for Android)
-    if (Platform.OS === "android") {
+    // Android channel (required for Android)
+    if (Platform.OS === "android" && token) {
       await Notifications.setNotificationChannelAsync("default", {
         name: "default",
         importance: Notifications.AndroidImportance.MAX,
@@ -76,13 +87,7 @@ export async function getExpoPushTokenAsync() {
 }
 
 /**
- * ✅ Register token to backend (do this after login)
- *
- * @param {Object} params
- * @param {number|string} params.user_id - logged in user id
- * @param {"user"|"merchant"} params.role - role of logged in user
- * @param {number|string|null} [params.business_id] - required if merchant wants business notifications
- * @param {string|null} [params.token] - optional JWT if your backend requires auth
+ * Register token to backend (do this after login)
  */
 export async function registerExpoPushTokenToBackend({
   user_id,
@@ -97,16 +102,18 @@ export async function registerExpoPushTokenToBackend({
       return null;
     }
 
-    // 1) get expo token
-    const expoToken = await getExpoPushTokenAsync();
+    const expoToken = await getExpoPushTokenAsync({
+      skipPermissionRequest: false,
+    });
     if (!expoToken) return null;
 
-    // 2) send to backend
     const payload = {
       user_id: uid,
       role: String(role || "user"),
       business_id:
-        business_id != null && Number(business_id) > 0 ? Number(business_id) : null,
+        business_id != null && Number(business_id) > 0
+          ? Number(business_id)
+          : null,
       expo_push_token: expoToken,
       device: Platform.OS,
       device_name: Device?.deviceName || null,
@@ -139,13 +146,9 @@ export async function registerExpoPushTokenToBackend({
 }
 
 /**
- * ✅ Optional helpers (recommended)
- * Listen when a notification arrives (foreground/background)
+ * Optional helpers - Listen when a notification arrives
  */
-export function addExpoNotificationListeners({
-  onReceived,
-  onResponse,
-} = {}) {
+export function addExpoNotificationListeners({ onReceived, onResponse } = {}) {
   const receivedSub = Notifications.addNotificationReceivedListener((n) => {
     try {
       onReceived?.(n);
@@ -154,13 +157,15 @@ export function addExpoNotificationListeners({
     }
   });
 
-  const responseSub = Notifications.addNotificationResponseReceivedListener((r) => {
-    try {
-      onResponse?.(r);
-    } catch (e) {
-      console.log("[PUSH] onResponse handler error:", e?.message || e);
-    }
-  });
+  const responseSub = Notifications.addNotificationResponseReceivedListener(
+    (r) => {
+      try {
+        onResponse?.(r);
+      } catch (e) {
+        console.log("[PUSH] onResponse handler error:", e?.message || e);
+      }
+    },
+  );
 
   return {
     remove: () => {

@@ -35,9 +35,9 @@ const G = {
 };
 
 /* ========= endpoints ========= */
-const TRANSFER_URL = "https://grab.newedge.bt/wallet/wallet/transfer";
+const TRANSFER_URL = "https://backend.tabdhey.bt/wallet/wallet/transfer";
 const GET_RECIPIENT_USERNAME = (walletId) =>
-  `https://grab.newedge.bt/wallet/wallet/${walletId}/user-name`;
+  `https://backend.tabdhey.bt/wallet/wallet/${walletId}/user-name`;
 
 /* ========= tiny helpers ========= */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

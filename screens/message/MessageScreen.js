@@ -66,8 +66,8 @@ function formatChatTime(ts) {
 
 /**
  * ✅ Profile base from env:
- * - Prefer PROFILE_IMAGE (https://grab.newedge.bt/driver/)
- * - Fallback API_BASE_URL (https://grab.newedge.bt)
+ * - Prefer PROFILE_IMAGE (https://backend.tabdhey.bt/driver/)
+ * - Fallback API_BASE_URL (https://backend.tabdhey.bt)
  */
 const CUSTOMER_PROFILE_BASE = String(PROFILE_IMAGE || API_BASE_URL || "").replace(/\/+$/, "");
 
@@ -175,7 +175,7 @@ async function getMerchantUserIdFromSecureStore() {
 /* --- driver name lookup --- */
 /**
  * ✅ BASE_ORIGIN now from env:
- * - RIDE_LOCAL_ENDPOINT = https://grab.newedge.bt/grablike
+ * - RIDE_LOCAL_ENDPOINT = https://backend.tabdhey.bt/grablike
  * fallback API_BASE_URL
  */
 const BASE_ORIGIN = String(RIDE_LOCAL_ENDPOINT || API_BASE_URL || "").replace(/\/+$/, "");
@@ -299,7 +299,7 @@ export default function MessageScreen({ navigation, route }) {
     // default to original path if base exists
     return base
       ? `${base}/api/rides/merchant/chat-list`
-      : "https://grab.newedge.bt/grablike/api/rides/merchant/chat-list";
+      : "https://backend.tabdhey.bt/grablike/api/rides/merchant/chat-list";
   }, []);
 
   const fetchDriverBatches = useCallback(

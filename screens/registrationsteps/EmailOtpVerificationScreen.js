@@ -27,7 +27,7 @@ import {
   VERIFY_OTP_REGISTER_SMS_ENDPOINT,
 } from "@env";
 
-const VERIFY_NEXT_ROUTE = "LoginScreen";
+const VERIFY_NEXT_ROUTE = "MobileLoginScreen";
 const EDIT_SIGNUP_ROUTE = "SignupScreen";
 
 /* ---------------- Debug helpers (SAFE) ---------------- */

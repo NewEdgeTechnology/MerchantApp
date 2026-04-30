@@ -68,7 +68,7 @@ async function isAuthGraceActive() {
 }
 
 // Build URL for HAS_TPIN endpoint
-// ENV_HAS_TPIN should be like: https://grab.newedge.bt/wallet/wallet/{user_id}/has-tpin
+// ENV_HAS_TPIN should be like: https://backend.tabdhey.bt/wallet/wallet/{user_id}/has-tpin
 function buildHasTpinUrl(userId) {
   const raw = String(ENV_HAS_TPIN || '').trim();
   if (!raw || !userId) return null;

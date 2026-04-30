@@ -30,10 +30,10 @@ const G = {
 };
 
 /* ========= endpoint ========= */
-// POST https://grab.newedge.bt/wallet/wallet/:wallet_id/t-pin
+// POST https://backend.tabdhey.bt/wallet/wallet/:wallet_id/t-pin
 // body: { "t_pin": "1234" }
 const SET_TPIN_URL = (walletId) =>
-  `https://grab.newedge.bt/wallet/wallet/${walletId}/t-pin`;
+  `https://backend.tabdhey.bt/wallet/wallet/${walletId}/t-pin`;
 
 /* ========= helpers ========= */
 async function authFetch(url, opts = {}) {

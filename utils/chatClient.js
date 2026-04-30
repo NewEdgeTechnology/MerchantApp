@@ -2,8 +2,8 @@
 import { io } from "socket.io-client";
 
 const SOCKET_PATH = "/grablike/socket.io";
-const SOCKET_ORIGIN = "https://grab.newedge.bt";
-const HTTP_BASE = "https://grab.newedge.bt/grablike";
+const SOCKET_ORIGIN = "https://backend.tabdhey.bt";
+const HTTP_BASE = "https://backend.tabdhey.bt/grablike";
 const CHAT_UPLOAD_URL = `${HTTP_BASE}/chat/upload`;
 
 let socket = null;

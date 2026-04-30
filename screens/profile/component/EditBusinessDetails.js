@@ -1,10 +1,6 @@
 // screens/profile/component/EditBusinessDetails.js
-// ✅ ADD: Map picker (OpenStreetMap tiles) + auto-generate Latitude/Longitude using GPS (expo-location)
-// ✅ Pick on map (pan/zoom + center pin) updates lat/lng + reverse-geocodes Address (best effort)
-// ✅ UPDATE: Full-screen map overlay
-// ✅ UPDATE: Input border turns green when focused
-// ✅ UPDATE: Keyboard opens -> still scrollable to the end
-// ✅ UPDATE: Removed Auto-fill (GPS) button from form (location section)
+// ✅ FULLY FIXED: Proper location picking with working OSMView
+// ✅ IMPROVED: Separate hour & minute inputs for opening/closing times
 
 import React, {
   useCallback,
@@ -38,11 +34,48 @@ import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
-import MapView, { UrlTile } from "react-native-maps";
+import { OSMView } from "expo-osm-sdk";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { BUSINESS_DETAILS, MERCHANT_LOGO } from "@env";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
+
+/* ============================================================
+   ERROR BOUNDARY COMPONENT FOR MAP
+============================================================ */
+class OSMViewErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("OSMView crashed in EditBusinessDetails:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={styles.mapErrorContainer}>
+          <Ionicons name="map-outline" size={48} color="#ef4444" />
+          <Text style={styles.mapErrorText}>Map failed to load</Text>
+          <Text style={styles.mapErrorSubtext}>Tap to retry</Text>
+          <TouchableOpacity
+            style={styles.mapRetryBtn}
+            onPress={() => this.setState({ hasError: false })}
+          >
+            <Text style={styles.mapRetryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // Must match backend multer field names
 const LOGO_FIELD = "business_logo";
@@ -167,13 +200,12 @@ const splitAmPm = (label) => {
   return { time: s, meridiem: "AM" };
 };
 
-const clampClockText = (txt) => {
-  const raw = String(txt || "").replace(/[^\d:]/g, "");
-  const parts = raw.split(":");
-  let hh = (parts[0] ?? "").slice(0, 2);
-  let mm = (parts[1] ?? "").slice(0, 2);
-  if (!mm.length) return hh;
-  return `${hh}:${mm}`;
+const parseHourMinute = (timeStr) => {
+  if (!timeStr) return { hour: "", minute: "" };
+  const parts = timeStr.split(":");
+  let hour = parts[0] || "";
+  let minute = parts[1] || "";
+  return { hour, minute };
 };
 
 const normalizeTime = (t) => {
@@ -338,7 +370,6 @@ async function pickFromCamera() {
 const commaStringToJsonArray = (str) => {
   if (!str || !str.trim()) return null;
 
-  // Split by comma, trim each item, remove empty items
   const items = str
     .split(",")
     .map((item) => item.trim())
@@ -346,7 +377,6 @@ const commaStringToJsonArray = (str) => {
 
   if (items.length === 0) return null;
 
-  // Return as JSON string
   return JSON.stringify(items);
 };
 
@@ -355,14 +385,12 @@ const jsonArrayToCommaString = (jsonStr) => {
   if (!jsonStr) return "";
 
   try {
-    // If it's already a JSON string, parse it
     const parsed = JSON.parse(jsonStr);
     if (Array.isArray(parsed)) {
       return parsed.join(", ");
     }
     return jsonStr;
   } catch {
-    // If it's not valid JSON, return as is
     return jsonStr;
   }
 };
@@ -415,7 +443,7 @@ export default function EditBusinessDetails() {
 
   const [details, setDetails] = useState(initial);
 
-  // ✅ focused input -> green border
+  // focused input -> green border
   const [focusedKey, setFocusedKey] = useState(null);
 
   // form state
@@ -426,34 +454,47 @@ export default function EditBusinessDetails() {
   const [latitude, setLatitude] = useState(safeText(initial?.latitude));
   const [longitude, setLongitude] = useState(safeText(initial?.longitude));
 
-  // ✅ Map picker state
+  // Map picker state (using OSMView)
   const [mapOpen, setMapOpen] = useState(false);
   const [locating, setLocating] = useState(false);
-  const [mapRegion, setMapRegion] = useState(null);
+  const [tempSelectedCoords, setTempSelectedCoords] = useState(null); // Temporary selection in map
+  const [mapCenter, setMapCenter] = useState(null);
+  const [mapZoom, setMapZoom] = useState(15);
+  const [mapMarkers, setMapMarkers] = useState([]);
+  const [mapError, setMapError] = useState(false);
+  const [mapInitAttempts, setMapInitAttempts] = useState(0);
+  const [mapKey, setMapKey] = useState(Date.now());
+  const [mapLoading, setMapLoading] = useState(true);
 
-  // ✅ time = clock + AM/PM dropdown
+  // time = separate hour/minute + AM/PM dropdown
   const initOpen = splitAmPm(toAmPmLabel(initial?.opening_time));
   const initClose = splitAmPm(toAmPmLabel(initial?.closing_time));
+  const { hour: initOpenHour, minute: initOpenMinute } = parseHourMinute(initOpen.time);
+  const { hour: initCloseHour, minute: initCloseMinute } = parseHourMinute(initClose.time);
 
-  const [openingClock, setOpeningClock] = useState(initOpen.time);
+  const [openingHour, setOpeningHour] = useState(initOpenHour);
+  const [openingMinute, setOpeningMinute] = useState(initOpenMinute);
   const [openingMeridiem, setOpeningMeridiem] = useState(initOpen.meridiem);
-  const [closingClock, setClosingClock] = useState(initClose.time);
+  const [closingHour, setClosingHour] = useState(initCloseHour);
+  const [closingMinute, setClosingMinute] = useState(initCloseMinute);
   const [closingMeridiem, setClosingMeridiem] = useState(initClose.meridiem);
 
-  const opening_time = useMemo(
-    () => (openingClock ? `${openingClock} ${openingMeridiem}` : ""),
-    [openingClock, openingMeridiem],
-  );
-  const closing_time = useMemo(
-    () => (closingClock ? `${closingClock} ${closingMeridiem}` : ""),
-    [closingClock, closingMeridiem],
-  );
+  const opening_time = useMemo(() => {
+    if (!openingHour) return "";
+    const minute = openingMinute ? String(openingMinute).padStart(2, "0") : "00";
+    return `${openingHour}:${minute} ${openingMeridiem}`;
+  }, [openingHour, openingMinute, openingMeridiem]);
+
+  const closing_time = useMemo(() => {
+    if (!closingHour) return "";
+    const minute = closingMinute ? String(closingMinute).padStart(2, "0") : "00";
+    return `${closingHour}:${minute} ${closingMeridiem}`;
+  }, [closingHour, closingMinute, closingMeridiem]);
 
   const [delivery_option, setDeliveryOption] = useState(
     safeText(initial?.delivery_option, "BOTH").toUpperCase(),
   );
 
-  // Handle holidays as comma-separated string for display, but store as JSON for backend
   const [holidaysDisplay, setHolidaysDisplay] = useState(() => {
     const val = initial?.holidays;
     if (!val) return "";
@@ -487,14 +528,39 @@ export default function EditBusinessDetails() {
 
   // source chooser
   const [sourceModalOpen, setSourceModalOpen] = useState(false);
-  const [sourceTarget, setSourceTarget] = useState(null); // "logo" | "license"
+  const [sourceTarget, setSourceTarget] = useState(null);
 
   // delivery dropdown modal
   const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
 
-  // ✅ AM/PM dropdown modal
+  // AM/PM dropdown modal
   const [ampmModalOpen, setAmpmModalOpen] = useState(false);
-  const [ampmTarget, setAmpmTarget] = useState(null); // "opening" | "closing"
+  const [ampmTarget, setAmpmTarget] = useState(null);
+
+  // Map loader timeout
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (mapLoading) {
+        console.log("Force hiding map loader after timeout");
+        setMapLoading(false);
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Retry map initialization
+  useEffect(() => {
+    if (mapInitAttempts < 3 && mapLoading && mapInitAttempts > 0) {
+      const retryTimer = setTimeout(() => {
+        console.log(
+          `Retrying map initialization (attempt ${mapInitAttempts + 1})`,
+        );
+        setMapKey(Date.now());
+        setMapError(false);
+      }, 2000);
+      return () => clearTimeout(retryTimer);
+    }
+  }, [mapInitAttempts, mapLoading]);
 
   const openImageModal = useCallback((title, uri) => {
     if (!uri) return;
@@ -547,7 +613,7 @@ export default function EditBusinessDetails() {
     return isHttpUrl(p) ? p : joinUrl(MERCHANT_LOGO, p);
   }, [pickedLicense, details]);
 
-  // ✅ reverse geocode (best effort) -> fill address
+  // reverse geocode (best effort) -> fill address
   const reverseGeocodeToAddress = useCallback(async (lat, lng) => {
     try {
       const res = await Location.reverseGeocodeAsync({
@@ -573,6 +639,19 @@ export default function EditBusinessDetails() {
     } catch {}
   }, []);
 
+  // ✅ FIXED: Create marker with proper pinColor (no PNGs)
+  const updateMapMarker = useCallback((latNum, lngNum) => {
+    setMapMarkers([
+      {
+        id: "selected",
+        coordinate: { latitude: latNum, longitude: lngNum },
+        title: "📍 SELECTED LOCATION",
+        description: `Lat: ${latNum.toFixed(6)} | Lng: ${lngNum.toFixed(6)}`,
+        pinColor: "#00b14f", // Green pin for selected location
+      },
+    ]);
+  }, []);
+
   const applyCoords = useCallback(
     async (lat, lng, { alsoAddress = true } = {}) => {
       const latNum = Number(lat);
@@ -585,13 +664,6 @@ export default function EditBusinessDetails() {
       setLatitude(latStr);
       setLongitude(lngStr);
 
-      setMapRegion((prev) => ({
-        latitude: latNum,
-        longitude: lngNum,
-        latitudeDelta: prev?.latitudeDelta ?? 0.01,
-        longitudeDelta: prev?.longitudeDelta ?? 0.01,
-      }));
-
       if (alsoAddress) {
         await reverseGeocodeToAddress(latNum, lngNum);
       }
@@ -599,7 +671,43 @@ export default function EditBusinessDetails() {
     [reverseGeocodeToAddress],
   );
 
-  const useCurrentLocation = useCallback(async () => {
+  // ✅ FIXED: Handle map press by updating temporary selection
+  const handleMapPress = useCallback((event) => {
+    console.log("Map pressed:", event);
+
+    // OSMView returns coordinate in event.coordinate
+    if (
+      event?.coordinate &&
+      event.coordinate.latitude &&
+      event.coordinate.longitude
+    ) {
+      const coord = {
+        latitude: event.coordinate.latitude,
+        longitude: event.coordinate.longitude,
+      };
+
+      console.log("Selected coordinates:", coord);
+      setTempSelectedCoords(coord);
+
+      // Update marker on map
+      setMapMarkers([
+        {
+          id: "selected",
+          coordinate: coord,
+          title: "📍 SELECTED LOCATION",
+          description: `Lat: ${coord.latitude.toFixed(6)} | Lng: ${coord.longitude.toFixed(6)}`,
+          pinColor: "#00b14f",
+        },
+      ]);
+
+      // Also center the map on the tapped location
+      setMapCenter(coord);
+    } else {
+      console.log("No coordinate in event:", event);
+    }
+  }, []);
+
+  const useCurrentLocationInMap = useCallback(async () => {
     try {
       setLocating(true);
 
@@ -610,7 +718,7 @@ export default function EditBusinessDetails() {
       }
 
       const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
+        accuracy: Location.Accuracy.High,
       });
 
       const lat = pos?.coords?.latitude;
@@ -620,91 +728,113 @@ export default function EditBusinessDetails() {
         return;
       }
 
-      // ✅ FIX: Pass lat and lng as separate arguments, not as an object
+      const coord = { latitude: lat, longitude: lng };
+      setTempSelectedCoords(coord);
+      setMapCenter(coord);
+      updateMapMarker(lat, lng);
+      
+      // Auto-apply the current location
       await applyCoords(lat, lng, { alsoAddress: true });
+      Alert.alert("Success", "Current location has been set as your business location.");
+      closeMapPicker(); // Close the map picker after setting location
     } catch (e) {
       Alert.alert("Location error", String(e?.message || e));
     } finally {
       setLocating(false);
     }
-  }, [applyCoords]);
+  }, [updateMapMarker, applyCoords, closeMapPicker]);
 
   const openMapPicker = useCallback(async () => {
+    setMapError(false);
+    setMapLoading(true);
+    setMapInitAttempts(0);
+    setTempSelectedCoords(null); // Reset temp selection
+
     const latNum = Number(latitude);
     const lngNum = Number(longitude);
 
     if (Number.isFinite(latNum) && Number.isFinite(lngNum)) {
-      setMapRegion({
+      setMapCenter({
         latitude: latNum,
         longitude: lngNum,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
       });
+      setMapZoom(16);
+      updateMapMarker(latNum, lngNum);
       setMapOpen(true);
       return;
     }
 
-    // try GPS once for a nice starting point (no button in form)
     try {
       setLocating(true);
       const perm = await Location.requestForegroundPermissionsAsync();
       if (!perm.granted) {
-        setMapRegion({
+        setMapCenter({
           latitude: 27.4728,
           longitude: 89.639,
-          latitudeDelta: 0.08,
-          longitudeDelta: 0.08,
         });
+        setMapZoom(13);
+        setMapMarkers([]);
         setMapOpen(true);
         return;
       }
 
       const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
+        accuracy: Location.Accuracy.High,
       });
       const lat = pos?.coords?.latitude;
       const lng = pos?.coords?.longitude;
 
       if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        setMapRegion({
+        setMapCenter({
           latitude: lat,
           longitude: lng,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
         });
+        setMapZoom(15);
+        setMapMarkers([]);
       } else {
-        setMapRegion({
+        setMapCenter({
           latitude: 27.4728,
           longitude: 89.639,
-          latitudeDelta: 0.08,
-          longitudeDelta: 0.08,
         });
+        setMapZoom(13);
+        setMapMarkers([]);
       }
       setMapOpen(true);
     } catch {
-      setMapRegion({
+      setMapCenter({
         latitude: 27.4728,
         longitude: 89.639,
-        latitudeDelta: 0.08,
-        longitudeDelta: 0.08,
       });
+      setMapZoom(13);
+      setMapMarkers([]);
       setMapOpen(true);
     } finally {
       setLocating(false);
     }
-  }, [latitude, longitude]);
+  }, [latitude, longitude, updateMapMarker]);
 
-  const closeMapPicker = useCallback(() => setMapOpen(false), []);
+  const closeMapPicker = useCallback(() => {
+    setMapOpen(false);
+    setTempSelectedCoords(null);
+  }, []);
 
+  // ✅ FIXED: Confirm selection and apply coordinates
   const confirmMapSelection = useCallback(async () => {
-    const r = mapRegion;
-    if (!r?.latitude || !r?.longitude) {
-      closeMapPicker();
-      return;
+    if (tempSelectedCoords) {
+      await applyCoords(
+        tempSelectedCoords.latitude,
+        tempSelectedCoords.longitude,
+        { alsoAddress: true },
+      );
+      Alert.alert("Location Updated", "Business location has been updated.");
+    } else if (mapCenter) {
+      await applyCoords(mapCenter.latitude, mapCenter.longitude, {
+        alsoAddress: true,
+      });
+      Alert.alert("Location Updated", "Business location has been updated.");
     }
-    await applyCoords(r.latitude, r.longitude, { alsoAddress: true });
     closeMapPicker();
-  }, [mapRegion, applyCoords, closeMapPicker]);
+  }, [tempSelectedCoords, mapCenter, applyCoords, closeMapPicker]);
 
   const loadDetails = useCallback(
     async ({ isRefresh = false } = {}) => {
@@ -745,26 +875,29 @@ export default function EditBusinessDetails() {
         const latNum = Number(data?.latitude);
         const lngNum = Number(data?.longitude);
         if (Number.isFinite(latNum) && Number.isFinite(lngNum)) {
-          setMapRegion({
+          setMapCenter({
             latitude: latNum,
             longitude: lngNum,
-            latitudeDelta: 0.01,
-            longitudeDelta: 0.01,
           });
+          setMapZoom(16);
+          updateMapMarker(latNum, lngNum);
         }
 
         const o = splitAmPm(toAmPmLabel(safeText(data?.opening_time)));
         const c = splitAmPm(toAmPmLabel(safeText(data?.closing_time)));
-        setOpeningClock(o.time);
+        const { hour: oHour, minute: oMinute } = parseHourMinute(o.time);
+        const { hour: cHour, minute: cMinute } = parseHourMinute(c.time);
+        setOpeningHour(oHour);
+        setOpeningMinute(oMinute);
         setOpeningMeridiem(o.meridiem);
-        setClosingClock(c.time);
+        setClosingHour(cHour);
+        setClosingMinute(cMinute);
         setClosingMeridiem(c.meridiem);
 
         setDeliveryOption(
           safeText(data?.delivery_option, "BOTH").toUpperCase(),
         );
 
-        // Handle holidays - convert from JSON to display string
         const holidayVal = data?.holidays;
         if (holidayVal) {
           setHolidaysDisplay(jsonArrayToCommaString(holidayVal));
@@ -785,7 +918,7 @@ export default function EditBusinessDetails() {
         isRefresh ? setRefreshing(false) : setLoading(false);
       }
     },
-    [detailsUrl, businessId],
+    [detailsUrl, businessId, updateMapMarker],
   );
 
   useEffect(() => {
@@ -876,7 +1009,6 @@ export default function EditBusinessDetails() {
   );
 
   const buildPayload = useCallback(() => {
-    // Convert holidays display string to JSON array for backend
     const holidaysJson = commaStringToJsonArray(holidaysDisplay);
 
     const payload = {
@@ -930,24 +1062,20 @@ export default function EditBusinessDetails() {
     }
 
     if (key === "holidays") {
-      // Get the current value from display string
       const currentDisplay = holidaysDisplay;
       const currentJson = commaStringToJsonArray(currentDisplay);
 
-      // Get the original value from the object
       let originalJson = null;
       if (v) {
         if (typeof v === "string") {
-          // Try to parse if it's a JSON string
           try {
             const parsed = JSON.parse(v);
             if (Array.isArray(parsed)) {
-              originalJson = v; // Keep as JSON string
+              originalJson = v;
             } else {
-              originalJson = JSON.stringify([v]); // Convert single value to array
+              originalJson = JSON.stringify([v]);
             }
           } catch {
-            // If it's not JSON, treat as comma string and convert
             originalJson = commaStringToJsonArray(v);
           }
         } else if (Array.isArray(v)) {
@@ -1081,7 +1209,6 @@ export default function EditBusinessDetails() {
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
-  // ✅ keyboard scroll fix
   const EXTRA_KB_SPACE = 140 + (insets?.bottom ?? 0);
 
   if (loading) {
@@ -1095,7 +1222,7 @@ export default function EditBusinessDetails() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
-      {/* ✅ FULLSCREEN MAP PICKER MODAL (user-friendly center pin) */}
+      {/* FULLSCREEN MAP PICKER MODAL with OSMView - FIXED location picking */}
       <Modal
         visible={mapOpen}
         animationType="slide"
@@ -1125,49 +1252,87 @@ export default function EditBusinessDetails() {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.mapFullHelpRow}>
-            <Ionicons name="hand-left-outline" size={16} color="#475569" />
-            <Text style={styles.mapFullHelpText}>
-              Move the map so the pin is on your exact location.
-            </Text>
-          </View>
-
           <View style={styles.mapFullMapWrap}>
-            <MapView
-              style={StyleSheet.absoluteFillObject}
-              region={
-                mapRegion || {
-                  latitude: 27.4728,
-                  longitude: 89.639,
-                  latitudeDelta: 0.08,
-                  longitudeDelta: 0.08,
-                }
-              }
-              onRegionChangeComplete={(r) => setMapRegion(r)}
-            >
-              <UrlTile
-                urlTemplate="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                maximumZ={19}
-              />
-            </MapView>
+            {!mapError ? (
+              <OSMViewErrorBoundary>
+                <OSMView
+                  key={mapKey}
+                  style={StyleSheet.absoluteFillObject}
+                  initialCenter={
+                    mapCenter || { latitude: 27.4728, longitude: 89.639 }
+                  }
+                  initialZoom={mapZoom || 12}
+                  markers={mapMarkers}
+                  styleUrl="https://tiles.openfreemap.org/styles/liberty"
+                  onPress={handleMapPress}
+                  onMapReady={() => {
+                    console.log("Map ready in EditBusinessDetails");
+                    setMapLoading(false);
+                    setMapInitAttempts(0);
+                  }}
+                  onError={(error) => {
+                    console.error("Map error:", error);
+                    setMapInitAttempts((prev) => prev + 1);
+                    if (mapInitAttempts >= 2) {
+                      setMapError(true);
+                      setMapLoading(false);
+                    }
+                  }}
+                  cacheEnabled={true}
+                  cacheSize={100}
+                  userAgent="YourApp/1.0"
+                  renderToHardwareTextureAndroid={true}
+                />
+              </OSMViewErrorBoundary>
+            ) : (
+              <View style={styles.mapErrorContainer}>
+                <Ionicons name="map-outline" size={48} color="#ef4444" />
+                <Text style={styles.mapErrorText}>Unable to load map</Text>
+                <Text style={styles.mapErrorSubtext}>
+                  Check your internet connection
+                </Text>
+                <TouchableOpacity
+                  style={styles.mapRetryBtn}
+                  onPress={() => {
+                    setMapError(false);
+                    setMapInitAttempts(0);
+                    setMapKey(Date.now());
+                    setMapLoading(true);
+                  }}
+                >
+                  <Text style={styles.mapRetryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
-            {/* Center Pin Overlay */}
-            <View pointerEvents="none" style={styles.centerPinWrap}>
-              <View style={styles.centerPinShadow} />
-              <Ionicons name="location-sharp" size={34} color="#00b14f" />
-            </View>
+            {mapLoading && !mapError && (
+              <View style={styles.mapLoadingOverlay}>
+                <ActivityIndicator size="large" color="#16a34a" />
+                <Text style={styles.mapLoadingText}>Loading map...</Text>
+                {mapInitAttempts > 0 && (
+                  <Text style={styles.mapLoadingSubtext}>
+                    Retry attempt {mapInitAttempts}/3
+                  </Text>
+                )}
+              </View>
+            )}
 
-            {/* Bottom card */}
+            {/* Bottom card with current selection */}
             <View style={styles.mapFullBottomCard}>
               <Text style={styles.mapFullBottomText} numberOfLines={1}>
-                Lat:{" "}
-                {mapRegion?.latitude
-                  ? Number(mapRegion.latitude).toFixed(6)
-                  : latitude || "—"}{" "}
-                • Lng:{" "}
-                {mapRegion?.longitude
-                  ? Number(mapRegion.longitude).toFixed(6)
-                  : longitude || "—"}
+                {tempSelectedCoords ? (
+                  <>
+                    Selected: Lat: {tempSelectedCoords.latitude.toFixed(6)} •
+                    Lng: {tempSelectedCoords.longitude.toFixed(6)}
+                  </>
+                ) : mapCenter ? (
+                  <>
+                    Current: Lat: {mapCenter.latitude.toFixed(6)} • Lng:{" "}
+                    {mapCenter.longitude.toFixed(6)}
+                  </>
+                ) : (
+                  "Tap on the map to select a location"
+                )}
               </Text>
 
               <View style={{ height: 10 }} />
@@ -1178,12 +1343,12 @@ export default function EditBusinessDetails() {
                     styles.mapFullBtn,
                     locating ? { opacity: 0.75 } : null,
                   ]}
-                  onPress={useCurrentLocation}
+                  onPress={useCurrentLocationInMap}
                   activeOpacity={0.9}
                   disabled={locating}
                 >
                   {locating ? (
-                    <ActivityIndicator />
+                    <ActivityIndicator size="small" color="#0f172a" />
                   ) : (
                     <>
                       <Ionicons
@@ -1191,37 +1356,17 @@ export default function EditBusinessDetails() {
                         size={18}
                         color="#0f172a"
                       />
-                      <Text style={styles.mapFullBtnText}>Current</Text>
+                      <Text style={styles.mapFullBtnText}>My Location</Text>
                     </>
                   )}
                 </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.mapFullBtn, styles.mapFullBtnPrimary]}
-                  onPress={confirmMapSelection}
-                  activeOpacity={0.9}
-                >
-                  <Ionicons
-                    name="checkmark-circle-outline"
-                    size={18}
-                    color="#fff"
-                  />
-                  <Text style={[styles.mapFullBtnText, { color: "#fff" }]}>
-                    Set Location
-                  </Text>
-                </TouchableOpacity>
               </View>
-
-              <Text style={styles.mapFullBottomHint} numberOfLines={2}>
-                Tip: zoom in for better accuracy. Address will auto-fill if
-                available.
-              </Text>
             </View>
           </View>
         </SafeAreaView>
       </Modal>
 
-      {/* ✅ AM/PM dropdown modal */}
+      {/* AM/PM dropdown modal */}
       <Modal
         visible={ampmModalOpen}
         transparent
@@ -1394,7 +1539,7 @@ export default function EditBusinessDetails() {
         </TouchableOpacity>
       </View>
 
-      {/* ✅ Keyboard-safe scroll */}
+      {/* Keyboard-safe scroll */}
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -1598,7 +1743,6 @@ export default function EditBusinessDetails() {
               onBlur={() => setFocusedKey(null)}
             />
 
-            {/* ✅ Removed Auto-fill (GPS) button */}
             <View style={styles.locActions}>
               <TouchableOpacity
                 style={styles.locBtnFull}
@@ -1638,7 +1782,7 @@ export default function EditBusinessDetails() {
             </View>
           </View>
 
-          {/* Operations */}
+          {/* Operations - TIME INPUTS IMPROVED */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Operations</Text>
 
@@ -1647,13 +1791,45 @@ export default function EditBusinessDetails() {
                 <Label>Opening Time</Label>
                 <View style={styles.timeRow}>
                   <View style={{ flex: 1 }}>
-                    <Input
-                      value={openingClock}
-                      onChangeText={(t) => setOpeningClock(clampClockText(t))}
-                      placeholder="2:00"
+                    <TextInput
+                      style={[styles.input, { textAlign: "center" }]}
+                      value={openingHour}
+                      onChangeText={(text) => {
+                        let val = text.replace(/[^0-9]/g, "");
+                        if (val.length > 2) val = val.slice(0, 2);
+                        let num = parseInt(val, 10);
+                        if (val !== "" && (num < 1 || num > 12)) {
+                          if (num < 1) val = "1";
+                          if (num > 12) val = "12";
+                        }
+                        setOpeningHour(val);
+                      }}
+                      placeholder="HH"
                       keyboardType="number-pad"
-                      isFocused={focusedKey === "openingClock"}
-                      onFocus={() => setFocusedKey("openingClock")}
+                      maxLength={2}
+                      onFocus={() => setFocusedKey("openingHour")}
+                      onBlur={() => setFocusedKey(null)}
+                    />
+                  </View>
+                  <Text style={styles.colon}>:</Text>
+                  <View style={{ flex: 1 }}>
+                    <TextInput
+                      style={[styles.input, { textAlign: "center" }]}
+                      value={openingMinute}
+                      onChangeText={(text) => {
+                        let val = text.replace(/[^0-9]/g, "");
+                        if (val.length > 2) val = val.slice(0, 2);
+                        let num = parseInt(val, 10);
+                        if (val !== "" && (num < 0 || num > 59)) {
+                          if (num < 0) val = "0";
+                          if (num > 59) val = "59";
+                        }
+                        setOpeningMinute(val);
+                      }}
+                      placeholder="MM"
+                      keyboardType="number-pad"
+                      maxLength={2}
+                      onFocus={() => setFocusedKey("openingMinute")}
                       onBlur={() => setFocusedKey(null)}
                     />
                   </View>
@@ -1672,13 +1848,45 @@ export default function EditBusinessDetails() {
                 <Label>Closing Time</Label>
                 <View style={styles.timeRow}>
                   <View style={{ flex: 1 }}>
-                    <Input
-                      value={closingClock}
-                      onChangeText={(t) => setClosingClock(clampClockText(t))}
-                      placeholder="10:00"
+                    <TextInput
+                      style={[styles.input, { textAlign: "center" }]}
+                      value={closingHour}
+                      onChangeText={(text) => {
+                        let val = text.replace(/[^0-9]/g, "");
+                        if (val.length > 2) val = val.slice(0, 2);
+                        let num = parseInt(val, 10);
+                        if (val !== "" && (num < 1 || num > 12)) {
+                          if (num < 1) val = "1";
+                          if (num > 12) val = "12";
+                        }
+                        setClosingHour(val);
+                      }}
+                      placeholder="HH"
                       keyboardType="number-pad"
-                      isFocused={focusedKey === "closingClock"}
-                      onFocus={() => setFocusedKey("closingClock")}
+                      maxLength={2}
+                      onFocus={() => setFocusedKey("closingHour")}
+                      onBlur={() => setFocusedKey(null)}
+                    />
+                  </View>
+                  <Text style={styles.colon}>:</Text>
+                  <View style={{ flex: 1 }}>
+                    <TextInput
+                      style={[styles.input, { textAlign: "center" }]}
+                      value={closingMinute}
+                      onChangeText={(text) => {
+                        let val = text.replace(/[^0-9]/g, "");
+                        if (val.length > 2) val = val.slice(0, 2);
+                        let num = parseInt(val, 10);
+                        if (val !== "" && (num < 0 || num > 59)) {
+                          if (num < 0) val = "0";
+                          if (num > 59) val = "59";
+                        }
+                        setClosingMinute(val);
+                      }}
+                      placeholder="MM"
+                      keyboardType="number-pad"
+                      maxLength={2}
+                      onFocus={() => setFocusedKey("closingMinute")}
                       onBlur={() => setFocusedKey(null)}
                     />
                   </View>
@@ -1873,7 +2081,7 @@ const styles = StyleSheet.create({
   },
   inputMultiline: { minHeight: 90, textAlignVertical: "top" },
 
-  grid2: { flexDirection: "row", gap: 10, marginTop: 4 },
+  grid2: { flexDirection: "row", gap: 1, marginTop: 4 },
 
   imageRow: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
   imageBox: {
@@ -1925,19 +2133,20 @@ const styles = StyleSheet.create({
     marginVertical: 12,
   },
 
-  timeRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  timeRow: { flexDirection: "row", alignItems: "center", gap: 1 },
+  colon: { fontSize: 18, fontWeight: "bold", color: "#0f172a" },
   ampmBtn: {
     height: 46,
-    paddingHorizontal: 12,
+    paddingHorizontal: 6,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: "#e2e8f0",
     backgroundColor: "#f8fafc",
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
+    gap: 4,
   },
-  ampmText: { fontSize: 14, fontWeight: "700", color: "#0f172a" },
+  ampmText: { fontSize: 12, fontWeight: "700", color: "#0f172a" },
 
   saveBtn: {
     marginTop: 6,
@@ -2060,7 +2269,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
 
-  // location buttons
   locActions: { marginTop: 8 },
   locBtnFull: {
     width: "100%",
@@ -2076,7 +2284,7 @@ const styles = StyleSheet.create({
   },
   locBtnText: { fontSize: 13, fontWeight: "800", color: "#0f172a" },
 
-  // ✅ FULLSCREEN MAP
+  // FULLSCREEN MAP
   mapFullSafe: { flex: 1, backgroundColor: "#fff" },
   mapFullHeader: {
     height: 54,
@@ -2120,25 +2328,7 @@ const styles = StyleSheet.create({
     color: "#475569",
   },
 
-  mapFullMapWrap: { flex: 1, backgroundColor: "#fff" },
-
-  centerPinWrap: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    top: "50%",
-    transform: [{ translateY: -34 }],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  centerPinShadow: {
-    position: "absolute",
-    width: 18,
-    height: 6,
-    borderRadius: 999,
-    backgroundColor: "rgba(15,23,42,0.22)",
-    bottom: 6,
-  },
+  mapFullMapWrap: { flex: 1, backgroundColor: "#fff", position: "relative" },
 
   mapFullBottomCard: {
     position: "absolute",
@@ -2185,5 +2375,57 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginLeft: 4,
     fontWeight: "500",
+  },
+
+  // Map error styles
+  mapErrorContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f9fafb",
+  },
+  mapErrorText: {
+    marginTop: 12,
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#374151",
+  },
+  mapErrorSubtext: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#6b7280",
+  },
+  mapRetryBtn: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    backgroundColor: "#16a34a",
+    borderRadius: 8,
+  },
+  mapRetryText: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+  mapLoadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+  },
+  mapLoadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: "#16a34a",
+    fontWeight: "600",
+  },
+  mapLoadingSubtext: {
+    marginTop: 4,
+    fontSize: 11,
+    color: "#6b7280",
   },
 });

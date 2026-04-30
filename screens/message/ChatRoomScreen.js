@@ -68,9 +68,9 @@ const num = (v) => {
 
 /**
  * ✅ Bases from env (NO hardcoding):
- * - Customer profile base: PROFILE_IMAGE (example: https://grab.newedge.bt/driver/)
+ * - Customer profile base: PROFILE_IMAGE (example: https://backend.tabdhey.bt/driver/)
  *   fallback: API_BASE_URL + "/driver"
- * - Chat media base: CHAT_ORIGIN (example: https://grab.newedge.bt)
+ * - Chat media base: CHAT_ORIGIN (example: https://backend.tabdhey.bt)
  *   fallback: API_BASE_URL
  */
 const CUSTOMER_PROFILE_BASE = (() => {

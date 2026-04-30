@@ -34,10 +34,10 @@ function safeJsonFromText(text) {
 /**
  * ✅ IMPORTANT:
  * Returns a FULL PREFIX (can include path like /chat)
- * Example: USER_MERCHANT_CHAT_ORIGIN=https://grab.newedge.bt/chat
- * Then final messages URL becomes: https://grab.newedge.bt/chat/chat/messages/:id
+ * Example: USER_MERCHANT_CHAT_ORIGIN=https://backend.tabdhey.bt/chat
+ * Then final messages URL becomes: https://backend.tabdhey.bt/chat/chat/messages/:id
  */
-function pickChatPrefix(fallback = "https://grab.newedge.bt/chat") {
+function pickChatPrefix(fallback = "https://backend.tabdhey.bt/chat") {
   const prefix =
     String(USER_MERCHANT_CHAT_ORIGIN || "").trim() ||
     String(CHAT_ORIGIN || "").trim() ||
@@ -168,7 +168,7 @@ export async function listMerchantConversations({ businessId, token }) {
 
 /* =========================================================
    ✅ Get messages (DOUBLE /chat/chat/... as you requested)
-   GET  https://grab.newedge.bt/chat/chat/messages/:conversationId?limit=80
+   GET  https://backend.tabdhey.bt/chat/chat/messages/:conversationId?limit=80
    ========================================================= */
 export async function getConversationMessages({
   conversationId,
@@ -178,7 +178,7 @@ export async function getConversationMessages({
   businessIdHeader,
   token,
 }) {
-  const base = pickChatPrefix("https://grab.newedge.bt/chat"); // ✅ ends with /chat
+  const base = pickChatPrefix("https://backend.tabdhey.bt/chat"); // ✅ ends with /chat
   const cid = String(conversationId || "").trim();
   if (!cid) throw new Error("conversationId required");
 
@@ -195,7 +195,7 @@ export async function getConversationMessages({
 
 /* =========================================================
    ✅ Send text (DOUBLE /chat/chat/messages)
-   POST https://grab.newedge.bt/chat/chat/messages/:conversationId
+   POST https://backend.tabdhey.bt/chat/chat/messages/:conversationId
    ========================================================= */
 export async function sendTextMessage({
   conversationId,
@@ -205,7 +205,7 @@ export async function sendTextMessage({
   businessIdHeader,
   token,
 }) {
-  const base = pickChatPrefix("https://grab.newedge.bt/chat");
+  const base = pickChatPrefix("https://backend.tabdhey.bt/chat");
   const cid = String(conversationId || "").trim();
   if (!cid) throw new Error("conversationId required");
 
@@ -230,7 +230,7 @@ export async function sendImageMessage({
   businessIdHeader,
   token,
 }) {
-  const base = pickChatPrefix("https://grab.newedge.bt/chat");
+  const base = pickChatPrefix("https://backend.tabdhey.bt/chat");
   const cid = String(conversationId || "").trim();
   if (!cid) throw new Error("conversationId required");
 
@@ -269,7 +269,7 @@ export async function markConversationRead({
   businessIdHeader,
   token,
 }) {
-  const base = pickChatPrefix("https://grab.newedge.bt/chat");
+  const base = pickChatPrefix("https://backend.tabdhey.bt/chat");
   const cid = String(conversationId || "").trim();
   if (!cid) throw new Error("conversationId required");
 

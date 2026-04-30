@@ -86,7 +86,7 @@ export default function WalletMyQR() {
       userName,
       userId,
       // currency: "BTN",
-      // platform: "grab.newedge.bt",
+      // platform: "backend.tabdhey.bt",
     };
 
     try {

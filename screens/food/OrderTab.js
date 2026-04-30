@@ -8,8 +8,17 @@
 // ✅ UPDATE: Order "total" now matches OrderDetails display total (EXCLUDES platform_fee; includes delivery + merchant_delivery - discount).
 // ✅ FIX: Totals computed robustly from nested totals + item line totals (supports string prices like "Nu. 20")
 // ✅ UPDATE: Hide Delivered/Completed orders everywhere (DELIVERED/DELIVERED_* -> COMPLETED -> filtered out)
+// ✅ NEW: Accept/Decline for scheduled orders using dedicated endpoints from .env.
+// ✅ FIX: Parse scheduled order status from API ("ACCEPTED" -> SCHEDULED_ACCEPTED, "REJECTED" -> SCHEDULED_REJECTED).
+// ✅ NEW: Show rejection reason for rejected scheduled orders.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   View,
   Text,
@@ -27,78 +36,143 @@ import {
   Alert,
   Modal,
   Pressable,
-} from 'react-native';
-import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import { Ionicons } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
-import DateTimePicker from '@react-native-community/datetimepicker';
+} from "react-native";
+import {
+  useNavigation,
+  useRoute,
+  useFocusEffect,
+} from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
+import * as SecureStore from "expo-secure-store";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import {
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
   SCHEDULED_ORDER_ENDPOINT as ENV_SCHEDULED_ORDER_ENDPOINT,
-} from '@env';
+  ACCEPT_SCHEDULED_ORDER_ENDPOINT as ENV_ACCEPT_SCHEDULED,
+  REJECT_SCHEDULED_ORDER_ENDPOINT as ENV_REJECT_SCHEDULED,
+} from "@env";
 
 const BASE_STATUS_LABELS = [
-  { key: 'PENDING', label: 'Pending' },
-  { key: 'CONFIRMED', label: 'Confirmed' },
-  { key: 'READY', label: 'Ready' },
-  { key: 'OUT_FOR_DELIVERY', label: 'Out for delivery' },
+  { key: "PENDING", label: "Pending" },
+  { key: "CONFIRMED", label: "Confirmed" },
+  { key: "READY", label: "Ready" },
+  { key: "OUT_FOR_DELIVERY", label: "Out for delivery" },
   // { key: 'COMPLETED', label: 'Completed' }, // hidden
-  { key: 'DECLINED', label: 'Declined' },
+  { key: "DECLINED", label: "Declined" },
 ];
 
 const STATUS_THEME = {
-  PENDING: { fg: '#0ea5e9', bg: '#e0f2fe', bd: '#bae6fd', icon: 'time-outline' },
-  CONFIRMED: { fg: '#16a34a', bg: '#ecfdf5', bd: '#bbf7d0', icon: 'checkmark-circle-outline' },
-  READY: { fg: '#2563eb', bg: '#dbeafe', bd: '#bfdbfe', icon: 'cube-outline' },
-  OUT_FOR_DELIVERY: { fg: '#f59e0b', bg: '#fef3c7', bd: '#fde68a', icon: 'bicycle-outline' },
-  COMPLETED: { fg: '#047857', bg: '#ecfdf5', bd: '#bbf7d0', icon: 'checkmark-done-outline' },
-  DECLINED: { fg: '#b91c1c', bg: '#fee2e2', bd: '#fecaca', icon: 'close-circle-outline' },
-  SCHEDULED: { fg: '#0ea5e9', bg: '#eff6ff', bd: '#dbeafe', icon: 'calendar-outline' },
+  PENDING: {
+    fg: "#0ea5e9",
+    bg: "#e0f2fe",
+    bd: "#bae6fd",
+    icon: "time-outline",
+  },
+  CONFIRMED: {
+    fg: "#16a34a",
+    bg: "#ecfdf5",
+    bd: "#bbf7d0",
+    icon: "checkmark-circle-outline",
+  },
+  READY: { fg: "#2563eb", bg: "#dbeafe", bd: "#bfdbfe", icon: "cube-outline" },
+  OUT_FOR_DELIVERY: {
+    fg: "#f59e0b",
+    bg: "#fef3c7",
+    bd: "#fde68a",
+    icon: "bicycle-outline",
+  },
+  COMPLETED: {
+    fg: "#047857",
+    bg: "#ecfdf5",
+    bd: "#bbf7d0",
+    icon: "checkmark-done-outline",
+  },
+  DECLINED: {
+    fg: "#b91c1c",
+    bg: "#fee2e2",
+    bd: "#fecaca",
+    icon: "close-circle-outline",
+  },
+  SCHEDULED: {
+    fg: "#0ea5e9",
+    bg: "#eff6ff",
+    bd: "#dbeafe",
+    icon: "calendar-outline",
+  },
+  SCHEDULED_ACCEPTED: {
+    fg: "#16a34a",
+    bg: "#ecfdf5",
+    bd: "#bbf7d0",
+    icon: "checkmark-circle-outline",
+  },
+  SCHEDULED_REJECTED: {
+    fg: "#b91c1c",
+    bg: "#fee2e2",
+    bd: "#fecaca",
+    icon: "close-circle-outline",
+  },
 };
 
 const FULFILL_THEME = {
-  DELIVERY: { fg: '#0ea5e9', bg: '#e0f2fe', bd: '#bae6fd', icon: 'bicycle-outline', label: 'Delivery' },
-  PICKUP: { fg: '#7c3aed', bg: '#f5f3ff', bd: '#ddd6fe', icon: 'bag-outline', label: 'Pickup' },
+  DELIVERY: {
+    fg: "#0ea5e9",
+    bg: "#e0f2fe",
+    bd: "#bae6fd",
+    icon: "bicycle-outline",
+    label: "Delivery",
+  },
+  PICKUP: {
+    fg: "#7c3aed",
+    bg: "#f5f3ff",
+    bd: "#ddd6fe",
+    icon: "bag-outline",
+    label: "Pickup",
+  },
 };
 
-const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTH_NAMES = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
 
 /* ---------------- helpers ---------------- */
-// ✅ normalize status keys from backend into UI keys
 const normalizeStatusKey = (s) => {
-  const k = String(s || '').trim().toUpperCase().replace(/\s+/g, '_');
-
-  // map "on road" variants
-  if (k === 'ON_ROAD' || k === 'ONROAD') return 'OUT_FOR_DELIVERY';
-
-  // ✅ treat delivered variants as completed so we can hide them consistently
-  if (k === 'DELIVERED' || k === 'DELIVERED_TO_CUSTOMER' || k === 'DELIVERED_TO_CLIENT') return 'COMPLETED';
-
-  // some backends might use "COMPLETED" already
-  if (k === 'COMPLETED') return 'COMPLETED';
-
+  const k = String(s || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_");
+  if (k === "ON_ROAD" || k === "ONROAD") return "OUT_FOR_DELIVERY";
+  if (
+    k === "DELIVERED" ||
+    k === "DELIVERED_TO_CUSTOMER" ||
+    k === "DELIVERED_TO_CLIENT"
+  )
+    return "COMPLETED";
+  if (k === "COMPLETED") return "COMPLETED";
   return k;
 };
 
-// ✅ hide these statuses from the list everywhere
-const HIDE_STATUSES = new Set(['COMPLETED']);
+const HIDE_STATUSES = new Set(["COMPLETED"]);
 
 const showAsGiven = (s) => {
-  if (!s) return '';
+  if (!s) return "";
   const d = String(s);
-
-  // supports:
-  // - "2026-01-17T12:30:00+06:00"
-  // - "2026-01-17T06:30:00.000Z"
-  // - "2026-01-17 12:30:00"
-  const isoish = d.includes('T') ? d : d.replace(' ', 'T');
-
+  const isoish = d.includes("T") ? d : d.replace(" ", "T");
   const y = isoish.slice(0, 4),
     m = isoish.slice(5, 7),
     dd = isoish.slice(8, 10);
   const hh = isoish.slice(11, 13),
     mm = isoish.slice(14, 16);
-
   const mon = MONTH_NAMES[(+m || 1) - 1] || m;
   if (!y || !m || !dd || !hh || !mm) return d;
   return `${mon} ${dd}, ${hh}:${mm}`;
@@ -107,38 +181,39 @@ const showAsGiven = (s) => {
 const parseForSort = (v) => {
   if (!v) return 0;
   const s = String(v).trim();
-
-  let n = Date.parse(s.includes('T') ? s : s.replace(' ', 'T'));
+  let n = Date.parse(s.includes("T") ? s : s.replace(" ", "T"));
   if (Number.isFinite(n)) return n;
-
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4}),\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  const m = s.match(
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4}),\s*(\d{1,2}):(\d{2})(?::(\d{2}))?/,
+  );
   if (m) {
     const [, dd, mm, yyyy, hh, min, ss] = m;
-    const date = new Date(Number(yyyy), Number(mm) - 1, Number(dd), Number(hh), Number(min), ss ? Number(ss) : 0);
+    const date = new Date(
+      Number(yyyy),
+      Number(mm) - 1,
+      Number(dd),
+      Number(hh),
+      Number(min),
+      ss ? Number(ss) : 0,
+    );
     if (!Number.isNaN(date.getTime())) return date.getTime();
   }
   return 0;
 };
 
-const safeNum = (v) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-};
-
 const pad2 = (n) => (n < 10 ? `0${n}` : String(n));
-const dateKeyFromDateObj = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-
+const dateKeyFromDateObj = (d) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const dateKeyFromTs = (v) => {
   const t = parseForSort(v);
   if (!t) return null;
   const d = new Date(t);
   return dateKeyFromDateObj(d);
 };
-
 const labelForDateKey = (key, todayKey, yesterdayKey) => {
-  if (key === todayKey) return 'Today';
-  if (key === yesterdayKey) return 'Yesterday';
-  const [y, m, d] = key.split('-').map(Number);
+  if (key === todayKey) return "Today";
+  if (key === yesterdayKey) return "Yesterday";
+  const [y, m, d] = key.split("-").map(Number);
   if (!y || !m || !d) return key;
   const date = new Date(y, m - 1, d);
   return `${MONTH_NAMES[date.getMonth()]} ${d}`;
@@ -151,9 +226,7 @@ const getItemNote = (it = {}) =>
   it.instructions ||
   it.customization ||
   it.item_note ||
-  '';
-
-/* ✅ address extractor that supports deliver_to */
+  "";
 const pickAddress = (o = {}) => {
   const cand = [
     o?.delivery_address,
@@ -164,47 +237,45 @@ const pickAddress = (o = {}) => {
     o?.shipping_address,
     o?.address,
     o?.customer_address,
-    o?.deliver_to, // sometimes a string
+    o?.deliver_to,
   ];
-
   for (const v of cand) {
     if (!v) continue;
-    if (typeof v === 'string' && v.trim()) return v.trim();
-    if (typeof v === 'object') {
-      if (typeof v.address === 'string' && v.address.trim()) return v.address.trim();
-      if (typeof v.label === 'string' && v.label.trim()) return v.label.trim();
-      if (typeof v.formatted === 'string' && v.formatted.trim()) return v.formatted.trim();
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "object") {
+      if (typeof v.address === "string" && v.address.trim())
+        return v.address.trim();
+      if (typeof v.label === "string" && v.label.trim()) return v.label.trim();
+      if (typeof v.formatted === "string" && v.formatted.trim())
+        return v.formatted.trim();
     }
   }
-  return '';
+  return "";
 };
 
-/* ===========================
-   ✅ money parsing + totals (match OrderDetails)
-   =========================== */
+/* =========================== money parsing + totals =========================== */
 const toMoneyNumber = (v) => {
   if (v == null) return null;
-  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
   const s = String(v).trim();
   if (!s) return null;
-  const cleaned = s.replace(/[^0-9.-]/g, '');
+  const cleaned = s.replace(/[^0-9.-]/g, "");
   const n = parseFloat(cleaned);
   return Number.isFinite(n) ? n : null;
 };
-
 const pickMoney = (...vals) => {
   for (const v of vals) {
     const n = toMoneyNumber(v);
-    if (n != null) return n; // includes 0
+    if (n != null) return n;
   }
   return null;
 };
-
 const getItemQty = (it) => {
-  const q = Number(it?.qty ?? it?.quantity ?? it?.quantity_ordered ?? it?.order_qty ?? 1);
+  const q = Number(
+    it?.qty ?? it?.quantity ?? it?.quantity_ordered ?? it?.order_qty ?? 1,
+  );
   return Number.isFinite(q) && q > 0 ? q : 1;
 };
-
 const getItemUnitPrice = (it) => {
   const p =
     toMoneyNumber(it?.unit_price) ??
@@ -214,12 +285,17 @@ const getItemUnitPrice = (it) => {
     toMoneyNumber(it?.selling_price) ??
     toMoneyNumber(it?.unitPrice) ??
     null;
-
   if (p != null) return p;
-  const n = Number(it?.price ?? it?.unit_price ?? it?.item_price ?? it?.rate ?? it?.selling_price ?? 0);
+  const n = Number(
+    it?.price ??
+      it?.unit_price ??
+      it?.item_price ??
+      it?.rate ??
+      it?.selling_price ??
+      0,
+  );
   return Number.isFinite(n) ? n : 0;
 };
-
 const getItemLineTotal = (it) => {
   const direct = pickMoney(
     it?.subtotal,
@@ -228,37 +304,77 @@ const getItemLineTotal = (it) => {
     it?.lineTotal,
     it?.total,
     it?.amount,
-    it?.final_amount
+    it?.final_amount,
   );
   if (direct != null) return direct;
   return getItemQty(it) * getItemUnitPrice(it);
 };
-
-const sumItemsTotal = (items = []) => {
-  return (items || []).reduce((sum, it) => sum + getItemLineTotal(it), 0);
-};
-
+const sumItemsTotal = (items = []) =>
+  (items || []).reduce((sum, it) => sum + getItemLineTotal(it), 0);
 const getTotalsSnapshot = (o = {}) => {
-  const t = o?.totals || o?.total_breakdown || o?.breakdown || o?.pricing || null;
+  const t =
+    o?.totals || o?.total_breakdown || o?.breakdown || o?.pricing || null;
   const b =
     o?.totals_for_business ||
     o?.totalsForBusiness ||
     o?.business_totals ||
     o?.businessTotals ||
     null;
-
-  const platform_fee = pickMoney(o?.platform_fee, o?.platformFee, t?.platform_fee, t?.platformFee, b?.platform_fee, b?.platformFee);
-  const discount_amount = pickMoney(o?.discount_amount, o?.discountAmount, o?.discount, t?.discount_amount, t?.discountAmount, t?.discount, b?.discount_amount, b?.discountAmount, b?.discount);
-  const delivery_fee = pickMoney(o?.delivery_fee, o?.deliveryFee, t?.delivery_fee, t?.deliveryFee, b?.delivery_fee, b?.deliveryFee);
-  const merchant_delivery_fee = pickMoney(o?.merchant_delivery_fee, o?.merchantDeliveryFee, t?.merchant_delivery_fee, t?.merchantDeliveryFee, b?.merchant_delivery_fee, b?.merchantDeliveryFee);
-
-  const total_amount = pickMoney(o?.total_amount, o?.totalAmount, o?.total, t?.total_amount, t?.totalAmount, t?.total, b?.total_amount, b?.totalAmount, b?.total);
-
-  return { platform_fee, discount_amount, delivery_fee, merchant_delivery_fee, total_amount };
+  const platform_fee = pickMoney(
+    o?.platform_fee,
+    o?.platformFee,
+    t?.platform_fee,
+    t?.platformFee,
+    b?.platform_fee,
+    b?.platformFee,
+  );
+  const discount_amount = pickMoney(
+    o?.discount_amount,
+    o?.discountAmount,
+    o?.discount,
+    t?.discount_amount,
+    t?.discountAmount,
+    t?.discount,
+    b?.discount_amount,
+    b?.discountAmount,
+    b?.discount,
+  );
+  const delivery_fee = pickMoney(
+    o?.delivery_fee,
+    o?.deliveryFee,
+    t?.delivery_fee,
+    t?.deliveryFee,
+    b?.delivery_fee,
+    b?.deliveryFee,
+  );
+  const merchant_delivery_fee = pickMoney(
+    o?.merchant_delivery_fee,
+    o?.merchantDeliveryFee,
+    t?.merchant_delivery_fee,
+    t?.merchantDeliveryFee,
+    b?.merchant_delivery_fee,
+    b?.merchantDeliveryFee,
+  );
+  const total_amount = pickMoney(
+    o?.total_amount,
+    o?.totalAmount,
+    o?.total,
+    t?.total_amount,
+    t?.totalAmount,
+    t?.total,
+    b?.total_amount,
+    b?.totalAmount,
+    b?.total,
+  );
+  return {
+    platform_fee,
+    discount_amount,
+    delivery_fee,
+    merchant_delivery_fee,
+    total_amount,
+  };
 };
-
 const round2 = (n) => Math.round(Number(n || 0) * 100) / 100;
-
 const computeDisplayTotal = ({ items, totals }) => {
   const snap = totals || {};
   const df = snap.delivery_fee ?? 0;
@@ -266,19 +382,19 @@ const computeDisplayTotal = ({ items, totals }) => {
   const disc = snap.discount_amount ?? 0;
   const pf = snap.platform_fee ?? null;
   const grand = snap.total_amount ?? null;
-
   const hasItems = Array.isArray(items) && items.length > 0;
   const itemsTotal = hasItems ? sumItemsTotal(items) : null;
-
   if (hasItems && itemsTotal != null) {
-    return round2(Number(itemsTotal || 0) + Number(df || 0) + Number(mdf || 0) - Number(disc || 0));
+    return round2(
+      Number(itemsTotal || 0) +
+        Number(df || 0) +
+        Number(mdf || 0) -
+        Number(disc || 0),
+    );
   }
-
   if (grand != null) {
-    // fallback when item totals are missing: subtract platform fee if known
     return round2(Number(grand || 0) - Number(pf || 0));
   }
-
   return 0;
 };
 
@@ -291,7 +407,7 @@ const StatusPill = ({ status }) => {
       <Ionicons name={t.icon} size={12} color={t.fg} />
       <Text style={[styles.pillText, { color: t.fg }]} numberOfLines={1}>
         {key
-          .replaceAll('_', ' ')
+          .replaceAll("_", " ")
           .toLowerCase()
           .replace(/(^|\s)\S/g, (s) => s.toUpperCase())}
       </Text>
@@ -300,7 +416,8 @@ const StatusPill = ({ status }) => {
 };
 
 const FulfillmentPill = ({ type }) => {
-  const key = String(type || '').toUpperCase() === 'DELIVERY' ? 'DELIVERY' : 'PICKUP';
+  const key =
+    String(type || "").toUpperCase() === "DELIVERY" ? "DELIVERY" : "PICKUP";
   const t = FULFILL_THEME[key];
   return (
     <View style={[styles.pill, { backgroundColor: t.bg, borderColor: t.bd }]}>
@@ -315,29 +432,52 @@ const FulfillmentPill = ({ type }) => {
 const ItemPreview = ({ items, raw }) => {
   if (Array.isArray(raw) && raw.length) {
     const [a, b] = raw;
-    const t1 = a ? `${a.item_name ?? 'Item'} ×${Number(a.quantity ?? 1)}` : '';
-    const t2 = b ? `${b.item_name ?? 'Item'} ×${Number(b.quantity ?? 1)}` : '';
-    const more = raw.length > 2 ? ` +${raw.length - 2} more` : '';
+    const t1 = a ? `${a.item_name ?? "Item"} ×${Number(a.quantity ?? 1)}` : "";
+    const t2 = b ? `${b.item_name ?? "Item"} ×${Number(b.quantity ?? 1)}` : "";
+    const more = raw.length > 2 ? ` +${raw.length - 2} more` : "";
     return (
       <Text style={styles.orderItems} numberOfLines={2}>
         {t1}
-        {t2 ? `, ${t2}` : ''}
+        {t2 ? `, ${t2}` : ""}
         {more}
       </Text>
     );
   }
-  if (items) return <Text style={styles.orderItems} numberOfLines={2}>{items}</Text>;
+  if (items)
+    return (
+      <Text style={styles.orderItems} numberOfLines={2}>
+        {items}
+      </Text>
+    );
   return null;
 };
 
-const OrderItem = ({ item, isTablet, money, onPress }) => {
-  const isDelivery = item.type === 'Delivery';
-  const isScheduled = normalizeStatusKey(item.status) === 'SCHEDULED';
-  const moneyFmt = money || ((n, c = 'Nu') => `${c} ${Number(n || 0).toFixed(2)}`);
-
-  // ✅ scheduled label safety (always show scheduled time)
-  const scheduledPretty = item?.created_at ? `Scheduled • ${showAsGiven(item.created_at)}` : 'Scheduled';
-  const scheduledText = item?.time && String(item.time).trim() ? String(item.time) : scheduledPretty;
+// ======================= IMPROVED ORDER ITEM LAYOUT =======================
+const OrderItem = ({
+  item,
+  isTablet,
+  money,
+  onPress,
+  isUpcoming,
+  onAccept,
+  onDecline,
+  actionLoadingId,
+}) => {
+  const isDelivery = item.type === "Delivery";
+  const statusKey = normalizeStatusKey(item.status);
+  const isScheduled = statusKey === "SCHEDULED";
+  const isAccepted = statusKey === "SCHEDULED_ACCEPTED";
+  const isRejected = statusKey === "SCHEDULED_REJECTED";
+  const moneyFmt =
+    money || ((n, c = "Nu") => `${c} ${Number(n || 0).toFixed(2)}`);
+  const scheduledPretty = item?.created_at
+    ? `Scheduled • ${showAsGiven(item.created_at)}`
+    : "Scheduled";
+  const scheduledText =
+    item?.time && String(item.time).trim()
+      ? String(item.time)
+      : scheduledPretty;
+  const isLoading = actionLoadingId === item.id;
 
   return (
     <TouchableOpacity
@@ -346,148 +486,225 @@ const OrderItem = ({ item, isTablet, money, onPress }) => {
       style={styles.card}
       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
     >
+      {/* Top row: icon + order ID + total */}
       <View style={styles.row1}>
         <View style={styles.row1Left}>
-          <Ionicons name={isDelivery ? 'bicycle-outline' : 'bag-outline'} size={18} color="#0f172a" />
-          <View>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Text style={[styles.orderId, { fontSize: isTablet ? 15 : 14 }]}>{item.id}</Text>
-              {!isScheduled && !!item.time && (
-                <Text style={[styles.orderTime, { fontSize: isTablet ? 13 : 12 }]}>
-                  {' '}• {item.time}
-                </Text>
-              )}
-            </View>
-
-            {isScheduled && (
-              <Text style={[styles.scheduledTime, { fontSize: isTablet ? 14 : 13 }]} numberOfLines={2}>
-                {scheduledText}
-              </Text>
-            )}
-          </View>
+          <Ionicons
+            name={isDelivery ? "bicycle-outline" : "bag-outline"}
+            size={18}
+            color="#0f172a"
+          />
+          <Text style={[styles.orderId, { fontSize: isTablet ? 15 : 14 }]}>
+            {item.id}
+          </Text>
         </View>
-
-        {/* ✅ total now matches OrderDetails display total */}
-        <Text style={[styles.orderTotal, { fontSize: isTablet ? 18 : 17 }]}>{moneyFmt(item.total, 'Nu')}</Text>
+        <Text style={[styles.orderTotal, { fontSize: isTablet ? 18 : 17 }]}>
+          {moneyFmt(item.total, "Nu")}
+        </Text>
       </View>
 
+      {/* Scheduled time line (for all scheduled orders) */}
+      {(isScheduled || isAccepted || isRejected) && (
+        <Text style={styles.scheduledTime} numberOfLines={2}>
+          {scheduledText}
+        </Text>
+      )}
+
+      {/* Pills row – wraps automatically */}
       <View style={styles.row2}>
         <FulfillmentPill type={item.type} />
         <StatusPill status={item.status} />
         {!!item.payment_method && (
           <View style={styles.payWrap}>
             <Ionicons name="card-outline" size={14} color="#64748b" />
-            <Text style={styles.payText} numberOfLines={1}>{item.payment_method}</Text>
+            <Text style={styles.payText} numberOfLines={1}>
+              {item.payment_method}
+            </Text>
           </View>
         )}
       </View>
 
-      <ItemPreview items={item.items} raw={item.raw_items} />
-
-      {(item.customer_name || item.customer_phone || item.customer_email) ? (
-        <View style={styles.metaRow}>
-          <Ionicons name="person-outline" size={16} color="#64748b" />
-          <Text style={styles.customerText} numberOfLines={1}>
-            {item.customer_name || 'Customer'}
-            {item.customer_phone ? ` • ${item.customer_phone}` : ''}
-            {!item.customer_phone && item.customer_email ? ` • ${item.customer_email}` : ''}
+      {/* Rejection reason (if rejected) */}
+      {isRejected && item.rejection_reason && (
+        <View style={styles.rejectionRow}>
+          <Ionicons name="alert-circle-outline" size={14} color="#b91c1c" />
+          <Text style={styles.rejectionText} numberOfLines={3}>
+            Rejected: {item.rejection_reason}
           </Text>
-        </View>
-      ) : null}
-
-      {!!item.delivery_address?.trim?.() && (
-        <View style={styles.metaRow}>
-          <Ionicons name="location-outline" size={16} color="#64748b" />
-          <Text style={styles.customerText} numberOfLines={2}>{item.delivery_address.trim()}</Text>
         </View>
       )}
 
+      {/* Items preview */}
+      <ItemPreview items={item.items} raw={item.raw_items} />
+
+      {/* Customer info */}
+      {(item.customer_name || item.customer_phone || item.customer_email) && (
+        <View style={styles.metaRow}>
+          <Ionicons name="person-outline" size={16} color="#64748b" />
+          <Text style={styles.customerText} numberOfLines={1}>
+            {item.customer_name || "Customer"}
+            {item.customer_phone ? ` • ${item.customer_phone}` : ""}
+            {!item.customer_phone && item.customer_email
+              ? ` • ${item.customer_email}`
+              : ""}
+          </Text>
+        </View>
+      )}
+
+      {/* Delivery address */}
+      {!!item.delivery_address?.trim?.() && (
+        <View style={styles.metaRow}>
+          <Ionicons name="location-outline" size={16} color="#64748b" />
+          <Text style={styles.customerText} numberOfLines={2}>
+            {item.delivery_address.trim()}
+          </Text>
+        </View>
+      )}
+
+      {/* Special note */}
       {!!item.note_for_restaurant?.trim?.() && (
         <View style={styles.noteRow}>
-          <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0f766e" />
+          <Ionicons
+            name="chatbubble-ellipses-outline"
+            size={14}
+            color="#0f766e"
+          />
           <View style={{ flex: 1 }}>
-            <Text style={styles.noteText} numberOfLines={3}>{item.note_for_restaurant.trim()}</Text>
+            <Text style={styles.noteText} numberOfLines={3}>
+              {item.note_for_restaurant.trim()}
+            </Text>
             {!!item.note_target?.trim?.() && (
-              <Text style={styles.noteMeta} numberOfLines={1}>for {item.note_target.trim()}</Text>
+              <Text style={styles.noteMeta} numberOfLines={1}>
+                for {item.note_target.trim()}
+              </Text>
             )}
           </View>
+        </View>
+      )}
+
+      {/* Action buttons for pending scheduled orders (not accepted, not rejected) */}
+      {isUpcoming && !isAccepted && !isRejected && (
+        <View style={styles.actionButtonsRow}>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.acceptButton]}
+            onPress={() => onAccept?.(item)}
+            disabled={isLoading}
+            activeOpacity={0.7}
+          >
+            {isLoading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={18}
+                  color="#fff"
+                />
+                <Text style={styles.actionButtonText}>Accept</Text>
+              </>
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.declineButton]}
+            onPress={() => onDecline?.(item)}
+            disabled={isLoading}
+            activeOpacity={0.7}
+          >
+            {isLoading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="close-circle-outline" size={18} color="#fff" />
+                <Text style={styles.actionButtonText}>Decline</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Accepted badge for scheduled orders */}
+      {isUpcoming && isAccepted && (
+        <View style={styles.acceptedBadge}>
+          <Ionicons name="checkmark-circle" size={16} color="#16a34a" />
+          <Text style={styles.acceptedText}>
+            Accepted – will move when scheduled time arrives
+          </Text>
         </View>
       )}
     </TouchableOpacity>
   );
 };
+// ======================= END OF IMPROVED ORDER ITEM =======================
 
 /* ---------------- grouping & normalization ---------------- */
 const groupOrders = (rows = []) => {
   const byId = new Map();
   for (const r of rows) {
-    const id = r.order_id ?? r.id ?? 'UNKNOWN';
-    const g =
-      byId.get(id) ||
-      {
-        id,
-        created_at: null,
-        type: r.fulfillment_type || 'Pickup',
-        itemsArr: [],
-        raw_items: [],
-        business_name: r.business_name,
-        payment_method: r.payment_method,
-        status: normalizeStatusKey(r.status),
-        note_for_restaurant: null,
-        note_target: null,
-        delivery_address: '',
-
-        // totals components
-        items_total: 0,
-        platform_fee: null,
-        discount_amount: null,
-        delivery_fee: null,
-        merchant_delivery_fee: null,
-        total_amount: null,
-      };
-
+    const id = r.order_id ?? r.id ?? "UNKNOWN";
+    const g = byId.get(id) || {
+      id,
+      created_at: null,
+      type: r.fulfillment_type || "Pickup",
+      itemsArr: [],
+      raw_items: [],
+      business_name: r.business_name,
+      payment_method: r.payment_method,
+      status: normalizeStatusKey(r.status),
+      note_for_restaurant: null,
+      note_target: null,
+      delivery_address: "",
+      items_total: 0,
+      platform_fee: null,
+      discount_amount: null,
+      delivery_fee: null,
+      merchant_delivery_fee: null,
+      total_amount: null,
+    };
     if (r.status) g.status = normalizeStatusKey(r.status);
-
     const qty = getItemQty(r) || 1;
-    const nm = r.item_name || 'Item';
+    const nm = r.item_name || "Item";
     g.itemsArr.push(`${nm} ×${qty}`);
     g.raw_items.push({ item_name: nm, quantity: qty });
-
-    // items total
     g.items_total += getItemLineTotal(r);
-
-    // fee/totals (first non-null wins)
     const snap = getTotalsSnapshot(r);
-    if (g.platform_fee == null && snap.platform_fee != null) g.platform_fee = snap.platform_fee;
-    if (g.discount_amount == null && snap.discount_amount != null) g.discount_amount = snap.discount_amount;
-    if (g.delivery_fee == null && snap.delivery_fee != null) g.delivery_fee = snap.delivery_fee;
-    if (g.merchant_delivery_fee == null && snap.merchant_delivery_fee != null) g.merchant_delivery_fee = snap.merchant_delivery_fee;
-    if (g.total_amount == null && snap.total_amount != null) g.total_amount = snap.total_amount;
-
-    const rowCreated = r.created_at || r.createdAt || r.placed_at || r.order_time || r.createdOn || null;
+    if (g.platform_fee == null && snap.platform_fee != null)
+      g.platform_fee = snap.platform_fee;
+    if (g.discount_amount == null && snap.discount_amount != null)
+      g.discount_amount = snap.discount_amount;
+    if (g.delivery_fee == null && snap.delivery_fee != null)
+      g.delivery_fee = snap.delivery_fee;
+    if (g.merchant_delivery_fee == null && snap.merchant_delivery_fee != null)
+      g.merchant_delivery_fee = snap.merchant_delivery_fee;
+    if (g.total_amount == null && snap.total_amount != null)
+      g.total_amount = snap.total_amount;
+    const rowCreated =
+      r.created_at ||
+      r.createdAt ||
+      r.placed_at ||
+      r.order_time ||
+      r.createdOn ||
+      null;
     const prev = g.created_at ? parseForSort(g.created_at) : 0;
     const cur = rowCreated ? parseForSort(rowCreated) : 0;
     if (!prev || (cur && cur < prev)) g.created_at = rowCreated || g.created_at;
-
-    if (r.fulfillment_type === 'Delivery') g.type = 'Delivery';
-    if (!g.delivery_address) g.delivery_address = pickAddress(r) || '';
-
-    if (!g.note_for_restaurant) {
-      g.note_for_restaurant = r.note_for_restaurant || r.restaurant_note || r.note_for_store || r.note || null;
-    }
-
-    const itemLevelNote = getItemNote(r) || '';
+    if (r.fulfillment_type === "Delivery") g.type = "Delivery";
+    if (!g.delivery_address) g.delivery_address = pickAddress(r) || "";
+    if (!g.note_for_restaurant)
+      g.note_for_restaurant =
+        r.note_for_restaurant ||
+        r.restaurant_note ||
+        r.note_for_store ||
+        r.note ||
+        null;
+    const itemLevelNote = getItemNote(r) || "";
     if (!g.note_target && itemLevelNote && String(itemLevelNote).trim()) {
-      g.note_target = r.item_name || 'Item';
+      g.note_target = r.item_name || "Item";
       if (!g.note_for_restaurant) g.note_for_restaurant = itemLevelNote;
     }
-
     byId.set(id, g);
   }
-
   const list = Array.from(byId.values()).map((g) => {
     const createdISO = g.created_at || null;
-
     const totals = {
       platform_fee: g.platform_fee,
       discount_amount: g.discount_amount ?? 0,
@@ -495,44 +712,44 @@ const groupOrders = (rows = []) => {
       merchant_delivery_fee: g.merchant_delivery_fee ?? 0,
       total_amount: g.total_amount,
     };
-
-    // ✅ total matches OrderDetails display total
     const total = computeDisplayTotal({
-      items: [{ subtotal: g.items_total }], // provide itemsTotal without needing full items list
+      items: [{ subtotal: g.items_total }],
       totals: { ...totals, total_amount: totals.total_amount ?? null },
     });
-
     return {
       id: String(g.id),
       type: g.type,
       time: showAsGiven(createdISO),
       created_at: createdISO,
-      items: g.itemsArr.join(', '),
+      items: g.itemsArr.join(", "),
       total,
       status: normalizeStatusKey(g.status),
       payment_method: g.payment_method,
       business_name: g.business_name,
       customer_id: null,
-      customer_name: '',
-      customer_email: '',
-      customer_phone: '',
+      customer_name: "",
+      customer_email: "",
+      customer_phone: "",
       raw_items: g.raw_items,
-      delivery_address: g.delivery_address || '',
-      note_for_restaurant: g.note_for_restaurant || '',
-      note_target: g.note_target || '',
+      delivery_address: g.delivery_address || "",
+      note_for_restaurant: g.note_for_restaurant || "",
+      note_target: g.note_target || "",
       priority: 0,
       discount_amount: Number(g.discount_amount ?? 0),
     };
   });
-
   return list
     .filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o.status)))
     .sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
 };
 
-const buildOrdersUrl = (base, businessId, { appendOwnerType = false, ownerType = 'mart' } = {}) => {
+const buildOrdersUrl = (
+  base,
+  businessId,
+  { appendOwnerType = false, ownerType = "mart" } = {},
+) => {
   if (!base || !businessId) return null;
-  const b = String(base).trim().replace(/\/+$/, '');
+  const b = String(base).trim().replace(/\/+$/, "");
   const id = encodeURIComponent(String(businessId));
   let replaced = b
     .replace(/\{\s*businessId\s*\}/g, id)
@@ -542,12 +759,12 @@ const buildOrdersUrl = (base, businessId, { appendOwnerType = false, ownerType =
   if (replaced === b) {
     if (/\/business$/i.test(b)) replaced = `${b}/${id}`;
     else if (!b.endsWith(`/${id}`)) {
-      const sep = b.includes('?') ? '&' : '?';
+      const sep = b.includes("?") ? "&" : "?";
       replaced = `${b}${sep}business_id=${id}`;
     }
   }
   if (appendOwnerType) {
-    const sep2 = replaced.includes('?') ? '&' : '?';
+    const sep2 = replaced.includes("?") ? "&" : "?";
     replaced = `${replaced}${sep2}owner_type=${encodeURIComponent(ownerType)}`;
   }
   return replaced;
@@ -555,9 +772,8 @@ const buildOrdersUrl = (base, businessId, { appendOwnerType = false, ownerType =
 
 const buildScheduledUrl = (base, businessId) => {
   if (!base || !businessId) return null;
-  const b = String(base).trim().replace(/\/+$/, '');
+  const b = String(base).trim().replace(/\/+$/, "");
   const id = encodeURIComponent(String(businessId));
-
   let replaced = b
     .replace(/\{\s*businessId\s*\}/gi, id)
     .replace(/\{\s*business_id\s*\}/gi, id)
@@ -565,11 +781,10 @@ const buildScheduledUrl = (base, businessId) => {
     .replace(/:businessId/gi, id)
     .replace(/:business_id/gi, id)
     .replace(/:business_Id/g, id);
-
   if (replaced === b) {
     if (/\/business$/i.test(b)) replaced = `${b}/${id}`;
     else if (!b.endsWith(`/${id}`)) {
-      const sep = b.includes('?') ? '&' : '?';
+      const sep = b.includes("?") ? "&" : "?";
       replaced = `${b}${sep}business_id=${id}`;
     }
   }
@@ -587,21 +802,19 @@ const parseJSON = async (res) => {
 
 const normalizeOrdersFromApi = (payload) => {
   try {
-    if (Array.isArray(payload)) {
-      return groupOrders(payload).filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o.status)));
-    }
-
+    if (Array.isArray(payload))
+      return groupOrders(payload).filter(
+        (o) => !HIDE_STATUSES.has(normalizeStatusKey(o.status)),
+      );
     const blocks = Array.isArray(payload?.data) ? payload.data : [];
     const list = [];
-
     for (const block of blocks) {
       const u = block?.user || {};
       const orders = Array.isArray(block?.orders) ? block.orders : [];
-
       for (const o of orders) {
-        const createdISO = o.created_at || o.createdAt || o.placed_at || o.order_time || null;
-
-        let noteTarget = '';
+        const createdISO =
+          o.created_at || o.createdAt || o.placed_at || o.order_time || null;
+        let noteTarget = "";
         if (Array.isArray(o.items)) {
           const withNote = o.items.find((it) =>
             (
@@ -611,35 +824,30 @@ const normalizeOrdersFromApi = (payload) => {
               it?.instructions ||
               it?.customization ||
               it?.item_note
-            )?.trim?.()
+            )?.trim?.(),
           );
-          if (withNote) noteTarget = withNote.item_name || withNote.name || '';
+          if (withNote) noteTarget = withNote.item_name || withNote.name || "";
         }
-
         const itemsArr = Array.isArray(o.items) ? o.items : [];
         const itemsStr = itemsArr
-          .map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`)
-          .join(', ');
-
+          .map((it) => `${it.item_name ?? "Item"} ×${Number(it.quantity ?? 1)}`)
+          .join(", ");
         const businessName =
           (o.items && o.items[0] && o.items[0].business_name) ||
           o.business_name ||
           o.business?.business_name ||
-          '';
-
+          "";
         const deliveryAddr = pickAddress(o);
-
         const snap = getTotalsSnapshot(o);
-
-        // ✅ total matches OrderDetails display total
-        const displayTotal = computeDisplayTotal({ items: itemsArr, totals: snap });
-
+        const displayTotal = computeDisplayTotal({
+          items: itemsArr,
+          totals: snap,
+        });
         const statusKey = normalizeStatusKey(o.status);
         if (HIDE_STATUSES.has(statusKey)) continue;
-
         list.push({
           id: String(o.order_id ?? o.id),
-          type: o.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
+          type: o.fulfillment_type === "Delivery" ? "Delivery" : "Pickup",
           time: showAsGiven(createdISO),
           created_at: createdISO,
           items: itemsStr,
@@ -647,20 +855,19 @@ const normalizeOrdersFromApi = (payload) => {
           status: statusKey,
           payment_method: o.payment_method,
           business_name: businessName,
-          delivery_address: deliveryAddr || '',
-          note_for_restaurant: o.note_for_restaurant || '',
+          delivery_address: deliveryAddr || "",
+          note_for_restaurant: o.note_for_restaurant || "",
           note_target: noteTarget,
           priority: Number(o.priority ?? 0),
           discount_amount: Number(snap.discount_amount ?? 0),
           raw_items: itemsArr,
           customer_id: u.user_id ?? null,
-          customer_name: u.name || '',
-          customer_email: u.email || '',
-          customer_phone: u.phone || '',
+          customer_name: u.name || "",
+          customer_email: u.email || "",
+          customer_phone: u.phone || "",
         });
       }
     }
-
     return list
       .filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o.status)))
       .sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
@@ -669,29 +876,28 @@ const normalizeOrdersFromApi = (payload) => {
   }
 };
 
-// ✅ UPDATED: uses scheduled_at_local / scheduled_at_utc from API and builds label "Scheduled • Jan 17, 12:30"
+// ✅ Updated to read status from order_payload – REJECTED now maps to SCHEDULED_REJECTED and includes rejection reason
 const normalizeScheduledForBiz = (payload, bizId) => {
   try {
     const rows = Array.isArray(payload?.data) ? payload.data : [];
     const list = [];
-
     for (const job of rows) {
       const payloadOrder = job.order_payload || {};
-      const allItems = Array.isArray(payloadOrder.items) ? payloadOrder.items : [];
+      const apiStatus = payloadOrder.status;
 
+      const allItems = Array.isArray(payloadOrder.items)
+        ? payloadOrder.items
+        : [];
       const itemsForBiz = bizId
         ? allItems.filter((it) => String(it.business_id) === String(bizId))
         : allItems;
-
       if (!itemsForBiz.length) continue;
 
       const itemsStr = itemsForBiz
-        .map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`)
-        .join(', ');
-
-      const businessName = itemsForBiz[0]?.business_name || '';
-
-      let noteTarget = '';
+        .map((it) => `${it.item_name ?? "Item"} ×${Number(it.quantity ?? 1)}`)
+        .join(", ");
+      const businessName = itemsForBiz[0]?.business_name || "";
+      let noteTarget = "";
       const withNote = itemsForBiz.find((it) =>
         (
           it?.note_for_restaurant ||
@@ -700,36 +906,33 @@ const normalizeScheduledForBiz = (payload, bizId) => {
           it?.instructions ||
           it?.customization ||
           it?.item_note
-        )?.trim?.()
+        )?.trim?.(),
       );
-      if (withNote) noteTarget = withNote.item_name || withNote.name || '';
+      if (withNote) noteTarget = withNote.item_name || withNote.name || "";
 
-      // ✅ prefer local schedule time (your API has scheduled_at_local)
       const scheduledLocal =
         job.scheduled_at_local ||
         payloadOrder.scheduled_at_local ||
         payloadOrder.scheduled_at ||
         null;
-
       const scheduledUtc =
         job.scheduled_at_utc ||
         payloadOrder.scheduled_at_utc ||
         job.scheduled_at ||
         null;
-
       const scheduledAt = scheduledLocal || scheduledUtc || null;
-
-      const pretty = scheduledAt ? showAsGiven(scheduledAt) : '';
+      const pretty = scheduledAt ? showAsGiven(scheduledAt) : "";
       const timeLabel =
         payloadOrder.scheduled_label ||
         payloadOrder.scheduled_time_label ||
         payloadOrder.scheduledTimeLabel ||
         payloadOrder.scheduled_at_label ||
-        (pretty ? `Scheduled • ${pretty}` : 'Scheduled');
+        (pretty ? `Scheduled • ${pretty}` : "Scheduled");
 
-      const customer_name = job.name || payloadOrder.customer_name || payloadOrder.name || '';
-      const customer_phone = payloadOrder.customer_phone || payloadOrder.phone || '';
-
+      const customer_name =
+        job.name || payloadOrder.customer_name || payloadOrder.name || "";
+      const customer_phone =
+        payloadOrder.customer_phone || payloadOrder.phone || "";
       const scheduledAddr =
         payloadOrder?.delivery_address?.address ||
         payloadOrder?.deliver_to?.address ||
@@ -737,45 +940,50 @@ const normalizeScheduledForBiz = (payload, bizId) => {
         payloadOrder?.deliver_to?.label ||
         payloadOrder?.deliver_to?.formatted ||
         payloadOrder?.deliver_to ||
-        '';
-
+        "";
       const snap = getTotalsSnapshot(payloadOrder);
-      const displayTotal = computeDisplayTotal({ items: itemsForBiz, totals: snap });
+      const displayTotal = computeDisplayTotal({
+        items: itemsForBiz,
+        totals: snap,
+      });
+
+      // Map API status to internal status
+      let orderStatus = "SCHEDULED";
+      if (apiStatus === "ACCEPTED") orderStatus = "SCHEDULED_ACCEPTED";
+      if (apiStatus === "REJECTED") orderStatus = "SCHEDULED_REJECTED";
 
       list.push({
         id: String(job.job_id || job.id),
-        type: payloadOrder.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
-
-        // used for sorting + fallback label
+        type:
+          payloadOrder.fulfillment_type === "Delivery" ? "Delivery" : "Pickup",
         created_at: scheduledAt,
-
-        // optional fields (handy for debugging)
         scheduled_at_local: scheduledLocal || null,
         scheduled_at_utc: scheduledUtc || null,
-
-        // ✅ card prints this
         time: timeLabel,
-
         items: itemsStr,
         total: displayTotal,
-        status: 'SCHEDULED',
+        status: orderStatus,
         payment_method: payloadOrder.payment_method,
         business_name: businessName,
-        delivery_address: String(scheduledAddr || ''),
-        note_for_restaurant: payloadOrder.note_for_restaurant || '',
+        delivery_address: String(scheduledAddr || ""),
+        note_for_restaurant: payloadOrder.note_for_restaurant || "",
         note_target: noteTarget,
         priority: payloadOrder.priority ? 1 : 0,
-        discount_amount: Number(snap.discount_amount ?? payloadOrder.discount_amount ?? 0),
+        discount_amount: Number(
+          snap.discount_amount ?? payloadOrder.discount_amount ?? 0,
+        ),
         raw_items: itemsForBiz,
         customer_id: job.user_id ?? payloadOrder.user_id ?? null,
         customer_name,
-        customer_email: '',
+        customer_email: "",
         customer_phone,
+        accepted_at: payloadOrder.accepted_at || null,
+        rejection_reason: payloadOrder.rejection_reason || null,
       });
     }
-
-    // scheduled orders: soonest first
-    return list.sort((a, b) => parseForSort(a.created_at) - parseForSort(b.created_at));
+    return list.sort(
+      (a, b) => parseForSort(a.created_at) - parseForSort(b.created_at),
+    );
   } catch {
     return [];
   }
@@ -789,48 +997,65 @@ export default function MartOrdersTab({
   businessId,
   orderEndpoint,
   appendOwnerType = true,
-  ownerType: ownerTypeProp = 'mart',
-  detailsRoute = 'OrderDetails',
+  ownerType: ownerTypeProp = "mart",
+  detailsRoute = "OrderDetails",
   delivery_option: deliveryOptionProp,
+  acceptScheduledEndpoint: propAcceptEndpoint, // optional override
+  rejectScheduledEndpoint: propRejectEndpoint, // optional override
+  onAcceptScheduled, // optional custom accept handler
+  onDeclineScheduled, // optional custom decline handler
 }) {
   const navigation = useNavigation();
   const route = useRoute();
 
-  const [bizId, setBizId] = useState(businessId || route?.params?.businessId || null);
-
-  const initialOwnerType = route?.params?.owner_type || route?.params?.ownerType || ownerTypeProp || 'mart';
+  const [bizId, setBizId] = useState(
+    businessId || route?.params?.businessId || null,
+  );
+  const initialOwnerType =
+    route?.params?.owner_type ||
+    route?.params?.ownerType ||
+    ownerTypeProp ||
+    "mart";
   const [ownerType, setOwnerType] = useState(String(initialOwnerType));
-
   const [deliveryOption, setDeliveryOption] = useState(
-    (route?.params?.delivery_option || route?.params?.deliveryOption || deliveryOptionProp || null)
-      ? String(route?.params?.delivery_option || route?.params?.deliveryOption || deliveryOptionProp).toUpperCase()
-      : null
+    route?.params?.delivery_option ||
+      route?.params?.deliveryOption ||
+      deliveryOptionProp ||
+      null
+      ? String(
+          route?.params?.delivery_option ||
+            route?.params?.deliveryOption ||
+            deliveryOptionProp,
+        ).toUpperCase()
+      : null,
   );
 
   const [loading, setLoading] = useState(false);
   const [orders, setOrders] = useState(
-    Array.isArray(ordersProp) ? ordersProp.filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status))) : []
+    Array.isArray(ordersProp)
+      ? ordersProp.filter(
+          (o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status)),
+        )
+      : [],
   );
   const [error, setError] = useState(null);
-
   const [scheduledOrders, setScheduledOrders] = useState([]);
   const [scheduledLoading, setScheduledLoading] = useState(false);
   const [scheduledError, setScheduledError] = useState(null);
-
   const [refreshing, setRefreshing] = useState(false);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState("");
   const [kbHeight, setKbHeight] = useState(0);
-
-  const [activeDateKey, setActiveDateKey] = useState(''); // All dates
+  const [activeDateKey, setActiveDateKey] = useState("");
   const [showDateDropdown, setShowDateDropdown] = useState(false);
-
   const [showCalendar, setShowCalendar] = useState(false);
   const [tempCalendarDate, setTempCalendarDate] = useState(new Date());
-
-  const [activeChip, setActiveChip] = useState('ALL');
+  const [activeChip, setActiveChip] = useState("ALL");
+  const [actionLoadingId, setActionLoadingId] = useState(null);
+  const [declineModalVisible, setDeclineModalVisible] = useState(false);
+  const [declineReasonInput, setDeclineReasonInput] = useState("");
+  const [pendingDeclineOrder, setPendingDeclineOrder] = useState(null);
 
   const abortRef = useRef(null);
-
   const today = useMemo(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -841,27 +1066,37 @@ export default function MartOrdersTab({
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
   }, []);
   const todayKey = useMemo(() => dateKeyFromDateObj(today), [today]);
-  const yesterdayKey = useMemo(() => dateKeyFromDateObj(yesterday), [yesterday]);
+  const yesterdayKey = useMemo(
+    () => dateKeyFromDateObj(yesterday),
+    [yesterday],
+  );
 
   const STATUS_LABELS = useMemo(() => {
-    const isMart = String(ownerType || '').toLowerCase() === 'mart';
-    // Completed is hidden from BASE_STATUS_LABELS already
-    return isMart ? BASE_STATUS_LABELS.filter((s) => s.key !== 'PREPARING') : BASE_STATUS_LABELS;
+    const isMart = String(ownerType || "").toLowerCase() === "mart";
+    return isMart
+      ? BASE_STATUS_LABELS.filter((s) => s.key !== "PREPARING")
+      : BASE_STATUS_LABELS;
   }, [ownerType]);
 
+  // Use environment variables as defaults
+  const acceptEndpoint = propAcceptEndpoint || ENV_ACCEPT_SCHEDULED;
+  const rejectEndpoint = propRejectEndpoint || ENV_REJECT_SCHEDULED;
+
   useEffect(() => {
-    const fromRoute = route?.params?.owner_type || route?.params?.ownerType || null;
-    if (fromRoute && String(fromRoute) !== String(ownerType)) setOwnerType(String(fromRoute));
+    const fromRoute =
+      route?.params?.owner_type || route?.params?.ownerType || null;
+    if (fromRoute && String(fromRoute) !== String(ownerType))
+      setOwnerType(String(fromRoute));
   }, [route, ownerType]);
 
   useEffect(() => {
     const showSub = Keyboard.addListener(
-      Platform.OS === 'android' ? 'keyboardDidShow' : 'keyboardWillShow',
-      (e) => setKbHeight(e.endCoordinates?.height || 0)
+      Platform.OS === "android" ? "keyboardDidShow" : "keyboardWillShow",
+      (e) => setKbHeight(e.endCoordinates?.height || 0),
     );
     const hideSub = Keyboard.addListener(
-      Platform.OS === 'android' ? 'keyboardDidHide' : 'keyboardWillHide',
-      () => setKbHeight(0)
+      Platform.OS === "android" ? "keyboardDidHide" : "keyboardWillHide",
+      () => setKbHeight(0),
     );
     return () => {
       showSub.remove();
@@ -875,35 +1110,43 @@ export default function MartOrdersTab({
       (async () => {
         if (!bizId) {
           try {
-            const blob = await SecureStore.getItemAsync('business_details');
+            const blob = await SecureStore.getItemAsync("business_details");
             let id = null;
             if (blob) {
               try {
                 const parsed = JSON.parse(blob);
                 id = parsed?.business_id ?? parsed?.id ?? null;
-
-                if (!deliveryOption && parsed?.delivery_option) {
-                  setDeliveryOption(String(parsed.delivery_option).toUpperCase());
-                }
-
-                if (!ownerType && parsed?.owner_type) setOwnerType(String(parsed.owner_type));
+                if (!deliveryOption && parsed?.delivery_option)
+                  setDeliveryOption(
+                    String(parsed.delivery_option).toUpperCase(),
+                  );
+                if (!ownerType && parsed?.owner_type)
+                  setOwnerType(String(parsed.owner_type));
               } catch {}
             }
             if (!id) {
-              const single = await SecureStore.getItemAsync('business_id');
+              const single = await SecureStore.getItemAsync("business_id");
               if (single) id = Number(single);
             }
             if (alive && id) setBizId(id);
           } catch {}
         }
         try {
-          const raw = await SecureStore.getItemAsync('merchant_login');
+          const raw = await SecureStore.getItemAsync("merchant_login");
           if (raw) {
             const parsed = JSON.parse(raw);
-            const opt = parsed?.delivery_option || parsed?.user?.delivery_option || parsed?.user?.deliveryOption || null;
-            const oType = parsed?.owner_type || parsed?.user?.owner_type || parsed?.user?.ownerType || null;
-
-            if (opt && alive && !deliveryOption) setDeliveryOption(String(opt).toUpperCase());
+            const opt =
+              parsed?.delivery_option ||
+              parsed?.user?.delivery_option ||
+              parsed?.user?.deliveryOption ||
+              null;
+            const oType =
+              parsed?.owner_type ||
+              parsed?.user?.owner_type ||
+              parsed?.user?.ownerType ||
+              null;
+            if (opt && alive && !deliveryOption)
+              setDeliveryOption(String(opt).toUpperCase());
             if (oType && alive && !ownerType) setOwnerType(String(oType));
           }
         } catch {}
@@ -911,28 +1154,27 @@ export default function MartOrdersTab({
       return () => {
         alive = false;
       };
-    }, [bizId, deliveryOption, ownerType])
+    }, [bizId, deliveryOption, ownerType]),
   );
 
   const buildUrl = useCallback(() => {
-    const base = (orderEndpoint ?? ENV_ORDER_ENDPOINT) || '';
+    const base = (orderEndpoint ?? ENV_ORDER_ENDPOINT) || "";
     return buildOrdersUrl(base, bizId, { appendOwnerType, ownerType });
   }, [bizId, orderEndpoint, appendOwnerType, ownerType]);
-
   const buildScheduledApiUrl = useCallback(() => {
-    const base = ENV_SCHEDULED_ORDER_ENDPOINT || '';
+    const base = ENV_SCHEDULED_ORDER_ENDPOINT || "";
     return buildScheduledUrl(base, bizId);
   }, [bizId]);
 
   const fetchOrders = useCallback(
     async (opts = { silent: false }) => {
       if (!bizId) {
-        setError('Missing businessId');
+        setError("Missing businessId");
         return;
       }
       const url = buildUrl();
       if (!url) {
-        setError('Invalid ORDER_ENDPOINT or businessId');
+        setError("Invalid ORDER_ENDPOINT or businessId");
         return;
       }
       if (!opts.silent) setLoading(true);
@@ -941,117 +1183,122 @@ export default function MartOrdersTab({
         abortRef.current?.abort?.();
         const controller = new AbortController();
         abortRef.current = controller;
-
-        const token = await SecureStore.getItemAsync('auth_token');
-        const headers = { Accept: 'application/json' };
+        const token = await SecureStore.getItemAsync("auth_token");
+        const headers = { Accept: "application/json" };
         if (token) headers.Authorization = `Bearer ${token}`;
-
         const res = await fetch(url, { headers, signal: controller.signal });
         if (!res.ok) {
           const json = await parseJSON(res);
-          const msg = (json && (json.message || json.error)) || `HTTP ${res.status}`;
+          const msg =
+            (json && (json.message || json.error)) || `HTTP ${res.status}`;
           throw new Error(msg);
         }
         const json = await parseJSON(res);
-        const list = normalizeOrdersFromApi(json).filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status)));
+        const list = normalizeOrdersFromApi(json).filter(
+          (o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status)),
+        );
         setOrders(list);
       } catch (e) {
-        setError(String(e?.message || e) || 'Failed to load orders');
+        setError(String(e?.message || e) || "Failed to load orders");
       } finally {
         if (!opts.silent) setLoading(false);
       }
     },
-    [bizId, buildUrl]
+    [bizId, buildUrl],
   );
 
   const fetchScheduledOrders = useCallback(
     async (opts = { silent: false }) => {
       if (!bizId) {
-        setScheduledError('Missing businessId for scheduled orders');
+        setScheduledError("Missing businessId for scheduled orders");
         return;
       }
       const url = buildScheduledApiUrl();
       if (!url) {
-        setScheduledError('Invalid SCHEDULED_ORDER_ENDPOINT or businessId');
+        setScheduledError("Invalid SCHEDULED_ORDER_ENDPOINT or businessId");
         return;
       }
       if (!opts.silent) setScheduledLoading(true);
       setScheduledError(null);
       try {
-        const token = await SecureStore.getItemAsync('auth_token');
-        const headers = { Accept: 'application/json' };
+        const token = await SecureStore.getItemAsync("auth_token");
+        const headers = { Accept: "application/json" };
         if (token) headers.Authorization = `Bearer ${token}`;
-
         const res = await fetch(url, { headers });
         if (!res.ok) {
           const json = await parseJSON(res);
-          const msg = (json && (json.message || json.error)) || `HTTP ${res.status}`;
+          const msg =
+            (json && (json.message || json.error)) || `HTTP ${res.status}`;
           throw new Error(msg);
         }
         const json = await parseJSON(res);
         const list = normalizeScheduledForBiz(json, bizId);
         setScheduledOrders(list);
       } catch (e) {
-        setScheduledError(String(e?.message || e) || 'Failed to load scheduled orders');
+        setScheduledError(
+          String(e?.message || e) || "Failed to load scheduled orders",
+        );
       } finally {
         if (!opts.silent) setScheduledLoading(false);
       }
     },
-    [bizId, buildScheduledApiUrl]
+    [bizId, buildScheduledApiUrl],
   );
 
-  // Initial fetch
   useEffect(() => {
-    if (ordersProp && ordersProp.length) {
-      setOrders(ordersProp.filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status))));
-    } else {
-      fetchOrders();
-    }
+    if (ordersProp && ordersProp.length)
+      setOrders(
+        ordersProp.filter(
+          (o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status)),
+        ),
+      );
+    else fetchOrders();
   }, [ordersProp, fetchOrders]);
-
-  // Prefetch upcoming so count shows quickly
   useEffect(() => {
     if (bizId) fetchScheduledOrders({ silent: true });
   }, [bizId, fetchScheduledOrders]);
-
-  // If user switches to Upcoming and nothing yet, refetch
   useEffect(() => {
-    if (activeChip === 'UPCOMING' && scheduledOrders.length === 0 && bizId) fetchScheduledOrders();
+    if (activeChip === "UPCOMING" && scheduledOrders.length === 0 && bizId)
+      fetchScheduledOrders();
   }, [activeChip, scheduledOrders.length, bizId, fetchScheduledOrders]);
 
-  // ✅ IMPORTANT: auto-normalize status patches so ON ROAD becomes OUT_FOR_DELIVERY immediately
-  // ✅ ALSO: if it becomes DELIVERED/COMPLETED -> remove from list instantly
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('order-updated', ({ id, patch }) => {
-      const nextStatus = patch?.status ? normalizeStatusKey(patch.status) : null;
-
-      // remove delivered/completed immediately
-      if (nextStatus && HIDE_STATUSES.has(nextStatus)) {
-        setOrders((prev) => prev.filter((o) => String(o.id) !== String(id)));
-        return;
-      }
-
-      const fixedPatch = {
-        ...patch,
-        ...(nextStatus ? { status: nextStatus } : null),
-      };
-
-      setOrders((prev) =>
-        prev.map((o) => (String(o.id) === String(id) ? { ...o, ...fixedPatch } : o))
-      );
-    });
+    const sub = DeviceEventEmitter.addListener(
+      "order-updated",
+      ({ id, patch }) => {
+        const nextStatus = patch?.status
+          ? normalizeStatusKey(patch.status)
+          : null;
+        if (nextStatus && HIDE_STATUSES.has(nextStatus)) {
+          setOrders((prev) => prev.filter((o) => String(o.id) !== String(id)));
+          return;
+        }
+        const fixedPatch = {
+          ...patch,
+          ...(nextStatus ? { status: nextStatus } : null),
+        };
+        setOrders((prev) =>
+          prev.map((o) =>
+            String(o.id) === String(id) ? { ...o, ...fixedPatch } : o,
+          ),
+        );
+      },
+    );
     return () => sub.remove();
   }, []);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener('order-placed', (payload) => {
+    const sub = DeviceEventEmitter.addListener("order-placed", (payload) => {
       try {
         const o = payload?.order;
         if (!o) return;
         const createdISO =
-          o.created_at || o.createdAt || o.placed_at || o.order_time || new Date().toISOString();
-
-        let liveNoteTarget = '';
+          o.created_at ||
+          o.createdAt ||
+          o.placed_at ||
+          o.order_time ||
+          new Date().toISOString();
+        let liveNoteTarget = "";
         if (Array.isArray(o.items)) {
           const withNote = o.items.find((it) =>
             (
@@ -1061,51 +1308,57 @@ export default function MartOrdersTab({
               it?.instructions ||
               it?.customization ||
               it?.item_note
-            )?.trim?.()
+            )?.trim?.(),
           );
-          if (withNote) liveNoteTarget = withNote.item_name || withNote.name || '';
+          if (withNote)
+            liveNoteTarget = withNote.item_name || withNote.name || "";
         }
-
         const itemsArr = Array.isArray(o.items) ? o.items : [];
         const snap = getTotalsSnapshot(o);
-        const displayTotal = computeDisplayTotal({ items: itemsArr, totals: snap });
-
-        const normalizedStatus = normalizeStatusKey(o.status || 'PENDING');
+        const displayTotal = computeDisplayTotal({
+          items: itemsArr,
+          totals: snap,
+        });
+        const normalizedStatus = normalizeStatusKey(o.status || "PENDING");
         if (HIDE_STATUSES.has(normalizedStatus)) return;
-
         const normalized = {
           id: String(o.order_id || o.id),
-          type: o.fulfillment_type === 'Delivery' ? 'Delivery' : 'Pickup',
+          type: o.fulfillment_type === "Delivery" ? "Delivery" : "Pickup",
           created_at: createdISO,
           time: showAsGiven(createdISO),
           items: (itemsArr || [])
-            .map((it) => `${it.item_name ?? 'Item'} ×${Number(it.quantity ?? 1)}`)
-            .join(', '),
+            .map(
+              (it) => `${it.item_name ?? "Item"} ×${Number(it.quantity ?? 1)}`,
+            )
+            .join(", "),
           total: displayTotal,
           status: normalizedStatus,
-          payment_method: o.payment_method || 'COD',
+          payment_method: o.payment_method || "COD",
           business_name:
             (itemsArr && itemsArr[0] && itemsArr[0].business_name) ||
             o.business_name ||
             o.business?.business_name ||
-            'Mart',
+            "Mart",
           customer_id: o.user?.user_id ?? null,
-          customer_name: o.user?.name || '',
-          customer_email: o.user?.email || '',
-          customer_phone: o.user?.phone || '',
+          customer_name: o.user?.name || "",
+          customer_email: o.user?.email || "",
+          customer_phone: o.user?.phone || "",
           raw_items: itemsArr,
-          delivery_address: pickAddress(o) || '',
-          note_for_restaurant: o.note_for_restaurant || '',
+          delivery_address: pickAddress(o) || "",
+          note_for_restaurant: o.note_for_restaurant || "",
           note_target: liveNoteTarget,
           priority: Number(o.priority ?? 0),
           discount_amount: Number(snap.discount_amount ?? 0),
         };
-
         setOrders((prev) => {
-          const without = prev.filter((x) => String(x.id) !== String(normalized.id));
+          const without = prev.filter(
+            (x) => String(x.id) !== String(normalized.id),
+          );
           return [normalized, ...without]
             .filter((x) => !HIDE_STATUSES.has(normalizeStatusKey(x?.status)))
-            .sort((a, b) => parseForSort(b.created_at) - parseForSort(a.created_at));
+            .sort(
+              (a, b) => parseForSort(b.created_at) - parseForSort(a.created_at),
+            );
         });
       } catch {}
     });
@@ -1115,7 +1368,8 @@ export default function MartOrdersTab({
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      if (activeChip === 'UPCOMING') await fetchScheduledOrders({ silent: true });
+      if (activeChip === "UPCOMING")
+        await fetchScheduledOrders({ silent: true });
       else await fetchOrders({ silent: true });
     } finally {
       setRefreshing(false);
@@ -1125,58 +1379,45 @@ export default function MartOrdersTab({
   const openOrder = useCallback(
     (o) => {
       Keyboard.dismiss();
-      try {
-        const state = navigation.getState?.();
-        const routeExists = !!state?.routeNames?.includes?.(detailsRoute);
-        if (!routeExists) {
-          Alert.alert('Order screen not found', `No screen named "${detailsRoute}". Please register it in your navigator.`);
-          return;
-        }
-      } catch {}
       navigation.navigate(detailsRoute, {
         orderId: o.id,
         businessId: bizId,
         order: o,
         ownerType,
         delivery_option: deliveryOption,
-        isScheduled: normalizeStatusKey(o.status) === 'SCHEDULED',
+        isScheduled: normalizeStatusKey(o.status) === "SCHEDULED",
       });
     },
-    [navigation, bizId, detailsRoute, ownerType, deliveryOption]
+    [navigation, bizId, detailsRoute, ownerType, deliveryOption],
   );
 
-  /* -------- date filter (All / Today / Yesterday / calendar) -------- */
   const dateFilteredOrders = useMemo(() => {
     if (!activeDateKey) return orders;
     return orders.filter((o) => {
-      const key = dateKeyFromTs(o.created_at || o.time || '');
+      const key = dateKeyFromTs(o.created_at || o.time || "");
       return key === activeDateKey;
     });
   }, [orders, activeDateKey]);
-
-  // ✅ counts use normalized status so ON ROAD counts under OUT_FOR_DELIVERY
-  const statusCounts = useMemo(() => {
-    return dateFilteredOrders.reduce((acc, o) => {
-      const k = normalizeStatusKey(o.status);
-      acc[k] = (acc[k] || 0) + 1;
-      return acc;
-    }, {});
-  }, [dateFilteredOrders]);
-
+  const statusCounts = useMemo(
+    () =>
+      dateFilteredOrders.reduce((acc, o) => {
+        const k = normalizeStatusKey(o.status);
+        acc[k] = (acc[k] || 0) + 1;
+        return acc;
+      }, {}),
+    [dateFilteredOrders],
+  );
   const upcomingCount = scheduledOrders.length;
   const totalCount = dateFilteredOrders.length;
 
   const filtered = useMemo(() => {
-    const source = activeChip === 'UPCOMING' ? scheduledOrders : dateFilteredOrders;
+    const source =
+      activeChip === "UPCOMING" ? scheduledOrders : dateFilteredOrders;
     let base = source;
-
-    if (activeChip !== 'ALL' && activeChip !== 'UPCOMING') {
-      const statusKey = activeChip;
-      base = base.filter((o) => normalizeStatusKey(o.status) === statusKey);
-    }
-
-    const q = activeChip === 'UPCOMING' ? '' : query.trim().toLowerCase();
-    if (q) {
+    if (activeChip !== "ALL" && activeChip !== "UPCOMING")
+      base = base.filter((o) => normalizeStatusKey(o.status) === activeChip);
+    const q = activeChip === "UPCOMING" ? "" : query.trim().toLowerCase();
+    if (q)
       base = base.filter((o) => {
         const hay = [
           o.id,
@@ -1194,53 +1435,206 @@ export default function MartOrdersTab({
           o.delivery_address,
         ]
           .filter(Boolean)
-          .join(' ')
+          .join(" ")
           .toLowerCase();
         return hay.includes(q);
       });
-    }
-
-    // extra safety: never show completed
-    return base.filter((o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status)));
+    return base.filter(
+      (o) => !HIDE_STATUSES.has(normalizeStatusKey(o?.status)),
+    );
   }, [dateFilteredOrders, scheduledOrders, query, activeChip]);
 
+  const handleAccept = useCallback(
+    async (order) => {
+      Alert.alert(
+        "Accept Scheduled Order",
+        `Do you want to accept order ${order.id}? It will stay in Upcoming until its scheduled time.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Accept",
+            style: "default",
+            onPress: async () => {
+              setActionLoadingId(order.id);
+              try {
+                if (onAcceptScheduled) {
+                  await onAcceptScheduled(order.id, order);
+                } else {
+                  if (!acceptEndpoint)
+                    throw new Error("Accept endpoint not configured");
+                  let url = acceptEndpoint.replace(
+                    "{jobId}",
+                    encodeURIComponent(String(order.id)),
+                  );
+                  if (!url.startsWith("http")) {
+                    throw new Error(`Accept URL is not absolute: ${url}`);
+                  }
+                  console.log("[Accept] URL:", url);
+                  const token = await SecureStore.getItemAsync("auth_token");
+                  const res = await fetch(url, {
+                    method: "PATCH",
+                    headers: {
+                      "Content-Type": "application/json",
+                      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                    },
+                    body: JSON.stringify({ status: "ACCEPTED" }),
+                  });
+                  if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(`Failed to accept: ${res.status} ${text}`);
+                  }
+                }
+                // Optimistic UI update
+                setScheduledOrders((prev) =>
+                  prev.map((o) =>
+                    o.id === order.id
+                      ? { ...o, status: "SCHEDULED_ACCEPTED" }
+                      : o,
+                  ),
+                );
+                Alert.alert(
+                  "Accepted",
+                  `Order ${order.id} will be processed at its scheduled time.`,
+                );
+              } catch (err) {
+                Alert.alert("Error", err.message || "Could not accept order");
+              } finally {
+                setActionLoadingId(null);
+              }
+            },
+          },
+        ],
+        { cancelable: true },
+      );
+    },
+    [acceptEndpoint, onAcceptScheduled],
+  );
+
+  const openDeclineModal = useCallback((order) => {
+    setPendingDeclineOrder(order);
+    setDeclineReasonInput("");
+    setDeclineModalVisible(true);
+  }, []);
+
+  const confirmDecline = useCallback(async () => {
+    if (!pendingDeclineOrder) return;
+    const reason = declineReasonInput.trim() || "Item not available";
+    setActionLoadingId(pendingDeclineOrder.id);
+    setDeclineModalVisible(false);
+    try {
+      if (onDeclineScheduled) {
+        await onDeclineScheduled(
+          pendingDeclineOrder.id,
+          pendingDeclineOrder,
+          reason,
+        );
+      } else {
+        if (!rejectEndpoint) throw new Error("Reject endpoint not configured");
+        let url = rejectEndpoint.replace(
+          "{jobId}",
+          encodeURIComponent(String(pendingDeclineOrder.id)),
+        );
+        if (!url.startsWith("http")) {
+          throw new Error(`Reject URL is not absolute: ${url}`);
+        }
+        console.log("[Reject] URL:", url);
+        const token = await SecureStore.getItemAsync("auth_token");
+        const res = await fetch(url, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ status: "REJECTED", reason }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Failed to reject: ${res.status} ${text}`);
+        }
+      }
+      // Optimistic remove – but the API will now return REJECTED status, so on refresh it will appear as rejected
+      setScheduledOrders((prev) =>
+        prev.filter((o) => o.id !== pendingDeclineOrder.id),
+      );
+      Alert.alert(
+        "Declined",
+        `Order ${pendingDeclineOrder.id} has been declined.\nReason: ${reason}`,
+      );
+    } catch (err) {
+      Alert.alert("Error", err.message || "Could not decline order");
+    } finally {
+      setActionLoadingId(null);
+      setPendingDeclineOrder(null);
+    }
+  }, [
+    pendingDeclineOrder,
+    declineReasonInput,
+    rejectEndpoint,
+    onDeclineScheduled,
+  ]);
+
   const renderItem = useCallback(
-    ({ item }) => <OrderItem isTablet={isTablet} money={money} item={item} onPress={openOrder} />,
-    [isTablet, money, openOrder]
+    ({ item }) => (
+      <OrderItem
+        isTablet={isTablet}
+        money={money}
+        item={item}
+        onPress={openOrder}
+        isUpcoming={activeChip === "UPCOMING"}
+        onAccept={handleAccept}
+        onDecline={openDeclineModal}
+        actionLoadingId={actionLoadingId}
+      />
+    ),
+    [
+      isTablet,
+      money,
+      openOrder,
+      activeChip,
+      handleAccept,
+      openDeclineModal,
+      actionLoadingId,
+    ],
   );
 
   const content = useMemo(() => {
-    const isUpcoming = activeChip === 'UPCOMING';
+    const isUpcoming = activeChip === "UPCOMING";
     const effectiveOrders = isUpcoming ? scheduledOrders : dateFilteredOrders;
     const isLoading = isUpcoming ? scheduledLoading : loading;
     const err = isUpcoming ? scheduledError : error;
-
-    if (isLoading && effectiveOrders.length === 0) {
+    if (isLoading && effectiveOrders.length === 0)
       return (
-        <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+        <View style={{ paddingVertical: 24, alignItems: "center" }}>
           <ActivityIndicator />
-          <Text style={{ marginTop: 8, color: '#6b7280' }}>Loading orders…</Text>
+          <Text style={{ marginTop: 8, color: "#6b7280" }}>
+            Loading orders…
+          </Text>
         </View>
       );
-    }
-    if (err && effectiveOrders.length === 0) {
+    if (err && effectiveOrders.length === 0)
       return (
-        <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+        <View style={{ paddingVertical: 24, alignItems: "center" }}>
           <Ionicons name="alert-circle-outline" size={24} color="#b91c1c" />
-          <Text style={{ color: '#b91c1c', fontWeight: '700', marginTop: 6 }}>Failed to load</Text>
-          <Text style={{ color: '#6b7280', marginTop: 4, textAlign: 'center' }}>{err}</Text>
+          <Text style={{ color: "#b91c1c", fontWeight: "700", marginTop: 6 }}>
+            Failed to load
+          </Text>
+          <Text style={{ color: "#6b7280", marginTop: 4, textAlign: "center" }}>
+            {err}
+          </Text>
         </View>
       );
-    }
-    if (!isLoading && filtered.length === 0) {
+    if (!isLoading && filtered.length === 0)
       return (
-        <View style={{ paddingVertical: 36, alignItems: 'center' }}>
+        <View style={{ paddingVertical: 36, alignItems: "center" }}>
           <Ionicons name="file-tray-outline" size={36} color="#94a3b8" />
-          <Text style={{ color: '#334155', fontWeight: '800', marginTop: 8 }}>No orders</Text>
-          <Text style={{ color: '#64748b', marginTop: 4 }}>Pull down to refresh or change filters.</Text>
+          <Text style={{ color: "#334155", fontWeight: "800", marginTop: 8 }}>
+            No orders
+          </Text>
+          <Text style={{ color: "#64748b", marginTop: 4 }}>
+            Pull down to refresh or change filters.
+          </Text>
         </View>
       );
-    }
     return (
       <FlatList
         contentContainerStyle={{ paddingBottom: 24 + kbHeight }}
@@ -1248,7 +1642,9 @@ export default function MartOrdersTab({
         keyExtractor={(item) => String(item.id)}
         renderItem={renderItem}
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="always"
         removeClippedSubviews={false}
@@ -1270,10 +1666,9 @@ export default function MartOrdersTab({
   ]);
 
   const currentDateLabel = useMemo(() => {
-    if (!activeDateKey) return 'All dates';
+    if (!activeDateKey) return "All dates";
     return labelForDateKey(activeDateKey, todayKey, yesterdayKey);
   }, [activeDateKey, todayKey, yesterdayKey]);
-
   const applyCalendarDate = useCallback(() => {
     const key = dateKeyFromDateObj(tempCalendarDate);
     setActiveDateKey(key);
@@ -1282,42 +1677,91 @@ export default function MartOrdersTab({
   }, [tempCalendarDate]);
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} pointerEvents="box-none">
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      pointerEvents="box-none"
+    >
       <View style={{ flex: 1, paddingHorizontal: 16 }} pointerEvents="box-none">
-        {/* Status Tabs */}
-        <View style={{ marginTop: 12, marginBottom: 8 }} pointerEvents="box-none">
+        <View
+          style={{ marginTop: 12, marginBottom: 8 }}
+          pointerEvents="box-none"
+        >
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ alignItems: 'center', paddingVertical: 8, gap: 8 }}
+            contentContainerStyle={{
+              alignItems: "center",
+              paddingVertical: 8,
+              gap: 8,
+            }}
           >
-            {/* All chip */}
             <TouchableOpacity
-              onPress={() => setActiveChip('ALL')}
-              style={[styles.statusChip, activeChip === 'ALL' && styles.statusChipActive]}
+              onPress={() => setActiveChip("ALL")}
+              style={[
+                styles.statusChip,
+                activeChip === "ALL" && styles.statusChipActive,
+              ]}
               activeOpacity={0.7}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text style={[styles.statusChipText, activeChip === 'ALL' && styles.statusChipTextActive]}>All</Text>
-              <View style={[styles.badge, activeChip === 'ALL' && styles.badgeActive]}>
-                <Text style={[styles.badgeText, activeChip === 'ALL' && styles.badgeTextActive]}>{totalCount}</Text>
+              <Text
+                style={[
+                  styles.statusChipText,
+                  activeChip === "ALL" && styles.statusChipTextActive,
+                ]}
+              >
+                All
+              </Text>
+              <View
+                style={[
+                  styles.badge,
+                  activeChip === "ALL" && styles.badgeActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.badgeText,
+                    activeChip === "ALL" && styles.badgeTextActive,
+                  ]}
+                >
+                  {totalCount}
+                </Text>
               </View>
             </TouchableOpacity>
-
-            {/* Upcoming chip */}
             <TouchableOpacity
-              onPress={() => setActiveChip('UPCOMING')}
-              style={[styles.statusChip, activeChip === 'UPCOMING' && styles.statusChipActive]}
+              onPress={() => setActiveChip("UPCOMING")}
+              style={[
+                styles.statusChip,
+                activeChip === "UPCOMING" && styles.statusChipActive,
+              ]}
               activeOpacity={0.7}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text style={[styles.statusChipText, activeChip === 'UPCOMING' && styles.statusChipTextActive]}>Upcoming</Text>
-              <View style={[styles.badge, activeChip === 'UPCOMING' && styles.badgeActive]}>
-                <Text style={[styles.badgeText, activeChip === 'UPCOMING' && styles.badgeTextActive]}>{upcomingCount}</Text>
+              <Text
+                style={[
+                  styles.statusChipText,
+                  activeChip === "UPCOMING" && styles.statusChipTextActive,
+                ]}
+              >
+                Upcoming
+              </Text>
+              <View
+                style={[
+                  styles.badge,
+                  activeChip === "UPCOMING" && styles.badgeActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.badgeText,
+                    activeChip === "UPCOMING" && styles.badgeTextActive,
+                  ]}
+                >
+                  {upcomingCount}
+                </Text>
               </View>
             </TouchableOpacity>
-
-            {/* Status chips */}
             {STATUS_LABELS.map((s) => {
               const active = activeChip === s.key;
               const count = statusCounts[s.key] || 0;
@@ -1329,10 +1773,24 @@ export default function MartOrdersTab({
                   activeOpacity={0.7}
                   hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
                 >
-                  <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>{s.label}</Text>
+                  <Text
+                    style={[
+                      styles.statusChipText,
+                      active && styles.statusChipTextActive,
+                    ]}
+                  >
+                    {s.label}
+                  </Text>
                   {count > 0 ? (
                     <View style={[styles.badge, active && styles.badgeActive]}>
-                      <Text style={[styles.badgeText, active && styles.badgeTextActive]}>{count}</Text>
+                      <Text
+                        style={[
+                          styles.badgeText,
+                          active && styles.badgeTextActive,
+                        ]}
+                      >
+                        {count}
+                      </Text>
                     </View>
                   ) : null}
                 </TouchableOpacity>
@@ -1341,8 +1799,7 @@ export default function MartOrdersTab({
           </ScrollView>
         </View>
 
-        {/* Search + Date dropdown (hidden for Upcoming) */}
-        {activeChip !== 'UPCOMING' && (
+        {activeChip !== "UPCOMING" && (
           <>
             <View style={styles.searchRow} pointerEvents="auto">
               <View style={[styles.searchWrap, { flex: 1 }]}>
@@ -1359,7 +1816,7 @@ export default function MartOrdersTab({
                 />
                 {query ? (
                   <TouchableOpacity
-                    onPress={() => setQuery('')}
+                    onPress={() => setQuery("")}
                     style={styles.clearBtn}
                     activeOpacity={0.7}
                     hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -1369,8 +1826,6 @@ export default function MartOrdersTab({
                 ) : null}
               </View>
             </View>
-
-            {/* Date dropdown */}
             <View style={styles.dateRow}>
               <Text style={styles.dateRowLabel}>Filter by date</Text>
               <TouchableOpacity
@@ -1382,7 +1837,9 @@ export default function MartOrdersTab({
                 }}
                 activeOpacity={0.7}
               >
-                <Text style={styles.dateDropdownText} numberOfLines={1}>{currentDateLabel}</Text>
+                <Text style={styles.dateDropdownText} numberOfLines={1}>
+                  {currentDateLabel}
+                </Text>
                 <Ionicons name="chevron-down" size={16} color="#0f172a" />
               </TouchableOpacity>
             </View>
@@ -1391,7 +1848,6 @@ export default function MartOrdersTab({
 
         {content}
 
-        {/* Date dropdown modal */}
         <Modal
           visible={showDateDropdown}
           transparent
@@ -1409,60 +1865,96 @@ export default function MartOrdersTab({
                 setShowDateDropdown(false);
               }}
             />
-
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>Select date</Text>
-
               <ScrollView style={{ maxHeight: 260 }}>
                 <TouchableOpacity
-                  style={[styles.modalOption, activeDateKey === '' && styles.modalOptionActive]}
+                  style={[
+                    styles.modalOption,
+                    activeDateKey === "" && styles.modalOptionActive,
+                  ]}
                   onPress={() => {
-                    setActiveDateKey('');
+                    setActiveDateKey("");
                     setShowCalendar(false);
                     setShowDateDropdown(false);
                   }}
                 >
-                  <Text style={[styles.modalOptionText, activeDateKey === '' && styles.modalOptionTextActive]}>All dates</Text>
+                  <Text
+                    style={[
+                      styles.modalOptionText,
+                      activeDateKey === "" && styles.modalOptionTextActive,
+                    ]}
+                  >
+                    All dates
+                  </Text>
                 </TouchableOpacity>
-
                 <TouchableOpacity
-                  style={[styles.modalOption, activeDateKey === todayKey && styles.modalOptionActive]}
+                  style={[
+                    styles.modalOption,
+                    activeDateKey === todayKey && styles.modalOptionActive,
+                  ]}
                   onPress={() => {
                     setActiveDateKey(todayKey);
                     setShowCalendar(false);
                     setShowDateDropdown(false);
                   }}
                 >
-                  <Text style={[styles.modalOptionText, activeDateKey === todayKey && styles.modalOptionTextActive]}>Today</Text>
+                  <Text
+                    style={[
+                      styles.modalOptionText,
+                      activeDateKey === todayKey &&
+                        styles.modalOptionTextActive,
+                    ]}
+                  >
+                    Today
+                  </Text>
                 </TouchableOpacity>
-
                 <TouchableOpacity
-                  style={[styles.modalOption, activeDateKey === yesterdayKey && styles.modalOptionActive]}
+                  style={[
+                    styles.modalOption,
+                    activeDateKey === yesterdayKey && styles.modalOptionActive,
+                  ]}
                   onPress={() => {
                     setActiveDateKey(yesterdayKey);
                     setShowCalendar(false);
                     setShowDateDropdown(false);
                   }}
                 >
-                  <Text style={[styles.modalOptionText, activeDateKey === yesterdayKey && styles.modalOptionTextActive]}>Yesterday</Text>
+                  <Text
+                    style={[
+                      styles.modalOptionText,
+                      activeDateKey === yesterdayKey &&
+                        styles.modalOptionTextActive,
+                    ]}
+                  >
+                    Yesterday
+                  </Text>
                 </TouchableOpacity>
-
                 <View style={{ marginTop: 8 }}>
-                  <TouchableOpacity style={styles.calendarBtn} onPress={() => setShowCalendar(true)} activeOpacity={0.8}>
-                    <Ionicons name="calendar-outline" size={16} color="#0f172a" />
-                    <Text style={styles.calendarBtnText}>Pick from calendar</Text>
+                  <TouchableOpacity
+                    style={styles.calendarBtn}
+                    onPress={() => setShowCalendar(true)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons
+                      name="calendar-outline"
+                      size={16}
+                      color="#0f172a"
+                    />
+                    <Text style={styles.calendarBtnText}>
+                      Pick from calendar
+                    </Text>
                   </TouchableOpacity>
                 </View>
-
                 {showCalendar && (
                   <View style={{ marginTop: 8 }}>
                     <DateTimePicker
                       value={tempCalendarDate}
                       mode="date"
-                      display={Platform.OS === 'ios' ? 'inline' : 'calendar'}
+                      display={Platform.OS === "ios" ? "inline" : "calendar"}
                       onChange={(event, selectedDate) => {
-                        if (Platform.OS === 'android') {
-                          if (event.type === 'set' && selectedDate) {
+                        if (Platform.OS === "android") {
+                          if (event.type === "set" && selectedDate) {
                             const key = dateKeyFromDateObj(selectedDate);
                             setActiveDateKey(key);
                           }
@@ -1473,14 +1965,39 @@ export default function MartOrdersTab({
                         }
                       }}
                     />
-
-                    {Platform.OS === 'ios' && (
+                    {Platform.OS === "ios" && (
                       <View style={styles.iosCalendarActions}>
-                        <TouchableOpacity onPress={() => setShowCalendar(false)} style={[styles.iosCalendarBtn, { backgroundColor: '#e5e7eb' }]}>
-                          <Text style={[styles.iosCalendarBtnText, { color: '#111827' }]}>Cancel</Text>
+                        <TouchableOpacity
+                          onPress={() => setShowCalendar(false)}
+                          style={[
+                            styles.iosCalendarBtn,
+                            { backgroundColor: "#e5e7eb" },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.iosCalendarBtnText,
+                              { color: "#111827" },
+                            ]}
+                          >
+                            Cancel
+                          </Text>
                         </TouchableOpacity>
-                        <TouchableOpacity onPress={applyCalendarDate} style={[styles.iosCalendarBtn, { backgroundColor: '#16a34a' }]}>
-                          <Text style={[styles.iosCalendarBtnText, { color: '#fff' }]}>Apply</Text>
+                        <TouchableOpacity
+                          onPress={applyCalendarDate}
+                          style={[
+                            styles.iosCalendarBtn,
+                            { backgroundColor: "#16a34a" },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.iosCalendarBtnText,
+                              { color: "#fff" },
+                            ]}
+                          >
+                            Apply
+                          </Text>
                         </TouchableOpacity>
                       </View>
                     )}
@@ -1491,295 +2008,316 @@ export default function MartOrdersTab({
           </View>
         </Modal>
 
-        {/* FAB */}
-        <TouchableOpacity
-          style={styles.fab}
-          onPress={() =>
-            navigation.navigate('NearbyOrdersScreen', {
-              businessId: bizId,
-              ownerType,
-              orderEndpoint: orderEndpoint ?? ENV_ORDER_ENDPOINT,
-              detailsRoute,
-              thresholdKm: 5,
-              orders:
-                activeChip === 'UPCOMING'
-                  ? scheduledOrders.filter((o) => o.type === 'Delivery')
-                  : dateFilteredOrders.filter((o) => o.type === 'Delivery'),
-            })
-          }
-          activeOpacity={0.9}
+        {/* Decline Reason Modal */}
+        <Modal
+          visible={declineModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setDeclineModalVisible(false)}
         >
-          <Ionicons name="albums-outline" size={isTablet ? 24 : 22} color="#fff" />
-          <Text style={styles.fabLabel}>Grouped Orders</Text>
-        </TouchableOpacity>
+          <View style={styles.modalOverlay}>
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => setDeclineModalVisible(false)}
+            />
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Decline Scheduled Order</Text>
+              <Text style={{ marginBottom: 8, color: "#334155" }}>
+                Please provide a reason for declining:
+              </Text>
+              <TextInput
+                style={[styles.searchWrap, { marginBottom: 16 }]}
+                value={declineReasonInput}
+                onChangeText={setDeclineReasonInput}
+                placeholder="e.g., Item not available"
+                placeholderTextColor="#94a3b8"
+                autoFocus
+              />
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "flex-end",
+                  gap: 12,
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() => setDeclineModalVisible(false)}
+                  style={{ paddingHorizontal: 16, paddingVertical: 8 }}
+                >
+                  <Text style={{ color: "#64748b", fontWeight: "600" }}>
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={confirmDecline}
+                  style={{
+                    paddingHorizontal: 16,
+                    paddingVertical: 8,
+                    backgroundColor: "#dc2626",
+                    borderRadius: 8,
+                  }}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>
+                    Decline
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Grouped Orders FAB hidden in Upcoming tab */}
+        {activeChip !== "UPCOMING" && (
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={() =>
+              navigation.navigate("NearbyOrdersScreen", {
+                businessId: bizId,
+                ownerType,
+                orderEndpoint: orderEndpoint ?? ENV_ORDER_ENDPOINT,
+                detailsRoute,
+                thresholdKm: 5,
+                orders:
+                  activeChip === "UPCOMING"
+                    ? scheduledOrders.filter((o) => o.type === "Delivery")
+                    : dateFilteredOrders.filter((o) => o.type === "Delivery"),
+              })
+            }
+            activeOpacity={0.9}
+          >
+            <Ionicons
+              name="albums-outline"
+              size={isTablet ? 24 : 22}
+              color="#fff"
+            />
+            <Text style={styles.fabLabel}>Grouped Orders</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
 }
 
-/* ---------------- styles ---------------- */
 const styles = StyleSheet.create({
   headerInlineText: {
     fontSize: 14,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: "700",
+    color: "#0f172a",
     marginRight: 2,
   },
-
   statusChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: "#f1f5f9",
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: "#e2e8f0",
   },
-  statusChipActive: {
-    borderColor: '#16a34a',
-  },
-  statusChipText: {
-    color: '#0f172a',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  statusChipTextActive: {
-    color: '#16a34a',
-  },
-
+  statusChipActive: { borderColor: "#16a34a" },
+  statusChipText: { color: "#0f172a", fontWeight: "700", fontSize: 14 },
+  statusChipTextActive: { color: "#16a34a" },
   badge: {
     minWidth: 16,
     height: 16,
     paddingHorizontal: 6,
     borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#e2e8f0',
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#e2e8f0",
     marginLeft: 6,
   },
-  badgeActive: {
-    backgroundColor: '#16a34a',
-  },
-  badgeText: {
-    color: '#0f172a',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  badgeTextActive: {
-    color: 'white',
-  },
-
-  searchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 6,
-  },
+  badgeActive: { backgroundColor: "#16a34a" },
+  badgeText: { color: "#0f172a", fontSize: 12, fontWeight: "700" },
+  badgeTextActive: { color: "white" },
+  searchRow: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
   searchWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 12,
     borderRadius: 12,
-    backgroundColor: '#f8fafc',
+    backgroundColor: "#f8fafc",
     borderWidth: 1,
-    borderColor: '#16a34a',
+    borderColor: "#16a34a",
   },
-  searchInput: { flex: 1, color: '#0f172a', paddingVertical: 0 },
+  searchInput: { flex: 1, color: "#0f172a", paddingVertical: 0 },
   clearBtn: { padding: 4, borderRadius: 999 },
-
   dateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: 10,
-    justifyContent: 'space-between',
+    justifyContent: "space-between",
   },
-  dateRowLabel: {
-    fontSize: 12,
-    color: '#64748b',
-    fontWeight: '600',
-  },
+  dateRowLabel: { fontSize: 12, color: "#64748b", fontWeight: "600" },
   dateDropdown: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    backgroundColor: '#f8fafc',
-    maxWidth: '60%',
+    borderColor: "#e2e8f0",
+    backgroundColor: "#f8fafc",
+    maxWidth: "60%",
   },
   dateDropdownText: {
     fontSize: 12,
-    fontWeight: '700',
-    color: '#0f172a',
+    fontWeight: "700",
+    color: "#0f172a",
     marginRight: 4,
   },
-
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 16,
     padding: 14,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#000',
+    borderColor: "#e2e8f0",
+    shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 1,
   },
   scheduledTime: {
-    marginTop: 2,
-    color: '#0f172a',
-    fontWeight: '700',
+    marginTop: 4,
+    marginBottom: 6,
+    color: "#0f172a",
+    fontWeight: "700",
+    fontSize: 13,
   },
   row1: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
   },
-  row1Left: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  orderId: { fontWeight: '900', color: '#0f172a' },
-  orderTime: { color: '#64748b', fontWeight: '600' },
-  orderTotal: { fontWeight: '900', color: '#0f172a' },
-
+  row1Left: { flexDirection: "row", alignItems: "center", gap: 8 },
+  orderId: { fontWeight: "900", color: "#0f172a" },
+  orderTime: { color: "#64748b", fontWeight: "600" },
+  orderTotal: { fontWeight: "900", color: "#0f172a" },
   row2: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
     gap: 10,
-    marginTop: 10,
+    marginTop: 8,
+    marginBottom: 8,
   },
   pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
-    maxWidth: '70%',
   },
-  pillText: { fontWeight: '800', fontSize: 12 },
-
+  pillText: { fontWeight: "800", fontSize: 12 },
   payWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
-    marginLeft: 'auto',
+    marginLeft: "auto",
   },
-  payText: { color: '#64748b', fontWeight: '700' },
-
-  orderItems: { marginTop: 8, color: '#334155', fontWeight: '600' },
-
+  payText: { color: "#64748b", fontWeight: "700" },
+  orderItems: { marginTop: 8, color: "#334155", fontWeight: "600" },
   metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
     marginTop: 10,
   },
-  customerText: {
-    color: '#64748b',
-    fontWeight: '600',
-    flexShrink: 1,
-  },
-
+  customerText: { color: "#64748b", fontWeight: "600", flexShrink: 1 },
   noteRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+    flexDirection: "row",
+    alignItems: "flex-start",
     gap: 8,
     marginTop: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 12,
-    backgroundColor: '#ecfeff',
+    backgroundColor: "#ecfeff",
     borderWidth: 1,
-    borderColor: '#99f6e4',
+    borderColor: "#99f6e4",
   },
-  noteText: { flex: 1, color: '#115e59', fontWeight: '600' },
-  noteMeta: { marginTop: 4, color: '#0f766e', fontWeight: '700' },
-
+  noteText: { flex: 1, color: "#115e59", fontWeight: "600" },
+  noteMeta: { marginTop: 4, color: "#0f766e", fontWeight: "700" },
+  rejectionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+    marginBottom: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: "#fee2e2",
+    borderRadius: 8,
+  },
+  rejectionText: {
+    flex: 1,
+    color: "#b91c1c",
+    fontWeight: "600",
+    fontSize: 12,
+  },
   fab: {
-    position: 'absolute',
+    position: "absolute",
     right: 20,
     bottom: 24,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 18,
     paddingVertical: 12,
     borderRadius: 999,
-    backgroundColor: '#16a34a',
-    shadowColor: '#000',
+    backgroundColor: "#16a34a",
+    shadowColor: "#000",
     shadowOpacity: 0.25,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
   },
-  fabLabel: {
-    color: '#fff',
-    fontWeight: '700',
-    marginLeft: 8,
-    fontSize: 14,
-  },
-
+  fabLabel: { color: "#fff", fontWeight: "700", marginLeft: 8, fontSize: 14 },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15,23,42,0.35)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "rgba(15,23,42,0.35)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   modalContent: {
-    width: '80%',
+    width: "80%",
     maxWidth: 360,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 16,
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
   modalTitle: {
     fontSize: 14,
-    fontWeight: '800',
-    color: '#0f172a',
+    fontWeight: "800",
+    color: "#0f172a",
     marginBottom: 10,
   },
-  modalOption: {
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    borderRadius: 8,
-  },
-  modalOptionActive: {
-    backgroundColor: '#ecfdf5',
-  },
-  modalOptionText: {
-    fontSize: 13,
-    color: '#0f172a',
-    fontWeight: '600',
-  },
-  modalOptionTextActive: {
-    color: '#16a34a',
-  },
-
+  modalOption: { paddingVertical: 8, paddingHorizontal: 4, borderRadius: 8 },
+  modalOptionActive: { backgroundColor: "#ecfdf5" },
+  modalOptionText: { fontSize: 13, color: "#0f172a", fontWeight: "600" },
+  modalOptionTextActive: { color: "#16a34a" },
   calendarBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
     paddingVertical: 8,
     paddingHorizontal: 6,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f9fafb',
+    borderColor: "#e5e7eb",
+    backgroundColor: "#f9fafb",
   },
-  calendarBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-
+  calendarBtnText: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
   iosCalendarActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
+    flexDirection: "row",
+    justifyContent: "flex-end",
     marginTop: 8,
     gap: 10,
   },
@@ -1788,8 +2326,34 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 999,
   },
-  iosCalendarBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
+  iosCalendarBtnText: { fontSize: 13, fontWeight: "700" },
+  actionButtonsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 12,
+    gap: 12,
   },
+  actionButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 10,
+    borderRadius: 999,
+    gap: 8,
+  },
+  acceptButton: { backgroundColor: "#16a34a" },
+  declineButton: { backgroundColor: "#dc2626" },
+  actionButtonText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  acceptedBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    backgroundColor: "#ecfdf5",
+    borderRadius: 999,
+    gap: 6,
+  },
+  acceptedText: { color: "#16a34a", fontWeight: "600", fontSize: 12 },
 });

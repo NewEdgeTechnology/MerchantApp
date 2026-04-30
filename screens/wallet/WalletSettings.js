@@ -37,13 +37,13 @@ const TPIN_REGEX = /^\d{4}$/;
 
 /* ========= endpoints ========= */
 const CHANGE_TPIN_URL = (walletId) =>
-  `https://grab.newedge.bt/wallet/wallet/${walletId}/t-pin`;
+  `https://backend.tabdhey.bt/wallet/wallet/${walletId}/t-pin`;
 
 const FORGOT_TPIN_URL = (walletId) =>
-  `https://grab.newedge.bt/wallet/wallet/${walletId}/forgot-tpin-sms`;
+  `https://backend.tabdhey.bt/wallet/wallet/${walletId}/forgot-tpin-sms`;
 
 const VERIFY_FORGOT_TPIN_URL = (walletId) =>
-  `https://grab.newedge.bt/wallet/wallet/${walletId}/forgot-tpin-sms/verify`;
+  `https://backend.tabdhey.bt/wallet/wallet/${walletId}/forgot-tpin-sms/verify`;
 
 /* ========= networking helpers ========= */
 async function authFetch(url, opts = {}) {
