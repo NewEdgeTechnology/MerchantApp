@@ -1,7 +1,7 @@
 // ✅ UPDATE NearbyClusterOrdersScreen:
 // - "Track orders" redirects to BatchRidesScreen
-// - Checkbox shows ONLY for READY orders (no checkbox for other statuses)
-// - READY orders are selectable; batch creation uses ONLY selected READY orders
+// - Checkbox shows ONLY for CONFIRMED orders (no checkbox for other statuses)
+// - CONFIRMED orders are selectable; batch creation uses ONLY selected CONFIRMED orders
 // - Beside Order ID, show PRIORITY tag when priority === 1 (instead of small READY tag)
 // - Distance is calculated using BUSINESS_DETAILS coords (merchant lat/lng)
 // - ✅ IMPORTANT FIXES:
@@ -10,6 +10,7 @@
 //    3) Validate coords (range check) before calculating
 // - ✅ NEW: DO NOT show DECLINED (and REJECTED) orders in the list/tabs
 // - ✅ UPDATE: Removed "Track orders" button from this screen
+// - ✅ CHANGE: Multi-select CONFIRMED orders instead of READY orders
 
 import React, { useCallback, useMemo, useEffect, useState } from "react";
 import {
@@ -23,7 +24,10 @@ import {
   RefreshControl,
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import {
@@ -196,7 +200,8 @@ const extractCoords = (order = {}) => {
   for (const c of candidates) {
     const lat = toNum(c.lat);
     const lng = toNum(c.lng);
-    if (lat != null && lng != null && isValidCoords(lat, lng)) return { lat, lng };
+    if (lat != null && lng != null && isValidCoords(lat, lng))
+      return { lat, lng };
   }
 
   return null;
@@ -224,12 +229,19 @@ const distanceKm = (a, b) => {
 const getOrderAddressText = (order = {}) => {
   const rawAddr = order.delivery_address ?? order.raw?.delivery_address;
 
-  if (typeof rawAddr === "string" && rawAddr.trim().length > 0) return rawAddr.trim();
+  if (typeof rawAddr === "string" && rawAddr.trim().length > 0)
+    return rawAddr.trim();
 
   if (rawAddr && typeof rawAddr === "object") {
-    if (typeof rawAddr.address === "string" && rawAddr.address.trim().length > 0)
+    if (
+      typeof rawAddr.address === "string" &&
+      rawAddr.address.trim().length > 0
+    )
       return rawAddr.address.trim();
-    if (typeof rawAddr.formatted === "string" && rawAddr.formatted.trim().length > 0)
+    if (
+      typeof rawAddr.formatted === "string" &&
+      rawAddr.formatted.trim().length > 0
+    )
       return rawAddr.formatted.trim();
     if (typeof rawAddr.label === "string" && rawAddr.label.trim().length > 0)
       return rawAddr.label.trim();
@@ -237,11 +249,18 @@ const getOrderAddressText = (order = {}) => {
 
   const base = order.raw || order;
 
-  if (typeof base.address === "string" && base.address.trim().length > 0) return base.address.trim();
-  if (typeof base.general_place === "string" && base.general_place.trim().length > 0)
+  if (typeof base.address === "string" && base.address.trim().length > 0)
+    return base.address.trim();
+  if (
+    typeof base.general_place === "string" &&
+    base.general_place.trim().length > 0
+  )
     return base.general_place.trim();
 
-  if (typeof base.deliver_to?.address === "string" && base.deliver_to.address.trim().length > 0)
+  if (
+    typeof base.deliver_to?.address === "string" &&
+    base.deliver_to.address.trim().length > 0
+  )
     return base.deliver_to.address.trim();
 
   return "";
@@ -253,7 +272,10 @@ const buildGroupedOrdersUrl = (businessId, ordersGroupedUrlFromParams) => {
   const fromParams = safeStr(ordersGroupedUrlFromParams);
   if (fromParams) {
     if (businessId && fromParams.includes("{businessId}"))
-      return fromParams.replace("{businessId}", encodeURIComponent(String(businessId)));
+      return fromParams.replace(
+        "{businessId}",
+        encodeURIComponent(String(businessId)),
+      );
     return fromParams;
   }
 
@@ -261,9 +283,12 @@ const buildGroupedOrdersUrl = (businessId, ordersGroupedUrlFromParams) => {
   const tmpl = safeStr(ENV_ORDER_ENDPOINT);
   if (!tmpl) return null;
 
-  if (tmpl.includes("{businessId}")) return tmpl.replace("{businessId}", encodeURIComponent(businessId));
-  if (tmpl.includes(":businessId")) return tmpl.replace(":businessId", encodeURIComponent(businessId));
-  if (tmpl.includes(":business_id")) return tmpl.replace(":business_id", encodeURIComponent(businessId));
+  if (tmpl.includes("{businessId}"))
+    return tmpl.replace("{businessId}", encodeURIComponent(businessId));
+  if (tmpl.includes(":businessId"))
+    return tmpl.replace(":businessId", encodeURIComponent(businessId));
+  if (tmpl.includes(":business_id"))
+    return tmpl.replace(":business_id", encodeURIComponent(businessId));
 
   return `${tmpl.replace(/\/+$/, "")}/${encodeURIComponent(businessId)}`;
 };
@@ -300,12 +325,14 @@ const normalizeStatus = (raw) => {
     return "OUT_FOR_DELIVERY";
   }
 
-  if (s === "ACCEPT") return "ACCEPTED";
+  if (s === "ACCEPT") return "CONFIRMED";
   return s;
 };
 
 const statusKeyToLabel = (statusKey) => {
-  const s = String(statusKey || "").toUpperCase().trim();
+  const s = String(statusKey || "")
+    .toUpperCase()
+    .trim();
   if (!s) return "";
   if (s === "OUT_FOR_DELIVERY") return "Out for delivery";
   return s
@@ -353,7 +380,11 @@ const HIDDEN_STATUSES = new Set(["DECLINED", "REJECTED"]);
 /* ---------------- batch helpers ---------------- */
 
 const pickBatchId = (json) =>
-  json?.batch_id ?? json?.data?.batch_id ?? json?.batchId ?? json?.data?.batchId ?? null;
+  json?.batch_id ??
+  json?.data?.batch_id ??
+  json?.batchId ??
+  json?.data?.batchId ??
+  null;
 
 const pickBatchOrderIds = (json) => {
   const arr =
@@ -372,7 +403,14 @@ const pickBatchOrderIds = (json) => {
 /* ---------------- token helper ---------------- */
 
 async function getAccessToken() {
-  const keysToTry = ["auth_token", "accessToken", "ACCESS_TOKEN", "token", "authToken", "jwt"];
+  const keysToTry = [
+    "auth_token",
+    "accessToken",
+    "ACCESS_TOKEN",
+    "token",
+    "authToken",
+    "jwt",
+  ];
   for (const k of keysToTry) {
     const v = await SecureStore.getItemAsync(k);
     if (v && String(v).trim()) return String(v).trim();
@@ -402,7 +440,9 @@ export default function NearbyClusterOrdersScreen() {
     ordersGroupedUrl,
   } = route.params || {};
 
-  const [clusterOrders, setClusterOrders] = useState(Array.isArray(orders) ? orders : []);
+  const [clusterOrders, setClusterOrders] = useState(
+    Array.isArray(orders) ? orders : [],
+  );
   const [statusMap, setStatusMap] = useState({});
   const [creatingBatch, setCreatingBatch] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -413,14 +453,14 @@ export default function NearbyClusterOrdersScreen() {
   const [businessCoords, setBusinessCoords] = useState(null); // {lat,lng}
   const [businessName, setBusinessName] = useState(null);
 
-  // selected READY orders by orderId
-  const [selectedReadyMap, setSelectedReadyMap] = useState({}); // { [orderId]: true }
+  // ✅ CHANGE: selected CONFIRMED orders by orderId (instead of READY)
+  const [selectedConfirmedMap, setSelectedConfirmedMap] = useState({}); // { [orderId]: true }
 
-  const toggleReadySelected = useCallback((order) => {
+  const toggleConfirmedSelected = useCallback((order) => {
     const id = getOrderId(order) || safeStr(order?.id);
     if (!id) return;
 
-    setSelectedReadyMap((prev) => {
+    setSelectedConfirmedMap((prev) => {
       const next = { ...prev };
       if (next[id]) delete next[id];
       else next[id] = true;
@@ -428,8 +468,8 @@ export default function NearbyClusterOrdersScreen() {
     });
   }, []);
 
-  const clearSelectedReady = useCallback(() => {
-    setSelectedReadyMap({});
+  const clearSelectedConfirmed = useCallback(() => {
+    setSelectedConfirmedMap({});
   }, []);
 
   /* ---------------- fetch BUSINESS_DETAILS coords ---------------- */
@@ -448,7 +488,7 @@ export default function NearbyClusterOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch { }
+      } catch {}
 
       if (!res.ok) return;
 
@@ -456,12 +496,16 @@ export default function NearbyClusterOrdersScreen() {
       const lat = toNum(data?.latitude);
       const lng = toNum(data?.longitude);
 
-      if (lat != null && lng != null && isValidCoords(lat, lng)) setBusinessCoords({ lat, lng });
+      if (lat != null && lng != null && isValidCoords(lat, lng))
+        setBusinessCoords({ lat, lng });
       else setBusinessCoords(null);
 
       if (data?.business_name) setBusinessName(String(data.business_name));
     } catch (e) {
-      console.log("[NearbyClusterOrdersScreen] loadBusinessCoords error:", e?.message || e);
+      console.log(
+        "[NearbyClusterOrdersScreen] loadBusinessCoords error:",
+        e?.message || e,
+      );
     }
   }, [businessId]);
 
@@ -488,9 +532,12 @@ export default function NearbyClusterOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch { }
+      } catch {}
 
-      if (!res.ok) throw new Error(json?.message || json?.error || text || `HTTP ${res.status}`);
+      if (!res.ok)
+        throw new Error(
+          json?.message || json?.error || text || `HTTP ${res.status}`,
+        );
 
       const rawData = Array.isArray(json?.data) ? json.data : json;
       const collected = [];
@@ -499,7 +546,10 @@ export default function NearbyClusterOrdersScreen() {
         for (const block of rawData) {
           if (block && Array.isArray(block.orders)) {
             for (const o of block.orders) collected.push(o);
-          } else if (block && (block.id || block.order_id || block.order_code)) {
+          } else if (
+            block &&
+            (block.id || block.order_id || block.order_code)
+          ) {
             collected.push(block);
           }
         }
@@ -512,7 +562,10 @@ export default function NearbyClusterOrdersScreen() {
 
       if (match) setClusterOrders([match]);
     } catch (e) {
-      console.log("[NearbyClusterOrdersScreen] hydrateFocusedOrderIfMissing error:", e?.message || e);
+      console.log(
+        "[NearbyClusterOrdersScreen] hydrateFocusedOrderIfMissing error:",
+        e?.message || e,
+      );
     }
   }, [clusterOrders.length, focusOrderId, businessId, ordersGroupedUrl]);
 
@@ -534,15 +587,22 @@ export default function NearbyClusterOrdersScreen() {
   */
 
   const distanceCenter = useMemo(() => {
-    if (businessCoords && isValidCoords(businessCoords.lat, businessCoords.lng)) return businessCoords;
+    if (businessCoords && isValidCoords(businessCoords.lat, businessCoords.lng))
+      return businessCoords;
 
     if (
       centerCoordsFromParams &&
       Number.isFinite(Number(centerCoordsFromParams.lat)) &&
       Number.isFinite(Number(centerCoordsFromParams.lng)) &&
-      isValidCoords(Number(centerCoordsFromParams.lat), Number(centerCoordsFromParams.lng))
+      isValidCoords(
+        Number(centerCoordsFromParams.lat),
+        Number(centerCoordsFromParams.lng),
+      )
     ) {
-      return { lat: Number(centerCoordsFromParams.lat), lng: Number(centerCoordsFromParams.lng) };
+      return {
+        lat: Number(centerCoordsFromParams.lat),
+        lng: Number(centerCoordsFromParams.lng),
+      };
     }
 
     return null;
@@ -586,7 +646,7 @@ export default function NearbyClusterOrdersScreen() {
       let json = null;
       try {
         json = text ? JSON.parse(text) : null;
-      } catch { }
+      } catch {}
       if (!json) return;
 
       const nextMap = {};
@@ -596,14 +656,18 @@ export default function NearbyClusterOrdersScreen() {
         for (const block of rawData) {
           if (block && Array.isArray(block.orders)) {
             for (const o of block.orders) {
-              const status = o.status || o.order_status || o.current_status || o.orderStatus;
+              const status =
+                o.status || o.order_status || o.current_status || o.orderStatus;
               if (!status) continue;
               const keys = getAllOrderKeys(o);
               for (const k of keys) nextMap[k] = status;
             }
           } else if (block) {
             const status =
-              block?.status || block?.order_status || block?.current_status || block?.orderStatus;
+              block?.status ||
+              block?.order_status ||
+              block?.current_status ||
+              block?.orderStatus;
             if (!status) continue;
             const keys = getAllOrderKeys(block);
             for (const k of keys) nextMap[k] = status;
@@ -630,24 +694,33 @@ export default function NearbyClusterOrdersScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [creatingBatch, hydrateFocusedOrderIfMissing, loadStatuses, loadBusinessCoords]);
+  }, [
+    creatingBatch,
+    hydrateFocusedOrderIfMissing,
+    loadStatuses,
+    loadBusinessCoords,
+  ]);
 
   useEffect(() => {
-    const sub = DeviceEventEmitter.addListener("order-updated", ({ id, patch }) => {
-      if (!id) return;
-      const newStatus = patch?.status || patch?.order_status || patch?.current_status || null;
-      if (!newStatus) return;
+    const sub = DeviceEventEmitter.addListener(
+      "order-updated",
+      ({ id, patch }) => {
+        if (!id) return;
+        const newStatus =
+          patch?.status || patch?.order_status || patch?.current_status || null;
+        if (!newStatus) return;
 
-      setStatusMap((prev) => {
-        const next = { ...prev };
-        next[String(id)] = newStatus;
+        setStatusMap((prev) => {
+          const next = { ...prev };
+          next[String(id)] = newStatus;
 
-        const patchKeys = getAllOrderKeys({ ...(patch || {}), raw: patch });
-        for (const k of patchKeys) next[k] = newStatus;
+          const patchKeys = getAllOrderKeys({ ...(patch || {}), raw: patch });
+          for (const k of patchKeys) next[k] = newStatus;
 
-        return next;
-      });
-    });
+          return next;
+        });
+      },
+    );
 
     return () => sub?.remove?.();
   }, []);
@@ -676,39 +749,46 @@ export default function NearbyClusterOrdersScreen() {
 
   const filteredOrders = useMemo(() => {
     if (selectedStatus === "ALL") return allOrders;
-    return allOrders.filter((o) => getLatestStatusNorm(o, statusMap) === selectedStatus);
+    return allOrders.filter(
+      (o) => getLatestStatusNorm(o, statusMap) === selectedStatus,
+    );
   }, [allOrders, selectedStatus, statusMap]);
 
-  const readyOrders = useMemo(
-    () => allOrders.filter((o) => getLatestStatusNorm(o, statusMap) === "READY"),
-    [allOrders, statusMap]
+  // ✅ CHANGE: Get CONFIRMED orders (instead of READY)
+  const confirmedOrders = useMemo(
+    () =>
+      allOrders.filter(
+        (o) => getLatestStatusNorm(o, statusMap) === "CONFIRMED",
+      ),
+    [allOrders, statusMap],
   );
 
-  const selectedReadyOrders = useMemo(() => {
-    const selKeys = new Set(Object.keys(selectedReadyMap || {}));
+  // ✅ CHANGE: Selected CONFIRMED orders
+  const selectedConfirmedOrders = useMemo(() => {
+    const selKeys = new Set(Object.keys(selectedConfirmedMap || {}));
     if (!selKeys.size) return [];
-    return readyOrders.filter((o) => {
+    return confirmedOrders.filter((o) => {
       const id = getOrderId(o) || safeStr(o?.id);
       return id && selKeys.has(id);
     });
-  }, [readyOrders, selectedReadyMap]);
+  }, [confirmedOrders, selectedConfirmedMap]);
 
-  const selectedReadyCount = selectedReadyOrders.length;
+  const selectedConfirmedCount = selectedConfirmedOrders.length;
 
   // keep selection clean if orders/status change
   useEffect(() => {
-    setSelectedReadyMap((prev) => {
+    setSelectedConfirmedMap((prev) => {
       const next = { ...prev };
-      const readyNow = new Set(
+      const confirmedNow = new Set(
         (allOrders || [])
-          .filter((o) => getLatestStatusNorm(o, statusMap) === "READY")
+          .filter((o) => getLatestStatusNorm(o, statusMap) === "CONFIRMED")
           .map((o) => getOrderId(o) || safeStr(o?.id))
-          .filter(Boolean)
+          .filter(Boolean),
       );
 
       let changed = false;
       for (const k of Object.keys(next)) {
-        if (!readyNow.has(k)) {
+        if (!confirmedNow.has(k)) {
           delete next[k];
           changed = true;
         }
@@ -748,7 +828,7 @@ export default function NearbyClusterOrdersScreen() {
       distanceCenter,
       nextTrackScreen,
       ordersGroupedUrl,
-    ]
+    ],
   );
 
   const openOrderDetails = useCallback(
@@ -794,15 +874,18 @@ export default function NearbyClusterOrdersScreen() {
       statusMap,
       ordersGroupedUrl,
       buildClusterParamsForDetails,
-    ]
+    ],
   );
 
-  /* ---------------- create batch (SELECTED READY ONLY) ---------------- */
+  /* ---------------- create batch (SELECTED CONFIRMED ONLY) ---------------- */
 
-  const createBatchForSelectedReadyOrders = useCallback(async () => {
+  const createBatchForSelectedConfirmedOrders = useCallback(async () => {
     const url = safeStr(ENV_GROUP_NEARBY_ORDER_ENDPOINT);
     if (!url) {
-      Alert.alert("Configuration error", "GROUP_NEARBY_ORDER_ENDPOINT is not configured.");
+      Alert.alert(
+        "Configuration error",
+        "GROUP_NEARBY_ORDER_ENDPOINT is not configured.",
+      );
       return;
     }
 
@@ -811,12 +894,15 @@ export default function NearbyClusterOrdersScreen() {
       return;
     }
 
-    if (selectedReadyOrders.length === 0) {
-      Alert.alert("No selection", "Select at least 1 READY order to create a delivery batch.");
+    if (selectedConfirmedOrders.length === 0) {
+      Alert.alert(
+        "No selection",
+        "Select at least 1 CONFIRMED order to create a delivery batch.",
+      );
       return;
     }
 
-    const orderCodes = selectedReadyOrders
+    const orderCodes = selectedConfirmedOrders
       .map((o) => getOrderId(o) || o?.id)
       .map((x) => safeStr(x))
       .filter(Boolean);
@@ -826,11 +912,17 @@ export default function NearbyClusterOrdersScreen() {
       return;
     }
 
-    const numericIds = selectedReadyOrders.map((o) => getNumericOrderId(o)).filter((x) => x != null);
+    const numericIds = selectedConfirmedOrders
+      .map((o) => getNumericOrderId(o))
+      .filter((x) => x != null);
 
     const payload = {
-      merchant_id: Number.isFinite(Number(businessId)) ? Number(businessId) : businessId,
-      business_id: Number.isFinite(Number(businessId)) ? Number(businessId) : businessId,
+      merchant_id: Number.isFinite(Number(businessId))
+        ? Number(businessId)
+        : businessId,
+      business_id: Number.isFinite(Number(businessId))
+        ? Number(businessId)
+        : businessId,
       order_codes: orderCodes,
       order_ids: orderCodes,
       ...(numericIds.length ? { order_ids_numeric: numericIds } : {}),
@@ -859,7 +951,7 @@ export default function NearbyClusterOrdersScreen() {
       let bodyJson = null;
       try {
         bodyJson = bodyText ? JSON.parse(bodyText) : null;
-      } catch { }
+      } catch {}
 
       if (!res.ok) {
         const msg =
@@ -884,7 +976,7 @@ export default function NearbyClusterOrdersScreen() {
       console.log("Selected Orders:", orderCodes);
       console.log("===================================");
 
-      clearSelectedReady();
+      clearSelectedConfirmed();
 
       navigation.navigate("ClusterDeliveryOptionsScreen", {
         label,
@@ -892,7 +984,7 @@ export default function NearbyClusterOrdersScreen() {
         ownerType,
         delivery_option,
         centerCoords: distanceCenter,
-        readyOrders: selectedReadyOrders,
+        confirmedOrders: selectedConfirmedOrders,
         batch_id: batchId,
         batch_order_ids: batchOrderIds.length ? batchOrderIds : orderCodes,
         batchResponse: json,
@@ -910,39 +1002,49 @@ export default function NearbyClusterOrdersScreen() {
     label,
     navigation,
     distanceCenter,
-    selectedReadyOrders,
-    clearSelectedReady,
+    selectedConfirmedOrders,
+    clearSelectedConfirmed,
   ]);
 
-  const onReadyForDeliveryPress = useCallback(() => {
-    if (readyOrders.length === 0) {
-      Alert.alert("No ready orders", "There are no orders in READY status in this cluster yet.");
+  const onConfirmForDeliveryPress = useCallback(() => {
+    if (confirmedOrders.length === 0) {
+      Alert.alert(
+        "No confirmed orders",
+        "There are no orders in CONFIRMED status in this cluster yet.",
+      );
       return;
     }
 
-    if (selectedReadyOrders.length === 0) {
-      Alert.alert("Select orders", "Please select READY orders to include in the delivery batch.");
+    if (selectedConfirmedOrders.length === 0) {
+      Alert.alert(
+        "Select orders",
+        "Please select CONFIRMED orders to include in the delivery batch.",
+      );
       return;
     }
 
-    const count = selectedReadyOrders.length;
+    const count = selectedConfirmedOrders.length;
 
     Alert.alert(
-      "Deliver selected ready orders?",
-      `Create delivery batch for ${count} selected READY order${count === 1 ? "" : "s"}?`,
+      "Deliver selected confirmed orders?",
+      `Create delivery batch for ${count} selected CONFIRMED order${count === 1 ? "" : "s"}?`,
       [
         { text: "No", style: "cancel" },
-        { text: "Yes", onPress: createBatchForSelectedReadyOrders },
+        { text: "Yes", onPress: createBatchForSelectedConfirmedOrders },
       ],
-      { cancelable: true }
+      { cancelable: true },
     );
-  }, [readyOrders.length, selectedReadyOrders.length, createBatchForSelectedReadyOrders]);
+  }, [
+    confirmedOrders.length,
+    selectedConfirmedOrders.length,
+    createBatchForSelectedConfirmedOrders,
+  ]);
 
   /* ---------------- UI ---------------- */
 
   const renderStatusTab = ({ item }) => {
     const active = item.key === selectedStatus;
-    const bg = active ? "#16a34a" : "#e2e8f0";
+    const bg = active ? "#7c3aed" : "#e2e8f0";
     const txt = active ? "#fff" : "#0f172a";
 
     return (
@@ -954,8 +1056,18 @@ export default function NearbyClusterOrdersScreen() {
         <Text style={[styles.statusTabText, { color: txt }]} numberOfLines={1}>
           {item.label}
         </Text>
-        <View style={[styles.statusTabCountPill, { backgroundColor: active ? "#ffffff22" : "#fff" }]}>
-          <Text style={[styles.statusTabCountText, { color: active ? "#fff" : "#0f172a" }]}>
+        <View
+          style={[
+            styles.statusTabCountPill,
+            { backgroundColor: active ? "#ffffff22" : "#fff" },
+          ]}
+        >
+          <Text
+            style={[
+              styles.statusTabCountText,
+              { color: active ? "#fff" : "#0f172a" },
+            ]}
+          >
             {item.count}
           </Text>
         </View>
@@ -970,8 +1082,11 @@ export default function NearbyClusterOrdersScreen() {
     const latestStatusNorm = getLatestStatusNorm(item, statusMap);
     const statusLabel = statusKeyToLabel(latestStatusNorm);
 
-    const ready = latestStatusNorm === "READY";
-    const selected = ready ? !!selectedReadyMap[String(orderId)] : false;
+    // ✅ CHANGE: Check for CONFIRMED status instead of READY
+    const confirmed = latestStatusNorm === "CONFIRMED";
+    const selected = confirmed
+      ? !!selectedConfirmedMap[String(orderId)]
+      : false;
 
     const priority = isPriorityOrder(item);
 
@@ -982,7 +1097,8 @@ export default function NearbyClusterOrdersScreen() {
     let distanceLabel = "";
     if (coords && distanceCenter) {
       const km = distanceKm(distanceCenter, coords);
-      if (km != null && Number.isFinite(km) && km >= 0) distanceLabel = `${km.toFixed(2)} km`;
+      if (km != null && Number.isFinite(km) && km >= 0)
+        distanceLabel = `${km.toFixed(2)} km`;
     }
 
     const addressText = getOrderAddressText(item);
@@ -993,15 +1109,17 @@ export default function NearbyClusterOrdersScreen() {
         activeOpacity={0.75}
         onPress={() => openOrderDetails(item)}
       >
-        {/* ✅ Checkbox ONLY for READY orders */}
-        {ready ? (
+        {/* ✅ Checkbox ONLY for CONFIRMED orders */}
+        {confirmed ? (
           <TouchableOpacity
             activeOpacity={0.8}
-            onPress={() => toggleReadySelected(item)}
+            onPress={() => toggleConfirmedSelected(item)}
             style={styles.checkWrap}
           >
             <View style={[styles.checkBox, selected && styles.checkBoxChecked]}>
-              {selected ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
+              {selected ? (
+                <Ionicons name="checkmark" size={16} color="#fff" />
+              ) : null}
             </View>
           </TouchableOpacity>
         ) : (
@@ -1014,15 +1132,15 @@ export default function NearbyClusterOrdersScreen() {
               #{orderId}
             </Text>
 
-            {/* ✅ PRIORITY when priority=1; else READY pill only if READY */}
+            {/* ✅ PRIORITY when priority=1; else CONFIRMED pill only if CONFIRMED */}
             {priority ? (
               <View style={styles.priorityPill}>
                 <Ionicons name="flash" size={12} color="#fff" />
                 <Text style={styles.priorityText}>PRIORITY</Text>
               </View>
-            ) : ready ? (
-              <View style={styles.readyPill}>
-                <Text style={styles.readyText}>READY</Text>
+            ) : confirmed ? (
+              <View style={styles.confirmedPill}>
+                <Text style={styles.confirmedText}>CONFIRMED</Text>
               </View>
             ) : null}
           </View>
@@ -1045,7 +1163,9 @@ export default function NearbyClusterOrdersScreen() {
             <View
               style={[
                 styles.statusChip,
-                { backgroundColor: STATUS_COLORS[latestStatusNorm] || "#64748b" },
+                {
+                  backgroundColor: STATUS_COLORS[latestStatusNorm] || "#64748b",
+                },
               ]}
             >
               <Text style={styles.statusChipText} numberOfLines={1}>
@@ -1055,9 +1175,16 @@ export default function NearbyClusterOrdersScreen() {
           )}
 
           {/* ✅ show NOTHING if distanceLabel is empty */}
-          {!!distanceLabel && <Text style={styles.orderDistanceText}>{distanceLabel}</Text>}
+          {!!distanceLabel && (
+            <Text style={styles.orderDistanceText}>{distanceLabel}</Text>
+          )}
 
-          <Ionicons name="chevron-forward" size={18} color="#94a3b8" style={{ marginLeft: 4 }} />
+          <Ionicons
+            name="chevron-forward"
+            size={18}
+            color="#94a3b8"
+            style={{ marginLeft: 4 }}
+          />
         </View>
       </TouchableOpacity>
     );
@@ -1065,22 +1192,30 @@ export default function NearbyClusterOrdersScreen() {
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
-  const readyCount = readyOrders.length;
-  const fabDisabled = selectedReadyCount === 0 || creatingBatch;
+  const confirmedCount = confirmedOrders.length;
+  const fabDisabled = selectedConfirmedCount === 0 || creatingBatch;
   const fabLabel = creatingBatch
     ? "Creating..."
-    : `Ready for delivery (${selectedReadyCount}/${readyCount})`;
+    : `Confirm for delivery (${selectedConfirmedCount}/${confirmedCount})`;
 
   const selectionSubtitle =
-    readyCount > 0 ? `Selected READY: ${selectedReadyCount}/${readyCount}` : null;
+    confirmedCount > 0
+      ? `Selected CONFIRMED: ${selectedConfirmedCount}/${confirmedCount}`
+      : null;
 
   const businessLine =
-    businessName || businessCoords ? `${businessName ? businessName : "Business"}` : null;
+    businessName || businessCoords
+      ? `${businessName ? businessName : "Business"}`
+      : null;
 
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
       <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
+        <TouchableOpacity
+          onPress={() => navigation.navigate("NearbyOrdersScreen")}
+          style={styles.backBtn}
+          activeOpacity={0.7}
+        >
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
 
@@ -1090,11 +1225,14 @@ export default function NearbyClusterOrdersScreen() {
 
         <TouchableOpacity
           onPress={() => {
-            if (selectedReadyCount === 0) return;
-            clearSelectedReady();
+            if (selectedConfirmedCount === 0) return;
+            clearSelectedConfirmed();
           }}
-          activeOpacity={selectedReadyCount === 0 ? 1 : 0.8}
-          style={[styles.clearBtn, selectedReadyCount === 0 && { opacity: 0.35 }]}
+          activeOpacity={selectedConfirmedCount === 0 ? 1 : 0.8}
+          style={[
+            styles.clearBtn,
+            selectedConfirmedCount === 0 && { opacity: 0.35 },
+          ]}
         >
           <Text style={styles.clearBtnText}>Clear</Text>
         </TouchableOpacity>
@@ -1140,7 +1278,9 @@ export default function NearbyClusterOrdersScreen() {
         data={filteredOrders}
         keyExtractor={(o, idx) => String(getOrderId(o) || o?.id || idx)}
         renderItem={renderRow}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
         contentContainerStyle={{
           paddingHorizontal: 16,
           paddingTop: 10,
@@ -1149,7 +1289,9 @@ export default function NearbyClusterOrdersScreen() {
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
         ListEmptyComponent={
           <View style={{ padding: 16 }}>
-            <Text style={{ color: "#64748b" }}>No orders found. Pull to refresh.</Text>
+            <Text style={{ color: "#64748b" }}>
+              No orders found. Pull to refresh.
+            </Text>
           </View>
         }
       />
@@ -1159,11 +1301,16 @@ export default function NearbyClusterOrdersScreen() {
         <TouchableOpacity
           style={[styles.fab, fabDisabled && { opacity: 0.4 }]}
           activeOpacity={fabDisabled ? 1 : 0.8}
-          onPress={onReadyForDeliveryPress}
+          onPress={onConfirmForDeliveryPress}
           disabled={fabDisabled}
         >
           <Ionicons name="bicycle" size={18} color="#fff" />
-          <Text style={styles.fabText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+          <Text
+            style={styles.fabText}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.85}
+          >
             {fabLabel}
           </Text>
         </TouchableOpacity>
@@ -1260,11 +1407,11 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   orderRowSelected: {
-    borderColor: "#16a34a",
-    backgroundColor: "#f0fdf4",
+    borderColor: "#7c3aed",
+    backgroundColor: "#f5f3ff",
   },
 
-  // checkbox only for READY; spacer keeps alignment for other rows
+  // checkbox only for CONFIRMED; spacer keeps alignment for other rows
   checkWrap: { marginRight: 10 },
   checkSpacer: { width: 32, height: 22 },
   checkBox: {
@@ -1278,11 +1425,16 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   checkBoxChecked: {
-    borderColor: "#16a34a",
-    backgroundColor: "#16a34a",
+    borderColor: "#7c3aed",
+    backgroundColor: "#7c3aed",
   },
 
-  orderIdRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 8 },
+  orderIdRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+  },
   orderIdText: { fontSize: 14, fontWeight: "800", color: "#0f172a" },
 
   priorityPill: {
@@ -1301,15 +1453,16 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
-  readyPill: {
-    backgroundColor: "#dcfce7",
+  // ✅ Updated CONFIRMED pill styling (purple theme)
+  confirmedPill: {
+    backgroundColor: "#ede9fe",
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderWidth: 1,
-    borderColor: "#bbf7d0",
+    borderColor: "#ddd6fe",
   },
-  readyText: { color: "#16a34a", fontSize: 10, fontWeight: "900" },
+  confirmedText: { color: "#7c3aed", fontSize: 10, fontWeight: "900" },
 
   orderCustomerText: { marginTop: 2, fontSize: 13, color: "#475569" },
   orderAddressText: { marginTop: 2, fontSize: 12, color: "#64748b" },
@@ -1344,7 +1497,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 15,
     borderRadius: 999,
-    backgroundColor: "#16a34a",
+    backgroundColor: "#7c3aed",
     shadowColor: "#000",
     shadowOpacity: 0.2,
     shadowRadius: 6,

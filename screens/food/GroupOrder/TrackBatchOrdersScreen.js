@@ -1,7 +1,5 @@
 // services/food/GroupOrder/TrackBatchOrdersScreen.js
-// ✅ FIXED VERSION FOR APK - Working marker popups with Alert dialogs
-// ✅ Differentiated markers: Business (Red colored marker), Driver (PNG), Customers (PNG)
-// ✅ Added console logs for locations and marker colors
+// ✅ UPDATED - Shows order items + Mark as Ready button
 
 import React, {
   useCallback,
@@ -23,7 +21,6 @@ import {
   Pressable,
   ActivityIndicator,
   Dimensions,
-  Platform,
   Image,
 } from "react-native";
 import {
@@ -43,6 +40,7 @@ import {
   BUSINESS_DETAILS as ENV_BUSINESS_DETAILS,
   DELIVERY_RIDE_ID_ENDPOINT as ENV_DELIVERY_RIDE_ID_ENDPOINT,
   DRIVER_DETAILS_ENDPOINT as ENV_DRIVER_DETAILS_ENDPOINT,
+  UPDATE_ORDER_STATUS_ENDPOINT,
 } from "@env";
 
 import {
@@ -53,39 +51,27 @@ import {
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
-// Import custom marker images for driver and customer only
 const DRIVER_MARKER = require("../../../assets/driver.png");
 const CUSTOMER_MARKER = require("../../../assets/customer.png");
 
-// Color constants for business marker
 const COLORS = {
   BUSINESS: "#e71414",
 };
 
-/* ============================================================
-   ERROR BOUNDARY COMPONENT
-============================================================ */
 class OSMViewErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false };
   }
-
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
+  static getDerivedStateFromError() {
+    return { hasError: true };
   }
-
-  componentDidCatch(error, errorInfo) {
-    console.error("OSMView crashed:", error, errorInfo);
-  }
-
   render() {
     if (this.state.hasError) {
       return (
         <View style={styles.mapErrorContainer}>
           <Ionicons name="map-outline" size={48} color="#ef4444" />
           <Text style={styles.mapErrorText}>Map failed to load</Text>
-          <Text style={styles.mapErrorSubtext}>Tap to retry</Text>
           <TouchableOpacity
             style={styles.mapRetryBtn}
             onPress={() => this.setState({ hasError: false })}
@@ -99,9 +85,7 @@ class OSMViewErrorBoundary extends React.Component {
   }
 }
 
-/* ============================================================
-   HELPERS
-============================================================ */
+// ============ HELPERS ============
 const safeStr = (v) => (v == null ? "" : String(v)).trim();
 
 const getOrderId = (order = {}) => {
@@ -120,110 +104,12 @@ const getOrderId = (order = {}) => {
   return null;
 };
 
-const getNumericOrderId = (order = {}) => {
-  const base = order.raw || order;
-  const cand = [
-    base.order_db_id,
-    base.db_id,
-    base.order_table_id,
-    base.numeric_order_id,
-    base.order_numeric_id,
-    base.orderIdNumeric,
-    base.order_id_numeric,
-    base.id,
-  ];
-  for (const v of cand) {
-    const n = Number(v);
-    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
-  }
-  return null;
-};
+const getItemName = (it) =>
+  it?.item_name ?? it?.name ?? it?.product_name ?? it?.title ?? "Item";
 
-const getAllOrderKeys = (order = {}) => {
-  const base = order.raw || order;
-  const keys = [];
-  const code = getOrderId(base);
-  if (code) keys.push(String(code));
-  const numeric = getNumericOrderId(base);
-  if (numeric) keys.push(String(numeric));
-  const extra = [
-    base.order_id,
-    base.id,
-    base.order_code,
-    base.order_no,
-    base.orderNo,
-    base.order_db_id,
-    base.db_id,
-    base.order_table_id,
-    base.numeric_order_id,
-    base.order_numeric_id,
-    base.orderIdNumeric,
-    base.order_id_numeric,
-  ];
-  for (const v of extra) {
-    const s = safeStr(v);
-    if (s) keys.push(s);
-  }
-  return [...new Set(keys)];
-};
-
-const sameOrderKey = (a, b) => {
-  const A = safeStr(a);
-  const B = safeStr(b);
-  if (!A || !B) return false;
-  if (A === B) return true;
-  const na = Number(A);
-  const nb = Number(B);
-  if (Number.isFinite(na) && Number.isFinite(nb) && na === nb) return true;
-  const strip = (s) =>
-    String(s)
-      .replace(/^ORD[-_]?/i, "")
-      .replace(/^FOOD[-_]?/i, "");
-  return strip(A) === strip(B);
-};
-
-const normalizeOrderIdsList = (arr) => {
-  if (!Array.isArray(arr)) return [];
-  return arr.map((x) => safeStr(x)).filter(Boolean);
-};
-
-const filterOrdersByBatchIds = (allOrders = [], batchOrderIds = []) => {
-  const ids = normalizeOrderIdsList(batchOrderIds);
-  if (!ids.length) return [];
-  const idSet = new Set(ids);
-  return (Array.isArray(allOrders) ? allOrders : []).filter((o) => {
-    const keys = getAllOrderKeys(o);
-    for (const k of keys) {
-      for (const id of idSet) {
-        if (sameOrderKey(k, id)) return true;
-      }
-    }
-    return false;
-  });
-};
-
-const filterOrdersByBatchField = (allOrders = [], batchId) => {
-  const bid = safeStr(batchId);
-  if (!bid) return [];
-  return (Array.isArray(allOrders) ? allOrders : []).filter((o) => {
-    const base = o?.raw || o || {};
-    const b =
-      base?.batch_id ??
-      base?.delivery_batch_id ??
-      base?.batchId ??
-      base?.deliveryBatchId ??
-      base?.raw?.batch_id ??
-      null;
-    return b != null && safeStr(b) === bid;
-  });
-};
-
-const safePhone = (v) => {
-  const s = v == null ? "" : String(v).trim();
-  if (!s) return "";
-  if (s.startsWith("+")) return s;
-  if (s.startsWith("975")) return `+${s}`;
-  return `+975${s.replace(/^0+/, "")}`;
+const getItemQty = (it) => {
+  const q = Number(it?.qty ?? it?.quantity ?? it?.item_qty ?? 1);
+  return Number.isFinite(q) && q > 0 ? q : 1;
 };
 
 const extractLatLng = (obj) => {
@@ -234,9 +120,7 @@ const extractLatLng = (obj) => {
     { lat: obj.current_lat, lng: obj.current_lng },
     { lat: obj.driver_lat, lng: obj.driver_lng },
     { lat: obj?.coords?.lat, lng: obj?.coords?.lng },
-    { lat: obj?.coords?.latitude, lng: obj?.coords?.longitude },
     { lat: obj?.location?.lat, lng: obj?.location?.lng },
-    { lat: obj?.location?.latitude, lng: obj?.location?.longitude },
   ];
   for (const c of cand) {
     const la = Number(c.lat);
@@ -259,10 +143,6 @@ const buildGroupedOrdersUrl = (businessId) => {
   if (!tmpl) return null;
   if (tmpl.includes("{businessId}"))
     return tmpl.replace("{businessId}", encodeURIComponent(businessId));
-  if (tmpl.includes(":businessId"))
-    return tmpl.replace(":businessId", encodeURIComponent(businessId));
-  if (tmpl.includes(":business_id"))
-    return tmpl.replace(":business_id", encodeURIComponent(businessId));
   return `${tmpl.replace(/\/+$/, "")}/${encodeURIComponent(businessId)}`;
 };
 
@@ -272,26 +152,7 @@ const buildBusinessDetailsUrl = (businessId) => {
   if (!tmpl) return null;
   if (tmpl.includes("{businessId}"))
     return tmpl.replace("{businessId}", encodeURIComponent(businessId));
-  if (tmpl.includes(":businessId"))
-    return tmpl.replace(":businessId", encodeURIComponent(businessId));
-  if (tmpl.includes(":business_id"))
-    return tmpl.replace(":business_id", encodeURIComponent(businessId));
-  if (tmpl.includes("{business_id}"))
-    return tmpl.replace("{business_id}", encodeURIComponent(businessId));
   return `${tmpl.replace(/\/+$/, "")}/${encodeURIComponent(businessId)}`;
-};
-
-const buildDeliveryRideUrl = (batchId) => {
-  if (!batchId) return null;
-  const tmpl = String(ENV_DELIVERY_RIDE_ID_ENDPOINT || "").trim();
-  if (!tmpl) return null;
-  if (tmpl.includes("{batch_id}"))
-    return tmpl.replace("{batch_id}", encodeURIComponent(String(batchId)));
-  if (tmpl.includes("{batchId}"))
-    return tmpl.replace("{batchId}", encodeURIComponent(String(batchId)));
-  const base = tmpl.replace(/\/+$/, "");
-  const join = base.includes("?") ? "&" : "?";
-  return `${base}${join}delivery_batch_id=${encodeURIComponent(String(batchId))}`;
 };
 
 const buildDriverDetailsUrl = (driverId) => {
@@ -301,18 +162,9 @@ const buildDriverDetailsUrl = (driverId) => {
   if (!tmpl) return null;
   if (tmpl.includes("{driverId}"))
     return tmpl.replace("{driverId}", encodeURIComponent(id));
-  if (tmpl.includes(":driverId"))
-    return tmpl.replace(":driverId", encodeURIComponent(id));
   const base = tmpl.replace(/\/+$/, "");
   const join = base.includes("?") ? "&" : "?";
   return `${base}${join}driverId=${encodeURIComponent(id)}`;
-};
-
-const isDelivered = (status) => {
-  const s = String(status || "")
-    .toUpperCase()
-    .trim();
-  return s === "DELIVERED" || s === "COMPLETED" || s === "COMPLETE";
 };
 
 const haversineMeters = (a, b) => {
@@ -329,149 +181,13 @@ const haversineMeters = (a, b) => {
   return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 };
 
-const pickRideIdFromResponse = (json) => {
-  const base = json?.data ?? json ?? {};
-  const cand = [
-    base.delivery_ride_id,
-    base.ride_id,
-    base.rideId,
-    base?.ride?.id,
-    base?.ride?.ride_id,
-    base?.result?.delivery_ride_id,
-  ];
-  for (const v of cand) {
-    if (v != null && String(v).trim().length > 0) return String(v).trim();
-  }
-  return "";
-};
-
-const normalizeBatchIdFromParams = (params) => {
-  const cand = [
-    params?.batch_id,
-    params?.batchId,
-    params?.delivery_batch_id,
-    params?.deliveryBatchId,
-    params?.batch?.id,
-    params?.batch?.batch_id,
-  ];
-  for (const v of cand) {
-    if (v != null && String(v).trim().length > 0) return String(v).trim();
-  }
-  return "";
-};
-
-const normalizeRideIdFromParams = (params) => {
-  const cand = [
-    params?.ride_id,
-    params?.rideId,
-    params?.delivery_ride_id,
-    params?.deliveryRideId,
-    params?.ride?.id,
-  ];
-  for (const v of cand) {
-    if (v != null && String(v).trim().length > 0) return String(v).trim();
-  }
-  return "";
-};
-
-/* ---- OSRM routing ---- */
-const OSRM_ROUTE_BASE = "https://router.project-osrm.org/route/v1/driving";
-
-const fetchOsrmRoute2 = async (a, b, timeoutMs = 5000) => {
-  const url = `${OSRM_ROUTE_BASE}/${a.lng},${a.lat};${b.lng},${b.lat}?geometries=geojson&overview=full`;
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    const json = await res.json();
-    const line = json?.routes?.[0]?.geometry?.coordinates;
-    if (!Array.isArray(line) || line.length < 2) return [];
-    return line.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
-  } catch (error) {
-    console.log("OSRM route fetch timeout or error:", error.message);
-    return [];
-  } finally {
-    clearTimeout(timeoutId);
-  }
-};
-
-/* ---- Items helpers ---- */
-const pickItemName = (it) =>
-  safeStr(
-    it?.item_name ??
-      it?.name ??
-      it?.product_name ??
-      it?.title ??
-      it?.item?.name ??
-      it?.product?.name ??
-      it?.food_name ??
-      it?.menu_name ??
-      it?.variant_name,
-  ) || "Item";
-
-const pickItemQty = (it) => {
-  const n = Number(
-    it?.qty ??
-      it?.quantity ??
-      it?.count ??
-      it?.item_qty ??
-      it?.itemQuantity ??
-      it?.order_qty ??
-      it?.cart_qty ??
-      it?.units,
-  );
-  return Number.isFinite(n) && n > 0 ? n : 1;
-};
-
-const pickItemPrice = (it) => {
-  const n = Number(
-    it?.price ??
-      it?.unit_price ??
-      it?.unitPrice ??
-      it?.selling_price ??
-      it?.amount ??
-      it?.rate ??
-      it?.mrp,
-  );
-  return Number.isFinite(n) ? n : null;
-};
-
-const formatMoney = (v) => {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return "";
-  return `${n.toFixed(2)}`;
-};
-
-const extractDriverId = (p) => {
-  if (!p) return "";
-  const cand = [
-    p?.driverId,
-    p?.driver_id,
-    p?.driver?.id,
-    p?.driver?.driver_id,
-    p?.driver?.user_id,
-    p?.driver_user_id,
-    p?.user_id,
-    p?.id,
-  ];
-  for (const v of cand) {
-    const s = safeStr(v);
-    if (s) return s;
-  }
-  return "";
-};
-
-/* ---- Location grouping ---- */
 const groupDropsByDistance = (orders = [], distanceMeters = 12) => {
   const groups = [];
   for (const o of orders || []) {
     const base = o?.raw || o || {};
     const coords = extractOrderDropCoords(base);
     if (!coords) continue;
-    const orderId =
-      getOrderId(base) || getOrderId(o) || safeStr(base?.id) || "";
+    const orderId = getOrderId(base) || getOrderId(o) || "";
     if (!orderId) continue;
     let placed = false;
     for (const g of groups) {
@@ -499,22 +215,6 @@ const groupDropsByDistance = (orders = [], distanceMeters = 12) => {
   }));
 };
 
-/* ---- SecureStore keys ---- */
-const sanitizeKeyPart = (v) => {
-  const s = v == null ? "" : String(v).trim();
-  return s.replace(/[^a-zA-Z0-9._-]/g, "_") || "global";
-};
-
-const keyBatchId = (b) => `cluster_last_batch_id_${sanitizeKeyPart(b)}`;
-const keyRideId = (b) => `cluster_last_ride_id_${sanitizeKeyPart(b)}`;
-const keyDriver = (b) => `cluster_last_driver_${sanitizeKeyPart(b)}`;
-const keyDriverRating = (b) =>
-  `cluster_last_driver_rating_${sanitizeKeyPart(b)}`;
-const keyMapCenter = (b) => `map_center_${sanitizeKeyPart(b)}`;
-
-/* ============================================================
-   Zoom heuristic
-============================================================ */
 const computeZoomForPoints = (points = []) => {
   if (points.length < 2) return 14;
   let minLat = Infinity,
@@ -531,19 +231,15 @@ const computeZoomForPoints = (points = []) => {
       maxLng = Math.max(maxLng, lng);
     }
   }
-  const latDiff = maxLat - minLat;
-  const lngDiff = maxLng - minLng;
-  const maxDiff = Math.max(latDiff, lngDiff);
-  if (maxDiff < 0.01) return 15;
-  if (maxDiff < 0.05) return 13;
-  if (maxDiff < 0.1) return 11;
+  const maxDiff = Math.max(maxLat - minLat, maxLng - minLng);
+  if (maxDiff < 0.01) return 16;
+  if (maxDiff < 0.05) return 14;
+  if (maxDiff < 0.1) return 12;
   if (maxDiff < 0.5) return 10;
   return 9;
 };
 
-/* ============================================================
-   COMPONENT
-============================================================ */
+// ============ MAIN COMPONENT ============
 export default function TrackBatchOrdersScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -567,319 +263,154 @@ export default function TrackBatchOrdersScreen() {
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
 
-  /* ---------- IDs ---------- */
-  const [batchId, setBatchId] = useState(() =>
-    normalizeBatchIdFromParams(params),
-  );
-  const [deliveryRideId, setDeliveryRideId] = useState(() =>
-    normalizeRideIdFromParams(params),
+  // IDs
+  const [batchId, setBatchId] = useState(() => params?.batch_id || null);
+  const [deliveryRideId, setDeliveryRideId] = useState(
+    () => params?.ride_id || null,
   );
   const [restoredIds, setRestoredIds] = useState(false);
 
-  /* ---------- Driver ---------- */
+  // Driver
   const [driverInfo, setDriverInfo] = useState(driverDetailsFromParams || null);
   const [driverRating, setDriverRating] = useState(
     driverRatingFromParams || null,
   );
+  const [driverId, setDriverId] = useState(
+    () => driver_id || driverIdParam || null,
+  );
 
-  const initialDriverId = useMemo(() => {
-    const p = safeStr(driver_id || driverIdParam);
-    if (p) return p;
-    const fromDetails = extractDriverId(driverDetailsFromParams);
-    if (fromDetails) return fromDetails;
-    return safeStr(extractDriverId(params));
-  }, [driver_id, driverIdParam, driverDetailsFromParams, params]);
+  // Order status update loading state
+  const [updatingOrderId, setUpdatingOrderId] = useState(null);
 
-  const [driverId, setDriverId] = useState(initialDriverId);
   const lastDriverDetailsFetchMsRef = useRef(0);
+  const lastDriverUpdateMsRef = useRef(0);
+  const lastMapCenterHashRef = useRef("");
+  const lastMarkersHashRef = useRef("");
+  const socketInitializedRef = useRef(false);
+  const routeComputedRef = useRef(false);
+  const hasFetchedInitialData = useRef(false);
+  const hasLoadedBatchOrders = useRef(false);
+  const didFitOnceRef = useRef(false);
+  const [mapKey, setMapKey] = useState(Date.now());
 
-  useEffect(() => {
-    if (driverRatingFromParams) setDriverRating(driverRatingFromParams);
-  }, [driverRatingFromParams]);
-  useEffect(() => {
-    const pid = safeStr(driver_id || driverIdParam);
-    if (pid) setDriverId(pid);
-  }, [driver_id, driverIdParam]);
-  useEffect(() => {
-    const dn = safeStr(driverNameFromParams);
-    if (!dn) return;
-    setDriverInfo((prev) => ({
-      ...(prev || {}),
-      user_name: safeStr(prev?.user_name ?? prev?.name) || dn,
-    }));
-  }, [driverNameFromParams]);
-  useEffect(() => {
-    if (driverDetailsFromParams) {
-      setDriverInfo((prev) => ({
-        ...(prev || {}),
-        ...(driverDetailsFromParams || {}),
-      }));
-      const extracted = extractDriverId(driverDetailsFromParams);
-      if (!safeStr(driver_id || driverIdParam) && extracted)
-        setDriverId(extracted);
-    }
-  }, [driverDetailsFromParams, driver_id, driverIdParam]);
-
-  /* ---------- Batch order ids ---------- */
+  // Batch orders
   const batchOrderIds = useMemo(
-    () => normalizeOrderIdsList(batchOrderIdsFromParams),
+    () =>
+      Array.isArray(batchOrderIdsFromParams)
+        ? batchOrderIdsFromParams.map(safeStr).filter(Boolean)
+        : [],
     [batchOrderIdsFromParams],
   );
 
   const [batchOrders, setBatchOrders] = useState(() => {
-    const passedOrders = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
-    if (
-      Array.isArray(batchOrderIdsFromParams) &&
-      batchOrderIdsFromParams.length
-    )
-      return filterOrdersByBatchIds(passedOrders, batchOrderIdsFromParams);
-    const initialBid = normalizeBatchIdFromParams(params);
-    if (initialBid) return filterOrdersByBatchField(passedOrders, initialBid);
+    const passed = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
+    if (batchOrderIds.length) {
+      return passed.filter((o) => batchOrderIds.includes(getOrderId(o)));
+    }
     return [];
   });
   const [batchOrdersLoading, setBatchOrdersLoading] = useState(false);
 
-  /* ---------- SecureStore restore ---------- */
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [
-          savedBatch,
-          savedRide,
-          savedDriverJson,
-          savedDriverRatingJson,
-          savedMapCenter,
-        ] = await Promise.all([
-          SecureStore.getItemAsync(keyBatchId(businessId)),
-          SecureStore.getItemAsync(keyRideId(businessId)),
-          SecureStore.getItemAsync(keyDriver(businessId)),
-          SecureStore.getItemAsync(keyDriverRating(businessId)),
-          SecureStore.getItemAsync(keyMapCenter(businessId)),
-        ]);
-        if (cancelled) return;
-        if (!batchId && savedBatch?.trim()) setBatchId(savedBatch.trim());
-        if (!deliveryRideId && savedRide?.trim())
-          setDeliveryRideId(savedRide.trim());
-        const hasExplicitDriverParam = Boolean(
-          safeStr(driver_id || driverIdParam),
-        );
-        if (!driverInfo && savedDriverJson) {
-          try {
-            const parsed = JSON.parse(savedDriverJson);
-            if (parsed && typeof parsed === "object") {
-              setDriverInfo(parsed);
-              const id = extractDriverId(parsed);
-              if (!hasExplicitDriverParam && !safeStr(driverId) && id)
-                setDriverId(id);
-            }
-          } catch {}
-        }
-        if (!driverRating && savedDriverRatingJson) {
-          try {
-            const parsed = JSON.parse(savedDriverRatingJson);
-            if (parsed && typeof parsed === "object") setDriverRating(parsed);
-          } catch {}
-        }
-      } catch (e) {
-        console.log("[SecureStore] restore error:", e?.message || e);
-      } finally {
-        if (!cancelled) setRestoredIds(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [businessId]);
-
-  /* ---------- SecureStore save ---------- */
-  useEffect(() => {
-    (async () => {
-      try {
-        if (batchId)
-          await SecureStore.setItemAsync(
-            keyBatchId(businessId),
-            String(batchId),
-          );
-        if (deliveryRideId)
-          await SecureStore.setItemAsync(
-            keyRideId(businessId),
-            String(deliveryRideId),
-          );
-        if (driverInfo)
-          await SecureStore.setItemAsync(
-            keyDriver(businessId),
-            JSON.stringify(driverInfo),
-          );
-        if (driverRating)
-          await SecureStore.setItemAsync(
-            keyDriverRating(businessId),
-            JSON.stringify(driverRating),
-          );
-      } catch (e) {
-        console.log("[SecureStore] save error:", e?.message || e);
-      }
-    })();
-  }, [businessId, batchId, deliveryRideId, driverInfo, driverRating]);
-
-  /* ---------- Fetch ride id ---------- */
-  const fetchDeliveryRideId = useCallback(async () => {
-    if (!batchId || deliveryRideId) return;
-    const url = buildDeliveryRideUrl(batchId);
-    if (!url) return;
-    try {
-      const res = await fetch(url);
-      const text = await res.text();
-      let json = null;
-      try {
-        json = text ? JSON.parse(text) : null;
-      } catch {}
-      if (!res.ok) return;
-      const rid = pickRideIdFromResponse(json);
-      if (rid) setDeliveryRideId(rid);
-    } catch (e) {
-      console.log("[MERCHANT][RIDE_ID] error:", e?.message || e);
-    }
-  }, [batchId, deliveryRideId]);
-
-  useEffect(() => {
-    if (restoredIds) fetchDeliveryRideId();
-  }, [restoredIds, fetchDeliveryRideId]);
-
-  const effectiveRideIds = useMemo(() => {
-    const set = new Set();
-    const a = String(deliveryRideId || "").trim();
-    if (a) set.add(a);
-    if (Array.isArray(rideIds)) {
-      for (const r of rideIds) {
-        const s = String(r || "").trim();
-        if (s) set.add(s);
-      }
-    }
-    return Array.from(set);
-  }, [deliveryRideId, rideIds]);
-
-  /* ---------- Map & route state ---------- */
+  // Map state
   const [refreshing, setRefreshing] = useState(false);
   const [statusMap, setStatusMap] = useState({});
   const [itemsMap, setItemsMap] = useState({});
   const [loaded, setLoaded] = useState(false);
   const [businessCoords, setBusinessCoords] = useState(null);
   const [loadingLocation, setLoadingLocation] = useState(true);
-  const [locationError, setLocationError] = useState(null);
   const [mapError, setMapError] = useState(false);
   const [routeLoading, setRouteLoading] = useState(false);
-  const [showLoader, setShowLoader] = useState(true);
+  const [showLoader, setShowLoader] = useState(false); // CHANGED: Start with false to show map immediately
   const [mapInitAttempts, setMapInitAttempts] = useState(0);
-  const [mapKey, setMapKey] = useState(Date.now());
-
   const [driversByRideId, setDriversByRideId] = useState({});
   const [routeDriverToBiz, setRouteDriverToBiz] = useState([]);
   const [routeBizToCustomers, setRouteBizToCustomers] = useState([]);
-
-  const lastRouteKeyRef = useRef("");
-  const lastRouteAtMsRef = useRef(0);
-
   const [overlayOpen, setOverlayOpen] = useState(false);
-  const overlayMapRef = useRef(null);
-  const overlayDidFitOnceRef = useRef(false);
+  const [locationModalOpen, setLocationModalOpen] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [expandedMap, setExpandedMap] = useState({});
 
   const mapRef = useRef(null);
+  const overlayMapRef = useRef(null);
   const unsubscribeRef = useRef(null);
-  const initializedRef = useRef(false);
-
-  const lastDriverUpdateMsRef = useRef(0);
-  const didFitOnceRef = useRef(false);
+  const lastRouteKeyRef = useRef("");
+  const lastRouteAtMsRef = useRef(0);
   const lastMarkerPressTsRef = useRef(0);
-  const [cachedMapCenter, setCachedMapCenter] = useState(null);
 
-  // Force hide loader after 5 seconds
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (showLoader) {
-        console.log("Force hiding loader after timeout");
-        setShowLoader(false);
-      }
-    }, 5000);
-    return () => clearTimeout(timer);
-  }, []);
+  // ============ MARK ORDER AS READY ============
+  const markOrderAsReady = useCallback(
+    async (orderId, orderCode) => {
+      if (updatingOrderId) return;
 
-  // Retry map initialization
-  useEffect(() => {
-    if (mapInitAttempts < 3 && showLoader && mapInitAttempts > 0) {
-      const retryTimer = setTimeout(() => {
-        console.log(
-          `Retrying map initialization (attempt ${mapInitAttempts + 1})`,
-        );
-        setMapKey(Date.now());
-      }, 2000);
-      return () => clearTimeout(retryTimer);
-    }
-  }, [mapInitAttempts, showLoader]);
+      setUpdatingOrderId(orderId);
 
-  // Network connectivity check
-  useEffect(() => {
-    const checkNetworkConnectivity = async () => {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const token = await SecureStore.getItemAsync("auth_token");
+        if (!token) {
+          Alert.alert("Error", "Authentication token not found");
+          return;
+        }
 
-        const response = await fetch(
-          "https://tiles.openfreemap.org/styles/liberty",
-          {
-            signal: controller.signal,
-            method: "HEAD",
-          },
+        const endpoint = String(UPDATE_ORDER_STATUS_ENDPOINT || "").trim();
+        if (!endpoint) {
+          Alert.alert("Error", "Update order endpoint not configured");
+          return;
+        }
+
+        // Replace {order_id} with actual order code
+        const url = endpoint.replace(
+          "{order_id}",
+          encodeURIComponent(orderCode),
         );
 
-        clearTimeout(timeoutId);
+        const payload = {
+          status: "READY",
+          status_reason: "Order is ready for pickup/delivery",
+          reason: "Order is ready for pickup/delivery",
+        };
+
+        console.log("[MARK READY] Updating order:", orderCode, "to READY");
+
+        const response = await fetch(url, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const text = await response.text();
+        let json = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {}
 
         if (!response.ok) {
-          console.warn("Cannot reach OpenFreemap servers");
-        } else {
-          console.log("OpenFreemap servers reachable");
+          throw new Error(
+            json?.message || json?.error || `HTTP ${response.status}`,
+          );
         }
+
+        Alert.alert("Success", `Order #${orderCode} marked as READY`);
+
+        // Update local status
+        setStatusMap((prev) => ({ ...prev, [orderId]: "READY" }));
+
+        // Refresh orders to get updated status
+        await fetchGroupedStatusesItems();
       } catch (error) {
-        console.error("Network connectivity check failed:", error);
+        console.error("[MARK READY] Error:", error);
+        Alert.alert("Error", error.message || "Failed to update order status");
+      } finally {
+        setUpdatingOrderId(null);
       }
-    };
+    },
+    [updatingOrderId, fetchGroupedStatusesItems],
+  );
 
-    checkNetworkConnectivity();
-  }, []);
-
-  /* ---------- Seed initial driver coords ---------- */
-  useEffect(() => {
-    const seed = extractLatLng(driverInfo);
-    if (!seed) return;
-    setDriversByRideId((prev) => {
-      const rid = String(
-        deliveryRideId || effectiveRideIds?.[0] || "driver",
-      ).trim();
-      const next = { ...(prev || {}) };
-      next[rid] = {
-        coords: seed,
-        lastPing: new Date().toISOString(),
-        batchId: batchId || null,
-      };
-      return next;
-    });
-    console.log(`[LOCATION][DRIVER] Coords: ${seed.lat}, ${seed.lng}`);
-  }, [driverInfo, deliveryRideId, effectiveRideIds, batchId]);
-
-  /* ---------- Batch orders loading ---------- */
-  useEffect(() => {
-    const passedOrders = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
-    if (batchOrderIds.length) {
-      setBatchOrders(filterOrdersByBatchIds(passedOrders, batchOrderIds));
-      return;
-    }
-    if (batchId) {
-      setBatchOrders(filterOrdersByBatchField(passedOrders, batchId));
-      return;
-    }
-    setBatchOrders([]);
-  }, [passedOrdersRaw, batchOrderIds.join("|"), batchId]);
-
+  // ============ LOAD BATCH ORDERS ============
   const fetchAllGroupedOrdersFlat = useCallback(async () => {
     const url = buildGroupedOrdersUrl(businessId);
     if (!url) return [];
@@ -917,14 +448,15 @@ export default function TrackBatchOrdersScreen() {
   const loadBatchOrders = useCallback(async () => {
     if (!businessId) return;
     if (!batchOrderIds.length && !batchId) return;
-    if (Array.isArray(batchOrders) && batchOrders.length) return;
+    if (batchOrders.length) return;
     setBatchOrdersLoading(true);
     try {
       const all = await fetchAllGroupedOrdersFlat();
       if (!all.length) return;
-      let picked = batchOrderIds.length
-        ? filterOrdersByBatchIds(all, batchOrderIds)
-        : filterOrdersByBatchField(all, batchId);
+      const picked = all.filter((o) => {
+        const id = getOrderId(o);
+        return id && batchOrderIds.includes(id);
+      });
       if (picked.length) setBatchOrders(picked);
     } finally {
       setBatchOrdersLoading(false);
@@ -933,15 +465,18 @@ export default function TrackBatchOrdersScreen() {
     businessId,
     batchOrderIds,
     batchId,
-    batchOrders,
+    batchOrders.length,
     fetchAllGroupedOrdersFlat,
   ]);
 
   useEffect(() => {
-    loadBatchOrders();
-  }, [loadBatchOrders]);
+    if (!hasLoadedBatchOrders.current && batchOrderIds.length) {
+      hasLoadedBatchOrders.current = true;
+      loadBatchOrders();
+    }
+  }, [batchOrderIds, loadBatchOrders]);
 
-  /* ---------- Fetch statuses/items ---------- */
+  // ============ FETCH STATUSES & BUSINESS ============
   const fetchGroupedStatusesItems = useCallback(async () => {
     const url = buildGroupedOrdersUrl(businessId);
     if (!url) {
@@ -967,21 +502,10 @@ export default function TrackBatchOrdersScreen() {
             for (const o of block.orders) {
               const id = getOrderId(o);
               if (!id) continue;
-              const status =
-                o.status || o.order_status || o.current_status || o.orderStatus;
+              const status = o.status || o.order_status || o.current_status;
               if (status) nextStatusMap[id] = status;
               if (Array.isArray(o.items)) nextItemsMap[id] = o.items;
             }
-          } else if (block) {
-            const id = getOrderId(block);
-            const status =
-              block.status ||
-              block.order_status ||
-              block.current_status ||
-              block.orderStatus;
-            if (id && status) nextStatusMap[id] = status;
-            if (id && Array.isArray(block.items))
-              nextItemsMap[id] = block.items;
           }
         }
       }
@@ -994,6 +518,7 @@ export default function TrackBatchOrdersScreen() {
   }, [businessId]);
 
   const fetchBusinessLocation = useCallback(async () => {
+    if (businessCoords) return;
     const url = buildBusinessDetailsUrl(businessId);
     if (!url) {
       setLoadingLocation(false);
@@ -1013,626 +538,172 @@ export default function TrackBatchOrdersScreen() {
       const coords =
         extractLatLng(base) ||
         extractLatLng(base?.business) ||
-        extractLatLng(base?.restaurant) ||
-        extractLatLng(base?.shop) ||
         extractLatLng(base?.location);
       if (coords) {
         console.log("Business coordinates found:", coords);
-        console.log(
-          `[LOCATION][BUSINESS] Coords: ${coords.lat}, ${coords.lng} | Marker Color: ${COLORS.BUSINESS}`,
-        );
         setBusinessCoords(coords);
-      } else {
-        console.log("No business coordinates found");
       }
       setLoadingLocation(false);
     } catch (error) {
       console.error("Error fetching business location:", error);
-      setLocationError(error.message);
       setLoadingLocation(false);
     }
-  }, [businessId]);
+  }, [businessId, businessCoords]);
 
-  const fetchDriverDetailsById = useCallback(
-    async (id, opts = { force: false }) => {
-      const driverIdClean = safeStr(id);
-      if (!driverIdClean) return;
-      const url = buildDriverDetailsUrl(driverIdClean);
-      if (!url) return;
-      const now = Date.now();
-      if (!opts?.force && now - lastDriverDetailsFetchMsRef.current < 10_000)
-        return;
-      lastDriverDetailsFetchMsRef.current = now;
+  const fetchDriverDetailsById = useCallback(async (id) => {
+    const driverIdClean = safeStr(id);
+    if (!driverIdClean) return;
+    const url = buildDriverDetailsUrl(driverIdClean);
+    if (!url) return;
+    const now = Date.now();
+    if (now - lastDriverDetailsFetchMsRef.current < 10000) return;
+    lastDriverDetailsFetchMsRef.current = now;
+    try {
+      const token = await SecureStore.getItemAsync("auth_token");
+      const headers = { Accept: "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(url, { headers });
+      const text = await res.text();
+      let json = null;
       try {
-        const token = await SecureStore.getItemAsync("auth_token");
-        const headers = { Accept: "application/json" };
-        if (token) headers.Authorization = `Bearer ${token}`;
-        const res = await fetch(url, { headers });
-        const text = await res.text();
-        let json = null;
-        try {
-          json = text ? JSON.parse(text) : null;
-        } catch {}
-        if (!res.ok) return;
-        const details =
-          json?.details || json?.data?.details || json?.data || json || null;
-        if (!details || typeof details !== "object") return;
-        setDriverInfo((prev) => {
-          const next = { ...(prev || {}) };
-          if (details.user_id) next.user_id = details.user_id;
-          if (details.user_name) next.user_name = details.user_name;
-          if (details.phone) next.phone = details.phone;
-          if (details.email) next.email = details.email;
-          if (details.profile_image) next.profile_image = details.profile_image;
-          if (details.role) next.role = details.role;
-          return next;
-        });
-        const extracted = extractDriverId(details);
-        if (extracted) setDriverId(extracted);
-      } catch (e) {
-        console.log("[MERCHANT][DRIVER] error:", e?.message || e);
+        json = text ? JSON.parse(text) : null;
+      } catch {}
+      if (!res.ok) return;
+      const details = json?.details || json?.data || json || null;
+      if (details && typeof details === "object") {
+        setDriverInfo((prev) => ({
+          ...(prev || {}),
+          user_name: details.user_name || details.name || prev?.user_name,
+          phone: details.phone || prev?.phone,
+        }));
       }
-    },
-    [],
-  );
+    } catch (e) {
+      console.log("[DRIVER] error:", e?.message);
+    }
+  }, []);
 
+  // ============ INITIAL DATA FETCH ============
   useEffect(() => {
-    fetchGroupedStatusesItems();
-    fetchBusinessLocation();
-  }, [fetchGroupedStatusesItems, fetchBusinessLocation]);
-
-  useEffect(() => {
-    if (!restoredIds) return;
-    if (driverId) fetchDriverDetailsById(driverId);
-  }, [restoredIds, driverId, fetchDriverDetailsById]);
-
-  useFocusEffect(
-    useCallback(() => {
+    if (!hasFetchedInitialData.current) {
+      hasFetchedInitialData.current = true;
       fetchGroupedStatusesItems();
       fetchBusinessLocation();
-      if (restoredIds) fetchDeliveryRideId();
-      loadBatchOrders();
       if (driverId) fetchDriverDetailsById(driverId);
-    }, [
-      fetchGroupedStatusesItems,
-      fetchBusinessLocation,
-      restoredIds,
-      fetchDeliveryRideId,
-      loadBatchOrders,
-      driverId,
-      fetchDriverDetailsById,
-    ]),
-  );
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      await Promise.all([
-        fetchGroupedStatusesItems(),
-        fetchBusinessLocation(),
-        fetchDeliveryRideId(),
-      ]);
-      if (driverId) await fetchDriverDetailsById(driverId, { force: true });
-      setBatchOrders([]);
-      await loadBatchOrders();
-    } finally {
-      setRefreshing(false);
     }
   }, [
     fetchGroupedStatusesItems,
     fetchBusinessLocation,
-    fetchDeliveryRideId,
-    loadBatchOrders,
     driverId,
     fetchDriverDetailsById,
   ]);
 
-  /* ---------- SOCKET ---------- */
-  const onDriverLocation = useCallback(
-    (p) => {
+  // ============ SOCKET SETUP (ONCE) ============
+  useEffect(() => {
+    if (socketInitializedRef.current) return;
+    if (!deliveryRideId) return;
+
+    socketInitializedRef.current = true;
+    const socket = initSocket({});
+    if (!socket) {
+      socketInitializedRef.current = false;
+      return;
+    }
+
+    setCurrentRide(String(deliveryRideId));
+    const join = () =>
+      socket.emit("joinRide", { rideId: String(deliveryRideId) }, () => {});
+    socket.connected ? join() : socket.once("connect", join);
+
+    const unsubscribe = listenToDriverLocation((locationData) => {
       const now = Date.now();
-      if (now - lastDriverUpdateMsRef.current < 800) return;
+      if (now - lastDriverUpdateMsRef.current < 1000) return;
       lastDriverUpdateMsRef.current = now;
 
-      const coords =
-        p?.lat && p?.lng
-          ? { lat: p.lat, lng: p.lng }
-          : p?.latitude && p?.longitude
-            ? { lat: p.latitude, lng: p.longitude }
-            : p?.driver_lat && p?.driver_lng
-              ? { lat: p.driver_lat, lng: p.driver_lng }
-              : extractLatLng(p);
+      const coords = extractLatLng(locationData);
       if (!coords) return;
 
-      const ridFromPayload =
-        p?.ride_id ||
-        p?.rideId ||
-        p?.delivery_ride_id ||
-        p?.room ||
-        p?.request_id;
-      const rid = String(
-        ridFromPayload || effectiveRideIds[0] || "driver",
-      ).trim();
-
-      const pid = p?.driver_id || p?.driverId || p?.driver?.id || "";
-      if (pid) {
-        setDriverId(pid);
-        const missingName =
-          !safeStr(driverInfo?.user_name) && !safeStr(driverInfo?.name);
-        if (missingName) fetchDriverDetailsById(pid, { force: true });
-      }
-
-      const maybeDriver = {
-        user_name: p?.driver_name || p?.driverName,
-        phone: p?.driver_phone || p?.driverPhone,
-        ...(coords && { lat: coords.lat, lng: coords.lng }),
-      };
-      if (maybeDriver.user_name || maybeDriver.phone) {
-        setDriverInfo((prev) => ({ ...(prev || {}), ...maybeDriver }));
-      }
-
+      const rid = locationData?.ride_id || deliveryRideId;
       setDriversByRideId((prev) => {
         const prevEntry = prev?.[rid];
         if (prevEntry?.coords && haversineMeters(prevEntry.coords, coords) < 5)
           return prev;
-        const next = { ...(prev || {}) };
-        next[rid] = {
-          coords,
-          lastPing: new Date().toISOString(),
-          batchId: batchId || null,
+        return {
+          ...prev,
+          [rid]: { coords, lastPing: new Date().toISOString() },
         };
-        return next;
       });
-      console.log(
-        `[LOCATION][DRIVER] Update via socket: ${coords.lat}, ${coords.lng}`,
-      );
-    },
-    [effectiveRideIds, batchId, fetchDriverDetailsById, driverInfo],
-  );
-
-  useEffect(() => {
-    if (initializedRef.current || !restoredIds || !effectiveRideIds.length)
-      return;
-    initializedRef.current = true;
-    const socket = initSocket({});
-    if (!socket) return;
-    if (effectiveRideIds[0]) setCurrentRide(effectiveRideIds[0]);
-    effectiveRideIds.forEach((rid) => {
-      const join = () =>
-        socket.emit("joinRide", { rideId: String(rid) }, () => {});
-      socket.connected ? join() : socket.once("connect", join);
     });
-    const unsubscribe = listenToDriverLocation((locationData) =>
-      onDriverLocation(locationData),
-    );
     unsubscribeRef.current = unsubscribe;
+
     return () => {
       if (unsubscribeRef.current) unsubscribeRef.current();
-      initializedRef.current = false;
+      socketInitializedRef.current = false;
     };
-  }, [restoredIds, effectiveRideIds, onDriverLocation]);
+  }, [deliveryRideId]);
 
-  /* ---------- Derived ---------- */
-  const title = useMemo(() => {
-    const c = batchOrders.length;
-    const base = c === 1 ? "1 order" : `${c} orders`;
-    const method = selectedMethod ? ` · ${selectedMethod}` : "";
-    const bid = batchId ? ` · Batch #${batchId}` : "";
-    const rid =
-      effectiveRideIds.length === 1
-        ? ` · Ride #${effectiveRideIds[0]}`
-        : effectiveRideIds.length > 1
-          ? ` · ${effectiveRideIds.length} rides`
-          : "";
-    return `${base}${method}${bid}${rid}`;
-  }, [batchOrders.length, selectedMethod, batchId, effectiveRideIds]);
-
-  const driverName = useMemo(() => {
-    const d = driverInfo || {};
-    return (
-      safeStr(
-        d?.user_name ??
-          d?.name ??
-          d?.full_name ??
-          d?.fullName ??
-          driverNameFromParams ??
-          "",
-      ) || "Driver"
-    );
-  }, [driverInfo, driverNameFromParams]);
-
-  const driverPhoneText = useMemo(() => {
-    const p =
-      driverInfo?.phone ?? driverInfo?.mobile ?? driverInfo?.contact ?? "";
-    return safePhone(p);
-  }, [driverInfo]);
-
-  const deliveredByText = useMemo(() => {
-    const idPart = safeStr(driverId);
-    const namePart = safeStr(driverName) || "Driver";
-    return idPart
-      ? `Delivered by ${namePart} (${idPart})`
-      : `Delivered by ${namePart}`;
-  }, [driverName, driverId]);
-
-  const onCallDriver = useCallback(async () => {
-    if (!driverPhoneText)
-      return Alert.alert("No phone", "Driver phone number not available yet.");
-    try {
-      await Linking.openURL(`tel:${driverPhoneText}`);
-    } catch {
-      Alert.alert("Cannot call", "Your device cannot place calls.");
-    }
-  }, [driverPhoneText]);
-
-  const onChatDriver = useCallback(() => {
-    const rid = safeStr(deliveryRideId || effectiveRideIds?.[0] || "");
-    if (!rid) return Alert.alert("Chat", "Ride ID is not available yet.");
-    const did = safeStr(driverId);
-    if (!did) return Alert.alert("Chat", "Driver ID is not available yet.");
-    const mid = safeStr(businessId);
-    if (!mid) return Alert.alert("Chat", "Merchant ID is missing.");
-    const dname = safeStr(driverName) || "Driver";
-    navigation.navigate("Chat", {
-      requestId: String(rid),
-      rideId: String(rid),
-      driverUserId: String(did),
-      driverName: String(dname),
-      me: { role: "merchant", id: String(mid) },
-      type: "driver",
-      name: String(dname),
-    });
-  }, [
-    navigation,
-    deliveryRideId,
-    effectiveRideIds,
-    driverId,
-    businessId,
-    driverName,
-  ]);
+  // ============ DERIVED DATA ============
+  const effectiveRideIds = useMemo(() => {
+    const set = new Set();
+    if (deliveryRideId) set.add(deliveryRideId);
+    if (Array.isArray(rideIds))
+      rideIds.forEach((r) => {
+        if (r) set.add(String(r));
+      });
+    return Array.from(set);
+  }, [deliveryRideId, rideIds]);
 
   const groupedDropPoints = useMemo(
     () => groupDropsByDistance(batchOrders, 12),
     [batchOrders],
   );
 
-  // Calculate map center and zoom
   const { initialMapCenter, initialZoom } = useMemo(() => {
     const points = [];
-
-    if (businessCoords && businessCoords.lat && businessCoords.lng) {
-      points.push({ lat: businessCoords.lat, lng: businessCoords.lng });
-    }
-
-    Object.values(driversByRideId || {}).forEach((d) => {
-      if (d?.coords?.lat && d?.coords?.lng) points.push(d.coords);
+    if (businessCoords) points.push(businessCoords);
+    Object.values(driversByRideId).forEach((d) => {
+      if (d?.coords) points.push(d.coords);
     });
-
     groupedDropPoints.forEach((g) => {
       if (g.lat && g.lng) points.push({ lat: g.lat, lng: g.lng });
     });
 
-    console.log("Map points for center calculation:", points.length);
-
-    if (points.length > 0) {
-      let minLat = Infinity,
-        maxLat = -Infinity;
-      let minLng = Infinity,
-        maxLng = -Infinity;
-      points.forEach((p) => {
-        minLat = Math.min(minLat, p.lat);
-        maxLat = Math.max(maxLat, p.lat);
-        minLng = Math.min(minLng, p.lng);
-        maxLng = Math.max(maxLng, p.lng);
-      });
-
-      const center = {
-        latitude: (minLat + maxLat) / 2,
-        longitude: (minLng + maxLng) / 2,
+    if (points.length === 0) {
+      return {
+        initialMapCenter: { latitude: 27.4728, longitude: 89.639 },
+        initialZoom: 12,
       };
-
-      const zoom = computeZoomForPoints(points);
-      console.log("Computed map center:", center, "zoom:", zoom);
-      return { initialMapCenter: center, initialZoom: zoom };
     }
 
-    console.log("Using fallback coordinates (Thimphu)");
-    return {
-      initialMapCenter: { latitude: 27.4728, longitude: 89.639 },
-      initialZoom: 12,
+    let minLat = Infinity,
+      maxLat = -Infinity;
+    let minLng = Infinity,
+      maxLng = -Infinity;
+    points.forEach((p) => {
+      minLat = Math.min(minLat, p.lat);
+      maxLat = Math.max(maxLat, p.lat);
+      minLng = Math.min(minLng, p.lng);
+      maxLng = Math.max(maxLng, p.lng);
+    });
+
+    const center = {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLng + maxLng) / 2,
     };
+    const zoom = computeZoomForPoints(points);
+    return { initialMapCenter: center, initialZoom: zoom };
   }, [businessCoords, driversByRideId, groupedDropPoints]);
 
-  /* ============================================================
-     Fit helper
-  ============================================================ */
-  const fitToPoints = useCallback(
-    async (ref) => {
-      if (!ref?.current) return;
-
-      const points = [];
-
-      if (businessCoords && businessCoords.lat && businessCoords.lng) {
-        points.push({
-          latitude: businessCoords.lat,
-          longitude: businessCoords.lng,
-        });
-      }
-
-      for (const rid of Object.keys(driversByRideId || {})) {
-        const c = driversByRideId?.[rid]?.coords;
-        if (c?.lat && c?.lng) {
-          points.push({ latitude: c.lat, longitude: c.lng });
-        }
-      }
-
-      for (const g of groupedDropPoints) {
-        if (g.lat && g.lng) {
-          points.push({ latitude: g.lat, longitude: g.lng });
-        }
-      }
-
-      if (points.length === 0) return;
-
-      let minLat = Infinity,
-        maxLat = -Infinity;
-      let minLng = Infinity,
-        maxLng = -Infinity;
-      points.forEach((p) => {
-        minLat = Math.min(minLat, p.latitude);
-        maxLat = Math.max(maxLat, p.latitude);
-        minLng = Math.min(minLng, p.longitude);
-        maxLng = Math.max(maxLng, p.longitude);
-      });
-
-      const centerLat = (minLat + maxLat) / 2;
-      const centerLng = (minLng + maxLng) / 2;
-      const maxDelta = Math.max(maxLat - minLat, maxLng - minLng);
-
-      let zoom = 12;
-      if (maxDelta < 0.01) zoom = 16;
-      else if (maxDelta < 0.05) zoom = 14;
-      else if (maxDelta < 0.1) zoom = 12;
-      else if (maxDelta < 0.5) zoom = 10;
-      else zoom = 8;
-
-      try {
-        await ref.current.animateCamera({
-          latitude: centerLat,
-          longitude: centerLng,
-          zoom,
-        });
-      } catch (err) {
-        console.log("Fit error:", err);
-      }
-    },
-    [businessCoords, driversByRideId, groupedDropPoints],
-  );
-
-  const fitAll = useCallback(() => fitToPoints(mapRef), [fitToPoints]);
-  const fitOverlay = useCallback(
-    () => fitToPoints(overlayMapRef),
-    [fitToPoints],
-  );
-
-  const openOverlay = useCallback(() => {
-    if (Date.now() - lastMarkerPressTsRef.current < 300) return;
-    overlayDidFitOnceRef.current = false;
-    setOverlayOpen(true);
-  }, []);
-
-  const computeMultiRoutes = useCallback(async () => {
-    const firstDriverKey = Object.keys(driversByRideId || {})[0];
-    const driver = firstDriverKey
-      ? driversByRideId?.[firstDriverKey]?.coords
-      : null;
-
-    const biz = businessCoords;
-
-    const targets = (groupedDropPoints || []).filter((g) => {
-      return !g.orderIds?.every((oid) => isDelivered(statusMap?.[oid]));
-    });
-
-    const key = JSON.stringify({
-      driver,
-      biz,
-      targets: targets.map((t) => [t.lat, t.lng]),
-    });
-
-    const now = Date.now();
-
-    if (
-      key === lastRouteKeyRef.current &&
-      now - lastRouteAtMsRef.current < 10000
-    ) {
-      return;
-    }
-
-    lastRouteKeyRef.current = key;
-    lastRouteAtMsRef.current = now;
-
-    setRouteLoading(true);
-
-    try {
-      if (driver && biz) {
-        const coords = await fetchOsrmRoute2(driver, biz, 5000);
-        if (coords.length) {
-          setRouteDriverToBiz(coords);
-        } else {
-          setRouteDriverToBiz([
-            { latitude: driver.lat, longitude: driver.lng },
-            { latitude: biz.lat, longitude: biz.lng },
-          ]);
-        }
-      }
-
-      if (biz && targets.length) {
-        const limitedTargets = targets.slice(0, 5);
-        const results = await Promise.all(
-          limitedTargets.map(async (t) => {
-            const coords = await fetchOsrmRoute2(
-              biz,
-              {
-                lat: t.lat,
-                lng: t.lng,
-              },
-              5000,
-            );
-            if (coords.length) {
-              return { key: t.key, coords };
-            }
-            return {
-              key: t.key,
-              coords: [
-                { latitude: biz.lat, longitude: biz.lng },
-                { latitude: t.lat, longitude: t.lng },
-              ],
-            };
-          }),
-        );
-        setRouteBizToCustomers(results);
-      }
-    } finally {
-      setRouteLoading(false);
-    }
-  }, [driversByRideId, businessCoords, groupedDropPoints, statusMap]);
-
-  useEffect(() => {
-    if (businessCoords && !routeLoading) {
-      const timer = setTimeout(() => {
-        computeMultiRoutes();
-      }, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [businessCoords, computeMultiRoutes]);
-
-  /* ---------- Expandable items ---------- */
-  const [expandedMap, setExpandedMap] = useState({});
-  const toggleExpanded = useCallback((orderId) => {
-    const id = String(orderId || "");
-    if (!id) return;
-    setExpandedMap((prev) => ({ ...(prev || {}), [id]: !prev?.[id] }));
-  }, []);
-
-  const [locationModalOpen, setLocationModalOpen] = useState(false);
-  const [selectedGroup, setSelectedGroup] = useState(null);
-
-  const openGroupModal = useCallback((group) => {
-    if (!group) return;
-    lastMarkerPressTsRef.current = Date.now();
-    setSelectedGroup(group);
-    setLocationModalOpen(true);
-  }, []);
-  const closeGroupModal = useCallback(() => {
-    setLocationModalOpen(false);
-    setSelectedGroup(null);
-  }, []);
-
-  const selectedGroupRows = useMemo(() => {
-    const g = selectedGroup;
-    if (!g?.orderIds?.length) return [];
-    return g.orderIds.map((oid) => {
-      const st = statusMap?.[oid];
-      const label = st ? String(st).toUpperCase().replace(/_/g, " ") : "—";
-      return { orderId: oid, status: label, delivered: isDelivered(st) };
-    });
-  }, [selectedGroup, statusMap]);
-
-  /* ============================================================
-     MARKER POPUP HANDLER FOR APK
-  ============================================================ */
-  const handleMarkerPress = useCallback(
-    (markerId, markerData) => {
-      console.log(
-        "Marker pressed:",
-        markerId,
-        markerData?.popupData?.type || markerData?.type,
-      );
-
-      if (!markerData) {
-        Alert.alert("Location", "Tap for more details", [{ text: "OK" }]);
-        return;
-      }
-
-      // Check for popupData (APK compatible)
-      const popup = markerData.popupData || markerData;
-
-      if (popup.type === "business") {
-        Alert.alert(
-          popup.title || "Business Location",
-          popup.details ||
-            "Your business pickup point.\nAll deliveries start from here.",
-          [{ text: "OK" }],
-        );
-      } else if (popup.type === "driver") {
-        Alert.alert(
-          popup.title || "Driver Information",
-          popup.details ||
-            `Driver: ${driverName || "N/A"}\nID: ${driverId || "N/A"}`,
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: popup.button1Text || "Call Driver",
-              onPress: () => {
-                if (popup.button1Action === "call") onCallDriver();
-                else onCallDriver();
-              },
-            },
-            {
-              text: popup.button2Text || "Chat",
-              onPress: () => {
-                if (popup.button2Action === "chat") onChatDriver();
-                else onChatDriver();
-              },
-            },
-          ],
-        );
-      } else if (popup.type === "customer") {
-        if (
-          popup.button1Action === "viewOrders" &&
-          popup.orderIds?.length > 1
-        ) {
-          // Find the group and show the modal
-          const group = groupedDropPoints.find((g) => g.key === popup.groupKey);
-          if (group) {
-            openGroupModal(group);
-          } else {
-            Alert.alert(popup.title || "Orders", popup.details, [
-              { text: "OK" },
-            ]);
-          }
-        } else {
-          Alert.alert(popup.title || "Order Details", popup.details, [
-            { text: "OK" },
-          ]);
-        }
-      } else {
-        // Fallback
-        Alert.alert(
-          markerData.title || "Location",
-          markerData.description || "Tap for more details",
-          [{ text: "OK" }],
-        );
-      }
-    },
-    [
-      driverName,
-      driverId,
-      onCallDriver,
-      onChatDriver,
-      groupedDropPoints,
-      openGroupModal,
-    ],
-  );
+  // ============ MARKERS ============
+  const driverName = useMemo(() => {
+    const d = driverInfo || {};
+    return (
+      safeStr(d?.user_name || d?.name || driverNameFromParams || "") || "Driver"
+    );
+  }, [driverInfo, driverNameFromParams]);
 
   const markers = useMemo(() => {
     const list = [];
-
-    // Business marker - Regular marker with color (not PNG) - RED (#e71414)
-    if (businessCoords && businessCoords.lat && businessCoords.lng) {
-      console.log(
-        `[MARKER][BUSINESS] Adding marker at ${businessCoords.lat}, ${businessCoords.lng} with color ${COLORS.BUSINESS}`,
-      );
+    if (businessCoords) {
       list.push({
         id: "business",
         coordinate: {
@@ -1640,215 +711,357 @@ export default function TrackBatchOrdersScreen() {
           longitude: businessCoords.lng,
         },
         title: "Business",
-        description: `${businessCoords.lat.toFixed(6)}, ${businessCoords.lng.toFixed(6)}`,
-        icon: {
-          color: COLORS.BUSINESS,
-          size: 45,
-        },
-        zIndex: 20,
+        icon: { color: COLORS.BUSINESS, size: 45 },
         popupData: {
           type: "business",
-          title: "🏪 Business Location",
-          details: `Your business pickup point\n\nCoordinates: ${businessCoords.lat.toFixed(6)}, ${businessCoords.lng.toFixed(6)}\nAll deliveries start from here.`,
-          buttonText: "OK",
+          title: "Business Location",
+          details: "Your pickup point",
         },
       });
     }
-
-    // Driver markers - PNG image
-    Object.keys(driversByRideId || {}).forEach((rid) => {
+    Object.keys(driversByRideId).forEach((rid) => {
       const c = driversByRideId[rid]?.coords;
-      if (c?.lat && c?.lng) {
-        console.log(
-          `[MARKER][DRIVER] Adding marker for ride ${rid} at ${c.lat}, ${c.lng} with PNG image`,
-        );
+      if (c) {
         list.push({
           id: `driver-${rid}`,
           coordinate: { latitude: c.lat, longitude: c.lng },
           title: "Driver",
-          description: `${driverId || "N/A"}`,
-          icon: {
-            uri: Image.resolveAssetSource(DRIVER_MARKER).uri,
-            size: 50,
-          },
-          zIndex: 15,
+          icon: { uri: Image.resolveAssetSource(DRIVER_MARKER).uri, size: 50 },
           popupData: {
             type: "driver",
-            title: "🚗 Driver Information",
-            details: `Driver Name: ${driverName || "N/A"}\nDriver ID: ${driverId || "N/A"}\nRide ID: ${rid}`,
-            button1Text: "📞 Call Driver",
-            button1Action: "call",
-            button2Text: "💬 Chat",
-            button2Action: "chat",
+            title: "Driver",
+            details: `ID: ${driverId || "N/A"}`,
           },
         });
       }
     });
-
-    // Customer markers - PNG image
-    groupedDropPoints.slice(0, 15).forEach((g, idx) => {
-      if (g.lat && g.lng) {
-        console.log(
-          `[MARKER][CUSTOMER] Adding marker group ${g.key} at ${g.lat}, ${g.lng} with PNG image (${g.count} orders)`,
-        );
-        list.push({
-          id: `cust-${g.key}`,
-          coordinate: { latitude: g.lat, longitude: g.lng },
-          title: `${g.count} Orders`,
-          description: `${g.count} customers`,
-          icon: {
-            uri: Image.resolveAssetSource(CUSTOMER_MARKER).uri,
-            size: 45,
-          },
-          zIndex: 10,
-          popupData: {
-            type: "customer",
-            title: `📦 ${g.count} Orders at this Location`,
-            details: `Customer location for these orders. Orders: ${g.orderIds.join(", ")}`,
-            button1Text: "View Orders",
-            button1Action: "viewOrders",
-            groupKey: g.key,
-            orderIds: g.orderIds,
-          },
-        });
-      }
+    groupedDropPoints.slice(0, 15).forEach((g) => {
+      list.push({
+        id: `cust-${g.key}`,
+        coordinate: { latitude: g.lat, longitude: g.lng },
+        title: `${g.count} Orders`,
+        icon: { uri: Image.resolveAssetSource(CUSTOMER_MARKER).uri, size: 45 },
+        popupData: {
+          type: "customer",
+          title: "Orders",
+          details: `${g.count} customers`,
+          groupKey: g.key,
+          orderIds: g.orderIds,
+        },
+      });
     });
-
     return list;
-  }, [
-    businessCoords,
-    driversByRideId,
-    groupedDropPoints,
-    driverName,
-    driverId,
-  ]);
+  }, [businessCoords, driversByRideId, groupedDropPoints, driverId]);
 
-  /* ============================================================
-     POLYLINES
-  ============================================================ */
+  // ============ ROUTES ============
+  const computeMultiRoutes = useCallback(async () => {
+    const firstDriverKey = Object.keys(driversByRideId || {})[0];
+    const driver = firstDriverKey
+      ? driversByRideId[firstDriverKey]?.coords
+      : null;
+    const biz = businessCoords;
+    if (!driver || !biz) return;
+
+    const key = JSON.stringify({ driver, biz });
+    const now = Date.now();
+    if (
+      key === lastRouteKeyRef.current &&
+      now - lastRouteAtMsRef.current < 10000
+    )
+      return;
+    lastRouteKeyRef.current = key;
+    lastRouteAtMsRef.current = now;
+
+    setRouteLoading(true);
+    try {
+      setRouteDriverToBiz([
+        { latitude: driver.lat, longitude: driver.lng },
+        { latitude: biz.lat, longitude: biz.lng },
+      ]);
+    } finally {
+      setRouteLoading(false);
+    }
+  }, [driversByRideId, businessCoords]);
+
+  useEffect(() => {
+    if (!businessCoords || routeLoading || routeComputedRef.current) return;
+    routeComputedRef.current = true;
+    const timer = setTimeout(() => computeMultiRoutes(), 500); // CHANGED: Reduced from 2000ms to 500ms
+    return () => clearTimeout(timer);
+  }, [businessCoords, computeMultiRoutes, routeLoading]);
+
   const polylines = useMemo(() => {
     const lines = [];
-
     if (routeDriverToBiz?.length > 1) {
       lines.push({
         id: "driver-biz",
         coordinates: routeDriverToBiz,
         strokeColor: "#2563eb",
         strokeWidth: 4,
-        zIndex: 5,
       });
     }
-
-    routeBizToCustomers.forEach((r) => {
-      if (r?.coords?.length > 1) {
-        lines.push({
-          id: `cust-${r.key}`,
-          coordinates: r.coords,
-          strokeColor: "#60a5fa",
-          strokeWidth: 3,
-          zIndex: 5,
-        });
-      }
-    });
-
-    console.log("Polylines created:", lines.length);
     return lines;
-  }, [routeDriverToBiz, routeBizToCustomers]);
+  }, [routeDriverToBiz]);
 
-  /* ---------- Render order row ---------- */
+  // ============ FIT MAP ============
+  const fitAll = useCallback(() => {
+    if (!mapRef.current) return;
+    const points = [];
+    if (businessCoords)
+      points.push({
+        latitude: businessCoords.lat,
+        longitude: businessCoords.lng,
+      });
+    Object.values(driversByRideId).forEach((d) => {
+      if (d?.coords)
+        points.push({ latitude: d.coords.lat, longitude: d.coords.lng });
+    });
+    groupedDropPoints.forEach((g) => {
+      if (g.lat && g.lng) points.push({ latitude: g.lat, longitude: g.lng });
+    });
+    if (points.length === 0) return;
+
+    let minLat = Infinity,
+      maxLat = -Infinity;
+    let minLng = Infinity,
+      maxLng = -Infinity;
+    points.forEach((p) => {
+      minLat = Math.min(minLat, p.latitude);
+      maxLat = Math.max(maxLat, p.latitude);
+      minLng = Math.min(minLng, p.longitude);
+      maxLng = Math.max(maxLng, p.longitude);
+    });
+    const center = {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLng + maxLng) / 2,
+    };
+    const maxDelta = Math.max(maxLat - minLat, maxLng - minLng);
+    let zoom = 12;
+    if (maxDelta < 0.01) zoom = 16;
+    else if (maxDelta < 0.05) zoom = 14;
+    else if (maxDelta < 0.1) zoom = 12;
+    else if (maxDelta < 0.5) zoom = 10;
+    else zoom = 8;
+    mapRef.current.animateCamera?.({
+      latitude: center.latitude,
+      longitude: center.longitude,
+      zoom,
+    });
+  }, [businessCoords, driversByRideId, groupedDropPoints]);
+
+  // ============ RENDER ORDER ROW WITH STATUS-BASED READY BUTTON ============
+  const renderOrderItems = (items) => {
+    if (!items || !items.length) return null;
+    return items.slice(0, 10).map((it, idx) => {
+      const name = getItemName(it);
+      const qty = getItemQty(it);
+      return (
+        <View key={idx} style={styles.itemRow}>
+          <Text style={styles.itemName} numberOfLines={2}>
+            {name}
+          </Text>
+          <Text style={styles.itemQty}>x{qty}</Text>
+        </View>
+      );
+    });
+  };
+
   const renderRow = ({ item }) => {
-    const base = item.raw || item || {};
-    const id = getOrderId(base) || getOrderId(item) || item.id;
-
+    const id = getOrderId(item) || item.id;
+    const orderCode = item.order_code || item.id || id;
     const statusRaw = (loaded && id ? statusMap[id] : "") || "";
-    const statusLabel = statusRaw
-      ? String(statusRaw).toUpperCase().replace(/_/g, " ")
+    const normalizedStatus = statusRaw
+      ? String(statusRaw).toUpperCase()
       : loaded
-        ? "—"
+        ? "PENDING"
         : "...";
 
-    const name = base.customer_name ?? base.user_name ?? base.full_name ?? "";
+    // Normalize status for comparison
+    let displayStatus = normalizedStatus;
+    let showReadyButton = false;
 
-    const itemsFromMap = id && itemsMap[id] ? itemsMap[id] : null;
-    const itemsBase = Array.isArray(base.items) ? base.items : null;
-    const items = itemsFromMap || itemsBase || [];
-    const hasItems = Array.isArray(items) && items.length > 0;
-    const expanded = !!expandedMap?.[String(id || "")];
+    // Check if we should show the "Mark as Ready" button
+    // Show ONLY when status is ASSIGNED or CONFIRMED (before READY/PICKED_UP)
+    if (normalizedStatus === "ASSIGNED") {
+      showReadyButton = true;
+    }
+
+    // If status is already READY, PICKED_UP, OUT_FOR_DELIVERY, or COMPLETED, no button
+    const isReadyOrLater = [
+      "READY",
+      "PICKED_UP",
+      "PICKEDUP",
+      "OUT_FOR_DELIVERY",
+      "COMPLETED",
+      "DELIVERED",
+    ].includes(normalizedStatus);
+
+    // Display labels
+    let statusLabel = displayStatus;
+    let statusStyle = {};
+    let isReady = normalizedStatus === "READY";
+
+    if (normalizedStatus === "ASSIGNED") {
+      statusLabel = "DRIVER ASSIGNED";
+      statusStyle = { backgroundColor: "#e0e7ff", borderColor: "#c7d2fe" };
+    } else if (normalizedStatus === "CONFIRMED") {
+      statusLabel = "CONFIRMED";
+      statusStyle = { backgroundColor: "#dcfce7", borderColor: "#86efac" };
+    } else if (isReady) {
+      statusLabel = "READY ✓";
+      statusStyle = { backgroundColor: "#dcfce7", borderColor: "#86efac" };
+    } else if (
+      normalizedStatus === "PICKED_UP" ||
+      normalizedStatus === "PICKEDUP"
+    ) {
+      statusLabel = "PICKED UP ✓";
+      statusStyle = { backgroundColor: "#d1fae5", borderColor: "#a7f3d0" };
+    } else if (normalizedStatus === "OUT_FOR_DELIVERY") {
+      statusLabel = "OUT FOR DELIVERY";
+      statusStyle = { backgroundColor: "#fef3c7", borderColor: "#fcd34d" };
+    } else if (
+      normalizedStatus === "COMPLETED" ||
+      normalizedStatus === "DELIVERED"
+    ) {
+      statusLabel = "DELIVERED ✓";
+      statusStyle = { backgroundColor: "#d1fae5", borderColor: "#a7f3d0" };
+    } else if (normalizedStatus === "PENDING") {
+      statusLabel = "PENDING";
+      statusStyle = { backgroundColor: "#f3f4f6", borderColor: "#d1d5db" };
+    }
+
+    const name =
+      item.customer_name ?? item.user_name ?? item.customer?.name ?? "";
+    const items = (id && itemsMap[id]) || item.items || [];
 
     return (
-      <View style={styles.orderRow}>
-        <Pressable
-          onPress={() => toggleExpanded(id)}
-          style={({ pressed }) => [
-            styles.orderPress,
-            pressed ? { opacity: 0.85 } : null,
-          ]}
-        >
-          <View style={styles.orderTop}>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Text style={styles.orderId}>#{id}</Text>
-              <Ionicons
-                name={expanded ? "chevron-up" : "chevron-down"}
-                size={18}
-                color="#6b7280"
-                style={{ marginLeft: 8 }}
-              />
-            </View>
-            <View style={styles.statusPill}>
-              <Text style={styles.statusPillText}>{statusLabel}</Text>
-            </View>
+      <View style={styles.orderCard}>
+        <View style={styles.orderHeader}>
+          <View>
+            <Text style={styles.orderId}>#{orderCode}</Text>
+            {!!name && <Text style={styles.orderName}>{name}</Text>}
           </View>
-          {!!name && (
-            <Text style={styles.orderName} numberOfLines={1}>
-              {name}
+          <View style={[styles.statusPill, statusStyle]}>
+            <Text
+              style={[styles.statusPillText, isReady && styles.statusReadyText]}
+            >
+              {statusLabel}
             </Text>
-          )}
-          <Text style={styles.orderMeta} numberOfLines={1}>
-            {hasItems
-              ? `${items.length} item${items.length === 1 ? "" : "s"}`
-              : "Items: —"}
-          </Text>
-        </Pressable>
+          </View>
+        </View>
 
-        {expanded && (
-          <View style={styles.itemsDropdown}>
-            {hasItems ? (
-              items.slice(0, 5).map((it, idx) => {
-                const title = pickItemName(it);
-                const qty = pickItemQty(it);
-                const price = pickItemPrice(it);
-                return (
-                  <View key={`${id}-it-${idx}`} style={styles.itemRow}>
-                    <View style={{ flex: 1, paddingRight: 8 }}>
-                      <Text style={styles.itemName} numberOfLines={2}>
-                        {title}
-                      </Text>
-                      {price != null ? (
-                        <Text style={styles.itemSub}>
-                          {formatMoney(price)} x{qty}
-                        </Text>
-                      ) : (
-                        <Text style={styles.itemSub}>x{qty}</Text>
-                      )}
-                    </View>
-                  </View>
-                );
-              })
+        {items.length > 0 && (
+          <View style={styles.itemsContainer}>
+            <Text style={styles.itemsTitle}>Items ({items.length})</Text>
+            {renderOrderItems(items)}
+          </View>
+        )}
+
+        {/* Show "Mark as Ready" button ONLY for ASSIGNED or CONFIRMED status */}
+        {showReadyButton && !isReadyOrLater && (
+          <TouchableOpacity
+            style={styles.readyButton}
+            onPress={() => markOrderAsReady(id, orderCode)}
+            disabled={updatingOrderId === id}
+          >
+            {updatingOrderId === id ? (
+              <ActivityIndicator size="small" color="#ffffff" />
             ) : (
-              <Text style={styles.noItemsText}>No items</Text>
+              <>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={18}
+                  color="#ffffff"
+                />
+                <Text style={styles.readyButtonText}>Mark as Ready</Text>
+              </>
             )}
+          </TouchableOpacity>
+        )}
+
+        {/* Show "Ready" badge for READY status */}
+        {normalizedStatus === "READY" && (
+          <View style={styles.readyBadge}>
+            <Ionicons name="checkmark-circle" size={16} color="#16a34a" />
+            <Text style={styles.readyBadgeText}>
+              Order is ready for pickup/delivery
+            </Text>
+          </View>
+        )}
+
+        {/* Show "Picked Up" badge for PICKED_UP status */}
+        {(normalizedStatus === "PICKED_UP" ||
+          normalizedStatus === "PICKEDUP") && (
+          <View style={[styles.readyBadge, { backgroundColor: "#d1fae5" }]}>
+            <Ionicons name="bicycle" size={16} color="#16a34a" />
+            <Text style={[styles.readyBadgeText, { color: "#16a34a" }]}>
+              Driver has picked up the order
+            </Text>
+          </View>
+        )}
+
+        {/* Show "Delivered" badge for COMPLETED status */}
+        {(normalizedStatus === "COMPLETED" ||
+          normalizedStatus === "DELIVERED") && (
+          <View style={[styles.readyBadge, { backgroundColor: "#d1fae5" }]}>
+            <Ionicons name="checkmark-done-circle" size={16} color="#16a34a" />
+            <Text style={[styles.readyBadgeText, { color: "#16a34a" }]}>
+              Order delivered successfully
+            </Text>
           </View>
         )}
       </View>
     );
   };
 
-  const chatDisabled =
-    !safeStr(driverId) || !safeStr(deliveryRideId || effectiveRideIds?.[0]);
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        fetchGroupedStatusesItems(),
+        fetchBusinessLocation(),
+        loadBatchOrders(),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchGroupedStatusesItems, fetchBusinessLocation, loadBatchOrders]);
 
-  /* ============================================================
-     RENDER
-  ============================================================ */
+  const openGroupModal = useCallback((group) => {
+    setSelectedGroup(group);
+    setLocationModalOpen(true);
+  }, []);
+
+  const closeGroupModal = useCallback(() => {
+    setLocationModalOpen(false);
+    setSelectedGroup(null);
+  }, []);
+
+  const openOverlay = () => setOverlayOpen(true);
+  const fitOverlay = () => {};
+
+  const onCallDriver = useCallback(async () => {
+    const phone = driverInfo?.phone || "";
+    if (!phone) return Alert.alert("No phone", "Driver phone not available");
+    await Linking.openURL(`tel:${phone}`);
+  }, [driverInfo]);
+
+  const onChatDriver = useCallback(() => {
+    if (!deliveryRideId || !driverId)
+      return Alert.alert("Chat", "Ride/Driver ID missing");
+    navigation.navigate("Chat", {
+      rideId: deliveryRideId,
+      driverUserId: driverId,
+      driverName,
+      me: { role: "merchant", id: businessId },
+    });
+  }, [deliveryRideId, driverId, driverName, businessId, navigation]);
+
+  const driverPhoneText = driverInfo?.phone || "";
+  const chatDisabled = !driverId || !deliveryRideId;
+  const deliveredByText = `Delivered by ${driverName}${driverId ? ` (${driverId})` : ""}`;
+  const title = `${batchOrders.length} order${batchOrders.length !== 1 ? "s" : ""}${selectedMethod ? ` · ${selectedMethod}` : ""}${batchId ? ` · Batch #${batchId}` : ""}`;
+
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
       {/* LOCATION GROUP MODAL */}
@@ -1861,155 +1074,21 @@ export default function TrackBatchOrdersScreen() {
         <Pressable style={styles.modalBackdrop} onPress={closeGroupModal}>
           <Pressable style={styles.modalCard} onPress={() => {}}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                Orders at this location
-                {selectedGroup?.count > 1 ? ` (${selectedGroup.count})` : ""}
-              </Text>
-              <Pressable onPress={closeGroupModal} style={styles.modalCloseBtn}>
+              <Text style={styles.modalTitle}>Orders at this location</Text>
+              <Pressable onPress={closeGroupModal}>
                 <Ionicons name="close" size={18} color="#0f172a" />
               </Pressable>
             </View>
-            <View style={{ marginTop: 10, maxHeight: 400 }}>
-              {selectedGroupRows.length ? (
-                selectedGroupRows.map((r) => {
-                  const order = batchOrders.find((o) => {
-                    const id = getOrderId(o);
-                    return id === r.orderId;
-                  });
-                  const customerName =
-                    order?.customer_name || order?.user_name || "Unknown";
-                  const items = order?.items || [];
-                  const itemCount = items.length;
-
-                  return (
-                    <View key={`loc-${r.orderId}`} style={styles.modalRow}>
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <View>
-                          <Text style={styles.modalOrderId}>#{r.orderId}</Text>
-                          <Text
-                            style={{
-                              fontSize: 11,
-                              color: "#6b7280",
-                              marginTop: 2,
-                            }}
-                          >
-                            {customerName}
-                          </Text>
-                        </View>
-                        {r.delivered && (
-                          <View style={styles.modalDeliveredPill}>
-                            <Ionicons
-                              name="checkmark-circle"
-                              size={14}
-                              color="#16a34a"
-                            />
-                            <Text style={styles.modalDeliveredText}>
-                              Delivered
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          justifyContent: "space-between",
-                          marginTop: 8,
-                        }}
-                      >
-                        <Text style={styles.modalStatus}>{r.status}</Text>
-                        <Text style={{ fontSize: 11, color: "#6b7280" }}>
-                          {itemCount} {itemCount === 1 ? "item" : "items"}
-                        </Text>
-                      </View>
-                    </View>
-                  );
-                })
-              ) : (
-                <Text style={styles.modalEmpty}>No orders found.</Text>
-              )}
-            </View>
-            <TouchableOpacity
-              style={{ marginTop: 16, alignSelf: "center" }}
-              onPress={closeGroupModal}
-            >
-              <Text style={{ color: "#16a34a", fontWeight: "600" }}>Close</Text>
+            <Text style={styles.modalEmpty}>Tap an order to view details</Text>
+            <TouchableOpacity onPress={closeGroupModal}>
+              <Text
+                style={{ color: "#16a34a", textAlign: "center", marginTop: 16 }}
+              >
+                Close
+              </Text>
             </TouchableOpacity>
           </Pressable>
         </Pressable>
-      </Modal>
-
-      {/* FULLSCREEN OVERLAY MAP */}
-      <Modal
-        visible={overlayOpen}
-        animationType="slide"
-        presentationStyle="fullScreen"
-        onRequestClose={() => setOverlayOpen(false)}
-      >
-        <SafeAreaView
-          style={styles.overlaySafe}
-          edges={["left", "right", "top", "bottom"]}
-        >
-          <View style={styles.overlayHeader}>
-            <Pressable
-              onPress={() => setOverlayOpen(false)}
-              style={styles.overlayCloseBtn}
-            >
-              <Ionicons name="close" size={22} color="#0f172a" />
-            </Pressable>
-            <Text style={styles.overlayTitle}>Live location</Text>
-            <View style={{ width: 40 }} />
-          </View>
-          <View style={styles.overlayMapWrap}>
-            <OSMViewErrorBoundary>
-              <OSMView
-                ref={overlayMapRef}
-                style={{ flex: 1 }}
-                initialCenter={initialMapCenter}
-                initialZoom={initialZoom}
-                markers={markers}
-                polylines={polylines}
-                styleUrl="https://tiles.openfreemap.org/styles/liberty"
-                onMapReady={() => {
-                  console.log("Overlay map ready");
-                  if (overlayDidFitOnceRef.current) return;
-                  overlayDidFitOnceRef.current = true;
-                  setTimeout(() => fitOverlay(), 300);
-                }}
-                onError={(error) => {
-                  console.error("Overlay map error:", error);
-                }}
-                onMarkerPress={(event) => {
-                  const markerId =
-                    event?.nativeEvent?.markerId ||
-                    event?.markerId ||
-                    event?.id;
-                  const markerData = markers.find((m) => m.id === markerId);
-                  if (markerId && markerData) {
-                    handleMarkerPress(markerId, markerData);
-                  }
-                }}
-                cacheEnabled={true}
-                cacheSize={50}
-              />
-            </OSMViewErrorBoundary>
-            <View style={styles.overlayActions}>
-              <TouchableOpacity
-                style={styles.fitBtn}
-                onPress={fitOverlay}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="scan-outline" size={16} color="#ffffff" />
-                <Text style={styles.fitBtnText}>Fit</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </SafeAreaView>
       </Modal>
 
       {/* HEADER */}
@@ -2017,7 +1096,6 @@ export default function TrackBatchOrdersScreen() {
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backBtn}
-          activeOpacity={0.7}
         >
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
@@ -2028,127 +1106,46 @@ export default function TrackBatchOrdersScreen() {
       {/* SUMMARY */}
       <View style={styles.summaryBox}>
         <Text style={styles.summaryMain}>{title}</Text>
-        {!!label && (
-          <Text style={styles.summarySub} numberOfLines={2}>
-            Deliver To: {label}
-          </Text>
-        )}
+        {!!label && <Text style={styles.summarySub}>Deliver To: {label}</Text>}
         {!!rideMessage && <Text style={styles.summarySub}>{rideMessage}</Text>}
         <Text style={styles.summarySub}>
-          Batch: {batchId || "—"} · Ride:{" "}
-          {effectiveRideIds.length ? effectiveRideIds.join(", ") : "—"}
+          Batch: {batchId || "—"} · Ride: {effectiveRideIds.join(", ") || "—"}
         </Text>
       </View>
 
       {/* MAP CARD */}
       <View style={styles.mapCard}>
         <View style={styles.mapWrap}>
-          {!mapError ? (
-            <OSMViewErrorBoundary>
-              <OSMView
-                key={mapKey}
-                ref={mapRef}
-                style={styles.map}
-                initialCenter={initialMapCenter}
-                  initialZoom={initialZoom}
-                markers={markers}
-                polylines={polylines}
-                styleUrl="https://tiles.openfreemap.org/styles/liberty"
-                onMapReady={() => {
-                  console.log("✅ MAIN MAP READY!");
-                  setShowLoader(false);
-                  setMapInitAttempts(0);
-                  if (didFitOnceRef.current) return;
-                  didFitOnceRef.current = true;
-                  setTimeout(() => {
-                    if (markers.length > 0) {
-                      console.log("Fitting map to", markers.length, "markers");
-                      fitAll();
-                    }
-                  }, 500);
-                }}
-                onError={(error) => {
-                  console.error("❌ OSMView error:", error);
-                  setMapInitAttempts((prev) => prev + 1);
-                  if (mapInitAttempts >= 2) {
-                    setShowLoader(false);
-                    setMapError(true);
-                  }
-                }}
-                onPress={() => openOverlay()}
-                onMarkerPress={(event) => {
-                  console.log("Marker press event:", event);
-                  const markerId =
-                    event?.nativeEvent?.markerId ||
-                    event?.markerId ||
-                    event?.id;
-                  const markerData = markers.find((m) => m.id === markerId);
-                  if (markerId && markerData) {
-                    handleMarkerPress(markerId, markerData);
-                  }
-                }}
-                cacheEnabled={true}
-                cacheSize={100}
-                userAgent="YourApp/1.0"
-                renderToHardwareTextureAndroid={true}
-              />
-            </OSMViewErrorBoundary>
-          ) : (
-            <View style={styles.mapErrorContainer}>
-              <Ionicons name="map-outline" size={48} color="#ef4444" />
-              <Text style={styles.mapErrorText}>Unable to load map</Text>
-              <Text style={styles.mapErrorSubtext}>
-                Check your internet connection
-              </Text>
-              <TouchableOpacity
-                style={styles.mapRetryBtn}
-                onPress={() => {
-                  setMapError(false);
-                  setMapInitAttempts(0);
-                  setMapKey(Date.now());
-                  setShowLoader(true);
-                }}
-              >
-                <Text style={styles.mapRetryText}>Retry</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Loading indicator */}
-          {showLoader && !mapError && (
+          <OSMView
+            key={mapKey}
+            ref={mapRef}
+            style={styles.map}
+            initialCenter={initialMapCenter}
+            initialZoom={initialZoom}
+            markers={markers}
+            polylines={polylines}
+            styleUrl="https://tiles.openfreemap.org/styles/liberty"
+            onMapReady={() => {
+              console.log("Map ready");
+              setShowLoader(false);
+              if (!didFitOnceRef.current) {
+                didFitOnceRef.current = true;
+                setTimeout(() => fitAll(), 100); // CHANGED: Reduced from 500ms to 100ms
+              }
+            }}
+            onError={() => setMapError(true)}
+            onPress={openOverlay}
+          />
+          {showLoader && (
             <View style={styles.mapLoadingOverlay}>
               <ActivityIndicator size="large" color="#16a34a" />
               <Text style={styles.mapLoadingText}>Loading map...</Text>
-              <Text style={styles.mapLoadingSubtext}>
-                {businessCoords
-                  ? "📍 Found location"
-                  : "Waiting for location..."}
-              </Text>
-              {mapInitAttempts > 0 && (
-                <Text style={styles.mapLoadingSubtext}>
-                  Retry attempt {mapInitAttempts}/3
-                </Text>
-              )}
             </View>
           )}
-
           <View style={styles.mapActions}>
-            <TouchableOpacity
-              style={styles.fitBtn}
-              onPress={fitAll}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="scan-outline" size={16} color="#ffffff" />
+            <TouchableOpacity style={styles.fitBtn} onPress={fitAll}>
+              <Ionicons name="scan-outline" size={16} color="#fff" />
               <Text style={styles.fitBtnText}>Fit All</Text>
-            </TouchableOpacity>
-            <View style={{ height: 8 }} />
-            <TouchableOpacity
-              style={styles.expandBtn}
-              onPress={openOverlay}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="expand-outline" size={16} color="#ffffff" />
-              <Text style={styles.fitBtnText}>Fullscreen</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -2158,58 +1155,32 @@ export default function TrackBatchOrdersScreen() {
       <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
         <View style={styles.driverCard}>
           <View style={styles.driverHeaderRow}>
-            <View style={{ flexDirection: "row", alignItems: "center" }}>
-              <Ionicons name="car-outline" size={18} color="#111827" />
-              <Text style={styles.driverTitle}>Driver</Text>
-            </View>
-            <TouchableOpacity
-              onPress={onRefresh}
-              style={styles.driverRefreshBtn}
-              activeOpacity={0.8}
-            >
+            <Ionicons name="car-outline" size={18} color="#111827" />
+            <Text style={styles.driverTitle}>Driver</Text>
+            <TouchableOpacity onPress={onRefresh}>
               <Ionicons name="refresh" size={18} color="#111827" />
             </TouchableOpacity>
           </View>
           <Text style={styles.driverText}>{deliveredByText}</Text>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              marginTop: 10,
-            }}
-          >
+          <View style={{ flexDirection: "row", marginTop: 10 }}>
             <TouchableOpacity
               style={[
                 styles.callBtn,
-                !driverPhoneText ? styles.callBtnDisabled : null,
+                !driverPhoneText && styles.callBtnDisabled,
               ]}
-              activeOpacity={0.85}
               onPress={onCallDriver}
               disabled={!driverPhoneText}
             >
-              <Ionicons name="call-outline" size={16} color="#ffffff" />
+              <Ionicons name="call-outline" size={16} color="#fff" />
               <Text style={styles.callBtnText}>Call driver</Text>
             </TouchableOpacity>
-            <View style={{ width: 10 }} />
             <TouchableOpacity
-              style={[
-                styles.chatBtn,
-                chatDisabled ? styles.chatBtnDisabled : null,
-              ]}
-              activeOpacity={0.85}
+              style={[styles.chatBtn, chatDisabled && styles.chatBtnDisabled]}
               onPress={onChatDriver}
               disabled={chatDisabled}
             >
-              <Ionicons name="chatbubbles-outline" size={16} color="#ffffff" />
+              <Ionicons name="chatbubbles-outline" size={16} color="#fff" />
               <Text style={styles.chatBtnText}>Chat driver</Text>
-            </TouchableOpacity>
-            <View style={{ flex: 1 }} />
-            <TouchableOpacity
-              style={styles.moreBtn}
-              activeOpacity={0.85}
-              onPress={onRefresh}
-            >
-              <Ionicons name="ellipsis-vertical" size={18} color="#6b7280" />
             </TouchableOpacity>
           </View>
         </View>
@@ -2218,24 +1189,20 @@ export default function TrackBatchOrdersScreen() {
       {/* ORDER LIST */}
       <View style={styles.listHeader}>
         <Text style={styles.listHeaderText}>Orders in this batch</Text>
-        {!!batchOrderIds.length && (
-          <Text style={styles.attribTextSmall}>
-            IDs: {batchOrderIds.length}
-          </Text>
-        )}
       </View>
 
       <FlatList
         data={batchOrders}
         keyExtractor={(it, idx) => String(getOrderId(it) || it?.id || idx)}
         renderItem={renderRow}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+        showsVerticalScrollIndicator={false}
         ListEmptyComponent={
-          <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
-            <Text style={{ color: "#6b7280", fontWeight: "700" }}>
+          <View style={{ paddingTop: 20 }}>
+            <Text style={{ color: "#6b7280", textAlign: "center" }}>
               {batchOrdersLoading
                 ? "Loading orders…"
                 : "No orders found for this batch."}
@@ -2247,12 +1214,8 @@ export default function TrackBatchOrdersScreen() {
   );
 }
 
-/* ============================================================
-   STYLES
-============================================================ */
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
-
   headerBar: {
     minHeight: 52,
     paddingHorizontal: 12,
@@ -2261,7 +1224,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderBottomColor: "#e5e7eb",
     borderBottomWidth: 1,
-    backgroundColor: "#fff",
   },
   backBtn: {
     height: 40,
@@ -2277,7 +1239,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#0f172a",
   },
-
   summaryBox: {
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -2287,19 +1248,16 @@ const styles = StyleSheet.create({
   },
   summaryMain: { fontSize: 14, fontWeight: "800", color: "#0f172a" },
   summarySub: { marginTop: 3, fontSize: 12, color: "#6b7280" },
-
   mapCard: { paddingHorizontal: 16, paddingTop: 12 },
   mapWrap: {
     borderRadius: 14,
     overflow: "hidden",
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    backgroundColor: "#f0f0f0",
     height: 260,
     position: "relative",
   },
-  map: { flex: 1, width: "100%", height: "100%" },
-
+  map: { flex: 1 },
   mapLoadingOverlay: {
     position: "absolute",
     top: 0,
@@ -2317,27 +1275,16 @@ const styles = StyleSheet.create({
     color: "#16a34a",
     fontWeight: "600",
   },
-  mapLoadingSubtext: {
-    marginTop: 4,
-    fontSize: 11,
-    color: "#6b7280",
-  },
   mapErrorContainer: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#f9fafb",
   },
   mapErrorText: {
     marginTop: 12,
     fontSize: 16,
     fontWeight: "600",
     color: "#374151",
-  },
-  mapErrorSubtext: {
-    marginTop: 4,
-    fontSize: 12,
-    color: "#6b7280",
   },
   mapRetryBtn: {
     marginTop: 16,
@@ -2346,50 +1293,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#16a34a",
     borderRadius: 8,
   },
-  mapRetryText: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-
-  mapLegend: {
-    position: "absolute",
-    left: 10,
-    bottom: 14,
-    backgroundColor: "rgba(255,255,255,0.95)",
-    borderRadius: 10,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    zIndex: 5,
-    minWidth: 150,
-  },
-  legendSection: {
-    marginBottom: 6,
-    paddingBottom: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
-  },
-  legendTitle: {
-    fontSize: 11,
-    fontWeight: "bold",
-    color: "#0f172a",
-  },
-  legendRow: { flexDirection: "row", alignItems: "center", marginBottom: 4 },
-  legendDot: { width: 12, height: 12, borderRadius: 6, marginRight: 6 },
-  legendText: { fontSize: 10, color: "#374151", fontWeight: "500" },
-  legendDivider: {
-    height: 1,
-    backgroundColor: "#e5e7eb",
-    marginVertical: 4,
-  },
-  legendNote: {
-    fontSize: 9,
-    color: "#6b7280",
-    marginTop: 4,
-    textAlign: "center",
-    fontStyle: "italic",
-  },
-
+  mapRetryText: { color: "#fff", fontWeight: "600" },
   mapActions: { position: "absolute", right: 10, bottom: 14, zIndex: 5 },
   fitBtn: {
     flexDirection: "row",
@@ -2398,34 +1302,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
-    shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
-  },
-  expandBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#0f172a",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
   },
   fitBtnText: { marginLeft: 6, color: "#fff", fontSize: 11, fontWeight: "900" },
-
-  attribTextSmall: {
-    marginTop: 4,
-    fontSize: 10,
-    color: "#6b7280",
-    fontWeight: "700",
-  },
-
   driverCard: {
     borderRadius: 14,
     borderWidth: 1,
@@ -2436,38 +1314,19 @@ const styles = StyleSheet.create({
   driverHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 6,
     justifyContent: "space-between",
   },
-  driverTitle: {
-    marginLeft: 6,
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#111827",
-  },
-  driverRefreshBtn: {
-    height: 34,
-    width: 34,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  driverText: {
-    marginTop: 6,
-    fontSize: 12,
-    color: "#374151",
-    fontWeight: "700",
-  },
+  driverTitle: { fontSize: 13, fontWeight: "800", color: "#111827", flex: 1 },
+  driverText: { marginTop: 6, fontSize: 12, color: "#374151" },
   callBtn: {
-    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#16a34a",
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
+    marginRight: 10,
   },
   callBtnDisabled: { backgroundColor: "#9ca3af" },
   callBtnText: {
@@ -2477,7 +1336,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   chatBtn: {
-    alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#2563eb",
@@ -2492,159 +1350,108 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
   },
-  moreBtn: {
-    height: 34,
-    width: 34,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-
-  listHeader: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
+  listHeader: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
   listHeaderText: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
-  orderRow: {
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
-  },
-  orderPress: { paddingVertical: 2 },
-  orderTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  orderId: { fontSize: 13, fontWeight: "800", color: "#0f172a" },
+  // Add these to the styles object
   statusPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-    backgroundColor: "#ecfdf3",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    backgroundColor: "#f3f4f6",
     borderWidth: 1,
-    borderColor: "#bbf7d0",
+    borderColor: "#d1d5db",
   },
-  statusPillText: { fontSize: 10, fontWeight: "700", color: "#166534" },
-  orderName: { marginTop: 3, fontSize: 12, color: "#6b7280" },
-  orderMeta: {
-    marginTop: 2,
-    fontSize: 11,
-    color: "#4b5563",
-    fontWeight: "700",
-  },
-  itemsDropdown: {
-    marginTop: 10,
-    padding: 10,
-    borderRadius: 12,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  itemRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f3f4f6",
-  },
-  itemName: { fontSize: 12, color: "#111827", fontWeight: "800", flex: 1 },
-  itemSub: { marginTop: 2, fontSize: 10, color: "#6b7280" },
-  noItemsText: { fontSize: 12, color: "#6b7280", textAlign: "center" },
-
-  overlaySafe: { flex: 1, backgroundColor: "#fff" },
-  overlayHeader: {
-    height: 54,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
+  statusPillText: { fontSize: 10, fontWeight: "700", color: "#374151" },
+  statusReadyText: { color: "#16a34a" },
+  // Order card styles
+  orderCard: {
     backgroundColor: "#fff",
-  },
-  overlayCloseBtn: {
-    height: 40,
-    width: 40,
     borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  overlayTitle: {
-    flex: 1,
-    textAlign: "center",
-    fontSize: 16,
-    fontWeight: "900",
-    color: "#0f172a",
-  },
-  overlayMapWrap: { flex: 1, backgroundColor: "#f0f0f0", position: "relative" },
-  overlayActions: { position: "absolute", right: 14, top: 70, zIndex: 10 },
-
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.35)",
-    justifyContent: "center",
-    paddingHorizontal: 18,
-  },
-  modalCard: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
     borderWidth: 1,
     borderColor: "#e5e7eb",
     padding: 14,
+    marginBottom: 12,
   },
-  modalHeader: {
+  orderHeader: {
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 10,
   },
-  modalTitle: { fontSize: 14, fontWeight: "900", color: "#0f172a" },
-  modalCloseBtn: {
-    height: 32,
-    width: 32,
-    borderRadius: 10,
+  orderId: { fontSize: 14, fontWeight: "800", color: "#0f172a" },
+  orderName: { fontSize: 12, color: "#6b7280", marginTop: 2 },
+  statusPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+    backgroundColor: "#fef3c7",
+    borderWidth: 1,
+    borderColor: "#fcd34d",
+  },
+  statusReadyPill: {
+    backgroundColor: "#dcfce7",
+    borderColor: "#86efac",
+  },
+  statusPillText: { fontSize: 10, fontWeight: "700", color: "#d97706" },
+  statusReadyText: { color: "#16a34a" },
+
+  itemsContainer: { marginTop: 8, marginBottom: 12 },
+  itemsTitle: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#6b7280",
+    marginBottom: 6,
+  },
+  itemRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 4,
+  },
+  itemName: { flex: 1, fontSize: 12, color: "#374151", paddingRight: 8 },
+  itemQty: { fontSize: 12, fontWeight: "600", color: "#111827" },
+
+  readyButton: {
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#f3f4f6",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  modalRow: {
-    marginTop: 10,
+    backgroundColor: "#16a34a",
     paddingVertical: 10,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    backgroundColor: "#f9fafb",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
+    borderRadius: 10,
+    marginTop: 8,
+    gap: 8,
   },
-  modalOrderId: { fontSize: 13, fontWeight: "900", color: "#111827" },
-  modalStatus: {
-    marginTop: 4,
-    fontSize: 11,
-    fontWeight: "900",
-    color: "#0f172a",
-  },
-  modalEmpty: {
-    marginTop: 10,
-    fontSize: 12,
-    color: "#6b7280",
-    fontWeight: "800",
-  },
-  modalDeliveredPill: {
-    marginLeft: 8,
+  readyButtonText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+
+  readyBadge: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-    backgroundColor: "#ecfdf3",
-    borderWidth: 1,
-    borderColor: "#bbf7d0",
+    justifyContent: "center",
+    backgroundColor: "#dcfce7",
+    paddingVertical: 8,
+    borderRadius: 10,
+    marginTop: 8,
+    gap: 6,
   },
-  modalDeliveredText: {
-    marginLeft: 4,
-    fontSize: 11,
-    fontWeight: "900",
-    color: "#16a34a",
+  readyBadgeText: { color: "#16a34a", fontSize: 12, fontWeight: "600" },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  modalCard: { backgroundColor: "#fff", borderRadius: 16, padding: 16 },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  modalTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a" },
+  modalEmpty: {
+    fontSize: 12,
+    color: "#6b7280",
+    textAlign: "center",
+    paddingVertical: 20,
   },
 });

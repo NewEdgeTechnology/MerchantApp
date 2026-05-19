@@ -4,7 +4,13 @@
 // ✅ UPDATE: Green highlight for cluster containing focusOrderId (from OrderDetails)
 // ✅ Keeps your existing clustering + filters + responsive UI
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   View,
   Text,
@@ -16,10 +22,17 @@ import {
   RefreshControl,
   useWindowDimensions,
 } from "react-native";
-import { useNavigation, useRoute, useFocusEffect } from "@react-navigation/native";
+import {
+  useNavigation,
+  useRoute,
+  useFocusEffect,
+} from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import {
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
   BUSINESS_DETAILS,
@@ -37,9 +50,12 @@ const makeScaler = (screenWidth) => {
 
 /* ---------------- status normalizer ---------------- */
 const normalizeStatusForCluster = (v) => {
-  const s = String(v || "").trim().toUpperCase();
+  const s = String(v || "")
+    .trim()
+    .toUpperCase();
   if (!s) return "PENDING";
-  if (s === "ON ROAD" || s === "ON_ROAD" || s === "ONROAD") return "OUT_FOR_DELIVERY";
+  if (s === "ON ROAD" || s === "ON_ROAD" || s === "ONROAD")
+    return "OUT_FOR_DELIVERY";
   if (s === "OUT FOR DELIVERY") return "OUT_FOR_DELIVERY";
   if (s === "DELIVERED") return "COMPLETED";
   return s;
@@ -69,7 +85,9 @@ const isTrackableStatus = (statusRaw) => {
 
 /* ✅ status/fulfillment filters for this screen */
 const isDeclinedStatus = (statusRaw) => {
-  const s = String(statusRaw || "").trim().toUpperCase();
+  const s = String(statusRaw || "")
+    .trim()
+    .toUpperCase();
   return (
     s === "DECLINED" ||
     s === "REJECTED" ||
@@ -80,7 +98,9 @@ const isDeclinedStatus = (statusRaw) => {
 };
 
 const isPickupFulfillment = (fulfillmentTypeRaw) => {
-  const t = String(fulfillmentTypeRaw || "").trim().toUpperCase();
+  const t = String(fulfillmentTypeRaw || "")
+    .trim()
+    .toUpperCase();
   return (
     t === "PICKUP" ||
     t === "SELF_PICKUP" ||
@@ -107,9 +127,12 @@ const shouldExcludeFromScreen = (rawOrder) => {
 
 /* ---------------- delivery method helpers ---------------- */
 const normalizeDeliveryMethod = (v) => {
-  const s = String(v || "").trim().toUpperCase();
+  const s = String(v || "")
+    .trim()
+    .toUpperCase();
   if (!s) return "";
-  if (s === "3RD_PARTY" || s === "THIRD_PARTY" || s === "PLATFORM") return "GRAB";
+  if (s === "3RD_PARTY" || s === "THIRD_PARTY" || s === "PLATFORM")
+    return "GRAB";
   if (s === "RIDER" || s === "DRIVER") return "GRAB";
   if (s === "OUTSOURCE" || s === "OUTSOURCED") return "GRAB";
   return s;
@@ -149,10 +172,14 @@ const extractCoords = (order = {}) => {
   const base = order?.raw && typeof order.raw === "object" ? order.raw : order;
 
   const deliverTo =
-    base?.deliver_to && typeof base.deliver_to === "object" ? base.deliver_to : null;
+    base?.deliver_to && typeof base.deliver_to === "object"
+      ? base.deliver_to
+      : null;
 
   const deliverTo2 =
-    base?.deliverTo && typeof base.deliverTo === "object" ? base.deliverTo : null;
+    base?.deliverTo && typeof base.deliverTo === "object"
+      ? base.deliverTo
+      : null;
 
   const addrObj =
     base?.delivery_address && typeof base.delivery_address === "object"
@@ -206,15 +233,18 @@ const normalizeAddressField = (v) => {
   if (!v) return null;
   if (typeof v === "string") return v.trim() || null;
   if (typeof v === "object") {
-    if (typeof v.address === "string" && v.address.trim()) return v.address.trim();
+    if (typeof v.address === "string" && v.address.trim())
+      return v.address.trim();
     if (typeof v.label === "string" && v.label.trim()) return v.label.trim();
-    if (typeof v.formatted === "string" && v.formatted.trim()) return v.formatted.trim();
+    if (typeof v.formatted === "string" && v.formatted.trim())
+      return v.formatted.trim();
   }
   return null;
 };
 
 const isNumericish = (s) => /^[0-9\s-]+$/.test(s);
-const isPlusCodeish = (s) => /^[A-Z0-9+ ]+$/.test(s || "") && String(s).includes("+");
+const isPlusCodeish = (s) =>
+  /^[A-Z0-9+ ]+$/.test(s || "") && String(s).includes("+");
 
 const pick2ndOr1stPlace = (addressLike) => {
   const raw = normalizeAddressField(addressLike) || "";
@@ -226,7 +256,8 @@ const pick2ndOr1stPlace = (addressLike) => {
     .filter((p) => !isNumericish(p) && !isPlusCodeish(p));
 
   if (!parts.length) return "Nearby orders";
-  if (parts[1]) return parts[1].length > 40 ? parts[1].slice(0, 37) + "..." : parts[1];
+  if (parts[1])
+    return parts[1].length > 40 ? parts[1].slice(0, 37) + "..." : parts[1];
   return parts[0].length > 40 ? parts[0].slice(0, 37) + "..." : parts[0];
 };
 
@@ -484,7 +515,8 @@ const labelForCluster = (cluster) => {
     }
     if (c === bestCount && best) {
       if (label.length < best.length) best = label;
-      else if (label.length === best.length && label.localeCompare(best) < 0) best = label;
+      else if (label.length === best.length && label.localeCompare(best) < 0)
+        best = label;
     }
   }
 
@@ -509,7 +541,9 @@ const applyUniqueLabels = (clusters) => {
 /* ✅ Helper: Check if cluster contains the focus order */
 const clusterContainsFocusOrder = (cluster, focusOrderId) => {
   if (!focusOrderId || !cluster?.orders) return false;
-  return cluster.orders.some(order => String(order.id) === String(focusOrderId));
+  return cluster.orders.some(
+    (order) => String(order.id) === String(focusOrderId),
+  );
 };
 
 /* ---------------- screen ---------------- */
@@ -522,7 +556,8 @@ function NearbyOrdersScreen() {
 
   const businessIdFromParams = route?.params?.businessId;
 
-  const ownerType = route?.params?.ownerType || route?.params?.owner_type || "food";
+  const ownerType =
+    route?.params?.ownerType || route?.params?.owner_type || "food";
   const orderEndpointFromParams = route?.params?.orderEndpoint;
   const detailsRoute = route?.params?.detailsRoute || "OrderDetails";
 
@@ -530,7 +565,8 @@ function NearbyOrdersScreen() {
   const batchListScreen = route?.params?.batchListScreen || "BatchRidesScreen";
 
   // ✅ Extract focusOrderId from params (passed from OrderDetails)
-  const focusOrderId = route?.params?.focusOrderId || route?.params?.focus_order_id || null;
+  const focusOrderId =
+    route?.params?.focusOrderId || route?.params?.focus_order_id || null;
 
   const [deliveryOption, setDeliveryOption] = useState(null);
   const [bizId, setBizId] = useState(businessIdFromParams || null);
@@ -546,21 +582,15 @@ function NearbyOrdersScreen() {
   const abortRef = useRef(null);
 
   const handleBack = useCallback(() => {
-    if (navigation.canGoBack()) navigation.goBack();
-    else {
-      const parent = navigation.getParent?.();
-      const fallback = "OrdersTab";
-      if (parent) parent.navigate(fallback);
-      else navigation.navigate(fallback);
-    }
-    return true;
-  }, [navigation]);
+  navigation.navigate('GrabMerchantHomeScreen');
+  return true;
+}, [navigation]);
 
   useFocusEffect(
     useCallback(() => {
       const sub = BackHandler.addEventListener("hardwareBackPress", handleBack);
       return () => sub.remove();
-    }, [handleBack])
+    }, [handleBack]),
   );
 
   const applyBizDetails = useCallback(
@@ -573,7 +603,7 @@ function NearbyOrdersScreen() {
       const opt = optRaw ? String(optRaw).toUpperCase().trim() : null;
       if (opt) setDeliveryOption(opt);
     },
-    [bizId]
+    [bizId],
   );
 
   const fetchBusinessDetailsFromApi = useCallback(async () => {
@@ -603,7 +633,10 @@ function NearbyOrdersScreen() {
       applyBizDetails(biz);
       await SecureStore.setItemAsync("business_details", JSON.stringify(biz));
     } catch (e) {
-      console.log("[NearbyOrders][FOOD] BUSINESS_DETAILS fetch error:", e?.message || e);
+      console.log(
+        "[NearbyOrders][FOOD] BUSINESS_DETAILS fetch error:",
+        e?.message || e,
+      );
     }
   }, [bizId, applyBizDetails]);
 
@@ -706,14 +739,21 @@ function NearbyOrdersScreen() {
           batch_id: x?.batch_id ?? x?.batchId ?? null,
           ride_id: x?.ride_id ?? x?.rideId ?? null,
           driver_id: x?.driver_id ?? x?.driverId ?? null,
-          order_ids: Array.isArray(x?.order_ids) ? x.order_ids : Array.isArray(x?.orderIds) ? x.orderIds : [],
+          order_ids: Array.isArray(x?.order_ids)
+            ? x.order_ids
+            : Array.isArray(x?.orderIds)
+              ? x.orderIds
+              : [],
           raw: x,
         }))
         .filter((x) => x.batch_id != null && String(x.batch_id).trim());
 
       setBatchRides(cleaned);
     } catch (e) {
-      console.log("[NearbyOrders][FOOD] batch ride fetch error:", e?.message || e);
+      console.log(
+        "[NearbyOrders][FOOD] batch ride fetch error:",
+        e?.message || e,
+      );
       setBatchRides([]);
     } finally {
       setBatchLoading(false);
@@ -730,14 +770,18 @@ function NearbyOrdersScreen() {
       fetchBusinessDetailsFromApi();
       fetchOrders();
       fetchBatchRides();
-    }, [fetchBusinessDetailsFromApi, fetchOrders, fetchBatchRides])
+    }, [fetchBusinessDetailsFromApi, fetchOrders, fetchBatchRides]),
   );
 
   const onRefresh = useCallback(async () => {
     if (!bizId) return;
     setRefreshing(true);
     try {
-      await Promise.all([fetchBusinessDetailsFromApi(), fetchOrders(), fetchBatchRides()]);
+      await Promise.all([
+        fetchBusinessDetailsFromApi(),
+        fetchOrders(),
+        fetchBatchRides(),
+      ]);
     } finally {
       setRefreshing(false);
     }
@@ -748,11 +792,14 @@ function NearbyOrdersScreen() {
       (orders || [])
         .filter((o) => !shouldExcludeFromScreen(o?.raw))
         .filter((o) => shouldIncludeInCluster(o.statusNorm || o.status)),
-    [orders]
+    [orders],
   );
 
   const clusters = useMemo(() => {
-    const rawClusters = clusterOrdersByRadius(clusterEligibleOrders || [], thresholdKm);
+    const rawClusters = clusterOrdersByRadius(
+      clusterEligibleOrders || [],
+      thresholdKm,
+    );
     const labeled = applyUniqueLabels(rawClusters);
     labeled.sort((a, b) => (b.orders?.length || 0) - (a.orders?.length || 0));
     return labeled;
@@ -803,19 +850,28 @@ function NearbyOrdersScreen() {
       <View
         style={[
           styles.headerBar,
-          { paddingTop: headerTopPad, paddingHorizontal: S(12), paddingBottom: S(8) },
+          {
+            paddingTop: headerTopPad,
+            paddingHorizontal: S(12),
+            paddingBottom: S(8),
+          },
         ]}
       >
         <TouchableOpacity
           onPress={handleBack}
-          style={[styles.backBtn, { height: S(40), width: S(40), borderRadius: S(12) }]}
+          style={[
+            styles.backBtn,
+            { height: S(40), width: S(40), borderRadius: S(12) },
+          ]}
           activeOpacity={0.7}
           hitSlop={S(8)}
         >
           <Ionicons name="arrow-back" size={S(22)} color="#0f172a" />
         </TouchableOpacity>
 
-        <Text style={[styles.headerTitle, { fontSize: S(17) }]}>Nearby Orders</Text>
+        <Text style={[styles.headerTitle, { fontSize: S(17) }]}>
+          Nearby Orders
+        </Text>
 
         <View style={{ width: S(40) }} />
       </View>
@@ -839,10 +895,14 @@ function NearbyOrdersScreen() {
             paddingBottom: S(90) + bottomFabPad,
           }}
           ItemSeparatorComponent={() => <View style={{ height: S(12) }} />}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
           renderItem={({ item }) => {
             const { label, orders: clusterOrders, centerCoords } = item;
-            const order_ids = (clusterOrders || []).map((o) => o?.id).filter(Boolean);
+            const order_ids = (clusterOrders || [])
+              .map((o) => o?.id)
+              .filter(Boolean);
 
             const firstAddr =
               clusterOrders?.[0]?.raw?.deliver_to?.address ||
@@ -851,7 +911,8 @@ function NearbyOrdersScreen() {
               "—";
 
             // ✅ Check if this cluster contains the focused order
-            const isHighlighted = focusOrderId && clusterContainsFocusOrder(item, focusOrderId);
+            const isHighlighted =
+              focusOrderId && clusterContainsFocusOrder(item, focusOrderId);
 
             return (
               <TouchableOpacity
@@ -889,16 +950,29 @@ function NearbyOrdersScreen() {
                 }}
               >
                 <View style={styles.clusterHeader}>
-                  <Ionicons name="location-outline" size={S(18)} color="#0f172a" />
+                  <Ionicons
+                    name="location-outline"
+                    size={S(18)}
+                    color="#0f172a"
+                  />
                   <Text
-                    style={[styles.clusterTitle, { marginLeft: S(8), fontSize: S(16) }]}
+                    style={[
+                      styles.clusterTitle,
+                      { marginLeft: S(8), fontSize: S(16) },
+                    ]}
                     numberOfLines={1}
                   >
                     {label}
                   </Text>
                 </View>
 
-                <Text style={[styles.clusterSub, { marginTop: S(6), fontSize: S(12) }]} numberOfLines={2}>
+                <Text
+                  style={[
+                    styles.clusterSub,
+                    { marginTop: S(6), fontSize: S(12) },
+                  ]}
+                  numberOfLines={2}
+                >
                   {firstAddr}
                 </Text>
 
@@ -931,11 +1005,20 @@ function NearbyOrdersScreen() {
       )}
 
       {/* ✅ Global Track button (enabled only when batches exist) */}
-      <View style={[styles.fabWrapper, { paddingHorizontal: S(16), paddingBottom: bottomFabPad }]}>
+      <View
+        style={[
+          styles.fabWrapper,
+          { paddingHorizontal: S(16), paddingBottom: bottomFabPad },
+        ]}
+      >
         <TouchableOpacity
           style={[
             styles.fab,
-            { paddingHorizontal: S(12), paddingVertical: S(15), borderRadius: S(999) },
+            {
+              paddingHorizontal: S(12),
+              paddingVertical: S(15),
+              borderRadius: S(999),
+            },
             trackDisabled && { opacity: 0.4 },
           ]}
           activeOpacity={trackDisabled ? 1 : 0.85}
@@ -988,14 +1071,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e2e8f0",
   },
-  
+
   // ✅ Green highlight style (same as BatchRidesScreen)
   clusterCardHighlight: {
     borderColor: "#86efac",
     backgroundColor: "#f0fdf4",
     borderWidth: 2,
   },
-  
+
   clusterHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -1021,19 +1104,19 @@ const styles = StyleSheet.create({
 
   // ✅ Badge for current order highlight
   highlightBadge: {
-    position: 'absolute',
+    position: "absolute",
     top: 8,
     right: 8,
-    backgroundColor: '#16a34a',
+    backgroundColor: "#16a34a",
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
   },
-  
+
   highlightBadgeText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 10,
-    fontWeight: '700',
+    fontWeight: "700",
   },
 
   fabWrapper: {
