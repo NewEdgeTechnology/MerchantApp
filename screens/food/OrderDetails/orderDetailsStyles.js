@@ -213,6 +213,7 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 10,
+    alignSelf: "flex-start",
   },
   primaryBtnText: { color: "#fff", fontWeight: "800" },
   secondaryBtn: {
@@ -237,6 +238,28 @@ export const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "700",
+  },
+  // Add these styles to your orderDetailsStyles.js file
+
+  itemImageContainer: {
+    width: 60,
+    height: 60,
+    marginRight: 12,
+    borderRadius: 8,
+    overflow: "hidden",
+    backgroundColor: "#f1f5f9",
+  },
+  itemImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+  itemImagePlaceholder: {
+    width: "100%",
+    height: "100%",
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#f1f5f9",
   },
   declineButton: {
     backgroundColor: "#fff",
@@ -345,4 +368,21 @@ export const styles = StyleSheet.create({
     alignItems: "center",
   },
   dialogBtnText: { fontWeight: "800" },
+  pickedUpContainer: {
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 8,
+  marginTop: 4,
+  paddingVertical: 6,
+  paddingHorizontal: 10,
+  backgroundColor: "#F0FDF4",
+  borderRadius: 8,
+  borderWidth: 1,
+  borderColor: "#D1FAE5",
+},
+pickedUpText: {
+  fontSize: 13,
+  color: "#065F46",
+  fontWeight: "600",
+},
 });

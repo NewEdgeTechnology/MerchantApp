@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   Image,
   StyleSheet,
+  Alert,
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -104,6 +105,7 @@ export default function SimilarItemCatalog() {
   const itemName = route.params?.itemName || '';
   const paramBusinessId = route.params?.businessId || null;
   const ownerTypeRaw = route.params?.owner_type ?? route.params?.ownerType ?? 'food';
+  const shouldNavigateToChatAfterReplace = route.params?.shouldNavigateToChatAfterReplace ?? true;
 
   const ownerType = useMemo(
     () => normalizeOwnerType(ownerTypeRaw),
@@ -115,6 +117,7 @@ export default function SimilarItemCatalog() {
   const [catalog, setCatalog] = useState([]);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [selectedItem, setSelectedItem] = useState(null);
 
   const IMAGE_BASE = useMemo(
     () =>
@@ -173,7 +176,7 @@ export default function SimilarItemCatalog() {
         name: x?.item_name ?? x?.name ?? x?.title ?? 'Unnamed item',
         category: x?.category_name ?? x?.category ?? x?.categoryName ?? '',
         price,
-        currency: x?.currency ?? 'Nu',
+        currency: x?.currency ?? 'BTN',
         image: absImage,
       };
     },
@@ -274,18 +277,139 @@ export default function SimilarItemCatalog() {
     return out;
   }, [catalog, keywords]);
 
-  const onSelect = (item) => {
-    // Send choice back to OrderDetails through DeviceEventEmitter
-    DeviceEventEmitter.emit('similar-item-chosen', {
-      itemKey,
-      replacement: {
-        name: item.name,
-        price: item.price,
-        currency: item.currency,
-        id: item.id,
-      },
-    });
-    navigation.goBack();
+  const sendReplacementToChat = useCallback(async (item) => {
+    try {
+      const token = await SecureStore.getItemAsync('auth_token');
+      const merchantUserId = await SecureStore.getItemAsync('user_id_v1') || 
+                           await SecureStore.getItemAsync('user_id');
+      const businessIdNum = businessId;
+      
+      // First, get or create conversation for this order
+      const orderCode = route.params?.orderCode || null;
+      if (!orderCode) {
+        console.log('[SimilarItem] No orderCode provided');
+        return false;
+      }
+
+      // Get conversation ID
+      const convResponse = await fetch(
+        `https://backend.tabdhey.bt/chat/chat/conversations/order/${orderCode}`,
+        {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'x-business-id': String(businessIdNum),
+            'x-user-id': String(merchantUserId),
+            'x-user-type': 'MERCHANT',
+          },
+          body: JSON.stringify({
+            customer_id: Number(route.params?.customerId || 0),
+            business_id: Number(businessIdNum),
+          }),
+        }
+      );
+
+      const convData = await convResponse.json();
+      const conversationId = convData?.conversation_id;
+
+      if (!conversationId) {
+        console.log('[SimilarItem] No conversation ID');
+        return false;
+      }
+
+      // Send replacement proposal to chat
+      const message = `✅ I've selected *${item.name}* (${item.currency || 'BTN'} ${Number(item.price).toFixed(2)}) as the replacement for *${itemName}*.\n\nWould you like me to proceed with this replacement?`;
+      
+      await fetch(
+        `https://backend.tabdhey.bt/chat/chat/messages/${conversationId}/send`,
+        {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+            'x-business-id': String(businessIdNum),
+            'x-user-id': String(merchantUserId),
+            'x-user-type': 'MERCHANT',
+          },
+          body: JSON.stringify({
+            message: message,
+            type: 'text',
+            sender_type: 'MERCHANT',
+            order_id: orderCode,
+            is_auto: false,
+          }),
+        }
+      );
+
+      return true;
+    } catch (error) {
+      console.log('[SimilarItem] Error sending to chat:', error);
+      return false;
+    }
+  }, [businessId, itemName, route.params]);
+
+  const onSelect = async (item) => {
+    setSelectedItem(item);
+    
+    // Show confirmation alert
+    Alert.alert(
+      "Confirm Replacement",
+      `Replace "${itemName}" with "${item.name}" (${item.currency || 'BTN'} ${Number(item.price).toFixed(2)})?\n\nThe customer will be notified in chat.`,
+      [
+        { text: "Cancel", style: "cancel", onPress: () => setSelectedItem(null) },
+        {
+          text: "Confirm & Notify",
+          onPress: async () => {
+            // Try to send to chat first
+            const chatSent = await sendReplacementToChat(item);
+            
+            if (chatSent) {
+              Alert.alert(
+                "Replacement Proposed",
+                `Replacement proposal sent to customer in chat.\n\nCustomer will need to confirm before the order is updated.`,
+                [{ text: "OK" }]
+              );
+            }
+            
+            // Send choice back to OrderDetails through DeviceEventEmitter
+            DeviceEventEmitter.emit('similar-item-chosen', {
+              itemKey,
+              replacement: {
+                name: item.name,
+                price: item.price,
+                currency: item.currency,
+                id: item.id,
+                image: item.image,
+              },
+              fromChat: true,
+              shouldNavigateToChat: shouldNavigateToChatAfterReplace,
+            });
+            
+            // Navigate to chat if requested
+            if (shouldNavigateToChatAfterReplace && route.params?.conversationId) {
+              navigation.navigate("MerchantChatRoomScreen", {
+                conversationId: route.params.conversationId,
+                orderId: route.params.orderCode,
+                userType: "MERCHANT",
+                userId: await SecureStore.getItemAsync('user_id_v1') || await SecureStore.getItemAsync('user_id'),
+                businessId: String(businessId),
+                customerId: String(route.params?.customerId || ''),
+                customerName: route.params?.customerName || "Customer",
+                meta: {
+                  autoMessage: `I've proposed replacing "${itemName}" with "${item.name}". Please let me know if this works for you.`,
+                },
+                source: "similar-item-catalog",
+              });
+            } else {
+              navigation.goBack();
+            }
+          },
+        },
+      ],
+    );
   };
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
@@ -310,7 +434,7 @@ export default function SimilarItemCatalog() {
           Original item: {itemName || 'Item'}
         </Text>
         <Text style={[orderStyles.segmentHint, { marginBottom: 8 }]}>
-          Choose a similar item to replace the unavailable one.
+          Choose a similar item to replace the unavailable one. Customer will be notified in chat.
         </Text>
 
         {loading ? (
@@ -334,7 +458,10 @@ export default function SimilarItemCatalog() {
             renderItem={({ item }) => (
               <Pressable
                 onPress={() => onSelect(item)}
-                style={localStyles.card}
+                style={[
+                  localStyles.card,
+                  selectedItem?.id === item.id && localStyles.selectedCard
+                ]}
               >
                 {item.image ? (
                   <Image
@@ -362,10 +489,10 @@ export default function SimilarItemCatalog() {
                   </Text>
                 )}
                 <Text style={localStyles.cardPrice}>
-                  {`${item.currency || 'Nu'} ${Number(item.price || 0).toFixed(2)}`}
+                  {`${item.currency || 'BTN'} ${Number(item.price || 0).toFixed(2)}`}
                 </Text>
                 <Text style={localStyles.cardHint}>
-                  Tap to use this as replacement.
+                  Tap to propose this replacement
                 </Text>
               </Pressable>
             )}
@@ -402,6 +529,11 @@ const localStyles = StyleSheet.create({
     padding: 10,
     borderWidth: 1,
     borderColor: '#e5e7eb',
+  },
+  selectedCard: {
+    borderColor: '#00B14F',
+    backgroundColor: '#F0FDF4',
+    borderWidth: 2,
   },
   thumb: {
     width: '100%',

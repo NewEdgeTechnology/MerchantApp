@@ -1,23 +1,24 @@
 // screens/food/OrderDetails/orderDetailsUtils.js
-import { BUSINESS_DETAILS as ENV_BUSINESS_DETAILS } from '@env';
+import { BUSINESS_DETAILS as ENV_BUSINESS_DETAILS } from "@env";
 
 /* ---------------- Money + utils ---------------- */
-export const money = (n, c = 'Nu') => `${c} ${Number(n ?? 0).toFixed(2)}`;
-export const norm = (s = '') => String(s).toLowerCase().trim();
+export const money = (n, c = "BTN") => `${c} ${Number(n ?? 0).toFixed(2)}`;
+export const norm = (s = "") => String(s).toLowerCase().trim();
 export const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-export const findStepIndex = (status, seq) => seq.indexOf((status || '').toUpperCase());
+export const findStepIndex = (status, seq) =>
+  seq.indexOf((status || "").toUpperCase());
 export const fmtStamp = (iso) => {
-  if (!iso) return '';
+  if (!iso) return "";
   const d = new Date(iso);
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 
 /* ---------- stringify helpers ---------- */
-export const clean = (v) => (v == null ? '' : String(v).trim());
+export const clean = (v) => (v == null ? "" : String(v).trim());
 export const addressToLine = (val) => {
-  if (!val) return '';
-  if (typeof val === 'string') return val;
-  if (typeof val === 'object') {
+  if (!val) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "object") {
     const parts = [
       clean(val.address || val.line1 || val.street),
       clean(val.area || val.locality || val.block),
@@ -27,69 +28,64 @@ export const addressToLine = (val) => {
     if (!parts.length) {
       const lat = val.lat ?? val.latitude;
       const lng = val.lng ?? val.longitude;
-      const ll = [lat, lng].filter((n) => n != null).join(', ');
-      return ll ? `(${ll})` : '';
+      const ll = [lat, lng].filter((n) => n != null).join(", ");
+      return ll ? `(${ll})` : "";
     }
-    return parts.join(', ');
+    return parts.join(", ");
   }
   return String(val);
 };
 
-/* ---------------- Status config ---------------- */
 export const STATUS_META = {
-  PENDING: {
-    label: 'Pending',
-    color: '#0ea5e9',
-    bg: '#e0f2fe',
-    border: '#bae6fd',
-    icon: 'time-outline',
-  },
+  PENDING: { label: "Pending", color: "#F59E0B", icon: "time-outline" },
   CONFIRMED: {
-    label: 'Accepted',
-    color: '#16a34a',
-    bg: '#ecfdf5',
-    border: '#bbf7d0',
-    icon: 'checkmark-circle-outline',
+    label: "Confirmed",
+    color: "#10B981",
+    icon: "checkmark-circle-outline",
   },
-  READY: {
-    label: 'Ready',
-    color: '#2563eb',
-    bg: '#dbeafe',
-    border: '#bfdbfe',
-    icon: 'cube-outline',
+  ASSIGNED: { label: "Assigned", color: "#3B82F6", icon: "person-outline" },
+  READY: { label: "Ready", color: "#8B5CF6", icon: "restaurant-outline" },
+  PICKEDUP: {
+    label: "Picked Up",
+    color: "#10B981",
+    icon: "checkmark-done-circle-outline",
+  }, // ✅ ADD THIS LINE
+  PICKED_UP: {
+    label: "Picked Up",
+    color: "#10B981",
+    icon: "checkmark-done-circle-outline",
   },
   OUT_FOR_DELIVERY: {
-    label: 'Out for delivery',
-    color: '#f59e0b',
-    bg: '#fef3c7',
-    border: '#fde68a',
-    icon: 'bicycle-outline',
+    label: "Out for Delivery",
+    color: "#F59E0B",
+    icon: "bicycle-outline",
   },
   COMPLETED: {
-    label: 'Delivered',
-    color: '#047857',
-    bg: '#ecfdf5',
-    border: '#bbf7d0',
-    icon: 'checkmark-done-outline',
+    label: "Completed",
+    color: "#10B981",
+    icon: "checkmark-done-circle-outline",
   },
   DECLINED: {
-    label: 'Declined',
-    color: '#b91c1c',
-    bg: '#fee2e2',
-    border: '#fecaca',
-    icon: 'close-circle-outline',
+    label: "Declined",
+    color: "#EF4444",
+    icon: "close-circle-outline",
+  },
+  CANCELLED: {
+    label: "Cancelled",
+    color: "#EF4444",
+    icon: "close-circle-outline",
   },
 };
 
-export const TERMINAL_NEGATIVE = new Set(['DECLINED']);
-export const TERMINAL_SUCCESS = new Set(['COMPLETED']);
+export const TERMINAL_NEGATIVE = new Set(["CANCELLED", "DECLINED"]);
+export const TERMINAL_SUCCESS = new Set(["COMPLETED", "PICKEDUP"]);
 
 /* ---------------- if_unavailable mapping ---------------- */
 export const IF_UNAVAILABLE_LABELS = {
-  replace_with_similar: 'Replace with similar item',
-  suggest_replacement: 'Suggest a replacement',
-  remove_item: 'Remove that item',
-  cancel_order: 'Cancel the whole order',
+  replace_with_similar: "Replace with similar item",
+  suggest_replacement: "Suggest a replacement",
+  remove_item: "Remove that item",
+  cancel_order: "Cancel the whole order",
 };
 
 /* ---------------- Order code helpers ---------------- */
@@ -106,58 +102,82 @@ export const sameOrder = (a, b) => {
   const A = normalizeOrderCode(a);
   const B = normalizeOrderCode(b);
   if (!A || !B) return false;
-  return A.replace(/\D/g, '') === B.replace(/\D/g, '');
+  return A.replace(/\D/g, "") === B.replace(/\D/g, "");
 };
 
 export const buildUpdateUrl = (base, orderCode) => {
-  const cleanBase = String(base || '').trim().replace(/\/+$/, '');
+  const cleanBase = String(base || "")
+    .trim()
+    .replace(/\/+$/, "");
   if (!cleanBase || !orderCode) return null;
+
+  // Try different URL patterns
+  const candidates = [];
+
+  // Pattern 1: Replace placeholders
   let url = cleanBase
     .replace(/\{\s*order_id\s*\}/gi, orderCode)
     .replace(/\{\s*order\s*\}/gi, orderCode)
+    .replace(/\{\s*orderCode\s*\}/gi, orderCode)
     .replace(/:order_id/gi, orderCode)
-    .replace(/:order/gi, orderCode);
+    .replace(/:order/gi, orderCode)
+    .replace(/:orderCode/gi, orderCode);
+
   if (url !== cleanBase) {
-    if (!/\/status(?:\?|$)/i.test(url)) url = `${url}/status`;
-    return url;
+    candidates.push(url);
   }
-  return `${cleanBase}/${orderCode}/status`;
+
+  // Pattern 2: Append /{orderCode}/status
+  candidates.push(`${cleanBase}/${orderCode}/status`);
+
+  // Pattern 3: Append /status with query param
+  candidates.push(`${cleanBase}/status?order_code=${orderCode}`);
+  candidates.push(`${cleanBase}/status?order_id=${orderCode}`);
+
+  // Pattern 4: Just append /status (if the endpoint expects order_code in body)
+  candidates.push(`${cleanBase}/status`);
+
+  // Return the first candidate that isn't the same as base (preferring the most specific)
+  console.log("[DEBUG] buildUpdateUrl candidates:", candidates);
+  return candidates[0];
 };
 
 /* ---------------- NORMALIZERS ---------------- */
 export const normDelivery = (v) => {
-  const s = String(v || '').trim().toUpperCase();
-  if (!s) return 'UNKNOWN';
+  const s = String(v || "")
+    .trim()
+    .toUpperCase();
+  if (!s) return "UNKNOWN";
   if (
     [
-      'SELF',
-      'SELF_ONLY',
-      'PICKUP',
-      'PICK_UP',
-      'SELF_PICKUP',
-      'SELF-DELIVERY',
-      'SELF_DELIVERY',
+      "SELF",
+      "SELF_ONLY",
+      "PICKUP",
+      "PICK_UP",
+      "SELF_PICKUP",
+      "SELF-DELIVERY",
+      "SELF_DELIVERY",
     ].includes(s)
   )
-    return 'SELF';
+    return "SELF";
   if (
     [
-      'GRAB',
-      'GRAB_ONLY',
-      'DELIVERY',
-      'PLATFORM',
-      'PLATFORM_DELIVERY',
-      'PLATFORM-DELIVERY',
+      "GRAB",
+      "GRAB_ONLY",
+      "DELIVERY",
+      "PLATFORM",
+      "PLATFORM_DELIVERY",
+      "PLATFORM-DELIVERY",
     ].includes(s)
   )
-    return 'GRAB';
-  if (s === 'BOTH' || s === 'ALL') return 'BOTH';
-  if (s === '1' || s === 'TRUE') return 'GRAB';
-  if (s === '0' || s === 'FALSE') return 'SELF';
-  if (s.includes('GRAB') || s.includes('PLATFORM')) return 'GRAB';
-  if (s.includes('SELF')) return 'SELF';
-  if (s.includes('BOTH')) return 'BOTH';
-  return 'UNKNOWN';
+    return "GRAB";
+  if (s === "BOTH" || s === "ALL") return "BOTH";
+  if (s === "1" || s === "TRUE") return "GRAB";
+  if (s === "0" || s === "FALSE") return "SELF";
+  if (s.includes("GRAB") || s.includes("PLATFORM")) return "GRAB";
+  if (s.includes("SELF")) return "SELF";
+  if (s.includes("BOTH")) return "BOTH";
+  return "UNKNOWN";
 };
 
 export function resolveDeliveryOptionFromOrder(from) {
@@ -179,13 +199,13 @@ export function resolveDeliveryOptionFromOrder(from) {
     from?.params?.delivery_option,
     from?.params?.deliveryOption,
     from?.params?.delivery_by,
-  ].map((v) => (v == null ? '' : String(v).trim()));
+  ].map((v) => (v == null ? "" : String(v).trim()));
 
   for (const val of cands) {
     const n = normDelivery(val);
-    if (n !== 'UNKNOWN') return n;
+    if (n !== "UNKNOWN") return n;
   }
-  return '';
+  return "";
 }
 
 /** Returns 'Delivery' | 'Pickup' | '' */
@@ -198,53 +218,51 @@ export function resolveFulfillmentType(from) {
     from?.type,
     from?.delivery_type,
     from?.service_type,
-  ].map((v) => (v == null ? '' : String(v).trim()));
+  ].map((v) => (v == null ? "" : String(v).trim()));
 
   for (const val of cands) {
     const s = norm(val);
     if (!s) continue;
     if (
-      ['delivery', 'deliver', 'platform_delivery', 'self-delivery'].includes(
-        s
-      )
+      ["delivery", "deliver", "platform_delivery", "self-delivery"].includes(s)
     )
-      return 'Delivery';
+      return "Delivery";
     if (
-      ['pickup', 'self-pickup', 'pick_up', 'takeaway', 'take-away'].includes(s)
+      ["pickup", "self-pickup", "pick_up", "takeaway", "take-away"].includes(s)
     )
-      return 'Pickup';
-    return '';
+      return "Pickup";
+    return "";
   }
-  return '';
+  return "";
 }
 
 /* ---------------- BUSINESS_DETAILS URL helper ---------------- */
 
 const buildBusinessDetailsUrl = (business_id) => {
-  const tpl = (ENV_BUSINESS_DETAILS || '').trim();
+  const tpl = (ENV_BUSINESS_DETAILS || "").trim();
   if (!tpl) return null;
 
   const urls = [];
 
-  if (business_id != null && business_id !== '') {
+  if (business_id != null && business_id !== "") {
     const rawId = String(business_id).trim();
     const encId = encodeURIComponent(rawId);
 
     // Try replacing common placeholders
     let replaced = tpl
-      .replace('{business_id}', encId)
-      .replace('{businessId}', encId)
-      .replace(':business_id', encId)
-      .replace(':businessId', encId);
+      .replace("{business_id}", encId)
+      .replace("{businessId}", encId)
+      .replace(":business_id", encId)
+      .replace(":businessId", encId);
 
     if (replaced !== tpl) {
       urls.push(replaced);
     } else {
       // Fallback: /:id
-      urls.push(`${tpl.replace(/\/+$/, '')}/${encId}`);
+      urls.push(`${tpl.replace(/\/+$/, "")}/${encId}`);
 
       // Fallback: ?business_id=
-      const sep = tpl.includes('?') ? '&' : '?';
+      const sep = tpl.includes("?") ? "&" : "?";
       urls.push(`${tpl}${sep}business_id=${encId}`);
     }
   }
@@ -261,8 +279,8 @@ export async function fetchBusinessDetails({ token, business_id }) {
   if (!urlCandidates || urlCandidates.length === 0) return null;
 
   const headers = token
-    ? { Accept: 'application/json', Authorization: `Bearer ${token}` }
-    : { Accept: 'application/json' };
+    ? { Accept: "application/json", Authorization: `Bearer ${token}` }
+    : { Accept: "application/json" };
 
   for (const url of urlCandidates) {
     try {
@@ -277,7 +295,7 @@ export async function fetchBusinessDetails({ token, business_id }) {
       if (!r.ok) continue;
 
       const maybe =
-        data?.data && typeof data.data === 'object' ? data.data : data;
+        data?.data && typeof data.data === "object" ? data.data : data;
 
       if (
         maybe &&
@@ -295,31 +313,62 @@ export async function fetchBusinessDetails({ token, business_id }) {
   return null;
 }
 
-/* ---------------- API calls ---------------- */
 export async function updateStatusApi({ endpoint, orderCode, payload, token }) {
   const url = buildUpdateUrl(endpoint, orderCode);
-  if (!url) throw new Error('Invalid update endpoint');
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(payload),
-  });
-  const text = await res.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
-  }
-  if (!res.ok)
-    throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
-  return json;
-}
+  if (!url) throw new Error("Invalid update endpoint");
 
+  console.log("[DEBUG] updateStatusApi - URL:", url);
+  console.log(
+    "[DEBUG] updateStatusApi - Payload:",
+    JSON.stringify(payload, null, 2),
+  );
+
+  // Try with PUT first, then fallback to POST if needed
+  const methods = ["PUT", "POST"];
+  let lastError = null;
+
+  for (const method of methods) {
+    try {
+      const res = await fetch(url, {
+        method: method,
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          ...payload,
+          order_code: orderCode, // Always include order_code in body
+          order_id: orderCode, // Also include order_id
+        }),
+      });
+
+      const text = await res.text();
+      console.log(`[DEBUG] ${method} response status:`, res.status);
+      console.log(`[DEBUG] ${method} response body:`, text);
+
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = null;
+      }
+
+      if (res.ok) {
+        return json;
+      }
+
+      lastError = new Error(
+        json?.message || json?.error || `HTTP ${res.status}`,
+      );
+    } catch (err) {
+      lastError = err;
+      console.log(`[DEBUG] ${method} failed:`, err.message);
+    }
+  }
+
+  throw lastError || new Error("Failed to update status");
+}
 /* ---------------- Distance & ETA helpers (Haversine) ---------------- */
 const toRad = (deg) => (deg * Math.PI) / 180;
 
@@ -352,8 +401,8 @@ export const computeHaversineKm = (from, to) => {
 
 /* ---------------- Tiny helpers ---------------- */
 export const toText = (val) => {
-  if (val == null) return '—';
-  if (typeof val === 'object') return addressToLine(val) || '—';
+  if (val == null) return "—";
+  if (typeof val === "object") return addressToLine(val) || "—";
   const s = String(val).trim();
-  return s.length ? s : '—';
+  return s.length ? s : "—";
 };

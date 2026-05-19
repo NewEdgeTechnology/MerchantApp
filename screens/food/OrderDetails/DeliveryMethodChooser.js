@@ -1,4 +1,5 @@
 // screens/food/OrderDetails/DeliveryMethodChooser.js
+// ✅ UPDATED: Added PENDING status support
 // ✅ UPDATED: "Deliver in group" shows like your screenshot — as a separate button on the RIGHT
 // ✅ Self + Grab remain as your existing segmented buttons on the LEFT (same row)
 
@@ -41,7 +42,8 @@ export default function DeliveryMethodChooser({
     );
   }
 
-  if (!["CONFIRMED", "READY"].includes(status)) return null;
+  // ✅ FIXED: Allow PENDING, CONFIRMED, and READY status
+  if (!["PENDING", "CONFIRMED", "READY"].includes(status)) return null;
 
   const hintText = (() => {
     if (isSelfSelected) return "Self delivery selected.";
@@ -123,6 +125,13 @@ export default function DeliveryMethodChooser({
           </Pressable>
         </View>
 
+        {/* RIGHT: Deliver in group button (optional) */}
+        {showDeliverInGroup && (
+          <Pressable onPress={onDeliverInGroup} style={styles.groupButton}>
+            <Ionicons name="people-outline" size={16} color="#7c3aed" />
+            <Text style={styles.groupButtonText}>Deliver{'\n'}in group</Text>
+          </Pressable>
+        )}
       </View>
 
       <Text style={[styles.segmentHint, { marginTop: 8 }]}>{hintText}</Text>

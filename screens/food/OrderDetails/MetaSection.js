@@ -45,6 +45,16 @@ export default function MetaSection({
       )}
       <Row icon="card-outline" text={`Payment: ${order.payment_method || '—'}`} />
 
+      {/* ✅ ADD THIS - Show picked up by information */}
+      {(status === "PICKEDUP" || status === "COMPLETED") && order?.pickedup_by && (
+        <View style={styles.pickedUpContainer}>
+          <Ionicons name="checkmark-circle" size={16} color="#10B981" />
+          <Text style={styles.pickedUpText}>
+            Picked up by: {order.pickedup_by}
+          </Text>
+        </View>
+      )}
+
       {fulfillmentLower !== 'pickup' && (
         <Row icon="navigate-outline" text={deliveryAddressText} />
       )}
