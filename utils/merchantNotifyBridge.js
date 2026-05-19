@@ -11,7 +11,7 @@ function normalizeIncoming(payload) {
       orderId: String(o.order_id || o.orderCode || o.id),
       data: {
         title: 'New order received',
-        body: `You have a new order for Nu ${Number(o.total_amount || o.total || 0).toFixed(2)}`,
+        body: `You have a new order for BTN ${Number(o.total_amount || o.total || 0).toFixed(2)}`,
         owner_type: o.owner_type || o.module || 'mart',
         status: o.status || 'PENDING',
       },

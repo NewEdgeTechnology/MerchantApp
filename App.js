@@ -22,7 +22,14 @@ import * as SecureStore from "expo-secure-store";
 import { VERIFY_SESSION_ENDPOINT as ENV_VERIFY_SESSION_ENDPOINT } from "@env";
 import { getExpoPushTokenAsync } from "./utils/getExpoPushTokenAsync";
 import Constants from "expo-constants";
+// Add this import at the top with your other imports
+import { LogBox } from "react-native";
 
+// Add this after your imports, before the component definitions
+// Ignore the non-serializable warning - safe since we don't use persistence/deep linking
+LogBox.ignoreLogs([
+  'Non-serializable values were found in the navigation state',
+]);
 // Screens (all your existing imports remain the same)
 import WelcomeScreen from "./screens/general/WelcomeScreen";
 import OnboardingScreen from "./screens/general/OnboardingScreen";
@@ -96,6 +103,8 @@ import WalletTransferSuccess from "./screens/wallet/WalletTransferSuccess.js";
 import Withdrawal from "./screens/wallet/WithdrawalScreen.js";
 import Chat from "./screens/message/Chat.js";
 import ChatRoomScreen from "./screens/message/ChatRoomScreen";
+import ItemDetailScreen from "./screens/food/ItemDetailScreen.js";
+import EditItemScreen from "./screens/food/EditItemScreen.js";
 
 const Stack = createStackNavigator();
 
@@ -850,6 +859,11 @@ export default function App() {
             <Stack.Screen name="Withdrawal" component={Withdrawal} />
 
             <Stack.Screen name="Chat" component={Chat} />
+            <Stack.Screen name="EditItemScreen" component={EditItemScreen} />
+            <Stack.Screen
+              name="ItemDetailScreen"
+              component={ItemDetailScreen}
+            />
             <Stack.Screen
               name="MerchantChatRoomScreen"
               component={ChatRoomScreen}
