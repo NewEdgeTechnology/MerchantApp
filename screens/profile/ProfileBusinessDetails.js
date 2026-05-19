@@ -139,7 +139,7 @@ const moneyNu = (v) => {
   if (isNilish(v)) return "—";
   const n = Number(v);
   if (!Number.isFinite(n)) return String(v);
-  return `Nu. ${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  return `BTN. ${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 };
 
 const pct = (v) => {

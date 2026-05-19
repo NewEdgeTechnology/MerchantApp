@@ -1,5 +1,4 @@
-// PersonalInformation.js — header matches ProfileBusinessDetails (back + centered title)
-// Uses PROFILE_IMAGE base for avatar URLs; minimized helpers.
+// PersonalInformation.js — Fixed with correct HTTP method and endpoint
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, StyleSheet, TouchableOpacity, Dimensions,
@@ -17,8 +16,8 @@ const KEY_MERCHANT_LOGIN = 'merchant_login';
 
 /** ───────── Phone rules (Bhutan) ───────── */
 const COUNTRY_CODE = '+975';
-const LOCAL_MAX_LEN = 8;               // typical 8-digit local number
-const ALLOWED_PREFIXES = ['77','17','16']; // first two digits must be one of these
+const LOCAL_MAX_LEN = 8;
+const ALLOWED_PREFIXES = ['77', '17', '16'];
 
 /** Android emulator localhost normalization */
 function normalizeHost(url) {
@@ -36,9 +35,6 @@ function normalizeHost(url) {
 
 const isLocalFileUri = (src) =>
   !!src && (/^file:\/\//i.test(src) || /^content:\/\//i.test(src) || /^asset:\/\//i.test(src) || /^ph:\/\//i.test(src));
-
-const isHttpOrRelativePath = (src) =>
-  !!src && (/^https?:\/\//i.test(src) || src.startsWith('/'));
 
 const makeAbsolute = (maybeRelative, base = PROFILE_IMAGE_ENDPOINT) => {
   if (!maybeRelative) return '';
@@ -61,11 +57,14 @@ const withVersion = (url, version) => {
 };
 
 async function fetchJSON(url, options = {}, timeoutMs = 15000) {
+  console.log('🌐 Fetching URL:', url);
   const controller = new AbortController();
   const tid = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { ...options, signal: controller.signal });
     const text = await res.text();
+    console.log('📡 Response status:', res.status);
+    
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch {}
     if (!res.ok) {
@@ -84,17 +83,24 @@ async function discoverUserIdFromStore() {
     if (!raw) return null;
     const data = JSON.parse(raw);
     const candidates = [
-      data?.user?.user_id, data?.user?.id, data?.user_id, data?.id, data?.merchant?.user_id, data?.merchant?.id,
+      data?.user?.user_id, data?.user?.id, data?.user_id, data?.id, 
+      data?.merchant?.user_id, data?.merchant?.id, data?.data?.user_id,
+      data?.userId, data?.user?.userId
     ].filter(v => v !== undefined && v !== null && v !== '');
-    if (candidates.length) return String(candidates[0]);
-  } catch {}
+    if (candidates.length) {
+      console.log('✅ Found user ID in storage:', candidates[0]);
+      return String(candidates[0]);
+    }
+  } catch (e) {
+    console.error('Error discovering user ID:', e);
+  }
   return null;
 }
 
 /** ───────── Phone helpers ───────── */
-const digitsOnly = (s='') => String(s).replace(/\D+/g, '');
+const digitsOnly = (s = '') => String(s).replace(/\D+/g, '');
 
-const stripCountry = (raw='') => {
+const stripCountry = (raw = '') => {
   const s = String(raw).trim();
   if (s.startsWith(COUNTRY_CODE)) return digitsOnly(s.slice(COUNTRY_CODE.length));
   if (s.startsWith('00975')) return digitsOnly(s.slice(5));
@@ -102,16 +108,16 @@ const stripCountry = (raw='') => {
   return digitsOnly(s);
 };
 
-const buildE164 = (local='') => {
+const buildE164 = (local = '') => {
   const d = digitsOnly(local);
   return d ? `${COUNTRY_CODE}${d}` : '';
 };
 
-const isLocalValid = (local='') => {
+const isLocalValid = (local = '') => {
   const d = digitsOnly(local);
-  if (d.length < 2) return false;                            // need first two to check prefix
+  if (d.length < 2) return false;
   if (!ALLOWED_PREFIXES.includes(d.slice(0, 2))) return false;
-  return d.length === LOCAL_MAX_LEN;                         // require full length
+  return d.length === LOCAL_MAX_LEN;
 };
 
 export default function PersonalInformation() {
@@ -120,70 +126,118 @@ export default function PersonalInformation() {
   const route = useRoute();
   const params = route?.params || {};
 
-  const [name, setName]   = useState('');
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [localPhone, setLocalPhone] = useState(''); // <- store only local digits (no +975)
+  const [localPhone, setLocalPhone] = useState('');
   const [avatar, setAvatar] = useState('');
   const [userId, setUserId] = useState(params?.user_id ? String(params.user_id) : '');
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState(null);
-
+  const [error, setError] = useState(null);
   const [phoneError, setPhoneError] = useState('');
 
+  // Construct endpoint URL properly - make sure it includes /driver
   const endpoint = useMemo(() => {
-    if (!PROFILE_ENDPOINT || !userId) return '';
-    const base = normalizeHost(PROFILE_ENDPOINT.trim());
-    return `${base.replace(/\/+$/, '')}/${encodeURIComponent(userId)}`;
+    if (!PROFILE_ENDPOINT) {
+      console.error('❌ PROFILE_ENDPOINT not defined in env');
+      return '';
+    }
+    if (!userId) {
+      console.log('⏳ Waiting for user ID...');
+      return '';
+    }
+    
+    // Get the base URL from env
+    let base = PROFILE_ENDPOINT.trim().replace(/\/+$/, '');
+    
+    // Remove any {user_id} placeholder
+    base = base.replace(/\{user_id\}/g, '');
+    
+    // Ensure the URL has /driver in the path
+    // If the base doesn't include 'driver', add it
+    if (!base.includes('/driver/')) {
+      // Insert /driver after the domain
+      const urlParts = base.split('/');
+      const domain = urlParts.slice(0, 3).join('/'); // https://backend.tabdhey.bt
+      const rest = urlParts.slice(3).join('/');
+      base = `${domain}/driver/${rest}`;
+    }
+    
+    // Construct the full URL with user ID
+    const fullUrl = `${base}/${userId}`;
+    const normalized = normalizeHost(fullUrl);
+    console.log('🔗 Constructed endpoint:', normalized);
+    return normalized;
   }, [userId]);
 
   useEffect(() => {
     (async () => {
-      if (userId) return;
+      if (userId) {
+        console.log('📱 User ID from params:', userId);
+        return;
+      }
+      console.log('🔍 Discovering user ID from storage...');
       const discovered = await discoverUserIdFromStore();
-      if (discovered) setUserId(discovered);
-      else {
-        setError('Missing user_id. Pass it via navigation or store it at login.');
+      if (discovered) {
+        console.log('✅ Discovered user ID:', discovered);
+        setUserId(discovered);
+      } else {
+        setError('Unable to find user information. Please log in again.');
         setLoading(false);
       }
     })();
   }, []);
 
   const hydrateFromPayload = (payload) => {
-    setName(payload?.user_name || '');
-    setEmail(payload?.email || '');
+    console.log('📦 Hydrating from payload:', payload);
+    const data = payload?.data || payload;
+    
+    setName(data?.user_name || '');
+    setEmail(data?.email || '');
 
-    // Accept phone returned as +975XXXXXXXX or 975XXXXXXXX or raw digits.
-    const rawPhone = payload?.phone || '';
-    setLocalPhone(stripCountry(rawPhone).slice(0, LOCAL_MAX_LEN));
+    const rawPhone = data?.phone || '';
+    const stripped = stripCountry(rawPhone);
+    console.log('📞 Phone raw:', rawPhone, 'stripped:', stripped);
+    setLocalPhone(stripped.slice(0, LOCAL_MAX_LEN));
 
-    const version =
-      payload?.profile_image_version ||
-      payload?.updated_at ||
-      payload?.user_updated_at ||
-      null;
+    const version = data?.profile_image_version || data?.updated_at || null;
 
-    if (payload?.profile_image) {
-      const abs = makeAbsolute(String(payload.profile_image), PROFILE_IMAGE_ENDPOINT);
+    if (data?.profile_image) {
+      const abs = makeAbsolute(String(data.profile_image), PROFILE_IMAGE_ENDPOINT);
       setAvatar(withVersion(abs, version));
+      console.log('🖼️ Avatar URL:', abs);
     } else {
       setAvatar('');
     }
   };
 
   const fetchProfile = useCallback(async () => {
-    if (!endpoint) { setLoading(false); return; }
+    if (!endpoint) { 
+      if (userId) {
+        setError('API endpoint not properly configured. Check PROFILE_ENDPOINT in .env');
+      }
+      setLoading(false);
+      return; 
+    }
     try {
-      setError(null); setLoading(true);
-      const data = await fetchJSON(endpoint, { method: 'GET' });
-      hydrateFromPayload(data);
+      setError(null);
+      setLoading(true);
+      console.log('🚀 Fetching profile from:', endpoint);
+      const response = await fetchJSON(endpoint, { method: 'GET' });
+      console.log('✅ Profile fetched successfully');
+      hydrateFromPayload(response);
     } catch (e) {
-      setError(e.message || 'Failed to fetch profile');
+      console.error('❌ Fetch error:', e);
+      setError(e.message || 'Failed to fetch profile. Please check your connection.');
     } finally {
       setLoading(false);
     }
-  }, [endpoint]);
+  }, [endpoint, userId]);
 
-  useEffect(() => { if (userId) fetchProfile(); }, [userId, fetchProfile]);
+  useEffect(() => {
+    if (userId) {
+      fetchProfile();
+    }
+  }, [userId, fetchProfile]);
 
   const handleChangePhoto = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -192,11 +246,14 @@ export default function PersonalInformation() {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1,1], quality: 1,
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
     });
-    if (!result.cancelled && !result.canceled) {
-      const uri = result?.assets?.[0]?.uri || result?.uri;
-      if (uri) setAvatar(uri); // local preview
+    if (!result.canceled) {
+      const uri = result?.assets?.[0]?.uri;
+      if (uri) setAvatar(uri);
     }
   };
 
@@ -211,65 +268,63 @@ export default function PersonalInformation() {
         email: payload?.email ?? email,
         phone: payload?.phone ?? buildE164(localPhone),
         profile_image: payload?.profile_image ?? avatar,
+        user_id: userId,
         user: {
           ...(blob.user || {}),
           user_id: userId,
           user_name: payload?.user_name ?? name,
-          display_name: payload?.user_name ?? name,
           email: payload?.email ?? email,
           phone: payload?.phone ?? buildE164(localPhone),
           profile_image: payload?.profile_image ?? avatar,
         },
       };
       await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
-    } catch {}
+      console.log('💾 Profile saved to storage');
+    } catch (e) {
+      console.error('Error saving to storage:', e);
+    }
     DeviceEventEmitter.emit('profile-updated', {
       name: payload?.user_name ?? name,
       profile_image: payload?.profile_image ?? avatar,
     });
   };
 
-  const putJson = async () => {
-    const body = {
-      user_name: name,
-      email,
-      phone: buildE164(localPhone),      // <- send +975XXXXXXXX
-      profile_image: avatar
-    };
-    return fetchJSON(endpoint, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  };
-
-  const putMultipart = async () => {
-    const form = new FormData();
-    form.append('user_name', String(name ?? ''));
-    form.append('email', String(email ?? ''));
-    form.append('phone', buildE164(localPhone)); // <- send +975XXXXXXXX
+  const updateProfile = async () => {
+    const formData = new FormData();
+    formData.append('user_name', name);
+    formData.append('email', email);
+    formData.append('phone', buildE164(localPhone));
+    
     if (isLocalFileUri(avatar)) {
-      form.append('profile_image', {
+      formData.append('profile_image', {
         uri: avatar,
         name: `avatar_${Date.now()}.jpg`,
         type: 'image/jpeg',
       });
-    } else if (isHttpOrRelativePath(avatar)) {
-      form.append('profile_image', String(avatar));
+    } else if (avatar && !avatar.startsWith('http')) {
+      formData.append('profile_image', avatar);
     }
-    const res = await fetch(endpoint, { method: 'PUT', body: form });
-    const text = await res.text();
+
+    console.log('📤 Updating profile with PUT to:', endpoint);
+    const response = await fetch(endpoint, {
+      method: 'PUT',  // Changed back to PUT
+      body: formData,
+    });
+
+    const text = await response.text();
+    console.log('📥 Update response status:', response.status);
+    console.log('📥 Update response body:', text.substring(0, 200));
+    
     let json = null;
-    try { json = text ? JSON.parse(text) : null; } catch {}
-    if (!res.ok) {
-      const msg = (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
-      throw new Error(msg);
+    try { json = JSON.parse(text); } catch {}
+    
+    if (!response.ok) {
+      throw new Error(json?.message || json?.error || `HTTP ${response.status}`);
     }
     return json;
   };
 
   const handleSave = async () => {
-    // Validate local phone before request
     const valid = isLocalValid(localPhone);
     setPhoneError(valid ? '' : 'Enter 8 digits starting with 77, 17 or 16.');
     if (!valid) {
@@ -277,63 +332,53 @@ export default function PersonalInformation() {
       return;
     }
 
-    if (!endpoint) return;
+    if (!endpoint) {
+      Alert.alert('Error', 'Cannot save: API endpoint not configured');
+      return;
+    }
+
     try {
       setLoading(true);
-
-      try {
-        if (isLocalFileUri(avatar)) await putMultipart();
-        else await putJson();
-      } catch (firstErr) {
-        if (!isLocalFileUri(avatar)) await putMultipart();
-        else throw firstErr;
-      }
-
+      await updateProfile();
+      
+      // Fetch fresh data after update
       const fresh = await fetchJSON(endpoint, { method: 'GET' });
       hydrateFromPayload(fresh);
-
-      const version =
-        fresh?.profile_image_version ||
-        fresh?.updated_at ||
-        fresh?.user_updated_at ||
-        null;
-
-      const resolved = fresh?.profile_image
-        ? withVersion(makeAbsolute(String(fresh.profile_image), PROFILE_IMAGE_ENDPOINT), version)
-        : (avatar ? makeAbsolute(String(avatar), PROFILE_IMAGE_ENDPOINT) : '');
-
+      
+      const profileImage = fresh?.data?.profile_image || fresh?.profile_image;
+      const resolved = profileImage ? makeAbsolute(String(profileImage), PROFILE_IMAGE_ENDPOINT) : avatar;
+      
       await persistLocalAndNotify({
-        user_name: fresh?.user_name ?? name,
-        email: fresh?.email ?? email,
-        phone: buildE164(stripCountry(fresh?.phone || localPhone)),
-        profile_image: resolved || '',
+        user_name: fresh?.data?.user_name ?? name,
+        email: fresh?.data?.email ?? email,
+        phone: fresh?.data?.phone ?? buildE164(localPhone),
+        profile_image: resolved,
       });
 
-      Alert.alert('Saved', 'Profile updated successfully.');
+      Alert.alert('Success', 'Profile updated successfully');
       navigation.goBack();
     } catch (e) {
-      Alert.alert('Save failed', e?.message || 'Try again.');
+      console.error('Save error:', e);
+      Alert.alert('Save Failed', e?.message || 'Unable to save changes. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  /** Handle local phone typing */
   const onLocalPhoneChange = (txt) => {
     const d = digitsOnly(txt).slice(0, LOCAL_MAX_LEN);
     setLocalPhone(d);
-    // Live validate prefix & length
-    if (d.length >= 2 && !ALLOWED_PREFIXES.includes(d.slice(0,2))) {
+    if (d.length >= 2 && !ALLOWED_PREFIXES.includes(d.slice(0, 2))) {
       setPhoneError('Number must start with 77, 17 or 16.');
     } else if (d.length && d.length < LOCAL_MAX_LEN) {
-      setPhoneError('Enter all 8 digits.');
+      setPhoneError(`Enter ${LOCAL_MAX_LEN} digits (${d.length}/${LOCAL_MAX_LEN})`);
     } else {
       setPhoneError('');
     }
   };
 
   const headerTopPad = Math.max(insets.top, 8) + 18;
-  const canSave = isLocalValid(localPhone) && !loading;
+  const canSave = isLocalValid(localPhone) && !loading && name.trim().length > 0;
 
   if (loading) return (
     <View style={styles.centerWrap}>
@@ -344,17 +389,17 @@ export default function PersonalInformation() {
 
   if (error) return (
     <View style={styles.centerWrap}>
-      <Text style={styles.errorTitle}>Couldn’t load data</Text>
+      <Ionicons name="alert-circle-outline" size={48} color="#b91c1c" />
+      <Text style={styles.errorTitle}>Couldn't load data</Text>
       <Text style={styles.errorText}>{error}</Text>
-      <TouchableOpacity onPress={fetchProfile} style={[styles.saveButton,{marginTop:16}]}>
+      <TouchableOpacity onPress={fetchProfile} style={[styles.saveButton, { marginTop: 16 }]}>
         <Text style={styles.saveButtonText}>Retry</Text>
       </TouchableOpacity>
     </View>
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={['left','right','bottom']}>
-      {/* Header */}
+    <SafeAreaView style={styles.safe} edges={['left', 'right', 'bottom']}>
       <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
@@ -365,10 +410,12 @@ export default function PersonalInformation() {
 
       <ScrollView contentContainerStyle={styles.scrollInner} keyboardShouldPersistTaps="handled">
         <View style={styles.avatarWrap}>
-          {!!avatar ? (
+          {avatar ? (
             <Image source={{ uri: avatar }} style={styles.avatar} />
           ) : (
-            <View style={[styles.avatar, { backgroundColor:'#e2e8f0' }]} />
+            <View style={[styles.avatar, { backgroundColor: '#e2e8f0', justifyContent: 'center', alignItems: 'center' }]}>
+              <Ionicons name="person" size={40} color="#94a3b8" />
+            </View>
           )}
         </View>
         <TouchableOpacity onPress={handleChangePhoto} style={styles.changePhotoBtn}>
@@ -421,7 +468,6 @@ export default function PersonalInformation() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#fff' },
-
   headerBar: {
     minHeight: 52,
     paddingHorizontal: 12,
@@ -434,35 +480,27 @@ const styles = StyleSheet.create({
   },
   backBtn: { height: 40, width: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '700', color: '#0f172a' },
-
   scrollInner: { padding: 18 },
-
-  avatarWrap:{ alignItems:'center', marginVertical:10 },
-  avatar:{ width:100, height:100, borderRadius:50, borderColor:'#e2e8f0', borderWidth:2, backgroundColor:'#f8fafc' },
-  changePhotoBtn:{ alignSelf:'center', marginTop:8, marginBottom:4 },
-  changePhotoText:{ color:'#0ea5e9', fontWeight:'600' },
-
-  label:{ fontSize:width>400?18:16, marginVertical:5, color:'#334155' },
-  input:{
-    borderWidth:1, borderColor:'#e2e8f0', padding:12, borderRadius:8, marginBottom:20,
-    fontSize:width>400?18:16, backgroundColor:'#fff'
+  avatarWrap: { alignItems: 'center', marginVertical: 10 },
+  avatar: { width: 100, height: 100, borderRadius: 50, borderColor: '#e2e8f0', borderWidth: 2, backgroundColor: '#f8fafc' },
+  changePhotoBtn: { alignSelf: 'center', marginTop: 8, marginBottom: 4 },
+  changePhotoText: { color: '#0ea5e9', fontWeight: '600' },
+  label: { fontSize: width > 400 ? 18 : 16, marginVertical: 5, color: '#334155' },
+  input: {
+    borderWidth: 1, borderColor: '#e2e8f0', padding: 12, borderRadius: 8, marginBottom: 20,
+    fontSize: width > 400 ? 18 : 16, backgroundColor: '#fff'
   },
-
-  /** phone row */
-  phoneRow:{ flexDirection:'row', alignItems:'center', gap:10, marginBottom:8 },
-  ccBox:{
-    borderWidth:1, borderColor:'#e2e8f0', borderRadius:8, paddingHorizontal:12, paddingVertical:12,
-    backgroundColor:'#f8fafc'
+  phoneRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
+  ccBox: {
+    borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 12,
+    backgroundColor: '#f8fafc'
   },
-  ccText:{ fontWeight:'700', color:'#0f172a', fontSize: width>400?16:15 },
-  localInput:{ flex:1, marginBottom:0 },
-
-  helperError:{ color:'#b91c1c', marginBottom:14 },
-
-  saveButton:{ backgroundColor:'#16a34a', padding:15, borderRadius:10, alignItems:'center', elevation:1 },
-  saveButtonText:{ color:'#fff', fontSize:width>400?18:16, fontWeight:'700' },
-
-  centerWrap:{ flex:1, alignItems:'center', justifyContent:'center', paddingHorizontal:24, backgroundColor:'#fff' },
-  errorTitle:{ fontSize:18, fontWeight:'700', color:'#b91c1c', marginBottom:6, textAlign:'center' },
-  errorText:{ color:'#7f1d1d', textAlign:'center' },
+  ccText: { fontWeight: '700', color: '#0f172a', fontSize: width > 400 ? 16 : 15 },
+  localInput: { flex: 1, marginBottom: 0 },
+  helperError: { color: '#b91c1c', marginBottom: 14 },
+  saveButton: { backgroundColor: '#16a34a', padding: 15, borderRadius: 10, alignItems: 'center', elevation: 1 },
+  saveButtonText: { color: '#fff', fontSize: width > 400 ? 18 : 16, fontWeight: '700' },
+  centerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24, backgroundColor: '#fff' },
+  errorTitle: { fontSize: 18, fontWeight: '700', color: '#b91c1c', marginBottom: 6, textAlign: 'center' },
+  errorText: { color: '#7f1d1d', textAlign: 'center', marginBottom: 10 },
 });
