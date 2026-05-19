@@ -319,7 +319,7 @@ const stringsEN = {
     lastUpdated: "Last updated",
     bhutanContext: "Bhutan context",
     notice:
-      "This document is tailored for use in Bhutan and references local norms (currency: BTN/Nu.). Update it with your company’s exact legal wording before production.",
+      "This document is tailored for use in Bhutan and references local norms (currency: BTN/BTN.). Update it with your company’s exact legal wording before production.",
   },
   actions: { accept: "Accept & Continue", decline: "Decline" },
   consent: {
@@ -345,8 +345,8 @@ const stringsEN = {
     b4: "We may suspend or limit accounts for policy violations or unlawful use.",
   },
   s3: {
-    title: "3) Payments, Payouts & Invoices (Nu./BTN)",
-    b1: "All prices, fees and settlements are expressed in Bhutanese Ngultrum (Nu./BTN).",
+    title: "3) Payments, Payouts & Invoices (BTN./BTN)",
+    b1: "All prices, fees and settlements are expressed in Bhutanese Ngultrum (BTN./BTN).",
     b2: "You authorize us and our payment partners to process payments and deposits.",
     b3: "Settlement timelines may vary by bank/public holidays and risk checks.",
     b4: "You are responsible for applicable taxes, surcharges and statutory deductions.",

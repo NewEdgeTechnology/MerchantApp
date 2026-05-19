@@ -173,7 +173,7 @@ function NFRow({ item, onChange, onRemove }) {
         />
 
         <View style={{ flexDirection: "row", alignItems: "center", marginTop: 10 }}>
-          <Text style={styles.pricePrefix}>Nu.</Text>
+          <Text style={styles.pricePrefix}>BTN.</Text>
           <InputBox
             placeholder="Price"
             keyboardType="decimal-pad"

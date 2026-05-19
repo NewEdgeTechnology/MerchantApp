@@ -83,7 +83,7 @@ export default function HelpScreen() {
 
         <Card isDark={isDark} title="Payments & Payouts">
           <Text style={styles.p}>
-            Settlements are in Bhutanese Ngultrum (Nu./BTN). Bank holidays and checks can affect timelines. Check your Payouts tab for status.
+            Settlements are in Bhutanese Ngultrum (BTN./BTN). Bank holidays and checks can affect timelines. Check your Payouts tab for status.
           </Text>
         </Card>
 

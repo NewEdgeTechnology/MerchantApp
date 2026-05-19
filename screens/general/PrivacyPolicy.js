@@ -204,7 +204,7 @@ const stringsEN = {
     lastUpdated: "Last updated",
     bhutanContext: "Bhutan context",
     notice:
-      "This Privacy Policy is tailored for Bhutan (currency: BTN/Nu.). Replace placeholders with your company’s legal details before production.",
+      "This Privacy Policy is tailored for Bhutan (currency: BTN/BTN.). Replace placeholders with your company’s legal details before production.",
   },
   actions: { accept: "Accept & Continue", decline: "Decline" },
   consent: { agree: "I have read and acknowledge this Privacy Policy." },
