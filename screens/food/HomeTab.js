@@ -99,7 +99,7 @@ const StatusChip = ({ label, count = 0, onPress, active = false }) => (
 // Menu/Item card
 const MenuItem = ({ item, isTablet, money, onPress = () => {} }) => {
   const price =
-    typeof item?.price === 'number' ? money(item.price, item.currency || 'Nu') : item?.price ?? '';
+    typeof item?.price === 'number' ? money(item.price, item.currency || 'BTN') : item?.price ?? '';
   const inStock = item?.inStock ?? true;
   const cat = item?.category || item?.categoryName || '';
 
@@ -703,7 +703,7 @@ export default function HomeTab({
 
   const [kpis, setKpis] = useState({
     salesToday: 0,
-    salesCurrency: 'Nu',
+    salesCurrency: 'BTN',
     activeOrders: 0,
     acceptanceRate: 0,
     cancellations: 0,
@@ -856,7 +856,7 @@ export default function HomeTab({
         price,
         discount: x?.discount_percentage ?? '',
         taxRate: x?.tax_rate ?? '',
-        currency: x?.currency ?? 'Nu',
+        currency: x?.currency ?? 'BTN',
         inStock: (x?.is_available ?? x?.inStock ?? 1) ? true : false,
         category: x?.category_name ?? x?.category ?? x?.categoryName ?? '',
         categoryName: x?.category_name ?? x?.category ?? x?.categoryName ?? '',
@@ -975,7 +975,7 @@ export default function HomeTab({
         const rows = Array.isArray(payload?.rows) ? payload.rows : [];
         const todayTotal = sumTodayFromEarningsRows(rows);
 
-        return { salesToday: todayTotal, salesCurrency: 'Nu' };
+        return { salesToday: todayTotal, salesCurrency: 'BTN' };
       } catch {
         return null;
       }
@@ -1112,7 +1112,7 @@ export default function HomeTab({
   }, [BUSINESS_ID, ownerType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fmtMoney = useCallback(
-    (n, ccy = 'Nu') => (typeof moneyProp === 'function' ? moneyProp(n, ccy) : `${ccy} ${Number(n || 0).toFixed(2)}`),
+    (n, ccy = 'BTN') => (typeof moneyProp === 'function' ? moneyProp(n, ccy) : `${ccy} ${Number(n || 0).toFixed(2)}`),
     [moneyProp]
   );
   const pct = useCallback((v) => `${Math.round(Number.isFinite(v) ? v : 0)}%`, []);
@@ -1120,7 +1120,7 @@ export default function HomeTab({
   const eff = (obj) => (obj && typeof obj === 'object' ? obj : {});
   const mergedKpis = {
     salesToday: 0,
-    salesCurrency: 'Nu',
+    salesCurrency: 'BTN',
     activeOrders: 0,
     acceptanceRate: 0,
     cancellations: 0,
@@ -1128,7 +1128,7 @@ export default function HomeTab({
     ...eff(kpisProp),
   };
   const salesToday = Number(mergedKpis.salesToday ?? 0);
-  const salesCurrency = mergedKpis.salesCurrency || 'Nu';
+  const salesCurrency = mergedKpis.salesCurrency || 'BTN';
   const activeOrders = Number(mergedKpis.activeOrders ?? 0);
   const acceptanceRate = Number.isFinite(mergedKpis.acceptanceRate) ? mergedKpis.acceptanceRate : 0;
   const cancellations = Number(mergedKpis.cancellations ?? 0);

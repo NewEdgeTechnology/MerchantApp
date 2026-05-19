@@ -1,5 +1,11 @@
 // screens/food/SalesAnalyticsScreen.js - FINAL WORKING VERSION
-import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
+import React, {
+  useMemo,
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+} from "react";
 import {
   View,
   Text,
@@ -426,8 +432,7 @@ export default function SalesAnalyticsScreen(props) {
       const total = inRange.reduce((acc, o) => acc + Number(o.amount || 0), 0);
       let nextChart = [];
       if (tab === "Day") nextChart = buildDayChart(inRange);
-      else if (tab === "Week")
-        nextChart = buildWeekChart(inRange, anchorDate);
+      else if (tab === "Week") nextChart = buildWeekChart(inRange, anchorDate);
       else nextChart = buildMonthChart(inRange, anchorDate);
       return {
         summary: {
@@ -439,7 +444,7 @@ export default function SalesAnalyticsScreen(props) {
         chart: nextChart,
       };
     },
-    [tab, anchorDate]
+    [tab, anchorDate],
   );
 
   const fetchAllSales = useCallback(
@@ -472,7 +477,7 @@ export default function SalesAnalyticsScreen(props) {
         const json = await res.json().catch(() => null);
         if (!res.ok || !json?.success)
           throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
-        
+
         const rows = Array.isArray(json?.rows) ? json.rows : [];
         const allOrders = rows
           .map((r, idx) => {
@@ -487,7 +492,7 @@ export default function SalesAnalyticsScreen(props) {
             };
           })
           .filter((o) => o.ts > 0);
-        
+
         cacheRef.current.set(key, { allOrders, ts: Date.now() });
         const derived = deriveForRange(allOrders, start, end);
         setSummary(derived.summary);
@@ -500,7 +505,7 @@ export default function SalesAnalyticsScreen(props) {
         setLoading(false);
       }
     },
-    [resolveBusinessId, deriveForRange, start, end]
+    [resolveBusinessId, deriveForRange, start, end],
   );
 
   useEffect(() => {
@@ -522,7 +527,7 @@ export default function SalesAnalyticsScreen(props) {
           }
         } catch {}
       })();
-    }, [resolveBusinessId, deriveForRange, start, end])
+    }, [resolveBusinessId, deriveForRange, start, end]),
   );
 
   const onRefresh = useCallback(async () => {
@@ -583,7 +588,7 @@ export default function SalesAnalyticsScreen(props) {
   const generateExcelData = () => {
     const periodRange = rangeText(tab, anchorDate);
     const periodType = tab;
-    
+
     // Calculate totals
     const dailyTotals = new Map();
     orders.forEach((order) => {
@@ -605,8 +610,8 @@ export default function SalesAnalyticsScreen(props) {
         dailyBreakdown.push({
           Date: date,
           "Order Count": data.count,
-          "Total Amount (Nu)": data.amount.toFixed(2),
-          "Average Order (Nu)": (data.amount / data.count).toFixed(2),
+          "Total Amount (BTN)": data.amount.toFixed(2),
+          "Average Order (BTN)": (data.amount / data.count).toFixed(2),
         });
         totalSales += data.amount;
         totalOrders += data.count;
@@ -624,31 +629,34 @@ export default function SalesAnalyticsScreen(props) {
       [`Generated: ${new Date().toLocaleString()}`],
       [""],
       ["SUMMARY"],
-      [`Total Sales: Nu ${totalSales.toFixed(2)}`],
+      [`Total Sales: BTN ${totalSales.toFixed(2)}`],
       [`Total Orders: ${totalOrders}`],
-      [`Average Order Value: Nu ${(totalSales / totalOrders).toFixed(2)}`],
+      [`Average Order Value: BTN ${(totalSales / totalOrders).toFixed(2)}`],
       [""],
       ["DAILY BREAKDOWN"],
       [""],
-      ["Date", "Order Count", "Total Amount (Nu)", "Average Order (Nu)"],
+      ["Date", "Order Count", "Total Amount (BTN)", "Average Order (BTN)"],
     ];
 
-    dailyBreakdown.forEach(day => {
+    dailyBreakdown.forEach((day) => {
       summarySheetData.push([
         day.Date,
         day["Order Count"],
-        day["Total Amount (Nu)"],
-        day["Average Order (Nu)"]
+        day["Total Amount (BTN)"],
+        day["Average Order (BTN)"],
       ]);
     });
 
     summarySheetData.push([""]);
-    summarySheetData.push(["TOTAL", totalOrders, `Nu ${totalSales.toFixed(2)}`, `Nu ${(totalSales / totalOrders).toFixed(2)}`]);
+    summarySheetData.push([
+      "TOTAL",
+      totalOrders,
+      `BTN ${totalSales.toFixed(2)}`,
+      `BTN ${(totalSales / totalOrders).toFixed(2)}`,
+    ]);
 
     const wsSummary = XLSX.utils.aoa_to_sheet(summarySheetData);
-    wsSummary['!cols'] = [
-      { wch: 15 }, { wch: 12 }, { wch: 18 }, { wch: 18 }
-    ];
+    wsSummary["!cols"] = [{ wch: 15 }, { wch: 12 }, { wch: 18 }, { wch: 18 }];
     XLSX.utils.book_append_sheet(workbook, wsSummary, "Summary");
 
     // ORDER DETAILS SHEET
@@ -658,7 +666,7 @@ export default function SalesAnalyticsScreen(props) {
       [`Period: ${periodRange}`],
       [`Generated: ${new Date().toLocaleString()}`],
       [""],
-      ["#", "Order ID", "Date", "Time", "Amount (Nu)", "Status"],
+      ["#", "Order ID", "Date", "Time", "Amount (BTN)", "Status"],
     ];
 
     orders.forEach((order, index) => {
@@ -669,16 +677,28 @@ export default function SalesAnalyticsScreen(props) {
         date.toLocaleDateString(),
         date.toLocaleTimeString(),
         order.amount.toFixed(2),
-        order.raw?.status || "Completed"
+        order.raw?.status || "Completed",
       ]);
     });
 
     ordersSheetData.push([""]);
-    ordersSheetData.push(["TOTAL", "", "", "", `Nu ${totalSales.toFixed(2)}`, ""]);
+    ordersSheetData.push([
+      "TOTAL",
+      "",
+      "",
+      "",
+      `BTN ${totalSales.toFixed(2)}`,
+      "",
+    ]);
 
     const wsOrders = XLSX.utils.aoa_to_sheet(ordersSheetData);
-    wsOrders['!cols'] = [
-      { wch: 5 }, { wch: 15 }, { wch: 12 }, { wch: 10 }, { wch: 15 }, { wch: 12 }
+    wsOrders["!cols"] = [
+      { wch: 5 },
+      { wch: 15 },
+      { wch: 12 },
+      { wch: 10 },
+      { wch: 15 },
+      { wch: 12 },
     ];
     XLSX.utils.book_append_sheet(workbook, wsOrders, "Order Details");
 
@@ -686,7 +706,7 @@ export default function SalesAnalyticsScreen(props) {
     const chartSheetData = [
       [`${periodType} BREAKDOWN CHART DATA`],
       [""],
-      ["Period", "Sales Amount (Nu)"],
+      ["Period", "Sales Amount (BTN)"],
     ];
 
     chart.forEach((point) => {
@@ -694,16 +714,22 @@ export default function SalesAnalyticsScreen(props) {
     });
 
     const wsChart = XLSX.utils.aoa_to_sheet(chartSheetData);
-    wsChart['!cols'] = [{ wch: 10 }, { wch: 18 }];
+    wsChart["!cols"] = [{ wch: 10 }, { wch: 18 }];
     XLSX.utils.book_append_sheet(workbook, wsChart, "Chart Data");
 
-    return { workbook, fileName: `sales_report_${tab}_${toYMDLocal(anchorDate)}.xlsx` };
+    return {
+      workbook,
+      fileName: `sales_report_${tab}_${toYMDLocal(anchorDate)}.xlsx`,
+    };
   };
 
-  // EXPORT FUNCTION USING NEW FileSystem API
+  // EXPORT FUNCTION USING NEW EXPO FILESYSTEM API
   const exportAndShare = async () => {
     if (orders.length === 0) {
-      Alert.alert("No Data", "No orders available to export for the selected period.");
+      Alert.alert(
+        "No Data",
+        "No orders available to export for the selected period.",
+      );
       return;
     }
 
@@ -712,31 +738,45 @@ export default function SalesAnalyticsScreen(props) {
 
     try {
       const { workbook, fileName } = generateExcelData();
-      
-      // Write Excel file to binary string
-      const wbout = XLSX.write(workbook, { type: "binary", bookType: "xlsx" });
-      
-      // Convert binary string to base64
-      const base64Data = btoa(wbout);
-      
+
+      // Write Excel file to base64 string
+      const wbout = XLSX.write(workbook, { type: "base64", bookType: "xlsx" });
+
       // Create a new file in the document directory using the new API
       const file = new File(Paths.document, fileName);
-      
-      // Write base64 content to file
-      await file.write(base64Data);
-      
-      // Share the file
-      if (await Sharing.isAvailableAsync()) {
+
+      // Convert base64 string to Uint8Array
+      const binaryString = atob(wbout);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      // Write the file using the new API
+      await file.write(bytes);
+
+      // Check if sharing is available
+      const isSharingAvailable = await Sharing.isAvailableAsync();
+
+      if (isSharingAvailable) {
         await Sharing.shareAsync(file.uri, {
-          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          mimeType:
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           dialogTitle: "Export Sales Report",
+          UTI: "com.microsoft.excel.xlsx", // For iOS
         });
       } else {
-        Alert.alert("File Saved", `File saved to: ${file.uri}\n\nYou can find it in your device's file manager.`);
+        Alert.alert(
+          "File Saved",
+          `File saved to: ${file.uri}\n\nYou can find it in your device's file manager.`,
+        );
       }
     } catch (error) {
       console.error("Export error:", error);
-      Alert.alert("Export Failed", "Failed to export data.\n\nError: " + error.message);
+      Alert.alert(
+        "Export Failed",
+        "Failed to export data.\n\nError: " + error.message,
+      );
     } finally {
       setExporting(false);
     }
@@ -752,7 +792,7 @@ export default function SalesAnalyticsScreen(props) {
           {String(item.when || "—")}
         </Text>
       </View>
-      <Text style={styles.tripAmt}>Nu {formatNu(item.amount)}</Text>
+      <Text style={styles.tripAmt}>BTN {formatNu(item.amount)}</Text>
     </View>
   );
 
@@ -766,14 +806,22 @@ export default function SalesAnalyticsScreen(props) {
             hitSlop={8}
             style={{ padding: 4 }}
           >
-            <Ionicons name="download-outline" size={24} color={COLORS.GRAB_GREEN} />
+            <Ionicons
+              name="download-outline"
+              size={24}
+              color={COLORS.GRAB_GREEN}
+            />
           </Pressable>
           <Pressable
             onPress={() => setShowInfo(true)}
             hitSlop={8}
             style={{ padding: 4 }}
           >
-            <Ionicons name="information-circle-outline" size={24} color={COLORS.MID} />
+            <Ionicons
+              name="information-circle-outline"
+              size={24}
+              color={COLORS.MID}
+            />
           </Pressable>
         </View>
       </View>
@@ -799,7 +847,10 @@ export default function SalesAnalyticsScreen(props) {
         <Pressable onPress={shiftLeft} style={styles.iconBtn}>
           <Ionicons name="chevron-back" size={18} color={COLORS.DARK} />
         </Pressable>
-        <Pressable onPress={() => setShowPicker(true)} style={styles.rangeCenter}>
+        <Pressable
+          onPress={() => setShowPicker(true)}
+          style={styles.rangeCenter}
+        >
           <Ionicons name="calendar-outline" size={16} color={COLORS.MID} />
           <Text style={styles.rangeText}>{rangeText(tab, anchorDate)}</Text>
         </Pressable>
@@ -832,9 +883,15 @@ export default function SalesAnalyticsScreen(props) {
       <View style={styles.summaryStrip}>
         <View style={styles.summaryBlock}>
           <Text style={styles.summaryLabel}>
-            {tab === "Day" ? "Today" : tab === "Week" ? "This week" : "This month"}
+            {tab === "Day"
+              ? "Today"
+              : tab === "Week"
+                ? "This week"
+                : "This month"}
           </Text>
-          <Text style={styles.summaryValue}>Nu {formatNu(summary.total_amount ?? 0)}</Text>
+          <Text style={styles.summaryValue}>
+            BTN {formatNu(summary.total_amount ?? 0)}
+          </Text>
         </View>
         <View style={styles.vDivider} />
         <View style={styles.summaryBlock}>
@@ -869,7 +926,14 @@ export default function SalesAnalyticsScreen(props) {
       </View>
 
       {!!error && (
-        <Text style={{ color: "#EF4444", fontSize: 11, marginTop: 6, marginLeft: 16 }}>
+        <Text
+          style={{
+            color: "#EF4444",
+            fontSize: 11,
+            marginTop: 6,
+            marginLeft: 16,
+          }}
+        >
           {error}
         </Text>
       )}
@@ -892,7 +956,9 @@ export default function SalesAnalyticsScreen(props) {
         ListEmptyComponent={
           !loading && (
             <View style={{ alignItems: "center", marginTop: 24 }}>
-              <Text style={{ color: COLORS.MUTED, fontSize: 12, fontWeight: "700" }}>
+              <Text
+                style={{ color: COLORS.MUTED, fontSize: 12, fontWeight: "700" }}
+              >
                 No orders in this range
               </Text>
             </View>
@@ -921,11 +987,18 @@ export default function SalesAnalyticsScreen(props) {
                 onPress={exportAndShare}
                 disabled={exporting}
               >
-                <Ionicons name="share-social-outline" size={24} color={COLORS.GRAB_GREEN} />
+                <Ionicons
+                  name="share-social-outline"
+                  size={24}
+                  color={COLORS.GRAB_GREEN}
+                />
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.exportOptionTitle}>Export & Share Excel Report</Text>
+                  <Text style={styles.exportOptionTitle}>
+                    Export & Share Excel Report
+                  </Text>
                   <Text style={styles.exportOptionDesc}>
-                    Generate Excel file and share via Email, WhatsApp, or save to device
+                    Generate Excel file and share via Email, WhatsApp, or save
+                    to device
                   </Text>
                 </View>
               </Pressable>
@@ -933,12 +1006,17 @@ export default function SalesAnalyticsScreen(props) {
               {exporting && (
                 <View style={{ alignItems: "center", marginTop: 16 }}>
                   <ActivityIndicator color={COLORS.GRAB_GREEN} />
-                  <Text style={{ marginTop: 8, color: COLORS.MID }}>Generating report...</Text>
+                  <Text style={{ marginTop: 8, color: COLORS.MID }}>
+                    Generating report...
+                  </Text>
                 </View>
               )}
             </ScrollView>
             <Pressable
-              style={[styles.primaryBtn, { backgroundColor: COLORS.MID, marginTop: 10 }]}
+              style={[
+                styles.primaryBtn,
+                { backgroundColor: COLORS.MID, marginTop: 10 },
+              ]}
               onPress={() => setShowExportMenu(false)}
             >
               <Text style={styles.primaryBtnText}>Cancel</Text>
@@ -964,48 +1042,65 @@ export default function SalesAnalyticsScreen(props) {
             </View>
             <ScrollView style={{ maxHeight: 420 }}>
               <Text style={styles.modalPara}>
-                This screen shows your <Text style={styles.bold}>total sales</Text>{" "}
-                for the selected period (Day / Week / Month).
+                This screen shows your{" "}
+                <Text style={styles.bold}>total sales</Text> for the selected
+                period (Day / Week / Month).
               </Text>
               <View style={styles.hr} />
               <View style={styles.bullet}>
                 <Text style={styles.bulletDot}>•</Text>
                 <Text style={styles.bulletText}>
-                  <Text style={styles.bold}>Total</Text>: sum of order amounts in the selected range.
+                  <Text style={styles.bold}>Total</Text>: sum of order amounts
+                  in the selected range.
                 </Text>
               </View>
               <View style={styles.bullet}>
                 <Text style={styles.bulletDot}>•</Text>
                 <Text style={styles.bulletText}>
-                  <Text style={styles.bold}>Orders</Text>: number of orders found within the range.
+                  <Text style={styles.bold}>Orders</Text>: number of orders
+                  found within the range.
                 </Text>
               </View>
               <View style={styles.bullet}>
                 <Text style={styles.bulletDot}>•</Text>
                 <Text style={styles.bulletText}>
-                  <Text style={styles.bold}>Chart</Text>: Day shows last few orders; Week groups by day (Mon–Sun); Month groups across the month.
+                  <Text style={styles.bold}>Chart</Text>: Day shows last few
+                  orders; Week groups by day (Mon–Sun); Month groups across the
+                  month.
                 </Text>
               </View>
               <View style={styles.hr} />
               <Text style={styles.modalPara}>
-                <Text style={styles.bold}>Export:</Text> Click the share button to generate an Excel report that you can:
+                <Text style={styles.bold}>Export:</Text> Click the share button
+                to generate an Excel report that you can:
               </Text>
               <View style={styles.bullet}>
                 <Text style={styles.bulletDot}>•</Text>
-                <Text style={styles.bulletText}>Send via Email or WhatsApp</Text>
+                <Text style={styles.bulletText}>
+                  Send via Email or WhatsApp
+                </Text>
               </View>
               <View style={styles.bullet}>
                 <Text style={styles.bulletDot}>•</Text>
-                <Text style={styles.bulletText}>Save to Google Drive / iCloud</Text>
+                <Text style={styles.bulletText}>
+                  Save to Google Drive / iCloud
+                </Text>
               </View>
               <View style={styles.bullet}>
                 <Text style={styles.bulletDot}>•</Text>
-                <Text style={styles.bulletText}>Save to device storage (using "Save to Files" option)</Text>
+                <Text style={styles.bulletText}>
+                  Save to device storage (using "Save to Files" option)
+                </Text>
               </View>
               <View style={styles.hr} />
-              <Text style={styles.modalPara}>Pull down to refresh and fetch the latest data from the server.</Text>
+              <Text style={styles.modalPara}>
+                Pull down to refresh and fetch the latest data from the server.
+              </Text>
             </ScrollView>
-            <Pressable style={styles.primaryBtn} onPress={() => setShowInfo(false)}>
+            <Pressable
+              style={styles.primaryBtn}
+              onPress={() => setShowInfo(false)}
+            >
               <Text style={styles.primaryBtnText}>Got it</Text>
             </Pressable>
           </View>
@@ -1187,7 +1282,12 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 16, fontWeight: "900", color: COLORS.DARK },
   modalPara: { fontSize: 12, color: COLORS.DARK, marginTop: 6 },
   bullet: { flexDirection: "row", alignItems: "flex-start", marginTop: 6 },
-  bulletDot: { width: 16, textAlign: "center", color: COLORS.MID, marginTop: -2 },
+  bulletDot: {
+    width: 16,
+    textAlign: "center",
+    color: COLORS.MID,
+    marginTop: -2,
+  },
   bulletText: { flex: 1, fontSize: 12, color: COLORS.DARK },
   bold: { fontWeight: "900" },
   hr: { height: 1, backgroundColor: BORDER, marginVertical: 10 },

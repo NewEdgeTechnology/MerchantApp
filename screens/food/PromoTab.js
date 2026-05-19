@@ -3,7 +3,7 @@
 // - Image + "Select Image" are together in the form field (inline preview + buttons)
 // - Amount recalculates & displays immediately after date selection (create & edit)
 // - total_amount is sent on create, and on edit/reactivate ONLY when dates are changed
-// - In list rows: if inactive or expired => show "Paid: Nu. X" instead of amount
+// - In list rows: if inactive or expired => show "Paid: BTN. X" instead of amount
 // - Reactivate flow shows live days/amount, but wallet is charged only if dates change
 // - After successful POST/PUT, show Alert with message & journal/payment details
 // - Reactivating sends ONLY { user_id, start_date, end_date, total_amount, is_active:1 } when charging
@@ -156,7 +156,7 @@ const daysInclusive = (startYMD, endYMD) => {
 };
 
 const currency = (n) =>
-  `Nu. ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  `BTN. ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /* ===== unified error alert helpers ===== */
 function extractApiErrorMessage(input) {
@@ -780,7 +780,7 @@ export default function PromosTab({
           <Text style={styles.meta}>End: {toHuman(item.end_date)}</Text>
         </View>
 
-        {/* Days & Amount (or "Paid: Nu. X" when inactive/expired) */}
+        {/* Days & Amount (or "Paid: BTN. X" when inactive/expired) */}
         <View style={[styles.rowBetween, { marginTop: 6 }]}>
           <View style={[styles.badge, { backgroundColor: '#eef2ff' }]}>
             <Text style={[styles.badgeText, { color: '#3730a3' }]}>

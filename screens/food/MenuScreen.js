@@ -1,4 +1,5 @@
-// screens/food/MenuScreen.js
+// screens/food/MenuScreen.js - Updated with alphabetical sorting and dropdown category selector
+
 import React, {
   useMemo,
   useState,
@@ -6,7 +7,7 @@ import React, {
   useLayoutEffect,
   useCallback,
   useRef,
-} from 'react';
+} from "react";
 import {
   View,
   Text,
@@ -14,23 +15,27 @@ import {
   StyleSheet,
   FlatList,
   Image,
-  Modal,
-  KeyboardAvoidingView,
   Platform,
   ScrollView,
   StatusBar,
-  Switch,
   Alert,
   DeviceEventEmitter,
   Pressable,
   TouchableOpacity,
   ActivityIndicator,
-} from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
-import * as SecureStore from 'expo-secure-store';
-import * as ImagePicker from 'expo-image-picker';
+  Modal,
+} from "react-native";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import {
+  useNavigation,
+  useRoute,
+  useFocusEffect,
+} from "@react-navigation/native";
+import * as SecureStore from "expo-secure-store";
 import {
   DISPLAY_MENU_ENDPOINT as ENV_DISPLAY_MENU_ENDPOINT,
   DISPLAY_ITEM_ENDPOINT as ENV_DISPLAY_ITEM_ENDPOINT,
@@ -38,13 +43,13 @@ import {
   ITEM_ENDPOINT as ENV_ITEM_ENDPOINT,
   MENU_IMAGE_ENDPOINT as ENV_MENU_IMAGE_ENDPOINT,
   ITEM_IMAGE_ENDPOINT as ENV_ITEM_IMAGE_ENDPOINT,
-} from '@env';
+} from "@env";
 
 // basic money formatter
-const money = (n, c = 'Nu') => `${c} ${Number(n ?? 0).toFixed(2)}`;
+const money = (n, c = "BTN") => `${c} ${Number(n ?? 0).toFixed(2)}`;
 
-const DEFAULT_CATEGORIES = ['All'];
-const KEY_LAST_CTX = 'last_ctx_payload';
+const DEFAULT_CATEGORIES = ["All"];
+const KEY_LAST_CTX = "last_ctx_payload";
 
 /* ---------------- helpers ---------------- */
 function getOrigin(url) {
@@ -53,138 +58,124 @@ function getOrigin(url) {
     return `${u.protocol}//${u.host}`;
   } catch {
     const m = String(url).match(/^(https?:\/\/[^/]+)/i);
-    return m ? m[1] : '';
+    return m ? m[1] : "";
   }
 }
 
 const sanitizePath = (p) =>
-  String(p || '')
-    .replace(/^\/uploads\/uploads\//i, '/uploads/')
-    .replace(/([^:]\/)\/+/g, '$1');
+  String(p || "")
+    .replace(/^\/uploads\/uploads\//i, "/uploads/")
+    .replace(/([^:]\/)\/+/g, "$1");
 
 const encodePathSegments = (p) =>
-  String(p || '')
-    .split('/')
-    .map((seg) => (seg ? encodeURIComponent(seg) : ''))
-    .join('/');
+  String(p || "")
+    .split("/")
+    .map((seg) => (seg ? encodeURIComponent(seg) : ""))
+    .join("/");
 
 const absJoin = (base, raw) => {
-  const s = String(raw || '').trim();
-  if (!s) return '';
+  const s = String(raw || "").trim();
+  if (!s) return "";
   if (/^https?:\/\//i.test(s)) return s;
 
-  const baseNorm = String((base || '').replace(/\/+$/, ''));
-  let path = s.startsWith('/') ? s : `/${s}`;
+  const baseNorm = String((base || "").replace(/\/+$/, ""));
+  let path = s.startsWith("/") ? s : `/${s}`;
 
   if (/\/uploads$/i.test(baseNorm) && /^\/uploads\//i.test(path)) {
-    path = path.replace(/^\/uploads/i, '');
+    path = path.replace(/^\/uploads/i, "");
   }
 
   const encodedPath = encodePathSegments(sanitizePath(path));
-  return `${baseNorm}${encodedPath.startsWith('/') ? '' : '/'}${encodedPath}`.replace(
+  return `${baseNorm}${encodedPath.startsWith("/") ? "" : "/"}${encodedPath}`.replace(
     /([^:]\/)\/+/g,
-    '$1'
+    "$1",
   );
 };
 
-const isLocalUri = (u) => !!u && !/^https?:\/\//i.test(String(u));
-
-const addCacheBuster = (url) => {
-  if (!url) return url;
-  try {
-    const u = new URL(url);
-    u.searchParams.set('v', String(Date.now()));
-    return u.toString();
-  } catch {
-    return url.includes('?') ? `${url}&v=${Date.now()}` : `${url}?v=${Date.now()}`;
-  }
-};
-
 const normalizeOwnerType = (v) => {
-  const s = String(v ?? '').trim().toLowerCase();
-  if (s === '2' || s === 'mart') return 'mart';
-  if (s === '1' || s === 'food') return 'food';
-  return s || 'food';
+  const s = String(v ?? "")
+    .trim()
+    .toLowerCase();
+  if (s === "2" || s === "mart") return "mart";
+  if (s === "1" || s === "food") return "food";
+  return s || "food";
 };
 
-/* ---------- Category bar (horizontal ScrollView) ---------- */
-function CategoryBar({ categories, activeCategory, onChangeCategory }) {
+/* ---------- Category Dropdown Component ---------- */
+function CategoryDropdown({ categories, activeCategory, onChangeCategory }) {
+  const [modalVisible, setModalVisible] = useState(false);
   const data = Array.isArray(categories) ? categories : [];
-  const activeNorm = String(activeCategory || '').trim().toLowerCase();
-  const scrollRef = useRef(null);
+  const activeNorm = String(activeCategory || "").trim();
 
-  // console.log('[MenuScreen] CategoryBar render', {
-  //   count: data.length,
-  //   activeCategory,
-  // });
-
-  // Auto-scroll active category roughly into view when it changes
-  useEffect(() => {
-    if (!scrollRef.current || !data.length) return;
-
-    const index = data.findIndex((raw) => {
-      const label = String(raw || '').trim().toLowerCase();
-      return label === activeNorm;
-    });
-
-    if (index <= 0) return;
-
-    const approxChipWidth = 110; // rough estimate per chip in px
-    scrollRef.current.scrollTo({
-      x: index * approxChipWidth,
-      animated: true,
-    });
-  }, [activeNorm, data.length]);
+  const selectedCategory = data.includes(activeNorm) ? activeNorm : "All";
 
   return (
-    <View style={{ marginTop: 8, marginBottom: 4 }}>
-      <ScrollView
-        ref={scrollRef}
-        horizontal
-        showsHorizontalScrollIndicator={true} // keep on so you SEE there is more
-        keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{
-          alignItems: 'center',
-          paddingHorizontal: 12,
-          paddingVertical: 8,
-        }}
-        // onContentSizeChange={(w, h) => {
-        //   console.log('[MenuScreen] CategoryBar content width:', w, 'height:', h);
-        // }}
+    <>
+      <TouchableOpacity
+        style={styles.dropdownButton}
+        onPress={() => setModalVisible(true)}
+        activeOpacity={0.7}
       >
-        {data.map((raw, index) => {
-          const label = String(raw || '').trim();
-          if (!label) return null;
-          const labelNorm = label.toLowerCase();
-          const active = labelNorm === activeNorm;
+        <Text style={styles.dropdownButtonText}>{selectedCategory}</Text>
+        <Ionicons name="chevron-down" size={20} color="#0f172a" />
+      </TouchableOpacity>
 
-          return (
-            <TouchableOpacity
-              key={`${label}-${index}`}
-              onPress={() => {
-                // console.log('[MenuScreen] Category chip pressed:', label);
-                onChangeCategory(label);
-              }}
-              style={[
-                styles.statusChip,
-                active && styles.statusChipActive,
-              ]}
-              activeOpacity={0.7}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            >
-              <Text
-                style={[
-                  styles.statusChipText,
-                  active && styles.statusChipTextActive,
-                ]}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setModalVisible(false)}
+        >
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Category</Text>
+              <TouchableOpacity
+                onPress={() => setModalVisible(false)}
+                style={styles.modalCloseBtn}
               >
-                {label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-    </View>
+                <Ionicons name="close" size={24} color="#0f172a" />
+              </TouchableOpacity>
+            </View>
+            <FlatList
+              data={data}
+              keyExtractor={(item, index) => `${item}-${index}`}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.modalItem,
+                    selectedCategory === item && styles.modalItemActive,
+                  ]}
+                  onPress={() => {
+                    onChangeCategory(item);
+                    setModalVisible(false);
+                  }}
+                >
+                  <Text
+                    style={[
+                      styles.modalItemText,
+                      selectedCategory === item && styles.modalItemTextActive,
+                    ]}
+                  >
+                    {item}
+                  </Text>
+                  {selectedCategory === item && (
+                    <Ionicons name="checkmark" size={20} color="#00b14f" />
+                  )}
+                </TouchableOpacity>
+              )}
+              ItemSeparatorComponent={() => (
+                <View style={styles.modalSeparator} />
+              )}
+            />
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
   );
 }
 
@@ -194,15 +185,9 @@ export default function MenuScreen() {
   const route = useRoute();
   const insets = useSafeAreaInsets();
 
-  // console.log('[MenuScreen] mounted', {
-  //   ownerTypeParam: route?.params?.owner_type,
-  //   ownerTypeAlternate: route?.params?.ownerType,
-  //   fullParams: route?.params,
-  // });
-
   useLayoutEffect(() => {
     navigation.setOptions?.({
-      animation: 'slide_from_right',
+      animation: "slide_from_right",
       gestureEnabled: true,
       fullScreenGestureEnabled: true,
     });
@@ -211,37 +196,28 @@ export default function MenuScreen() {
   const ownerType = useMemo(
     () =>
       normalizeOwnerType(
-        route?.params?.owner_type ?? route?.params?.ownerType ?? 'food'
+        route?.params?.owner_type ?? route?.params?.ownerType ?? "food",
       ),
-    [route?.params?.owner_type, route?.params?.ownerType]
+    [route?.params?.owner_type, route?.params?.ownerType],
   );
-  const isMart = ownerType === 'mart';
-
-  // console.log('[MenuScreen] resolved ownerType:', ownerType, 'isMart:', isMart);
+  const isMart = ownerType === "mart";
 
   const IMAGE_BASE = useMemo(
     () =>
       String(
-        (isMart ? ENV_ITEM_IMAGE_ENDPOINT : ENV_MENU_IMAGE_ENDPOINT) || ''
-      ).replace(/\/+$/, ''),
-    [isMart]
+        (isMart ? ENV_ITEM_IMAGE_ENDPOINT : ENV_MENU_IMAGE_ENDPOINT) || "",
+      ).replace(/\/+$/, ""),
+    [isMart],
   );
 
   const nouns = useMemo(() => {
-    const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-    const base = isMart ? 'item' : 'menu';
-    const plural = isMart ? 'items' : 'menu items';
+    const base = isMart ? "item" : "menu";
     return {
-      headerTitle: isMart ? 'Items' : 'Menu',
-      searchPH: isMart ? 'Search items' : 'Search menu items',
-      emptyTitle: 'No items yet',
-      emptySub: 'Tap “Add item” to create your first one.',
-      editTitle: 'Edit item',
-      addFab: 'Add item',
-      noun: base,
-      plural,
-      cap,
-      baseCap: cap(base),
+      headerTitle: isMart ? "Items" : "Menu",
+      searchPH: isMart ? "Search items" : "Search menu items",
+      emptyTitle: "No items yet",
+      emptySub: 'Tap "Add item" to create your first one.',
+      addFab: "Add item",
     };
   }, [isMart]);
 
@@ -254,8 +230,7 @@ export default function MenuScreen() {
       p.merchant?.id ||
       p.user?.business_id ||
       p.user?.id ||
-      '';
-    // console.log('[MenuScreen] resolved businessId:', id);
+      "";
     return id;
   }, [route?.params]);
 
@@ -263,62 +238,65 @@ export default function MenuScreen() {
     route?.params?.business_name ||
     route?.params?.merchant?.business_name ||
     route?.params?.user?.business_name ||
-    '';
+    "";
 
   const businessLogo =
     route?.params?.business_logo ||
     route?.params?.merchant?.business_logo ||
     route?.params?.user?.business_logo ||
-    '';
+    "";
 
-  const [query, setQuery] = useState('');
-  const [activeCategory, setActiveCategory] = useState('All');
+  const [query, setQuery] = useState("");
+  const [activeCategory, setActiveCategory] = useState("All");
   const [menus, setMenus] = useState(route?.params?.menus ?? []);
   const [categories, setCategories] = useState(
-    route?.params?.categories ?? DEFAULT_CATEGORIES
+    route?.params?.categories ?? DEFAULT_CATEGORIES,
   );
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
-
-  const [modalVisible, setModalVisible] = useState(false);
-  const [form, setForm] = useState({
-    id: null,
-    name: '',
-    category: 'General',
-    price: '',
-    discount: '',
-    taxRate: '',
-    currency: 'Nu',
-    inStock: true,
-    image: '',
-  });
-  const isEditing = !!form?.id;
-  const autoOpenRef = useRef(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
   const DISPLAY_LIST_ENDPOINT = useMemo(
     () =>
-      ((isMart ? ENV_DISPLAY_ITEM_ENDPOINT : ENV_DISPLAY_MENU_ENDPOINT) || ''
-      ).replace(/\/$/, ''),
-    [isMart]
+      (
+        (isMart ? ENV_DISPLAY_ITEM_ENDPOINT : ENV_DISPLAY_MENU_ENDPOINT) || ""
+      ).replace(/\/$/, ""),
+    [isMart],
   );
   const MODIFY_ENDPOINT = useMemo(
-    () => ((isMart ? ENV_ITEM_ENDPOINT : ENV_MENU_ENDPOINT) || '').replace(/\/$/, ''),
-    [isMart]
+    () =>
+      ((isMart ? ENV_ITEM_ENDPOINT : ENV_MENU_ENDPOINT) || "").replace(
+        /\/$/,
+        "",
+      ),
+    [isMart],
   );
   const API_ORIGIN = useMemo(
     () => getOrigin(DISPLAY_LIST_ENDPOINT),
-    [DISPLAY_LIST_ENDPOINT]
+    [DISPLAY_LIST_ENDPOINT],
   );
 
-  /* ---------------- API response helpers ---------------- */
   const extractItemsFromResponse = useCallback((raw) => {
+    if (raw?.data && typeof raw.data === "object" && !Array.isArray(raw.data)) {
+      if (raw.data.id || raw.data.item_name) {
+        return [raw.data];
+      }
+    }
+
     if (Array.isArray(raw)) return raw;
     if (Array.isArray(raw?.data)) return raw.data;
 
-    for (const k of ['items', 'rows', 'result', 'payload', 'list', 'menus', 'menu']) {
+    for (const k of [
+      "items",
+      "rows",
+      "result",
+      "payload",
+      "list",
+      "menus",
+      "menu",
+    ]) {
       if (Array.isArray(raw?.[k])) return raw[k];
     }
-    if (raw && typeof raw === 'object') {
+    if (raw && typeof raw === "object") {
       for (const v of Object.values(raw)) {
         if (Array.isArray(v)) return v;
       }
@@ -326,224 +304,130 @@ export default function MenuScreen() {
     return [];
   }, []);
 
+  const parseMultipleImages = useCallback(
+    (item) => {
+      if (item?.product_info?.product_images) {
+        const imagesStr = item.product_info.product_images;
+        const imagePaths = imagesStr.includes(",")
+          ? imagesStr.split(",").map((img) => img.trim())
+          : [imagesStr];
+
+        return imagePaths.map((path) =>
+          absJoin(IMAGE_BASE || API_ORIGIN, path),
+        );
+      }
+      return [];
+    },
+    [IMAGE_BASE, API_ORIGIN],
+  );
+
   const normalizeItem = useCallback(
     (x, idx = 0) => {
-      const numericActual = Number(x?.actual_price);
-      const numericBase = Number(x?.base_price);
+      const item = x?.data || x;
+
+      const numericActual = Number(item?.actual_price);
+      const numericBase = Number(item?.base_price);
       const price = Number.isFinite(numericActual)
         ? numericActual
         : Number.isFinite(numericBase)
           ? numericBase
-          : typeof x?.price === 'number'
-            ? x.price
-            : Number(x?.price ?? 0);
+          : typeof item?.price === "number"
+            ? item.price
+            : Number(item?.price ?? 0);
 
       const rawImg =
-        x?.image_url ?? x?.item_image_url ?? x?.item_image ?? x?.image ?? '';
+        item?.image_url ??
+        item?.item_image_url ??
+        item?.item_image ??
+        item?.image ??
+        (isMart ? item?.item_image : null) ??
+        "";
+
       const absImage = absJoin(IMAGE_BASE || API_ORIGIN, rawImg);
 
+      const multipleImages = isMart ? parseMultipleImages(item) : [];
+
       return {
-        id: String(x?.id ?? x?._id ?? x?.menu_id ?? x?.item_id ?? idx),
-        name: x?.item_name ?? x?.name ?? x?.title ?? 'Unnamed item',
-        title: x?.title ?? undefined,
+        id: String(
+          item?.id ?? item?._id ?? item?.menu_id ?? item?.item_id ?? idx,
+        ),
+        name: item?.item_name ?? item?.name ?? item?.title ?? "Unnamed item",
         price,
-        discount: x?.discount_percentage ?? '',
-        taxRate: x?.tax_rate ?? '',
-        currency: x?.currency ?? 'Nu',
-        inStock: (x?.is_available ?? x?.inStock ?? 1) ? true : false,
-        category: x?.category_name ?? x?.category ?? x?.categoryName ?? '',
+        currency: item?.currency ?? "BTN",
+        inStock: (item?.is_available ?? item?.inStock ?? 1) ? true : false,
+        category:
+          item?.category_name ?? item?.category ?? item?.categoryName ?? "",
         image: absImage,
-        description: x?.description ?? '',
+        images: multipleImages,
+        description: item?.description ?? "",
+        discount: parseFloat(item?.discount_percentage) || 0,
+        taxRate: parseFloat(item?.tax_rate) || 0,
+        stockLimit: item?.stock_limit || 0,
+        isVeg: item?.is_veg === 1,
+        spiceLevel: item?.spice_level || "None",
+        productInfo: item?.product_info || null,
       };
     },
-    [API_ORIGIN, IMAGE_BASE]
+    [API_ORIGIN, IMAGE_BASE, isMart, parseMultipleImages],
   );
 
   const buildListUrl = useCallback(() => {
     if (!DISPLAY_LIST_ENDPOINT || !businessId) return null;
-    const base = DISPLAY_LIST_ENDPOINT.replace(/\/+$/, '');
-    const service = isMart ? 'mart' : 'food';
+    const base = DISPLAY_LIST_ENDPOINT.replace(/\/+$/, "");
+    const service = isMart ? "mart" : "food";
+
+    if (isMart) {
+      return `${base}/${encodeURIComponent(businessId)}?owner_type=${encodeURIComponent(service)}`;
+    }
 
     if (/\/business$/i.test(base)) {
-      const url = `${base}/${encodeURIComponent(
-        businessId
-      )}?owner_type=${encodeURIComponent(service)}`;
-      // console.log('[MenuScreen] buildListUrl (business pattern):', url);
-      return url;
+      return `${base}/${encodeURIComponent(businessId)}?owner_type=${encodeURIComponent(service)}`;
     }
-    const sep = base.includes('?') ? '&' : '?';
-    const url = `${base}${sep}business_id=${encodeURIComponent(
-      businessId
-    )}&owner_type=${encodeURIComponent(service)}`;
-    // console.log('[MenuScreen] buildListUrl:', url);
-    return url;
+
+    const sep = base.includes("?") ? "&" : "?";
+    return `${base}${sep}business_id=${encodeURIComponent(businessId)}&owner_type=${encodeURIComponent(service)}`;
   }, [DISPLAY_LIST_ENDPOINT, businessId, isMart]);
 
   const hydrateCategories = useCallback((list) => {
-    const uniq = new Set();
+    const uniq = new Map(); // Use Map to store original case
     for (const it of list) {
-      const c = String(it?.category || '').trim();
-      if (c) uniq.add(c);
+      const c = String(it?.category || "").trim();
+      if (c) {
+        // Store by lowercase key but keep original case
+        if (!uniq.has(c.toLowerCase())) {
+          uniq.set(c.toLowerCase(), c);
+        }
+      }
     }
-    const cats = ['All', ...Array.from(uniq)];
-    // console.log('[MenuScreen] Hydrated categories:', cats);
-    return cats;
+    // Return "All" first, then all unique categories sorted alphabetically (case insensitive)
+    const sortedCategories = Array.from(uniq.values()).sort((a, b) => 
+      a.toLowerCase().localeCompare(b.toLowerCase())
+    );
+    return ["All", ...sortedCategories];
   }, []);
 
-  /* ---------------- Update API helpers ---------------- */
-
-  const apiUpdateJson = useCallback(
-    async (id, data) => {
-      if (!MODIFY_ENDPOINT) throw new Error('Missing modify endpoint');
-      const token = (await SecureStore.getItemAsync('auth_token')) || '';
-      const url = `${MODIFY_ENDPOINT.replace(/\/+$/, '')}/${encodeURIComponent(id)}`;
-
-      const payload = {
-        business_id: data.business_id,
-        item_name: data.item_name,
-        category: data.category,
-        category_name: data.category,
-        actual_price: data.actual_price,
-        discount_percentage: data.discount_percentage ?? null,
-        tax_rate: data.tax_rate ?? null,
-        currency: data.currency,
-        is_available: data.is_available ? 1 : 0,
-        ...(data.image_url
-          ? { image_url: data.image_url, item_image_url: data.image_url }
-          : {}),
-        owner_type: isMart ? '2' : '1',
-        service: isMart ? 'mart' : 'food',
-      };
-
-      const res = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const text = await res.text();
-      let json = null;
-      try {
-        json = text ? JSON.parse(text) : null;
-      } catch {}
-      if (!res.ok) throw new Error(json?.message || text || `HTTP ${res.status}`);
-      return json || {};
-    },
-    [MODIFY_ENDPOINT, isMart]
-  );
-
-  const apiUpdateMultipart = useCallback(
-    async (id, data) => {
-      if (!MODIFY_ENDPOINT) throw new Error('Missing modify endpoint');
-      const token = (await SecureStore.getItemAsync('auth_token')) || '';
-
-      const url = `${MODIFY_ENDPOINT.replace(/\/+$/, '')}/${encodeURIComponent(id)}`;
-
-      const fd = new FormData();
-
-      fd.append('id', String(id));
-      fd.append('item_id', String(id));
-      fd.append('menu_id', String(id));
-      if (data.business_id != null) fd.append('business_id', String(data.business_id));
-
-      fd.append('owner_type', isMart ? '2' : '1');
-      fd.append('service', isMart ? 'mart' : 'food');
-
-      const nm = data.item_name ?? '';
-      const cat = data.category ?? '';
-      fd.append('item_name', nm);
-      fd.append('name', nm);
-      fd.append('title', nm);
-      fd.append('category', cat);
-      fd.append('category_name', cat);
-
-      const priceStr = data.actual_price != null ? String(data.actual_price) : '';
-      if (priceStr) {
-        fd.append('price', priceStr);
-        fd.append('actual_price', priceStr);
-        fd.append('base_price', priceStr);
-      }
-      if (data.discount_percentage !== '' && data.discount_percentage != null) {
-        const d = String(data.discount_percentage);
-        fd.append('discount', d);
-        fd.append('discount_percentage', d);
-      }
-      if (data.tax_rate !== '' && data.tax_rate != null) {
-        fd.append('tax_rate', String(data.tax_rate));
-      }
-
-      fd.append('currency', data.currency || 'Nu');
-      const avail = data.is_available ? '1' : '0';
-      fd.append('is_available', avail);
-      fd.append('in_stock', avail);
-
-      if (data.image_url) {
-        const u = String(data.image_url);
-        fd.append(isMart ? 'item_image_url' : 'image_url', u);
-      }
-
-      if (!data.image_local_uri) throw new Error('Missing image_local_uri');
-
-      const fileField = isMart ? 'item_image' : 'image';
-      const lower = (data.image_local_uri || '').toLowerCase();
-      const isPng = lower.endsWith('.png');
-      fd.append(fileField, {
-        uri: data.image_local_uri,
-        name: `upload_${Date.now()}.${isPng ? 'png' : 'jpg'}`,
-        type: isPng ? 'image/png' : 'image/jpeg',
-      });
-
-      const headers = {
-        Accept: 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      };
-
-      const res = await fetch(url, { method: 'PUT', headers, body: fd });
-      const text = await res.text();
-      let json = null;
-      try {
-        json = text ? JSON.parse(text) : null;
-      } catch {}
-      if (!res.ok) throw new Error(json?.message || text || `HTTP ${res.status}`);
-      return json || {};
-    },
-    [MODIFY_ENDPOINT, isMart]
-  );
-
-  /* ---------------- Fetch menus from backend ---------------- */
   const fetchMenus = useCallback(async () => {
-    // console.log('[MenuScreen] fetchMenus start', {
-    //   DISPLAY_LIST_ENDPOINT,
-    //   businessId,
-    //   ownerType,
-    //   isMart,
-    // });
-
     if (!DISPLAY_LIST_ENDPOINT) {
-      setErrorMsg('Missing list endpoint in .env');
+      setErrorMsg("Missing list endpoint in .env");
       return;
     }
     if (!businessId) {
-      setErrorMsg('Missing businessId in route params');
+      setErrorMsg("Missing businessId in route params");
       return;
     }
 
     setLoading(true);
-    setErrorMsg('');
+    setErrorMsg("");
     try {
-      const token = (await SecureStore.getItemAsync('auth_token')) || '';
+      const token = (await SecureStore.getItemAsync("auth_token")) || "";
       const url = buildListUrl();
       const controller = new AbortController();
       const tid = setTimeout(() => controller.abort(), 15000);
 
       const res = await fetch(url, {
-        method: 'GET',
+        method: "GET",
         headers: {
-          Accept: 'application/json',
+          Accept: "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         signal: controller.signal,
@@ -553,7 +437,7 @@ export default function MenuScreen() {
       const text = await res.text();
       if (!res.ok) {
         setErrorMsg(
-          `Failed to load ${isMart ? 'items' : 'menu items'} (HTTP ${res.status}).`
+          `Failed to load ${isMart ? "items" : "menu items"} (HTTP ${res.status}).`,
         );
       } else {
         let parsed;
@@ -563,17 +447,24 @@ export default function MenuScreen() {
           parsed = [];
         }
         const list = extractItemsFromResponse(parsed).map((x, i) =>
-          normalizeItem(x, i)
+          normalizeItem(x, i),
         );
-        // console.log('[MenuScreen] fetched list length:', list.length);
-        setMenus(list);
-        const cats = hydrateCategories(list);
+        
+        // Sort items alphabetically by name
+        const sortedList = list.sort((a, b) => 
+          a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+        );
+        
+        setMenus(sortedList);
+        const cats = hydrateCategories(sortedList);
         setCategories(cats);
-        setActiveCategory((prev) => (cats.includes(prev) ? prev : 'All'));
+        setActiveCategory((prev) => (cats.includes(prev) ? prev : "All"));
       }
     } catch (e) {
       setErrorMsg(
-        String(e?.message || `Failed to load ${isMart ? 'items' : 'menu items'}.`)
+        String(
+          e?.message || `Failed to load ${isMart ? "items" : "menu items"}.`,
+        ),
       );
     } finally {
       setLoading(false);
@@ -586,65 +477,42 @@ export default function MenuScreen() {
     normalizeItem,
     hydrateCategories,
     isMart,
-    ownerType,
   ]);
 
   useFocusEffect(
     useCallback(() => {
       fetchMenus();
-    }, [fetchMenus])
+    }, [fetchMenus]),
   );
 
-  /* 🔍 Log whenever categories state changes */
-  useEffect(() => {
-    // console.log('[MenuScreen] categories state changed:', categories);
-  }, [categories]);
-
-  /* ---------------- Filtering ---------------- */
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const activeNorm = activeCategory.trim().toLowerCase();
 
-    return menus.filter((m) => {
-      const cat = String(m.category || '').trim().toLowerCase();
-
-      const matchesCat = activeCategory === 'All' || cat === activeNorm;
-
+    let filteredItems = menus.filter((m) => {
+      const cat = String(m.category || "")
+        .trim()
+        .toLowerCase();
+      // Compare case-insensitively
+      const matchesCat = activeCategory === "All" || cat === activeNorm;
       const matchesText =
         !q ||
-        String(m.name || '').toLowerCase().includes(q) ||
+        String(m.name || "")
+          .toLowerCase()
+          .includes(q) ||
         cat.includes(q);
-
       return matchesCat && matchesText;
     });
+    
+    // Ensure filtered items remain alphabetically sorted
+    return filteredItems.sort((a, b) => 
+      a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+    );
   }, [menus, query, activeCategory]);
-
-  /* ---------------- Edit / Add ---------------- */
-  const openEdit = (item) => {
-    const firstRealCat = categories.find((c) => c !== 'All');
-    setForm({
-      id: item.id,
-      name: item.name,
-      category: item.category || firstRealCat || 'General',
-      price: String(item.price ?? ''),
-      discount:
-        item.discount !== undefined && item.discount !== null
-          ? String(item.discount)
-          : '',
-      taxRate:
-        item.taxRate !== undefined && item.taxRate !== null
-          ? String(item.taxRate)
-          : '',
-      currency: item.currency || 'Nu',
-      inStock: !!item.inStock,
-      image: item.image || '',
-    });
-    setModalVisible(true);
-  };
-
+  
   const openAddTab = async () => {
     const payload = {
-      openTab: 'Add Menu',
+      openTab: "Add Menu",
       businessId,
       business_id: businessId,
       business_name: businessName,
@@ -654,257 +522,184 @@ export default function MenuScreen() {
     try {
       await SecureStore.setItemAsync(KEY_LAST_CTX, JSON.stringify(payload));
     } catch {}
-    DeviceEventEmitter.emit('open-tab', { key: 'Add Menu', params: payload });
+    DeviceEventEmitter.emit("open-tab", { key: "Add Menu", params: payload });
     navigation.goBack();
-  };
-
-  const pickFromLibraryEdit = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert(
-        'Permission needed',
-        'Allow photo library access to select an image.'
-      );
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      allowsEditing: false,
-      quality: 0.9,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    });
-    if (!result.canceled && result.assets?.[0]) {
-      setForm((f) => ({ ...f, image: result.assets[0].uri }));
-    }
-  };
-
-  const takePhotoEdit = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow camera access to take a photo.');
-      return;
-    }
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: false,
-      quality: 0.9,
-    });
-    if (!result.canceled && result.assets?.[0]) {
-      setForm((f) => ({ ...f, image: result.assets[0].uri }));
-    }
-  };
-
-  const saveItem = async () => {
-    const priceNum = Number(form.price);
-    const discountNum = form.discount === '' ? '' : Number(form.discount);
-    const taxNum = form.taxRate === '' ? '' : Number(form.taxRate);
-
-    if (!form.name.trim())
-      return Alert.alert(
-        'Name required',
-        `Please enter a ${isMart ? 'item' : 'menu'} name.`
-      );
-    if (Number.isNaN(priceNum))
-      return Alert.alert('Invalid price', 'Please enter a numeric price.');
-    if (discountNum !== '' && Number.isNaN(discountNum))
-      return Alert.alert(
-        'Invalid discount',
-        'Please enter a numeric discount percentage.'
-      );
-    if (taxNum !== '' && Number.isNaN(taxNum))
-      return Alert.alert('Invalid tax', 'Please enter a numeric tax rate.');
-    if (!form.category)
-      return Alert.alert('Category required', 'Please choose a category.');
-
-    const payload = {
-      business_id: businessId,
-      item_name: form.name.trim(),
-      category: form.category,
-      actual_price: priceNum,
-      discount_percentage: discountNum === '' ? null : discountNum,
-      tax_rate: taxNum === '' ? null : taxNum,
-      currency: form.currency || 'Nu',
-      is_available: form.inStock ? 1 : 0,
-      image_local_uri: isLocalUri(form.image) ? form.image : null,
-      image_url: !isLocalUri(form.image) ? form.image || null : null,
-    };
-
-    try {
-      if (isEditing) {
-        const resp = payload.image_local_uri
-          ? await apiUpdateMultipart(form.id, payload)
-          : await apiUpdateJson(form.id, payload);
-
-        const serverImg =
-          resp?.image_url || resp?.item_image_url || resp?.image || '';
-        const updatedImage = addCacheBuster(
-          serverImg
-            ? absJoin(IMAGE_BASE || API_ORIGIN, serverImg)
-            : payload.image_url
-              ? absJoin(IMAGE_BASE || API_ORIGIN, payload.image_url)
-              : form.image
-        );
-
-        setMenus((prev) =>
-          prev.map((m) =>
-            m.id === form.id
-              ? {
-                  ...m,
-                  name: payload.item_name,
-                  category: payload.category,
-                  price: payload.actual_price,
-                  discount: payload.discount_percentage ?? '',
-                  taxRate: payload.tax_rate ?? '',
-                  currency: payload.currency,
-                  inStock: !!payload.is_available,
-                  image: updatedImage,
-                }
-              : m
-          )
-        );
-        if (!categories.includes(form.category)) {
-          setCategories((prev) => [
-            'All',
-            ...new Set([...prev.filter((c) => c !== 'All'), form.category]),
-          ]);
-        }
-      }
-      setModalVisible(false);
-    } catch (e) {
-      Alert.alert(
-        'Update failed',
-        String(e?.message || 'Could not update the item.')
-      );
-    }
   };
 
   const deleteItem = async (id) => {
     Alert.alert(
-      `Delete ${isMart ? 'item' : 'menu item'}`,
-      'Are you sure you want to delete this?',
+      `Delete ${isMart ? "item" : "menu item"}`,
+      "Are you sure you want to delete this?",
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: "Cancel", style: "cancel" },
         {
-          text: 'Delete',
-          style: 'destructive',
+          text: "Delete",
+          style: "destructive",
           onPress: async () => {
             try {
-              if (!MODIFY_ENDPOINT) throw new Error('Missing modify endpoint');
-              const token = await SecureStore.getItemAsync('auth_token');
+              if (!MODIFY_ENDPOINT) throw new Error("Missing modify endpoint");
+              const token = await SecureStore.getItemAsync("auth_token");
               const url = `${MODIFY_ENDPOINT}/${encodeURIComponent(id)}`;
               const res = await fetch(url, {
-                method: 'DELETE',
+                method: "DELETE",
                 headers: {
-                  Accept: 'application/json',
+                  Accept: "application/json",
                   ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 },
               });
-              const text = await res.text();
-              let parsed = null;
-              try {
-                parsed = text ? JSON.parse(text) : null;
-              } catch {}
+              await res.text();
               if (!res.ok)
-                throw new Error(
-                  parsed?.message || `Delete failed (HTTP ${res.status})`
-                );
+                throw new Error(`Delete failed (HTTP ${res.status})`);
               setMenus((prev) => prev.filter((m) => m.id !== id));
-              Alert.alert('Deleted', 'Item has been deleted successfully.');
+              Alert.alert("Deleted", "Item has been deleted successfully.");
             } catch (e) {
               Alert.alert(
-                'Delete failed',
-                String(e?.message || 'Could not delete the item.')
+                "Delete failed",
+                String(e?.message || "Could not delete the item."),
               );
             }
           },
         },
-      ]
+      ],
     );
   };
 
+  const convertToApiFormat = (normalizedItem) => {
+    return {
+      id: normalizedItem.id,
+      item_name: normalizedItem.name,
+      category_name: normalizedItem.category,
+      actual_price: normalizedItem.price,
+      item_image: normalizedItem.image,
+      images: normalizedItem.images,
+      is_available: normalizedItem.inStock ? 1 : 0,
+      description: normalizedItem.description || "",
+      discount_percentage: normalizedItem.discount || 0,
+      tax_rate: normalizedItem.taxRate || 0,
+      currency: normalizedItem.currency || "BTN",
+      stock_limit: normalizedItem.stockLimit || 0,
+      is_veg: normalizedItem.isVeg ? 1 : 0,
+      spice_level: normalizedItem.spiceLevel || "None",
+      product_info: normalizedItem.productInfo || null,
+    };
+  };
+  
   const renderMenu = ({ item }) => (
-    <View style={styles.card}>
-      {item.image ? (
-        <Image source={{ uri: item.image }} style={styles.thumb} />
-      ) : (
-        <View style={[styles.thumb, styles.thumbFallback]}>
-          <Ionicons name="image-outline" size={18} color="#64748b" />
-        </View>
-      )}
+    <Pressable
+      onPress={() =>
+        navigation.navigate("ItemDetailScreen", {
+          itemId: item.id,
+          businessId: businessId,
+          businessName: businessName,
+          ownerType: ownerType,
+          onItemDeleted: (deletedId) => {
+            setMenus((prev) => prev.filter((m) => m.id !== deletedId));
+          },
+          onItemUpdated: (updatedItem) => {
+            setMenus((prev) =>
+              prev.map((m) => (m.id === updatedItem.id ? updatedItem : m)),
+            );
+          },
+        })
+      }
+      style={styles.card}
+    >
+      <View style={styles.imageContainer}>
+        {item.images && item.images.length > 0 ? (
+          <>
+            <Image source={{ uri: item.images[0] }} style={styles.thumb} />
+            {item.images.length > 1 && (
+              <View style={styles.multipleImagesBadge}>
+                <Text style={styles.multipleImagesBadgeText}>
+                  +{item.images.length - 1}
+                </Text>
+              </View>
+            )}
+          </>
+        ) : item.image ? (
+          <Image source={{ uri: item.image }} style={styles.thumb} />
+        ) : (
+          <View style={[styles.thumb, styles.thumbFallback]}>
+            <Ionicons name="image-outline" size={18} color="#64748b" />
+          </View>
+        )}
+      </View>
       <View style={{ flex: 1 }}>
         <Text numberOfLines={1} style={styles.title}>
           {item.name}
         </Text>
         <Text numberOfLines={1} style={styles.meta}>
-          {item.category || '—'}
+          {item.category || "—"}
         </Text>
         <Text style={styles.price}>
-          {money(item.price, item.currency || 'Nu')}
+          {money(item.price, item.currency || "BTN")}
         </Text>
       </View>
       <View style={styles.rightCol}>
         <View style={styles.stockRow}>
           <Text style={styles.stockLabel}>
-            {item.inStock ? 'In stock' : 'Out'}
+            {item.inStock ? "In stock" : "Out"}
           </Text>
         </View>
         <View style={styles.actions}>
           <Pressable
-            onPress={() => openEdit(item)}
+            onPress={(e) => {
+              e.stopPropagation();
+              navigation.navigate("EditItemScreen", {
+                item: convertToApiFormat(item), // Convert to API format
+                businessId: businessId,
+                businessName: route.params?.businessName,
+                ownerType: ownerType,
+                onItemUpdated: (updatedItem) => {
+                  setMenus((prev) =>
+                    prev.map((m) =>
+                      m.id === updatedItem.id ? updatedItem : m,
+                    ),
+                  );
+                },
+              });
+            }}
             style={styles.iconBtn}
-            android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}
           >
             <Ionicons name="create-outline" size={20} color="#0f172a" />
           </Pressable>
           <Pressable
-            onPress={() => deleteItem(item.id)}
+            onPress={(e) => {
+              e.stopPropagation();
+              deleteItem(item.id);
+            }}
             style={styles.iconBtn}
-            android_ripple={{ color: 'rgba(185,28,28,0.12)', borderless: true }}
           >
             <Ionicons name="trash-outline" size={20} color="#b91c1c" />
           </Pressable>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
-
-  // keep parent synced if they passed onSaveMenus
-  useEffect(
-    () => () => {
-      if (route?.params?.onSaveMenus) route.params.onSaveMenus(menus);
-    },
-    [menus, route?.params]
-  );
-
-  // auto-open edit if editItem was passed in params
-  useEffect(() => {
-    if (autoOpenRef.current) return;
-    const edit = route?.params?.editItem;
-    if (!edit) return;
-    const found =
-      menus.find((m) => String(m.id) === String(edit.id)) || edit;
-    if (categories.length > 0) {
-      openEdit(found);
-      autoOpenRef.current = true;
-    }
-  }, [route?.params?.editItem, menus, categories]);
 
   return (
-    <SafeAreaView style={styles.safe} edges={['left', 'right']}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+    <SafeAreaView style={styles.safe} edges={["left", "right"]}>
+      <StatusBar
+        translucent
+        backgroundColor="transparent"
+        barStyle="dark-content"
+      />
 
-      {/* header */}
-      <View style={[styles.header, { paddingTop: (insets.top || 0) + 6 }]}>
-        <Pressable
+      {/* Updated Header - Same style as PasswordManagement */}
+      <View
+        style={[styles.header, { paddingTop: Math.max(insets.top, 8) + 10 }]}
+      >
+        <TouchableOpacity
           onPress={() => navigation.goBack()}
-          style={styles.iconBtn}
-          android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}
+          style={styles.backBtn}
+          activeOpacity={0.7}
         >
-          <Ionicons name="arrow-back" size={24} color="#0f172a" />
-        </Pressable>
+          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>{nouns.headerTitle}</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      {/* search */}
       <View style={styles.searchWrap}>
         <Ionicons name="search-outline" size={18} color="#64748b" />
         <TextInput
@@ -915,35 +710,33 @@ export default function MenuScreen() {
           onChangeText={setQuery}
         />
         {!!query && (
-          <Pressable
-            onPress={() => setQuery('')}
-            style={styles.clearBtn}
-            android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: true }}
-          >
+          <Pressable onPress={() => setQuery("")} style={styles.clearBtn}>
             <Ionicons name="close-circle" size={18} color="#94a3b8" />
           </Pressable>
         )}
       </View>
 
-      {/* categories bar */}
-      <CategoryBar
-        categories={categories}
-        activeCategory={activeCategory}
-        onChangeCategory={setActiveCategory}
-      />
+      {/* Category Dropdown instead of scrollable bar */}
+      <View style={styles.categoryDropdownContainer}>
+        <Text style={styles.categoryLabel}>Category:</Text>
+        <CategoryDropdown
+          categories={categories}
+          activeCategory={activeCategory}
+          onChangeCategory={setActiveCategory}
+        />
+      </View>
 
-      {/* content */}
       {loading ? (
-        <View style={{ paddingTop: 40, alignItems: 'center' }}>
+        <View style={{ paddingTop: 40, alignItems: "center" }}>
           <ActivityIndicator />
-          <Text style={{ marginTop: 8, color: '#64748b' }}>
-            Loading {isMart ? 'items' : 'menu items'}…
+          <Text style={{ marginTop: 8, color: "#64748b" }}>
+            Loading {isMart ? "items" : "menu items"}…
           </Text>
         </View>
       ) : errorMsg ? (
-        <View style={{ paddingTop: 40, alignItems: 'center' }}>
+        <View style={{ paddingTop: 40, alignItems: "center" }}>
           <Ionicons name="warning-outline" size={28} color="#ef4444" />
-          <Text style={{ marginTop: 8, color: '#ef4444', fontWeight: '700' }}>
+          <Text style={{ marginTop: 8, color: "#ef4444", fontWeight: "700" }}>
             {errorMsg}
           </Text>
           <Pressable
@@ -968,7 +761,7 @@ export default function MenuScreen() {
           ListEmptyComponent={
             <View style={styles.emptyBox}>
               <Ionicons
-                name={isMart ? 'cube-outline' : 'fast-food-outline'}
+                name={isMart ? "cube-outline" : "fast-food-outline"}
                 size={30}
                 color="#64748b"
               />
@@ -976,498 +769,225 @@ export default function MenuScreen() {
               <Text style={styles.emptySub}>{nouns.emptySub}</Text>
             </View>
           }
-          extraData={activeCategory}
+          nestedScrollEnabled={true}
+          keyboardShouldPersistTaps="handled"
         />
       )}
 
-      {/* Add item FAB */}
       <Pressable
         style={[styles.fab, { bottom: (insets.bottom || 0) + 24 }]}
         onPress={openAddTab}
-        android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: false }}
       >
         <Ionicons name="add" size={22} color="#fff" />
         <Text style={styles.fabText}>{nouns.addFab}</Text>
       </Pressable>
-
-      {/* Edit modal */}
-      <Modal visible={modalVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalWrap}
-        >
-          <View
-            style={[
-              styles.sheet,
-              { paddingBottom: (insets.bottom || 0) + 16 },
-            ]}
-          >
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>{nouns.editTitle}</Text>
-              <Pressable
-                onPress={() => setModalVisible(false)}
-                style={styles.iconBtn}
-                android_ripple={{
-                  color: 'rgba(0,0,0,0.08)',
-                  borderless: true,
-                }}
-              >
-                <Ionicons name="close" size={24} color="#0f172a" />
-              </Pressable>
-            </View>
-
-            <ScrollView contentContainerStyle={{ paddingBottom: 12 }}>
-              <Text style={styles.label}>Name</Text>
-              <TextInput
-                value={form.name}
-                onChangeText={(t) => setForm((f) => ({ ...f, name: t }))}
-                placeholder={
-                  isMart ? 'e.g., Toothpaste 200g' : 'e.g., Chicken Rice'
-                }
-                style={styles.input}
-              />
-
-              <Text style={styles.label}>Category</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ paddingVertical: 8, gap: 8 }}
-              >
-                {categories
-                  .filter((c) => c !== 'All')
-                  .map((c) => (
-                    <Pressable
-                      key={c}
-                      style={({ pressed }) => [
-                        styles.catChip,
-                        form.category === c && styles.catChipActive,
-                        pressed && { transform: [{ scale: 0.97 }] },
-                      ]}
-                      android_ripple={{
-                        color: 'rgba(0,0,0,0.06)',
-                        borderless: false,
-                      }}
-                      onPress={() =>
-                        setForm((f) => ({ ...f, category: c }))
-                      }
-                    >
-                      <Text
-                        style={[
-                          styles.catChipText,
-                          form.category === c && styles.catChipTextActive,
-                        ]}
-                      >
-                        {c}
-                      </Text>
-                    </Pressable>
-                  ))}
-              </ScrollView>
-
-              <View style={styles.row2}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Price</Text>
-                  <TextInput
-                    value={String(form.price)}
-                    onChangeText={(t) =>
-                      setForm((f) => ({
-                        ...f,
-                        price: t.replace(/,/g, '.'),
-                      }))
-                    }
-                    keyboardType="decimal-pad"
-                    placeholder="0.00"
-                    style={styles.input}
-                  />
-                </View>
-                <View style={{ width: 100 }}>
-                  <Text style={styles.label}>Currency</Text>
-                  <TextInput
-                    value={form.currency}
-                    onChangeText={(t) =>
-                      setForm((f) => ({
-                        ...f,
-                        currency: t.trim().slice(0, 4) || 'Nu',
-                      }))
-                    }
-                    placeholder="Nu"
-                    style={styles.input}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.row2}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Tax rate (%)</Text>
-                  <TextInput
-                    value={String(form.taxRate)}
-                    onChangeText={(t) =>
-                      setForm((f) => ({
-                        ...f,
-                        taxRate: t.replace(/,/g, '.'),
-                      }))
-                    }
-                    keyboardType="decimal-pad"
-                    placeholder="e.g., 5"
-                    style={styles.input}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Discount (%)</Text>
-                  <TextInput
-                    value={String(form.discount)}
-                    onChangeText={(t) =>
-                      setForm((f) => ({
-                        ...f,
-                        discount: t.replace(/,/g, '.'),
-                      }))
-                    }
-                    keyboardType="decimal-pad"
-                    placeholder="e.g., 10"
-                    style={styles.input}
-                  />
-                </View>
-              </View>
-
-              <Text style={styles.label}>Image</Text>
-              {form.image ? (
-                <Image
-                  source={{ uri: form.image }}
-                  style={{
-                    width: '100%',
-                    height: 160,
-                    borderRadius: 12,
-                    backgroundColor: '#f1f5f9',
-                  }}
-                  resizeMode="cover"
-                />
-              ) : (
-                <View
-                  style={{
-                    width: '100%',
-                    height: 160,
-                    borderRadius: 12,
-                    backgroundColor: '#f1f5f9',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <Ionicons
-                    name="image-outline"
-                    size={28}
-                    color="#64748b"
-                  />
-                  <Text
-                    style={{
-                      marginTop: 6,
-                      color: '#64748b',
-                      fontWeight: '700',
-                    }}
-                  >
-                    No image selected
-                  </Text>
-                </View>
-              )}
-
-              <View style={[styles.saveRow, { marginTop: 10 }]}>
-                <Pressable
-                  style={[styles.btn, styles.btnGhost]}
-                  onPress={takePhotoEdit}
-                  android_ripple={{
-                    color: 'rgba(0,0,0,0.06)',
-                    borderless: false,
-                  }}
-                >
-                  <Ionicons
-                    name="camera-outline"
-                    size={18}
-                    color="#0f172a"
-                  />
-                  <Text style={styles.btnGhostText}>Take photo</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.btn, styles.btnPrimary]}
-                  onPress={pickFromLibraryEdit}
-                  android_ripple={{
-                    color: 'rgba(255,255,255,0.25)',
-                    borderless: false,
-                  }}
-                >
-                  <Ionicons
-                    name="images-outline"
-                    size={18}
-                    color="#fff"
-                  />
-                  <Text style={styles.btnPrimaryText}>Pick photo</Text>
-                </Pressable>
-              </View>
-
-              <View style={styles.stockRow2}>
-                <Text style={styles.stockLabel2}>Available</Text>
-                <Switch
-                  value={form.inStock}
-                  onValueChange={(v) =>
-                    setForm((f) => ({ ...f, inStock: v }))
-                  }
-                  trackColor={{ true: '#a7f3d0', false: '#fee2e2' }}
-                  thumbColor={form.inStock ? '#10b981' : '#ef4444'}
-                />
-              </View>
-
-              <View style={styles.saveRow}>
-                {isEditing && (
-                  <Pressable
-                    style={[styles.btn, styles.btnGhost]}
-                    onPress={() => {
-                      setModalVisible(false);
-                      deleteItem(form.id);
-                    }}
-                    android_ripple={{
-                      color: 'rgba(0,0,0,0.06)',
-                      borderless: false,
-                    }}
-                  >
-                    <Ionicons
-                      name="trash-outline"
-                      size={18}
-                      color="#b91c1c"
-                    />
-                    <Text
-                      style={[
-                        styles.btnGhostText,
-                        { color: '#b91c1c' },
-                      ]}
-                    >
-                      Delete
-                    </Text>
-                  </Pressable>
-                )}
-                <Pressable
-                  style={[styles.btn, styles.btnPrimary]}
-                  onPress={saveItem}
-                  android_ripple={{
-                    color: 'rgba(255,255,255,0.25)',
-                    borderless: false,
-                  }}
-                >
-                  <Ionicons
-                    name="save-outline"
-                    size={18}
-                    color="#fff"
-                  />
-                  <Text style={styles.btnPrimaryText}>Save changes</Text>
-                </Pressable>
-              </View>
-            </ScrollView>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
     </SafeAreaView>
   );
 }
 
-/* ---------------- styles ---------------- */
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#ffffff' },
+  safe: { flex: 1, backgroundColor: "#ffffff" },
 
+  // Updated header style to match PasswordManagement
   header: {
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    minHeight: 52,
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+    backgroundColor: "#fff",
   },
+
+  backBtn: {
+    height: 40,
+    width: 40,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   headerTitle: {
     flex: 1,
-    textAlign: 'center',
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0f172a',
+    textAlign: "center",
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#0f172a",
   },
+
   iconBtn: {
     width: 40,
     height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     borderRadius: 999,
   },
 
   searchWrap: {
     marginHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
+    marginTop: 12,
     paddingHorizontal: 12,
     paddingVertical: 15,
     borderRadius: 12,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: "#f1f5f9",
   },
-  searchInput: { flex: 1, color: '#0f172a', paddingVertical: 0 },
+  searchInput: { flex: 1, color: "#0f172a", paddingVertical: 0 },
   clearBtn: { padding: 4, borderRadius: 999 },
-
-  /* category bar chips */
-  statusChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: '#f1f5f9',
+  
+  // Category dropdown styles
+  categoryDropdownContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  categoryLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#0f172a",
+  },
+  dropdownButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#f1f5f9",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    minWidth: 140,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: "#e2e8f0",
+  },
+  dropdownButtonText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#0f172a",
     marginRight: 8,
   },
-  statusChipActive: {
-    backgroundColor: '#16a34a1A',
-    borderColor: '#16a34a',
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "flex-end",
   },
-  statusChipText: {
-    color: '#0f172a',
-    fontWeight: '700',
-    fontSize: 14,
+  modalContent: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "80%",
   },
-  statusChipTextActive: {
-    color: '#065f46',
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
   },
-
-  // item cards
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  modalCloseBtn: {
+    padding: 4,
+  },
+  modalItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  modalItemActive: {
+    backgroundColor: "#f0fdf4",
+  },
+  modalItemText: {
+    fontSize: 16,
+    color: "#0f172a",
+  },
+  modalItemTextActive: {
+    color: "#00b14f",
+    fontWeight: "600",
+  },
+  modalSeparator: {
+    height: 1,
+    backgroundColor: "#f1f5f9",
+  },
+  
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 16,
     padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOpacity: 0.05,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
+  imageContainer: { position: "relative" },
   thumb: {
     width: 54,
     height: 54,
     borderRadius: 10,
-    backgroundColor: '#e2e8f0',
+    backgroundColor: "#e2e8f0",
   },
-  thumbFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
+  thumbFallback: { alignItems: "center", justifyContent: "center" },
+  multipleImagesBadge: {
+    position: "absolute",
+    bottom: -4,
+    right: -4,
+    backgroundColor: "#00b14f",
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: "white",
   },
-  title: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
-  meta: { fontSize: 12, color: '#64748b', marginTop: 2 },
-  price: {
-    fontSize: 14,
-    color: '#0f172a',
-    fontWeight: '800',
-    marginTop: 4,
-  },
-
-  rightCol: { alignItems: 'flex-end', gap: 8 },
-  stockRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  stockLabel: { fontSize: 12, color: '#0f172a', fontWeight: '700' },
-  actions: { flexDirection: 'row', gap: 6 },
-
-  emptyBox: { alignItems: 'center', paddingTop: 40, gap: 8 },
-  emptyTitle: { fontWeight: '800', color: '#0f172a' },
-  emptySub: { color: '#64748b' },
-
+  multipleImagesBadgeText: { color: "white", fontSize: 10, fontWeight: "bold" },
+  title: { fontSize: 15, fontWeight: "800", color: "#0f172a" },
+  meta: { fontSize: 12, color: "#64748b", marginTop: 2 },
+  price: { fontSize: 14, color: "#0f172a", fontWeight: "800", marginTop: 4 },
+  rightCol: { alignItems: "flex-end", gap: 8 },
+  stockRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  stockLabel: { fontSize: 12, color: "#0f172a", fontWeight: "700" },
+  actions: { flexDirection: "row", gap: 6 },
+  emptyBox: { alignItems: "center", paddingTop: 40, gap: 8 },
+  emptyTitle: { fontWeight: "800", color: "#0f172a" },
+  emptySub: { color: "#64748b" },
   fab: {
-    position: 'absolute',
+    position: "absolute",
     right: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
-    backgroundColor: '#00b14f',
+    backgroundColor: "#00b14f",
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 999,
-    shadowColor: '#000',
+    shadowColor: "#000",
     shadowOpacity: 0.2,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 6 },
     elevation: 5,
   },
-  fabText: { color: '#fff', fontWeight: '800' },
-
-  // modal / edit sheet
-  modalWrap: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.35)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    backgroundColor: 'white',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    maxHeight: '90%',
-  },
-  sheetHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  sheetTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
-
-  label: {
-    color: '#0f172a',
-    fontWeight: '700',
-    marginTop: 10,
-    marginBottom: 6,
-  },
-  input: {
-    backgroundColor: '#f1f5f9',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    color: '#0f172a',
-  },
-  row2: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 4,
-  },
-
-  // edit modal category chips
-  catChip: {
-    backgroundColor: '#e2e8f0',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-  },
-  catChipActive: { backgroundColor: '#00b14f' },
-  catChipText: { color: '#0f172a', fontWeight: '700' },
-  catChipTextActive: { color: '#fff' },
-
-  stockRow2: {
-    marginTop: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  stockLabel2: { fontSize: 14, color: '#0f172a', fontWeight: '700' },
-
-  saveRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 16,
-  },
+  fabText: { color: "#fff", fontWeight: "800" },
   btn: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderRadius: 999,
   },
-  btnPrimary: { backgroundColor: '#00b14f' },
-  btnPrimaryText: { color: '#fff', fontWeight: '800' },
-  btnGhost: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  btnGhostText: { color: '#0f172a', fontWeight: '800' },
+  btnPrimary: { backgroundColor: "#00b14f" },
+  btnPrimaryText: { color: "#fff", fontWeight: "800" },
 });

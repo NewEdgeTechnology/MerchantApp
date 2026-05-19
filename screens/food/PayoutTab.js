@@ -21,12 +21,18 @@ import {
   TOTAL_SALES_ENDPOINT,
 } from "@env";
 
-const money = (n) => `Nu ${Number(n ?? 0).toFixed(2)}`;
+const money = (n) => `BTN ${Number(n ?? 0).toFixed(2)}`;
 
 /* ───────────────────────── helpers ───────────────────────── */
 
 const UP = (s) => String(s || "").toUpperCase();
-const ACTIVE_FOOD = ["PENDING", "CONFIRMED", "PREPARING", "READY", "OUT_FOR_DELIVERY"];
+const ACTIVE_FOOD = [
+  "PENDING",
+  "CONFIRMED",
+  "PREPARING",
+  "READY",
+  "OUT_FOR_DELIVERY",
+];
 const ACTIVE_MART = ["PENDING", "CONFIRMED", "READY", "OUT_FOR_DELIVERY"];
 const CANCEL_SET = new Set(["CANCELLED", "CANCELED", "REJECTED", "DECLINED"]);
 
@@ -53,7 +59,8 @@ async function fetchJSON(url, options = {}) {
     json = text ? JSON.parse(text) : null;
   } catch {}
   if (!res.ok) {
-    const msg = (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
+    const msg =
+      (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
     throw new Error(msg);
   }
   return json;
@@ -106,7 +113,8 @@ const buildTotalSalesUrl = (businessId) => {
 
 function kpisFromStatusCounts(counts = {}, ownerType = "food") {
   const perStatus = {};
-  for (const [k, v] of Object.entries(counts || {})) perStatus[UP(k)] = Number(v || 0);
+  for (const [k, v] of Object.entries(counts || {}))
+    perStatus[UP(k)] = Number(v || 0);
 
   const isMart = String(ownerType).toLowerCase() === "mart";
   const activeSet = new Set(isMart ? ACTIVE_MART : ACTIVE_FOOD);
@@ -129,17 +137,31 @@ function kpisFromStatusCounts(counts = {}, ownerType = "food") {
 }
 
 const MONTHS = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 const ordinal = (n) => {
   const v = n % 100;
   if (v >= 11 && v <= 13) return `${n}th`;
   switch (n % 10) {
-    case 1: return `${n}st`;
-    case 2: return `${n}nd`;
-    case 3: return `${n}rd`;
-    default: return `${n}th`;
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
   }
 };
 const parseDate = (raw) => {
@@ -163,9 +185,13 @@ const formatDateTime = (d) => {
   const date = `${monthName} ${ordinal(day)} ${year}`;
   return { time, date };
 };
-const dateKey = (d) => (d && !Number.isNaN(d.getTime()) ? formatDateTime(d).date : "Unknown date");
+const dateKey = (d) =>
+  d && !Number.isNaN(d.getTime()) ? formatDateTime(d).date : "Unknown date";
 
-const niceNote = (note = "") => String(note || "").replace(/\s*\|\s*charge=\d+(\.\d+)?\s*/gi, " ").trim();
+const niceNote = (note = "") =>
+  String(note || "")
+    .replace(/\s*\|\s*charge=\d+(\.\d+)?\s*/gi, " ")
+    .trim();
 const extractOrderId = (note = "") => {
   const m = String(note || "").match(/ORD-\d+/i);
   return m ? m[0].toUpperCase() : "";
@@ -186,15 +212,29 @@ export default function PayoutTab({
   const routeParams = route?.params ?? {};
 
   const resolvedBusinessId =
-    propBusinessId ?? propBusinessId2 ?? routeParams.businessId ?? routeParams.business_id ?? null;
+    propBusinessId ??
+    propBusinessId2 ??
+    routeParams.businessId ??
+    routeParams.business_id ??
+    null;
 
   const resolvedUserId =
-    propUserId ?? propUserId2 ?? routeParams.userId ?? routeParams.user_id ?? null;
+    propUserId ??
+    propUserId2 ??
+    routeParams.userId ??
+    routeParams.user_id ??
+    null;
 
   const resolvedOwnerType =
-    propOwnerType ?? propOwnerType2 ?? routeParams.ownerType ?? routeParams.owner_type ?? "food";
+    propOwnerType ??
+    propOwnerType2 ??
+    routeParams.ownerType ??
+    routeParams.owner_type ??
+    "food";
 
-  const [walletId, setWalletId] = useState(routeParams.walletId ? String(routeParams.walletId) : null);
+  const [walletId, setWalletId] = useState(
+    routeParams.walletId ? String(routeParams.walletId) : null,
+  );
   const [transactions, setTransactions] = useState([]);
 
   const [salesToday, setSalesToday] = useState(0);
@@ -221,8 +261,24 @@ export default function PayoutTab({
         const rows = Array.isArray(payload?.rows) ? payload.rows : [];
 
         const now = new Date();
-        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-        const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+        const start = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate(),
+          0,
+          0,
+          0,
+          0,
+        );
+        const end = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate() + 1,
+          0,
+          0,
+          0,
+          0,
+        );
 
         let totalToday = 0;
         for (const r of rows) {
@@ -357,11 +413,29 @@ export default function PayoutTab({
 
   const topStats = useMemo(
     () => [
-      { icon: "wallet", title: "Today", value: money(salesToday), subtitle: "Sales", color: "#16a34a" },
-      { icon: "cart", title: "Active", value: `${Number(activeOrders || 0)} Orders`, subtitle: "In progress", color: "#2563eb" },
-      { icon: "checkmark-circle", title: "Accept", value: `${Number(acceptRate || 0)}%`, subtitle: "Rate", color: "#e11d48" },
+      {
+        icon: "wallet",
+        title: "Today",
+        value: money(salesToday),
+        subtitle: "Sales",
+        color: "#16a34a",
+      },
+      {
+        icon: "cart",
+        title: "Active",
+        value: `${Number(activeOrders || 0)} Orders`,
+        subtitle: "In progress",
+        color: "#2563eb",
+      },
+      {
+        icon: "checkmark-circle",
+        title: "Accept",
+        value: `${Number(acceptRate || 0)}%`,
+        subtitle: "Rate",
+        color: "#e11d48",
+      },
     ],
-    [salesToday, activeOrders, acceptRate]
+    [salesToday, activeOrders, acceptRate],
   );
 
   const renderRow = ({ item }) => {
@@ -380,8 +454,18 @@ export default function PayoutTab({
       <View style={styles.txCard}>
         <View style={styles.txLeft}>
           <View style={styles.txTopLine}>
-            <View style={[styles.badge, tx.isCredit ? styles.badgeCredit : styles.badgeDebit]}>
-              <Text style={[styles.badgeText, tx.isCredit ? styles.badgeTextCredit : styles.badgeTextDebit]}>
+            <View
+              style={[
+                styles.badge,
+                tx.isCredit ? styles.badgeCredit : styles.badgeDebit,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.badgeText,
+                  tx.isCredit ? styles.badgeTextCredit : styles.badgeTextDebit,
+                ]}
+              >
                 {tx.isCredit ? "CREDIT" : "DEBIT"}
               </Text>
             </View>
@@ -404,7 +488,11 @@ export default function PayoutTab({
             {tx.from ? (
               <>
                 <View style={styles.dot} />
-                <Ionicons name="swap-horizontal-outline" size={14} color="#6b7280" />
+                <Ionicons
+                  name="swap-horizontal-outline"
+                  size={14}
+                  color="#6b7280"
+                />
                 <Text style={styles.metaText} numberOfLines={1}>
                   {tx.from}
                 </Text>
@@ -414,7 +502,12 @@ export default function PayoutTab({
         </View>
 
         <View style={styles.txRight}>
-          <Text style={[styles.amount, tx.isCredit ? styles.amountCredit : styles.amountDebit]}>
+          <Text
+            style={[
+              styles.amount,
+              tx.isCredit ? styles.amountCredit : styles.amountDebit,
+            ]}
+          >
             {sign}
             {money(tx.amount)}
           </Text>
@@ -441,7 +534,9 @@ export default function PayoutTab({
         keyExtractor={(item) => item.id}
         renderItem={renderRow}
         contentContainerStyle={styles.contentContainer}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
         ListHeaderComponent={
           <View>
             <View style={styles.statsRow}>
@@ -458,7 +553,9 @@ export default function PayoutTab({
             </View>
 
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}>
+              <Text
+                style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}
+              >
                 Payout History
               </Text>
               {/* <Text style={styles.sectionHint}>{walletId ? `Wallet: ${walletId}` : ""}</Text> */}
@@ -468,7 +565,9 @@ export default function PayoutTab({
               <View style={styles.emptyBox}>
                 <Ionicons name="receipt-outline" size={22} color="#9ca3af" />
                 <Text style={styles.emptyTitle}>No payouts yet</Text>
-                <Text style={styles.emptyDesc}>Your wallet transactions will appear here.</Text>
+                <Text style={styles.emptyDesc}>
+                  Your wallet transactions will appear here.
+                </Text>
               </View>
             ) : null}
           </View>
@@ -520,7 +619,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   statTitle: { fontSize: 12, color: "#6b7280", fontWeight: "800" },
-  statValue: { fontSize: 16, color: "#0f172a", fontWeight: "900", marginTop: 2 },
+  statValue: {
+    fontSize: 16,
+    color: "#0f172a",
+    fontWeight: "900",
+    marginTop: 2,
+  },
   statSub: { fontSize: 12, color: "#9ca3af", marginTop: 2, fontWeight: "700" },
 
   sectionHeader: {
@@ -563,7 +667,12 @@ const styles = StyleSheet.create({
   txLeft: { flex: 1 },
   txRight: { justifyContent: "center", alignItems: "flex-end" },
 
-  txTopLine: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
+  txTopLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
 
   badge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
   badgeCredit: { backgroundColor: "#dcfce7" },
@@ -572,12 +681,27 @@ const styles = StyleSheet.create({
   badgeTextCredit: { color: "#166534" },
   badgeTextDebit: { color: "#991b1b" },
 
-  orderChip: { backgroundColor: "#eef2ff", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
+  orderChip: {
+    backgroundColor: "#eef2ff",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
   orderChipText: { color: "#3730a3", fontWeight: "900", fontSize: 11 },
 
-  noteText: { color: "#0f172a", fontWeight: "800", fontSize: 14, marginBottom: 8 },
+  noteText: {
+    color: "#0f172a",
+    fontWeight: "800",
+    fontSize: 14,
+    marginBottom: 8,
+  },
 
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" },
+  metaRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
+  },
   metaText: { color: "#6b7280", fontWeight: "700", fontSize: 12 },
   dot: { width: 4, height: 4, borderRadius: 999, backgroundColor: "#cbd5e1" },
 

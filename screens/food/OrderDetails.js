@@ -1,7 +1,7 @@
 // screens/food/OrderDetails.js
 // ✅ UPDATED: Accept (CONFIRMED) supports REMOVE / REPLACE payloads
 // ✅ FIX: Fees preserved using robust extraction
-// ✅ FIX: Item totals parse "Nu. 20" etc.
+// ✅ FIX: Item totals parse "BTN. 20" etc.
 // ✅ UPDATED: TotalsBlock shows GRAND TOTAL
 // ✅ UPDATED: Status updates use ClusterDeliveryOptionsScreen-style payload acceptance (allow missing ids AFTER driverAccepted)
 // ✅ FIX: useFocusEffect async usage (do not return Promise)
@@ -16,7 +16,8 @@
 // - When user selects GRAB, directly redirect to NearbyOrdersScreen (cluster list).
 // - No alert popup. No "Use Deliver in group" message.
 // ✅ CHANGE (LATEST):
-// - Delivery options only shown after order is READY (status === "READY" or "OUT_FOR_DELIVERY")
+// - Delivery options only shown after order is CONFIRMED (status === "CONFIRMED" or "READY" or "OUT_FOR_DELIVERY")
+// ✅ NEW: Auto-message customer when item marked as unavailable (REMOVE or REPLACE)
 
 import React, {
   useMemo,
@@ -36,6 +37,8 @@ import {
   DeviceEventEmitter,
   RefreshControl,
   useWindowDimensions,
+  Modal,
+  TextInput,
 } from "react-native";
 import {
   useRoute,
@@ -90,9 +93,9 @@ import TotalsBlock from "./OrderDetails/TotalsBlock";
 import DeclineModal from "./OrderDetails/DeclineModal";
 
 /* ---------------- responsive helpers ----------------
-   - baseline width: 375 (iPhone X-ish)
-   - keeps UI consistent but responsive across phones/tablets
------------------------------------------------------ */
+    - baseline width: 375 (iPhone X-ish)
+    - keeps UI consistent but responsive across phones/tablets
+  ----------------------------------------------------- */
 const makeScaler = (screenWidth) => {
   const base = 375;
   const ratio = screenWidth > 0 ? screenWidth / base : 1;
@@ -120,10 +123,10 @@ const logJson = (label, obj) => {
 };
 
 /* ===========================
-   ✅ SecureStore key sanitizer
-   - keys must contain only [A-Za-z0-9._-]
-   - also avoid ":" completely
-   =========================== */
+    ✅ SecureStore key sanitizer
+    - keys must contain only [A-Za-z0-9._-]
+    - also avoid ":" completely
+    =========================== */
 const toSafeKeyPart = (v, fallback = "0") => {
   if (v == null) return fallback;
 
@@ -144,9 +147,6 @@ const toSafeKeyPart = (v, fallback = "0") => {
 const keyRideId = (businessId) =>
   `orderdetails_last_ride_id_${toSafeKeyPart(businessId)}`;
 
-/* ===========================
-   status normalizer
-   =========================== */
 const normalizeStatus = (v) => {
   const s = String(v || "")
     .trim()
@@ -157,6 +157,8 @@ const normalizeStatus = (v) => {
   if (s === "ACCEPT") return "CONFIRMED";
   if (s === "CONFIRM") return "CONFIRMED";
   if (s === "PREPARING") return "CONFIRMED";
+  if (s === "PICKED_UP" || s === "PICKEDUP" || s === "PICKED UP")
+    return "PICKEDUP";
 
   // driver updates
   if (s === "ON ROAD" || s === "ON_ROAD" || s === "ONROAD")
@@ -175,11 +177,12 @@ const normalizeStatus = (v) => {
 
   return s;
 };
-
 const STATUS_RANK = {
   PENDING: 0,
   CONFIRMED: 1,
+  ASSIGNED: 1,
   READY: 2,
+  PICKED_UP: 2,
   OUT_FOR_DELIVERY: 3,
   COMPLETED: 4,
 };
@@ -191,8 +194,8 @@ const isHigherOrEqualStatus = (a, b) => {
 };
 
 /* ===========================
-   normalize delivery_address
-   =========================== */
+    normalize delivery_address
+    =========================== */
 const normalizeDeliveryAddress = (v) => {
   if (!v) return { address: "", lat: null, lng: null, city: null };
 
@@ -216,8 +219,8 @@ const normalizeDeliveryAddress = (v) => {
 };
 
 /* ===========================
-   find route name exists
-   =========================== */
+    find route name exists
+    =========================== */
 const pickExistingRouteName = (nav, candidates = []) => {
   const clean = (x) => String(x || "").trim();
   const existsIn = (n, name) => {
@@ -267,8 +270,8 @@ const findNavigatorOwningRoute = (nav, routeName) => {
 };
 
 /* ===========================
-   money parser + totals extraction
-   =========================== */
+    money parser + totals extraction
+    =========================== */
 const toMoneyNumber = (v) => {
   if (v == null) return null;
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -397,8 +400,8 @@ const getOrderTotalsSnapshot = (src = {}, fallback = {}) => {
 };
 
 /* ===========================
-   item helpers
-   =========================== */
+    item helpers
+    =========================== */
 const getItemMenuId = (it) =>
   it?.menu_id ??
   it?.menuId ??
@@ -475,8 +478,8 @@ const sumItemsTotal = (itemsArr = []) =>
   (itemsArr || []).reduce((sum, it) => sum + getItemLineTotal(it), 0);
 
 /* ===========================
-   unavailable changes
-   =========================== */
+    unavailable changes
+    =========================== */
 const buildUnavailableChanges = ({
   mode,
   items,
@@ -550,8 +553,8 @@ const buildUnavailableChanges = ({
 };
 
 /* ===========================
-   socket payload helpers (NO batch)
-   =========================== */
+    socket payload helpers (NO batch)
+    =========================== */
 const extractStatusFromPayload = (payload) => {
   if (!payload) return null;
 
@@ -726,7 +729,92 @@ const pickRideId = (payload) =>
   payload?.message?.ride_id ??
   payload?.message?.rideId ??
   null;
+// Simple status buttons for SELF delivery (no driver messages)
+const SelfDeliveryStatusButtons = ({
+  status,
+  updating,
+  onReady,
+  onOutForDelivery,
+  onComplete,
+}) => {
+  const statusOrder = ["CONFIRMED", "READY", "OUT_FOR_DELIVERY", "COMPLETED"];
+  const currentIndex = statusOrder.indexOf(status);
+  const nextStatus = statusOrder[currentIndex + 1];
 
+  if (!nextStatus) return null;
+
+  const getButtonConfig = () => {
+    switch (nextStatus) {
+      case "READY":
+        return {
+          label: "Mark as Ready",
+          color: "#00B14F",
+          icon: "checkmark-circle-outline",
+        };
+      case "OUT_FOR_DELIVERY":
+        return {
+          label: "Mark as Out for Delivery",
+          color: "#FF9800",
+          icon: "bicycle-outline",
+        };
+      case "COMPLETED":
+        return {
+          label: "Mark as Completed",
+          color: "#4CAF50",
+          icon: "checkmark-done-circle-outline",
+        };
+      default:
+        return {
+          label: "Update Status",
+          color: "#00B14F",
+          icon: "arrow-forward-outline",
+        };
+    }
+  };
+
+  const config = getButtonConfig();
+
+  return (
+    <Pressable
+      style={({ pressed }) => ({
+        backgroundColor: pressed ? config.color + "CC" : config.color,
+        paddingVertical: 14,
+        borderRadius: 12,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        opacity: updating ? 0.7 : 1,
+      })}
+      onPress={() => {
+        if (updating) return;
+        switch (nextStatus) {
+          case "READY":
+            onReady();
+            break;
+          case "OUT_FOR_DELIVERY":
+            onOutForDelivery();
+            break;
+          case "COMPLETED":
+            onComplete();
+            break;
+        }
+      }}
+      disabled={updating}
+    >
+      {updating ? (
+        <ActivityIndicator color="#FFFFFF" size="small" />
+      ) : (
+        <>
+          <Ionicons name={config.icon} size={20} color="#FFFFFF" />
+          <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "600" }}>
+            {config.label}
+          </Text>
+        </>
+      )}
+    </Pressable>
+  );
+};
 export default function OrderDetails() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -788,104 +876,203 @@ export default function OrderDetails() {
   const [merchantDeliveryOpt, setMerchantDeliveryOpt] = useState("UNKNOWN");
   const [businessId, setBusinessId] = useState(paramBusinessId);
   const [businessCoords, setBusinessCoords] = useState(null);
+  const [lastConversationId, setLastConversationId] = useState(null);
+  // Conversation cache for auto-messages
+  const conversationCacheRef = useRef({});
+  // Update the openChatFromOrder function
+  const [pickedUpModalVisible, setPickedUpModalVisible] = useState(false);
+  const [pickedUpByName, setPickedUpByName] = useState("");
+  const getOrCreateOrderConversation = useCallback(
+    async ({
+      orderCode,
+      customer_id,
+      business_id,
+      merchant_user_id,
+      token,
+    }) => {
+      const cacheKey = String(orderCode);
 
-  // ✅ open chat from order
+      if (conversationCacheRef.current?.[cacheKey]) {
+        return conversationCacheRef.current[cacheKey];
+      }
+
+      const result = await createOrGetOrderConversationFromOrderDetails({
+        orderId: orderCode,
+        customer_id: Number(customer_id),
+        business_id: Number(business_id),
+        merchant_user_id: String(merchant_user_id),
+        token,
+      });
+
+      const conversationId = result?.conversation_id || result?.conversationId;
+
+      if (conversationId) {
+        conversationCacheRef.current[cacheKey] = conversationId;
+        setLastConversationId(conversationId);
+      }
+
+      return conversationId;
+    },
+    [],
+  );
   const openChatFromOrder = useCallback(async () => {
     try {
       const token = await SecureStore.getItemAsync("auth_token");
-
-      const merchant_user_id =
-        (await SecureStore.getItemAsync("user_id_v1")) ||
-        (await SecureStore.getItemAsync("user_id")) ||
-        null;
-
-      if (!merchant_user_id) {
-        Alert.alert("Chat", "Merchant user_id not found in SecureStore.");
+      if (!token) {
+        Alert.alert(
+          "Error",
+          "Authentication token not found. Please login again.",
+        );
         return;
       }
 
+      // Get merchant user ID
+      const merchant_user_id =
+        (await SecureStore.getItemAsync("user_id_v1")) ||
+        (await SecureStore.getItemAsync("user_id"));
+
+      if (!merchant_user_id) {
+        Alert.alert("Error", "Merchant user ID not found. Please login again.");
+        return;
+      }
+
+      // Get business ID
       const business_id =
-        (await SecureStore.getItemAsync("business_id_v1")) ||
-        (await SecureStore.getItemAsync("business_id")) ||
-        (await SecureStore.getItemAsync("businessId")) ||
         businessId ||
         paramBusinessId ||
         order?.business_id ||
-        null;
+        (await (async () => {
+          const saved = await SecureStore.getItemAsync("merchant_login");
+          if (saved) {
+            try {
+              const j = JSON.parse(saved);
+              return (
+                j?.business_id ||
+                j?.user?.business_id ||
+                j?.user?.businessId ||
+                null
+              );
+            } catch {}
+          }
+          return null;
+        })());
 
       if (!business_id) {
-        Alert.alert("Chat", "Business id not found.");
+        Alert.alert(
+          "Error",
+          "Business ID not found. Please ensure you're logged in as a merchant.",
+        );
         return;
       }
 
+      // Get customer ID
       const customer_id =
-        order?.__user?.user_id ??
-        order?.__user?.id ??
-        order?.user?.user_id ??
-        order?.user?.id ??
-        order?.user_id ??
-        order?.customer_id ??
-        null;
+        order?.__user?.user_id ||
+        order?.__user?.id ||
+        order?.user?.user_id ||
+        order?.user?.id ||
+        order?.customer_id ||
+        order?.user_id;
 
       if (!customer_id) {
-        Alert.alert("Chat", "Customer id not found in this order payload.");
+        Alert.alert("Error", "Customer information not found in this order.");
         return;
       }
 
-      const orderIdForChat =
-        order?.order_code || order?.order_id || order?.id || routeOrderId;
-
-      if (!orderIdForChat) {
-        Alert.alert("Chat", "Order id/code missing.");
+      // Get order code
+      const orderCode = normalizeOrderCode(
+        order?.order_code || order?.id || routeOrderId,
+      );
+      if (!orderCode) {
+        Alert.alert("Error", "Order code not found.");
         return;
       }
 
-      const resp = await createOrGetOrderConversationFromOrderDetails({
-        orderId: orderIdForChat,
+      console.log("[CHAT] Opening chat - Details:", {
+        orderCode,
+        customerId: customer_id,
+        businessId: business_id,
+        merchantUserId: merchant_user_id,
+      });
+
+      const conversationId = await getOrCreateOrderConversation({
+        orderCode,
         customer_id,
         business_id,
         merchant_user_id,
         token,
       });
 
-      const conversationId =
-        resp?.conversation_id ??
-        resp?.data?.conversation_id ??
-        resp?.conversationId ??
-        null;
+      if (!conversationId) {
+        throw new Error("No conversation ID returned from API");
+      }
 
-      if (!conversationId) throw new Error("No conversation_id returned");
+      const customerName =
+        order?.__user?.user_name ||
+        order?.__user?.name ||
+        order?.customer_name ||
+        order?.user_name ||
+        order?.user?.name ||
+        "Customer";
 
+      // Navigate to chat screen
       navigation.navigate("MerchantChatRoomScreen", {
         conversationId: String(conversationId),
-        orderId: String(orderIdForChat),
+        orderId: String(orderCode),
         userType: "MERCHANT",
         userId: String(merchant_user_id),
         businessId: String(business_id),
+        customerId: String(customer_id),
+        customerName: customerName,
         meta: {
           customerId: String(customer_id),
-          customerName:
-            order?.customer_name ||
-            order?.user_name ||
-            order?.__user?.user_name ||
-            order?.__user?.name ||
-            "",
+          customerName: customerName,
           customer_profile_image:
-            order?.__user?.profile_image ||
-            order?.__user?.profileImage ||
-            order?.__user?.avatar ||
-            order?.user?.profile_image ||
-            order?.user?.profileImage ||
-            order?.user?.avatar ||
-            "",
+            order?.__user?.profile_image || order?.__user?.profileImage || "",
         },
         source: "order-details",
       });
-    } catch (e) {
-      Alert.alert("Chat", e?.message || "Failed to open chat");
-    }
-  }, [navigation, order, routeOrderId, businessId, paramBusinessId]);
+    } catch (error) {
+      console.error("[CHAT] Error:", error);
 
+      // Handle specific error cases
+      if (error.message?.includes("Chat not allowed")) {
+        Alert.alert(
+          "Chat Not Available",
+          "The customer hasn't accepted the chat yet. You can try again later or contact support.",
+          [{ text: "OK" }],
+        );
+      } else {
+        Alert.alert(
+          "Chat Error",
+          error.message ||
+            "Failed to open chat. Please check your connection and try again.",
+        );
+      }
+    }
+  }, [
+    navigation,
+    order,
+    routeOrderId,
+    businessId,
+    paramBusinessId,
+    getOrCreateOrderConversation,
+  ]);
+  // Chat with customer about a specific item
+  const chatWithCustomerAboutItem = useCallback(
+    async (item) => {
+      // Just reuse the existing chat function - item parameter is optional
+      await openChatFromOrder();
+
+      // Optional: You could also send an auto-message about this specific item
+      if (item) {
+        const itemName = getItemName(item);
+        console.log(`[CHAT] Opening chat from item: ${itemName}`);
+        // You could optionally pre-fill a message here if your chat screen supports it
+      }
+    },
+    [openChatFromOrder],
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [updating, setUpdating] = useState(false);
 
@@ -908,7 +1095,7 @@ export default function OrderDetails() {
   const liveRefreshTimerRef = useRef(null);
   const socketHydrateTimerRef = useRef(null);
   const lastSocketAppliedStatusRef = useRef(null);
-
+  const autoMessageSentRef = useRef(false);
   const LIVE_REFRESH_MS = 4000;
 
   // ✅ ride_id state (batch removed)
@@ -922,7 +1109,19 @@ export default function OrderDetails() {
   useEffect(() => {
     driverAcceptedRef.current = !!driverAccepted;
   }, [driverAccepted]);
-
+  useEffect(() => {
+    console.log("[ORDER] Status changed to:", status);
+    console.log("[ORDER] isTerminalNegative:", isTerminalNegative);
+    console.log("[ORDER] isTerminalSuccess:", isTerminalSuccess);
+    console.log("[ORDER] isCancelledByCustomer:", isCancelledByCustomer);
+    console.log("[ORDER] isSelfSelected:", isSelfSelected);
+  }, [
+    status,
+    isTerminalNegative,
+    isTerminalSuccess,
+    isCancelledByCustomer,
+    isSelfSelected,
+  ]);
   // ✅ Nearby list route candidates (GRAB redirects HERE)
   const NEARBY_LIST_ROUTE_CANDIDATES = useMemo(
     () => [
@@ -1004,7 +1203,34 @@ export default function OrderDetails() {
       return () => sub.remove();
     }, [goBackToOrders]),
   );
+  const handleTrackDriver = useCallback(async () => {
+    const biz = businessId ?? paramBusinessId ?? order?.business_id;
+    if (!biz) {
+      Alert.alert("Error", "Business ID not found");
+      return;
+    }
 
+    if (!rideId) {
+      Alert.alert("Error", "No active delivery found for this order");
+      return;
+    }
+
+    // Get the order code for focusing
+    const orderCode = normalizeOrderCode(
+      order?.order_code || order?.id || routeOrderId,
+    );
+
+    // Navigate to batch tracking screen with focus parameters
+    navigation.navigate("BatchRidesScreen", {
+      rideId: rideId,
+      businessId: biz,
+      orderId: order?.id || routeOrderId,
+      orderCode: orderCode,
+      focusRideId: rideId, // Focus this specific ride/batch
+      focusOrderId: orderCode, // Focus the order within the batch
+      highlightCard: true, // Enable highlighting
+    });
+  }, [rideId, businessId, paramBusinessId, order, routeOrderId, navigation]);
   const saveRideId = useCallback(
     async (rid, bizOverride = null) => {
       try {
@@ -1114,6 +1340,257 @@ export default function OrderDetails() {
     loadBusinessDetails();
   }, [loadBusinessDetails]);
 
+  // ✅ RESTORE DELIVERY CHOICE - Add this NEW useEffect here
+  useEffect(() => {
+    const restoreDeliveryChoice = async () => {
+      try {
+        const biz = businessId || paramBusinessId;
+        const orderKey = order?.id || routeOrderId;
+        if (biz && orderKey) {
+          const savedChoice = await SecureStore.getItemAsync(
+            `order_delivery_choice_${biz}_${orderKey}`,
+          );
+          if (
+            savedChoice &&
+            (savedChoice === "grab" || savedChoice === "self")
+          ) {
+            setDeliveryChoice(savedChoice);
+            console.log("[DELIVERY] Restored choice:", savedChoice);
+          }
+        }
+      } catch (e) {
+        console.log("[DELIVERY] Failed to restore choice:", e);
+      }
+    };
+    restoreDeliveryChoice();
+  }, [businessId, paramBusinessId, order?.id, routeOrderId]);
+  // ✅ FIXED: Remove driverDetails from dependencies and add fetch guards
+  const hasFetchedDriverRef = useRef(false);
+  const fetchAttemptCountRef = useRef(0);
+  const MAX_FETCH_ATTEMPTS = 5;
+
+  useEffect(() => {
+    let isMounted = true;
+    let activeFetch = false;
+    let intervalId = null;
+
+    const statusesWithDriver = [
+      "ASSIGNED",
+      "READY",
+      "PICKED_UP",
+      "OUT_FOR_DELIVERY",
+      "COMPLETED",
+    ];
+
+    const fetchDriverInfoFromBatch = async () => {
+      // ✅ Stop if already fetched successfully
+      if (hasFetchedDriverRef.current) return;
+
+      // ✅ Stop if max attempts reached
+      if (fetchAttemptCountRef.current >= MAX_FETCH_ATTEMPTS) {
+        console.log("[BATCH-RIDE] Max fetch attempts reached, stopping");
+        return;
+      }
+
+      // Only fetch if status is one of these
+      if (!statusesWithDriver.includes(status)) return;
+
+      if (activeFetch) return;
+
+      const bizId = businessId || paramBusinessId || order?.business_id;
+      if (!bizId) return;
+
+      const orderId = normalizeOrderCode(
+        order?.order_code || order?.id || routeOrderId,
+      );
+      if (!orderId) return;
+
+      activeFetch = true;
+      fetchAttemptCountRef.current++;
+
+      try {
+        const token = await SecureStore.getItemAsync("auth_token");
+        const GET_BATCH_RIDE_ID_ENDPOINT =
+          "https://backend.tabdhey.bt/grablike/api/batch-ride/get-batch-ride-id";
+
+        const url = `${GET_BATCH_RIDE_ID_ENDPOINT}?business_id=${encodeURIComponent(String(bizId))}`;
+
+        const response = await fetch(url, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+
+        const text = await response.text();
+        let json = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {}
+
+        if (!response.ok || !json?.ok) {
+          throw new Error(json?.message || `HTTP ${response.status}`);
+        }
+
+        const batchData = Array.isArray(json?.data) ? json.data : [];
+
+        // Find batch containing this order
+        let foundBatch = null;
+        for (const batch of batchData) {
+          if (
+            Array.isArray(batch.order_ids) &&
+            batch.order_ids.includes(orderId)
+          ) {
+            foundBatch = batch;
+            break;
+          }
+        }
+
+        if (!foundBatch) {
+          console.log("[BATCH-RIDE] No batch found for order:", orderId);
+          activeFetch = false;
+          return;
+        }
+
+        const ride_id = foundBatch.ride_id;
+        const driver_id = foundBatch.driver_id;
+
+        if (!driver_id) {
+          console.log("[BATCH-RIDE] No driver_id found in batch");
+          activeFetch = false;
+          return;
+        }
+
+        // Save ride_id
+        if (ride_id) {
+          saveRideId(ride_id);
+        }
+
+        // Set driver accepted
+        if (!driverAcceptedRef.current) {
+          driverAcceptedRef.current = true;
+          setDriverAccepted(true);
+        }
+
+        // Fetch driver details
+        const DRIVER_DETAILS_ENDPOINT =
+          "https://backend.tabdhey.bt/grablike/api/driver_id";
+        const driverUrl = `${DRIVER_DETAILS_ENDPOINT}?driverId=${encodeURIComponent(String(driver_id))}`;
+
+        const driverResponse = await fetch(driverUrl, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+
+        const driverText = await driverResponse.text();
+        let driverJson = null;
+        try {
+          driverJson = driverText ? JSON.parse(driverText) : null;
+        } catch {}
+
+        if (driverResponse.ok && driverJson?.ok && driverJson?.details) {
+          // ✅ Mark as fetched BEFORE setting state to prevent re-trigger
+          hasFetchedDriverRef.current = true;
+          setDriverDetails(driverJson.details);
+
+          // Fetch driver rating
+          const DIVER_RATING_ENDPOINT =
+            "https://backend.tabdhey.bt/grablike/api/ratings";
+          const ratingUrl = `${DIVER_RATING_ENDPOINT}?driver_id=${encodeURIComponent(String(driver_id))}&limit=20&offset=0`;
+
+          const ratingResponse = await fetch(ratingUrl, {
+            method: "GET",
+            headers: {
+              Accept: "application/json",
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+          });
+
+          const ratingText = await ratingResponse.text();
+          let ratingJson = null;
+          try {
+            ratingJson = ratingText ? JSON.parse(ratingText) : null;
+          } catch {}
+
+          if (ratingResponse.ok && ratingJson?.summary) {
+            const avg = ratingJson.summary.avg;
+            const count = ratingJson.summary.count;
+            setDriverRating({ average: avg, count: count });
+          }
+        }
+
+        // Set ride message
+        let message = "";
+        switch (status) {
+          case "ASSIGNED":
+            message = "Driver has been assigned to your order.";
+            break;
+          case "READY":
+            message = "Order is ready. Driver has been notified.";
+            break;
+          case "OUT_FOR_DELIVERY":
+            message = "Driver is on the way with your order.";
+            break;
+          case "COMPLETED":
+            message = "Order has been delivered.";
+            break;
+          default:
+            message = `Driver assigned. Status: ${status}`;
+        }
+        setRideMessage(message);
+
+        // ✅ Stop polling once we have driver details
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+      } catch (error) {
+        console.log(
+          "[BATCH-RIDE] Error fetching driver info:",
+          error?.message || error,
+        );
+      } finally {
+        activeFetch = false;
+      }
+    };
+
+    // Run immediately
+    fetchDriverInfoFromBatch();
+
+    // Set up polling ONLY if we haven't fetched yet and haven't exceeded attempts
+    if (
+      statusesWithDriver.includes(status) &&
+      !hasFetchedDriverRef.current &&
+      fetchAttemptCountRef.current < MAX_FETCH_ATTEMPTS
+    ) {
+      intervalId = setInterval(() => {
+        if (!isMounted) return;
+        if (!hasFetchedDriverRef.current) {
+          fetchDriverInfoFromBatch();
+        } else if (intervalId) {
+          clearInterval(intervalId);
+        }
+      }, 8000);
+    }
+
+    return () => {
+      isMounted = false;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [
+    status,
+    businessId,
+    paramBusinessId,
+    order?.business_id,
+    order?.order_code,
+    order?.id,
+    routeOrderId,
+    saveRideId,
+  ]); // ✅ REMOVED driverDetails from deps
   /* ---------- Normalize fulfillment ---------- */
   const fulfillment = useMemo(
     () => resolveFulfillmentType({ ...order, params }),
@@ -1142,46 +1619,108 @@ export default function OrderDetails() {
     return "self";
   });
 
-  const isBothOption = deliveryOptionInitial === "BOTH";
-  const isSelfSelected = deliveryChoice === "self";
-  const isGrabSelected = deliveryChoice === "grab";
-
   const status = normalizeStatus(order?.status || "PENDING");
 
+  // For ASSIGNED status, force GRAB delivery
+  const isGrabDeliveryByStatus = status === "ASSIGNED";
+
+  const isBothOption = deliveryOptionInitial === "BOTH";
+
   const isPlatformDelivery = useMemo(() => {
+    // If status is ASSIGNED, it's definitely a GRAB delivery
+    if (isGrabDeliveryByStatus) return true;
     if (isBothOption) return isGrabSelected;
     return deliveryOptionInitial === "GRAB";
-  }, [isBothOption, isGrabSelected, deliveryOptionInitial]);
+  }, [
+    isBothOption,
+    isGrabSelected,
+    deliveryOptionInitial,
+    isGrabDeliveryByStatus,
+  ]);
 
-  /* ---------- Sequence ---------- */
+  const isSelfSelected = useMemo(() => {
+    // If status is ASSIGNED, it's NOT self delivery
+    if (isGrabDeliveryByStatus) return false;
+    return deliveryChoice === "self";
+  }, [deliveryChoice, isGrabDeliveryByStatus]);
+
+  const isGrabSelected = useMemo(() => {
+    // If status is ASSIGNED, definitely GRAB
+    if (isGrabDeliveryByStatus) return true;
+    // If order has delivery_option = GRAB, keep it as GRAB
+    if (order?.delivery_option === "GRAB") return true;
+    // If driver has already accepted, it's definitely GRAB
+    if (driverAccepted) return true;
+    // Otherwise use the user's choice
+    return deliveryChoice === "grab";
+  }, [
+    deliveryChoice,
+    isGrabDeliveryByStatus,
+    order?.delivery_option,
+    driverAccepted,
+  ]);
+
   const STATUS_SEQUENCE = useMemo(
     () =>
       isPickupFulfillment
-        ? ["PENDING", "CONFIRMED", "READY"]
+        ? ["PENDING", "CONFIRMED", "READY", "PICKEDUP"]
         : ["PENDING", "CONFIRMED", "READY", "OUT_FOR_DELIVERY", "COMPLETED"],
     [isPickupFulfillment],
   );
 
   const isTerminalNegative = TERMINAL_NEGATIVE.has(status);
   const isTerminalSuccess =
-    TERMINAL_SUCCESS.has(status) || (isPickupFulfillment && status === "READY");
+    TERMINAL_SUCCESS.has(status) ||
+    (isPickupFulfillment && status === "PICKEDUP"); // REMOVED "READY" from here
 
-  // ✅ LOCK merchant updates AFTER driver accepts (Grab / platform delivery)
   const isDriverAssigned = useMemo(() => {
-    if (!driverAccepted) return false;
-    return isPlatformDelivery || (isBothOption && isGrabSelected);
-  }, [driverAccepted, isPlatformDelivery, isBothOption, isGrabSelected]);
+    // For ASSIGNED status, merchant can still update to READY
+    // Don't block merchant from updating when status is ASSIGNED
+    if (status === "ASSIGNED") return false;
 
+    // Driver is assigned when accepted for Grab deliveries
+    if (!driverAccepted) return false;
+
+    // For Grab/Platform deliveries
+    if (isPlatformDelivery || (isBothOption && isGrabSelected)) return true;
+
+    // For Self deliveries, driver is not assigned
+    return false;
+  }, [
+    driverAccepted,
+    isPlatformDelivery,
+    isBothOption,
+    isGrabSelected,
+    status,
+  ]);
   const shouldBlockAtReady =
     status === "READY" &&
     (isPlatformDelivery || (isBothOption && isGrabSelected)) &&
     !driverAccepted;
+
+  // Add this new variable for showing ready button after driver accepts
+  const shouldShowReadyAfterDriverAccept = useMemo(() => {
+    return (
+      (isPlatformDelivery || (isBothOption && isGrabSelected)) &&
+      driverAccepted &&
+      status === "CONFIRMED"
+    );
+  }, [
+    isPlatformDelivery,
+    isBothOption,
+    isGrabSelected,
+    driverAccepted,
+    status,
+  ]);
 
   const nextFor = useCallback(
     (curr) => {
       const s = normalizeStatus(curr);
       if (TERMINAL_NEGATIVE.has(s) || TERMINAL_SUCCESS.has(s)) return null;
       if (isPickupFulfillment && s === "READY") return null;
+
+      // For delivery orders, PICKEDUP should go to OUT_FOR_DELIVERY
+      if (!isPickupFulfillment && s === "PICKEDUP") return "OUT_FOR_DELIVERY";
 
       // ✅ Once driver accepted, merchant should not update any status
       if (isDriverAssigned) return null;
@@ -1200,7 +1739,13 @@ export default function OrderDetails() {
     ],
   );
 
-  const stepIndex = findStepIndex(status, STATUS_SEQUENCE);
+  const displayStatusForProgress =
+    status === "ASSIGNED"
+      ? "CONFIRMED"
+      : status === "PICKED_UP"
+        ? "READY"
+        : status;
+  const stepIndex = findStepIndex(displayStatusForProgress, STATUS_SEQUENCE);
   const lastIndex = STATUS_SEQUENCE.length - 1;
   const progressIndex = clamp(stepIndex === -1 ? 0 : stepIndex, 0, lastIndex);
   const progressPct = isTerminalNegative
@@ -1244,6 +1789,656 @@ export default function OrderDetails() {
     if (s.includes("remove") || s.includes("refund")) return "REMOVE";
     return "OTHER";
   }, [order?.if_unavailable]);
+  const effectiveUnavailableMode = useMemo(() => {
+    const owner = String(ownerType || "").toLowerCase();
+
+    if (owner === "food" && ifUnavailableMode === "OTHER") {
+      return "REMOVE";
+    }
+
+    return ifUnavailableMode;
+  }, [ownerType, ifUnavailableMode]);
+  const sendAutoMessageForUnavailable = useCallback(
+    async (
+      item,
+      itemTotal,
+      newTotal,
+      reason = "",
+      mode = "REMOVE",
+      replacementItem = null,
+      shouldNavigateToChat = true,
+    ) => {
+      try {
+        console.log("[AUTO-MESSAGE] Starting to send auto-message for:", mode);
+        console.log("[AUTO-MESSAGE] Item details:", {
+          name: getItemName(item),
+          total: itemTotal,
+          newTotal: newTotal,
+          reason: reason,
+        });
+
+        const token = await SecureStore.getItemAsync("auth_token");
+        if (!token) {
+          console.error("[AUTO-MESSAGE] No auth token found");
+          return false;
+        }
+
+        const merchant_user_id =
+          (await SecureStore.getItemAsync("user_id_v1")) ||
+          (await SecureStore.getItemAsync("user_id"));
+
+        if (!merchant_user_id) {
+          console.error("[AUTO-MESSAGE] No merchant user ID");
+          return false;
+        }
+
+        const business_id = businessId || paramBusinessId || order?.business_id;
+        if (!business_id) {
+          console.error("[AUTO-MESSAGE] No business ID");
+          return false;
+        }
+
+        const customer_id =
+          order?.customer_id || order?.__user?.user_id || order?.user?.user_id;
+
+        if (!customer_id) {
+          console.error("[AUTO-MESSAGE] No customer ID");
+          return false;
+        }
+
+        const orderCode = normalizeOrderCode(
+          order?.order_code || order?.id || routeOrderId,
+        );
+        if (!orderCode) {
+          console.error("[AUTO-MESSAGE] No order code");
+          return false;
+        }
+
+        const itemName = getItemName(item);
+        const qty = getItemQty(item);
+        const reasonText = reason ? ` Reason: ${reason}` : "";
+
+        let message = "";
+
+        if (mode === "REMOVE") {
+          message = `❌ *${itemName}* (×${qty}) has been REMOVED from your order as it is currently unavailable.${reasonText}\n\n💰 *New order total:* ${money(newTotal, "BTN.")}\n\nWe apologize for any inconvenience caused.`;
+        } else if (mode === "REPLACE" && replacementItem) {
+          const replacementName = getItemName(replacementItem);
+          const replacementPrice = getItemUnitPrice(replacementItem);
+          const replacementTotal = replacementPrice * qty;
+
+          message = `🔄 *${itemName}* (×${qty}) is currently out of stock.\n\n`;
+          message += `📋 *Suggested replacement:*\n`;
+          message += `✅ *${replacementName}*\n`;
+          message += `💰 Price: ${money(replacementPrice, "BTN.")} (×${qty}) = ${money(replacementTotal, "BTN.")}\n\n`;
+          message += `💬 *How to proceed:*\n`;
+          message += `• Reply "YES" to accept this replacement\n`;
+          message += `• Tap "Browse Similar Items" below to see more options\n`;
+          message += `• Suggest an alternative item\n\n`;
+          message += `💰 *New order total:* ${money(newTotal, "BTN.")}${reasonText}\n\n`;
+          message += `*Please respond within 10 minutes.*`;
+        }
+
+        // ✅ FIX: If message is empty, create a fallback
+        if (!message || message.trim() === "") {
+          console.warn("[AUTO-MESSAGE] Message was empty, using fallback");
+          message = `❌ *${itemName}* (×${qty}) has been REMOVED from your order as it is currently unavailable.${reasonText}\n\n💰 *New order total:* ${money(newTotal, "BTN.")}\n\nWe apologize for any inconvenience caused.`;
+        }
+
+        console.log("[AUTO-MESSAGE] Message content length:", message.length);
+        console.log(
+          "[AUTO-MESSAGE] First 100 chars:",
+          message.substring(0, 100),
+        );
+
+        const conversationId = await getOrCreateOrderConversation({
+          orderCode,
+          customer_id,
+          business_id,
+          merchant_user_id,
+          token,
+        });
+
+        if (!conversationId) {
+          console.error("[AUTO-MESSAGE] Failed to get conversation ID");
+          return false;
+        }
+        setLastConversationId(conversationId);
+        console.log("[AUTO-MESSAGE] Got conversation ID:", conversationId);
+
+        // Send the message using fetch
+        const sendResponse = await fetch(
+          `https://backend.tabdhey.bt/chat/chat/messages/${conversationId}`,
+          {
+            method: "POST",
+            headers: {
+              Accept: "application/json",
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+              "x-business-id": String(business_id),
+              "x-user-id": String(merchant_user_id),
+              "x-user-type": "MERCHANT",
+            },
+            body: JSON.stringify({
+              body: message,
+              message_type: "TEXT",
+            }),
+          },
+        );
+
+        const responseData = await sendResponse.json();
+
+        if (sendResponse.ok) {
+          console.log("[AUTO-MESSAGE] Message sent successfully!");
+          console.log("[AUTO-MESSAGE] Response:", responseData);
+        } else {
+          console.error("[AUTO-MESSAGE] Failed to send message:", responseData);
+          return false;
+        }
+
+        // Only navigate to chat if requested
+        if (
+          shouldNavigateToChat &&
+          navigation &&
+          mode !== "REMOVE_WITH_DECLINE"
+        ) {
+          setTimeout(() => {
+            try {
+              const customerName =
+                order?.customer_name ||
+                order?.user_name ||
+                order?.__user?.user_name ||
+                order?.__user?.name ||
+                "Customer";
+
+              navigation.navigate("MerchantChatRoomScreen", {
+                conversationId: String(conversationId),
+                orderId: String(orderCode),
+                userType: "MERCHANT",
+                userId: String(merchant_user_id),
+                businessId: String(business_id),
+                customerId: String(customer_id),
+                customerName: customerName,
+                meta: {
+                  customerId: String(customer_id),
+                  customerName: customerName,
+                  customer_profile_image: order?.__user?.profile_image || "",
+                },
+                source: "order-details-auto",
+              });
+            } catch (navError) {
+              console.log("[AUTO-MESSAGE] Navigation error:", navError);
+            }
+          }, 500);
+        }
+
+        return true;
+      } catch (err) {
+        console.error("[AUTO-MESSAGE] Error:", err);
+        Alert.alert(
+          "Message Error",
+          "Failed to send auto-message to customer. Please try again or contact support.",
+        );
+        return false;
+      }
+    },
+    [order, routeOrderId, businessId, paramBusinessId, navigation, money],
+  );
+  const checkAndAutoDeclineIfZeroTotal = useCallback(
+    async (newTotal, shouldNavigateToChat = true) => {
+      if (newTotal <= 0) {
+        console.log("[ORDER] Total became zero, auto-declining order");
+
+        // Auto-decline the order
+        const declineSuccess = await updateSingleStatusLikeCluster({
+          newStatus: "DECLINED",
+          deliveryBy: null,
+          reasonText: "All items unavailable - Out of stock",
+          extraPayload: {
+            cancel_reason: "All items unavailable",
+            cancellation_reason: "Out of stock - All items removed",
+            total_amount: 0,
+            final_total_amount: 0,
+          },
+          extraPatch: {
+            cancel_reason: "All items unavailable",
+            total: 0,
+            total_amount: 0,
+          },
+          showSuccessAlert: false, // Don't show auto alert
+        });
+
+        if (declineSuccess) {
+          // ✅ FORCE status update in state
+          setOrder((prev) => ({
+            ...prev,
+            status: "DECLINED",
+          }));
+
+          // ✅ Force refresh to ensure UI updates
+          await hydrateFromGrouped();
+
+          // First, try to get the conversation ID to open chat
+          let conversationId = null;
+          let customerName = "Customer";
+          let merchant_user_id = null;
+          let business_id = null;
+          let customer_id = null;
+
+          try {
+            // Try to get existing conversation or create one
+            const token = await SecureStore.getItemAsync("auth_token");
+            merchant_user_id =
+              (await SecureStore.getItemAsync("user_id_v1")) ||
+              (await SecureStore.getItemAsync("user_id"));
+            business_id = businessId || paramBusinessId || order?.business_id;
+            customer_id =
+              order?.customer_id ||
+              order?.__user?.user_id ||
+              order?.user?.user_id;
+            const orderCode = normalizeOrderCode(
+              order?.order_code || order?.id || routeOrderId,
+            );
+
+            if (
+              token &&
+              merchant_user_id &&
+              business_id &&
+              customer_id &&
+              orderCode
+            ) {
+              const convResult =
+                await createOrGetOrderConversationFromOrderDetails({
+                  orderId: orderCode,
+                  customer_id: Number(customer_id),
+                  business_id: Number(business_id),
+                  merchant_user_id: String(merchant_user_id),
+                  token: token,
+                });
+              conversationId =
+                convResult?.conversation_id || convResult?.conversationId;
+              customerName =
+                convResult?.meta?.customerName ||
+                order?.__user?.user_name ||
+                order?.__user?.name ||
+                "Customer";
+            }
+          } catch (err) {
+            console.log(
+              "[ORDER] Failed to get conversation for chat option:",
+              err,
+            );
+          }
+
+          Alert.alert(
+            "Order Auto-Declined",
+            "All items have been removed from this order. The order has been automatically declined due to out of stock.\n\nA message has been sent to the customer.\n\nWhat would you like to do?",
+            [
+              {
+                text: "Stay",
+                onPress: () => {
+                  console.log("[ORDER] User chose to stay");
+                },
+                style: "default",
+              },
+              {
+                text: "Go to Chat",
+                onPress: async () => {
+                  console.log("[ORDER] User chose to go to chat");
+                  // ✅ Use the saved conversation ID instead of creating a new one
+                  if (
+                    lastConversationId &&
+                    merchant_user_id &&
+                    business_id &&
+                    customer_id
+                  ) {
+                    try {
+                      navigation.navigate("MerchantChatRoomScreen", {
+                        conversationId: String(lastConversationId),
+                        orderId: String(
+                          order?.order_code || order?.id || routeOrderId,
+                        ),
+                        userType: "MERCHANT",
+                        userId: String(merchant_user_id),
+                        businessId: String(business_id),
+                        customerId: String(customer_id),
+                        customerName: customerName,
+                        meta: {
+                          customerId: String(customer_id),
+                          customerName: customerName,
+                          customer_profile_image:
+                            order?.__user?.profile_image || "",
+                        },
+                        source: "order-details-auto-decline",
+                      });
+                    } catch (navError) {
+                      console.log("[ORDER] Navigation error:", navError);
+                      Alert.alert(
+                        "Error",
+                        "Could not open chat. Please try again.",
+                      );
+                    }
+                  } else {
+                    // Fallback to regular chat open
+                    await openChatFromOrder();
+                  }
+                },
+              },
+            ],
+            { cancelable: false },
+          );
+          return true;
+        } else {
+          Alert.alert("Error", "Failed to decline order. Please try again.", [
+            { text: "OK" },
+          ]);
+          return false;
+        }
+      }
+      return false;
+    },
+    [
+      updateSingleStatusLikeCluster,
+      hydrateFromGrouped, // ✅ Add this dependency
+      goBackToOrders,
+      businessId,
+      paramBusinessId,
+      order,
+      routeOrderId,
+      navigation,
+      openChatFromOrder,
+      lastConversationId,
+    ],
+  );
+  const handleMarkItemUnavailable = useCallback(
+    async (
+      key,
+      item,
+      reason = "",
+      replacementItem = null,
+      shouldNavigateToChat = true,
+      forceRemove = false,
+    ) => {
+      if (normalizeStatus(status) !== "PENDING") {
+        Alert.alert(
+          "Cannot modify",
+          "Items can only be marked unavailable for pending orders.",
+        );
+        return false;
+      }
+
+      // Prevent duplicate marking
+      if (itemUnavailableMap[key]) {
+        console.log("[DEBUG] Item already marked unavailable, skipping");
+        return false;
+      }
+
+      // Reset auto-message sent flag
+      // autoMessageSentRef.current = false;
+      const actualMode = forceRemove ? "REMOVE" : effectiveUnavailableMode;
+      const itemName = getItemName(item);
+      const itemPrice = getItemUnitPrice(item);
+      const itemQty = getItemQty(item);
+      const itemTotal = itemPrice * itemQty;
+
+      // Calculate new total after removal/replacement
+      let newSubtotal = 0;
+      let remainingItemsCount = 0;
+
+      items.forEach((it) => {
+        const itKey = it._key;
+        if (itKey === key) {
+          // Skip the item being removed
+          if (ifUnavailableMode === "REMOVE") return;
+          // If we have a replacement, use its price instead
+          if (ifUnavailableMode === "REPLACE" && replacementItem) {
+            const replacementPrice = getItemUnitPrice(replacementItem);
+            const qty = getItemQty(it);
+            newSubtotal += replacementPrice * qty;
+            remainingItemsCount++;
+          }
+          return;
+        }
+        // Check if item is already marked unavailable
+        if (ifUnavailableMode === "REMOVE" && itemUnavailableMap[itKey]) return;
+
+        const itPrice = getItemUnitPrice(it);
+        const itQty = getItemQty(it);
+        newSubtotal += itPrice * itQty;
+        remainingItemsCount++;
+      });
+
+      // ✅ FIX: Calculate fees properly
+      let deliveryFee = feeSnapForUi.delivery_fee ?? 0;
+      const merchantDeliveryFee = feeSnapForUi.merchant_delivery_fee ?? 0;
+      const discount = feeSnapForUi.discount_amount ?? 0;
+      const platformFee = feeSnapForUi.platform_fee ?? 0;
+
+      // ✅ If no items remain, set ALL fees to 0
+      let finalTotal = 0;
+      let finalDeliveryFee = deliveryFee;
+
+      // ✅ FIX: Use actualMode instead of ifUnavailableMode
+      if (remainingItemsCount === 0 && actualMode === "REMOVE") {
+        // No items left - total should be 0
+        finalTotal = 0;
+        finalDeliveryFee = 0;
+        console.log(
+          "[ORDER] No items remaining, setting total to 0 and fees to 0",
+        );
+      } else {
+        // Calculate normal total
+        finalTotal = Math.max(
+          0,
+          newSubtotal +
+            deliveryFee +
+            merchantDeliveryFee +
+            platformFee -
+            discount,
+        );
+      }
+
+      console.log("[ORDER] finalTotal calculation:", {
+        remainingItemsCount,
+        actualMode,
+        newSubtotal,
+        deliveryFee,
+        merchantDeliveryFee,
+        platformFee,
+        discount,
+        finalTotal,
+      });
+
+      /// ✅ FIX: Use actualMode instead of ifUnavailableMode for auto-decline check
+      if (finalTotal === 0 && actualMode === "REMOVE") {
+        Alert.alert(
+          "Order Empty - Auto Decline",
+          `${itemName} is the last item in this order. Removing it will result in an empty order (total BTN. 0).\n\nThe order will be automatically declined due to "Out of Stock".`,
+          [
+            {
+              text: "Cancel",
+              style: "cancel",
+              onPress: () => {
+                setItemUnavailableMap((prev) => {
+                  const newMap = { ...prev };
+                  delete newMap[key];
+                  return newMap;
+                });
+              },
+            },
+            {
+              text: "Proceed & Decline",
+              onPress: async () => {
+                // Mark as unavailable
+                setItemUnavailableMap((prev) => ({ ...prev, [key]: true }));
+
+                // Send message
+                if (!autoMessageSentRef.current) {
+                  autoMessageSentRef.current = true;
+                  await sendAutoMessageForUnavailable(
+                    item,
+                    itemTotal,
+                    0,
+                    "Order empty - all items unavailable",
+                    "REMOVE",
+                    null,
+                    false, // Don't navigate
+                  );
+                }
+
+                // Decline order
+                setTimeout(async () => {
+                  try {
+                    setUpdating(true);
+
+                    // ✅ IMMEDIATELY update local status to hide buttons
+                    setOrder((prev) => ({
+                      ...prev,
+                      status: "DECLINED",
+                    }));
+
+                    const declineSuccess = await updateSingleStatusLikeCluster({
+                      newStatus: "DECLINED",
+                      deliveryBy: deliveryOptionInitial || null,
+                      reasonText:
+                        "Out of stock - all ordered items are unavailable",
+                      extraPayload: {
+                        cancel_reason: "Out of stock - all items unavailable",
+                        cancellation_reason:
+                          "Out of stock - all items removed from order",
+                        total_amount: 0,
+                        final_total_amount: 0,
+                      },
+                      extraPatch: {
+                        cancel_reason: "Out of stock - all items unavailable",
+                        total: 0,
+                        total_amount: 0,
+                      },
+                      showSuccessAlert: false,
+                    });
+
+                    if (declineSuccess) {
+                      // ✅ Force refresh from server to sync
+                      await hydrateFromGrouped();
+
+                      Alert.alert(
+                        "Order Declined",
+                        "Order has been declined due to all items being out of stock.\n\nA message has been sent to the customer.\n\nWhat would you like to do?",
+                        [
+                          {
+                            text: "Stay",
+                            onPress: () => {
+                              console.log("[ORDER] User chose to stay");
+                            },
+                          },
+                          {
+                            text: "Go to Chat",
+                            onPress: async () => {
+                              console.log("[ORDER] User chose to go to chat");
+                              await openChatFromOrder();
+                            },
+                          },
+                        ],
+                      );
+                    }
+                  } catch (error) {
+                    console.log("[ORDER] Auto-decline error:", error);
+                    Alert.alert("Error", "Failed to decline order");
+                  } finally {
+                    setUpdating(false);
+                  }
+                }, 1500);
+              },
+            },
+          ],
+        );
+        return false;
+      }
+
+      // Mark as unavailable immediately
+      setItemUnavailableMap((prev) => ({ ...prev, [key]: true }));
+
+      // ✅ FIX: Use actualMode instead of ifUnavailableMode
+      const mode = actualMode === "REPLACE" ? "REPLACE" : "REMOVE";
+      console.log(
+        `[ORDER] Sending auto-message with mode: ${mode} (actualMode: ${actualMode}, forceRemove: ${forceRemove})`,
+      );
+      // Always send message for this item, regardless of count
+      // Reset the flag for this specific operation
+      const messageSent = await sendAutoMessageForUnavailable(
+        item,
+        itemTotal,
+        finalTotal,
+        reason,
+        mode, // ✅ Now uses actualMode
+        replacementItem,
+        shouldNavigateToChat,
+      );
+
+      if (messageSent) {
+        console.log(`[ORDER] Auto-message sent for item: ${getItemName(item)}`);
+      } else {
+        console.log(
+          `[ORDER] Failed to send auto-message for item: ${getItemName(item)}`,
+        );
+      }
+
+      if (mode === "REPLACE" && replacementItem) {
+        setItemReplacementMap((prev) => ({ ...prev, [key]: replacementItem }));
+        console.log(
+          `[ORDER] Item ${itemName} replaced with ${getItemName(replacementItem)}.`,
+        );
+
+        Alert.alert(
+          "Item Replaced",
+          `${itemName} has been replaced with ${getItemName(replacementItem)}.\n\nNew total: ${money(finalTotal, "BTN.")}`,
+          [{ text: "OK" }],
+        );
+      } else {
+        // ✅ Show different message based on whether it was force removed or not
+        const removalType = forceRemove ? "removed" : "marked as unavailable";
+        console.log(`[ORDER] Item ${itemName} ${removalType}.`);
+
+        Alert.alert(
+          "Item Removed",
+          `${itemName} has been ${removalType}.\n\nNew total: ${money(finalTotal, "BTN.")}`,
+          [{ text: "OK" }],
+        );
+      }
+
+      return true;
+    },
+    [
+      status,
+      items,
+      itemUnavailableMap,
+      ifUnavailableMode,
+      feeSnapForUi,
+      sendAutoMessageForUnavailable,
+      updateSingleStatusLikeCluster,
+      goBackToOrders,
+      deliveryOptionInitial,
+      setUpdating,
+      money,
+    ],
+  );
+
+  /* ===========================
+      Handle replacement selection with auto-message
+      =========================== */
+  const handleReplacementWithNotification = useCallback(
+    async (itemKey, replacement) => {
+      if (!itemKey || !replacement) return;
+
+      // Find the original item
+      const originalItem = items.find((it) => it._key === itemKey);
+      if (!originalItem) return;
+
+      // Mark as unavailable with replacement
+      await handleMarkItemUnavailable(itemKey, originalItem, "", replacement);
+    },
+    [items, handleMarkItemUnavailable],
+  );
 
   /* ---------- Hydrate from grouped endpoint (live orders ONLY) ---------- */
   const hydrateFromGrouped = useCallback(async () => {
@@ -1344,9 +2539,16 @@ export default function OrderDetails() {
 
       const matchStatus = normalizeStatus(match?.status ?? "PENDING");
       const localStatus = normalizeStatus(order?.status ?? "PENDING");
-      const finalStatus = isHigherOrEqualStatus(localStatus, matchStatus)
-        ? localStatus
-        : matchStatus;
+
+      // ✅ If local status is DECLINED, keep it (don't override with PENDING from server)
+      let finalStatus;
+      if (localStatus === "DECLINED") {
+        finalStatus = "DECLINED";
+      } else {
+        finalStatus = isHigherOrEqualStatus(localStatus, matchStatus)
+          ? localStatus
+          : matchStatus;
+      }
 
       const feeSnap = getOrderTotalsSnapshot(match, order);
 
@@ -1413,17 +2615,28 @@ export default function OrderDetails() {
         totals: match?.totals ?? order?.totals ?? null,
       };
 
-      setOrder((prev) => ({
-        ...prev,
-        ...normalizedFromMatch,
-        status: normalizeStatus(normalizedFromMatch.status),
-        delivery_address: normalizeDeliveryAddress(
-          normalizedFromMatch?.delivery_address ??
-            prev?.delivery_address ??
-            prev?.address,
-        ),
-        __user: normalizedFromMatch.__user ?? prev.__user ?? prev.user ?? null,
-      }));
+      setOrder((prevOrderState) => {
+        // ✅ Preserve DECLINED status if already set
+        const shouldKeepDeclined = prevOrderState?.status === "DECLINED";
+
+        return {
+          ...prevOrderState,
+          ...normalizedFromMatch,
+          status: shouldKeepDeclined
+            ? "DECLINED"
+            : normalizeStatus(normalizedFromMatch.status),
+          delivery_address: normalizeDeliveryAddress(
+            normalizedFromMatch?.delivery_address ??
+              prevOrderState?.delivery_address ??
+              prevOrderState?.address,
+          ),
+          __user:
+            normalizedFromMatch.__user ??
+            prevOrderState.__user ??
+            prevOrderState.user ??
+            null,
+        };
+      });
     } catch (e) {
       console.warn("[OrderDetails] hydrate error:", e?.message);
     }
@@ -1436,11 +2649,9 @@ export default function OrderDetails() {
     isScheduledOrder,
   ]);
 
-  // ✅ FIX: do not return Promise from useFocusEffect
   useFocusEffect(
     useCallback(() => {
       hydrateFromGrouped();
-      return undefined;
     }, [hydrateFromGrouped]),
   );
 
@@ -1534,13 +2745,24 @@ export default function OrderDetails() {
       cityId: String(cityId || "thimphu").toLowerCase(),
     };
   }, [order]);
+  // Add this near your other useEffects (around line 800)
+  useEffect(() => {
+    autoMessageSentRef.current = false;
+  }, [routeOrderId]);
+  // ✅ Reset driver fetch refs when order changes - MOVE THIS OUTSIDE
+  useEffect(() => {
+    hasFetchedDriverRef.current = false;
+    fetchAttemptCountRef.current = 0;
+  }, [routeOrderId]);
 
+  // ✅ Keep the route calculation useEffect separate
   useEffect(() => {
     if ((fulfillment || "").toLowerCase() !== "delivery") {
       setRouteInfo(null);
       setRouteError("");
       return;
     }
+
     if (!businessCoords) return;
 
     const from = businessCoords;
@@ -1577,24 +2799,23 @@ export default function OrderDetails() {
       setRouteLoading(false);
     }
   }, [businessCoords, refCoords.lat, refCoords.lng, fulfillment]);
-
+  // ✅ REPLACED: Handle similar item selection with auto-message
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener(
       "similar-item-chosen",
       ({ itemKey, replacement }) => {
         if (!itemKey || !replacement) return;
-        setItemReplacementMap((prev) => ({
-          ...prev,
-          [String(itemKey)]: replacement,
-        }));
+
+        // Send auto-message for replacement
+        handleReplacementWithNotification(itemKey, replacement);
       },
     );
     return () => sub?.remove?.();
-  }, []);
+  }, [handleReplacementWithNotification]);
 
   /* ===========================
-     Cluster-style reasons
-     =========================== */
+      Cluster-style reasons
+      =========================== */
   const DEFAULT_REASON = useMemo(
     () => ({
       CONFIRMED: "Order accepted by merchant",
@@ -1607,8 +2828,8 @@ export default function OrderDetails() {
   );
 
   /* ===========================
-     FAST apply status from socket into UI + confirm via grouped
-     =========================== */
+      FAST apply status from socket into UI + confirm via grouped
+      =========================== */
   const applySocketStatusToUi = useCallback(
     (incomingStatusRaw, extraPatch = {}) => {
       const norm = normalizeStatus(incomingStatusRaw);
@@ -1669,14 +2890,25 @@ export default function OrderDetails() {
       const key = it._key;
       const qty = getItemQty(it);
       const oldLineTotal = getItemLineTotal(it);
+      const isUnavailable = !!itemUnavailableMap[key];
+      const hasReplacement = !!itemReplacementMap[key];
 
+      // For REMOVE mode - skip removed items
       if (ifUnavailableMode === "REMOVE") {
-        const isRemoved = !!itemUnavailableMap[key];
-        if (isRemoved) return;
+        if (isUnavailable) return;
         total += oldLineTotal;
         return;
       }
 
+      // For REPLACE mode - skip unavailable items without replacement
+      if (isUnavailable && !hasReplacement) {
+        console.log(
+          `[ORDER] Skipping item ${key} - unavailable without replacement`,
+        );
+        return;
+      }
+
+      // If there's a replacement, use replacement price
       const repl = itemReplacementMap[key];
       if (repl) {
         const newUnitPrice =
@@ -1687,6 +2919,7 @@ export default function OrderDetails() {
       }
     });
 
+    console.log("[ORDER] computedItemsTotal:", total);
     return total;
   }, [
     items,
@@ -1715,13 +2948,32 @@ export default function OrderDetails() {
   }, [computedItemsTotal, feeSnapForUi]);
 
   const { effectiveTotalLabel, effectiveItemsCount } = useMemo(() => {
-    const count = items.reduce((sum, it) => sum + getItemQty(it), 0);
+    let count = 0;
+    items.forEach((it) => {
+      const key = it._key;
+      const isUnavailable = !!itemUnavailableMap[key];
+      const hasReplacement = !!itemReplacementMap?.[key];
+
+      // Skip if item is marked as unavailable without replacement
+      if (isUnavailable && !hasReplacement) {
+        return;
+      }
+      count += getItemQty(it);
+    });
+
+    console.log("[ORDER] effectiveItemsCount:", count);
+
+    // Calculate total properly
+    let totalToShow = displayGrandTotal;
+    if (count === 0) {
+      totalToShow = 0;
+    }
+
     return {
-      effectiveTotalLabel: money(displayGrandTotal),
+      effectiveTotalLabel: money(totalToShow),
       effectiveItemsCount: count,
     };
-  }, [items, displayGrandTotal]);
-
+  }, [items, displayGrandTotal, itemUnavailableMap, itemReplacementMap]);
   const handleToggleUnavailable = useCallback(
     (key) => {
       if (normalizeStatus(status) !== "PENDING") return;
@@ -1730,6 +2982,7 @@ export default function OrderDetails() {
     [status],
   );
 
+  // Update handleOpenSimilarCatalog to indicate we want to navigate to chat after replacement
   const handleOpenSimilarCatalog = useCallback(
     (item) => {
       if (ifUnavailableMode !== "REPLACE") return;
@@ -1748,6 +3001,7 @@ export default function OrderDetails() {
         itemName: getItemName(item) || "",
         businessId: bizId,
         owner_type: ownerType,
+        shouldNavigateToChatAfterReplace: true, // NEW: Will trigger chat after replacement
       });
     },
     [
@@ -1761,8 +3015,8 @@ export default function OrderDetails() {
   );
 
   /* ===========================
-     Cluster-style status updater (ONE order)
-     =========================== */
+      Cluster-style status updater (ONE order)
+      =========================== */
   const updateSingleStatusLikeCluster = useCallback(
     async ({
       newStatus,
@@ -1800,6 +3054,19 @@ export default function OrderDetails() {
 
       try {
         setUpdating(true);
+
+        // ✅ Update local state IMMEDIATELY before API call
+        const immediatePatch = {
+          status: newStatus,
+          status_reason: reason,
+          ...extraPatch,
+        };
+
+        setOrder((prev) => ({
+          ...prev,
+          ...immediatePatch,
+          status: normalizeStatus(immediatePatch.status),
+        }));
 
         await updateStatusApi({
           endpoint: ENV_UPDATE_ORDER || "",
@@ -1857,17 +3124,23 @@ export default function OrderDetails() {
   );
 
   /* ===========================
-     doUpdate (cluster style)
-     =========================== */
+      doUpdate (cluster style)
+      =========================== */
   const doUpdate = useCallback(
     async (newStatusRaw, opts = {}, skipUnavailableCheck = false) => {
+      // ✅ Prevent actions on declined orders
+      if (status === "DECLINED" || isTerminalNegative) {
+        Alert.alert("Cannot update", "This order has already been declined.");
+        return;
+      }
       const currentStatus = normalizeStatus(order?.status || "PENDING");
       const newStatus = normalizeStatus(newStatusRaw);
-
-      if (isDriverAssigned) {
+      // Allow merchant to update from ASSIGNED to READY
+      // But block other updates when driver is assigned (except ASSIGNED status)
+      if (isDriverAssigned && currentStatus !== "ASSIGNED") {
         Alert.alert(
           "Driver controlled",
-          "Driver will update the status for Grab delivery.",
+          "Driver will update the status for Tabdhey delivery.",
         );
         return;
       }
@@ -1879,6 +3152,62 @@ export default function OrderDetails() {
             : "GRAB"
           : deliveryOptionInitial || "";
 
+      // PICKEDUP (for pickup orders)
+      if (newStatus === "PICKEDUP") {
+        // Use the passed name from opts, or fall back to state, or default
+        const pickupName =
+          opts?.pickupName || pickedUpByName || "Store Manager";
+        console.log("[PICKUP] Setting pickedup_by to:", pickupName);
+
+        // Force a complete state update with all fields
+        const updatedOrder = {
+          ...order,
+          status: "PICKEDUP",
+          pickedup_by: pickupName,
+          picked_up_by: pickupName,
+          pickup_by: pickupName,
+          status_timestamps: {
+            ...(order?.status_timestamps || {}),
+            PICKEDUP: new Date().toISOString(),
+          },
+        };
+
+        console.log(
+          "[PICKUP] Updated order object:",
+          JSON.stringify(updatedOrder, null, 2),
+        );
+
+        // Update the entire order state at once
+        setOrder(updatedOrder);
+
+        // Call API in background
+        updateSingleStatusLikeCluster({
+          newStatus: "PICKEDUP",
+          deliveryBy: deliveryBy || null,
+          reasonText: `Order picked up by ${pickupName}`,
+          extraPayload: {
+            pickedup_by: pickupName,
+            picked_up_by: pickupName,
+            pickup_by: pickupName,
+            pickedup_at: new Date().toISOString(),
+          },
+          extraPatch: {
+            pickedup_by: pickupName,
+            picked_up_by: pickupName,
+            pickup_by: pickupName,
+            status: "PICKEDUP",
+            status_timestamps: {
+              ...(order?.status_timestamps || {}),
+              PICKEDUP: new Date().toISOString(),
+            },
+          },
+          showSuccessAlert: false,
+        }).catch((err) => {
+          console.log("[PICKUP] API error:", err);
+        });
+
+        return;
+      }
       // DECLINE
       if (newStatus === "DECLINED") {
         const r = String(opts?.reason ?? "").trim();
@@ -2008,6 +3337,7 @@ export default function OrderDetails() {
             merchant_delivery_fee: final_merchant_delivery_fee,
             total: final_total_amount,
             total_amount: final_total_amount,
+            delivery_option: deliveryBy,
           },
           showSuccessAlert: true,
         });
@@ -2015,13 +3345,21 @@ export default function OrderDetails() {
         return;
       }
 
-      // OTHER STATUSES
+      // OTHER STATUSES (including READY)
+      // For GRAB deliveries, ensure delivery_option stays as GRAB when updating to READY
+      const finalDeliveryBy =
+        newStatus === "READY" && isGrabSelected ? "GRAB" : deliveryBy;
+      const finalExtraPatch =
+        newStatus === "READY" && isGrabSelected
+          ? { delivery_option: "GRAB" }
+          : {};
+
       await updateSingleStatusLikeCluster({
         newStatus,
-        deliveryBy: deliveryBy || null,
+        deliveryBy: finalDeliveryBy || null,
         reasonText: String(opts?.reason || "").trim(),
         extraPayload: {},
-        extraPatch: {},
+        extraPatch: finalExtraPatch,
         showSuccessAlert: true,
       });
     },
@@ -2044,6 +3382,8 @@ export default function OrderDetails() {
       isDriverAssigned,
       updateSingleStatusLikeCluster,
       DEFAULT_REASON,
+      status, // ✅ ADD THIS - critical for status updates
+      isTerminalNegative,
     ],
   );
 
@@ -2052,7 +3392,9 @@ export default function OrderDetails() {
     status === "PENDING"
       ? "Accept"
       : next
-        ? STATUS_META[next]?.label || "Next"
+        ? STATUS_META[next]?.label ||
+          (next === "PICKED_UP" ? STATUS_META.READY?.label : null) ||
+          "Next"
         : null;
 
   const onPrimaryAction = useCallback(() => {
@@ -2143,26 +3485,20 @@ export default function OrderDetails() {
     routeInfo,
   ]);
 
-  /* ---------- Driver rating fetch ---------- */
+  /* ---------- Driver rating fetch (simplified - now handled by batch effect) ---------- */
   const fetchDriverRating = useCallback(async (driverId) => {
     try {
-      let base = (ENV_DRIVER_RATING || "").trim();
-      if (!base) return;
+      const DIVER_RATING_ENDPOINT =
+        "https://backend.tabdhey.bt/grablike/api/ratings";
+      const ratingUrl = `${DIVER_RATING_ENDPOINT}?driver_id=${encodeURIComponent(String(driverId))}&limit=20&offset=0`;
 
-      let finalUrl = base;
-      if (base.includes("{driver_id}")) {
-        finalUrl = base.replace(
-          "{driver_id}",
-          encodeURIComponent(String(driverId)),
-        );
-      } else {
-        const sep = base.includes("?") ? "&" : "?";
-        finalUrl = `${base}${sep}driver_id=${encodeURIComponent(String(driverId))}`;
-      }
-
-      const res = await fetch(finalUrl, {
+      const token = await SecureStore.getItemAsync("auth_token");
+      const res = await fetch(ratingUrl, {
         method: "GET",
-        headers: { Accept: "application/json" },
+        headers: {
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
       });
 
       const text = await res.text();
@@ -2171,25 +3507,13 @@ export default function OrderDetails() {
         json = text ? JSON.parse(text) : null;
       } catch {}
 
-      if (!res.ok)
-        throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(json?.message || `HTTP ${res.status}`);
 
-      let avg = null;
-      let count = null;
-
-      const d = json?.summary || json?.details || json?.data || json;
-
-      if (Array.isArray(d) && d.length > 0) {
-        const first = d[0];
-        avg = first.avg_rating ?? first.average_rating ?? first.rating ?? null;
-        count =
-          first.total_ratings ?? first.count ?? first.rating_count ?? null;
-      } else if (d && typeof d === "object") {
-        avg = d.avg_rating ?? d.average_rating ?? d.rating ?? null;
-        count = d.total_ratings ?? d.count ?? d.rating_count ?? null;
+      if (json?.summary) {
+        const avg = json.summary.avg;
+        const count = json.summary.count;
+        setDriverRating({ average: avg, count });
       }
-
-      setDriverRating({ average: avg, count });
     } catch (err) {
       console.log(
         "[OrderDetails] Failed to fetch driver rating:",
@@ -2198,27 +3522,21 @@ export default function OrderDetails() {
     }
   }, []);
 
-  /* ---------- Driver details fetch ---------- */
+  /* ---------- Driver details fetch (simplified - now handled by batch effect) ---------- */
   const fetchDriverDetails = useCallback(
     async (driverId) => {
       try {
-        let base = (ENV_DRIVER_DETAILS || "").trim();
-        if (!base) return;
+        const DRIVER_DETAILS_ENDPOINT =
+          "https://backend.tabdhey.bt/grablike/api/driver_id";
+        const driverUrl = `${DRIVER_DETAILS_ENDPOINT}?driverId=${encodeURIComponent(String(driverId))}`;
 
-        let finalUrl = base;
-        if (base.includes("{driverId}")) {
-          finalUrl = base.replace(
-            "{driverId}",
-            encodeURIComponent(String(driverId)),
-          );
-        } else {
-          const sep = base.includes("?") ? "&" : "?";
-          finalUrl = `${base}${sep}driverId=${encodeURIComponent(String(driverId))}`;
-        }
-
-        const res = await fetch(finalUrl, {
+        const token = await SecureStore.getItemAsync("auth_token");
+        const res = await fetch(driverUrl, {
           method: "GET",
-          headers: { Accept: "application/json" },
+          headers: {
+            Accept: "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
         });
 
         const text = await res.text();
@@ -2227,13 +3545,12 @@ export default function OrderDetails() {
           json = text ? JSON.parse(text) : null;
         } catch {}
 
-        if (!res.ok)
-          throw new Error(json?.message || json?.error || `HTTP ${res.status}`);
+        if (!res.ok) throw new Error(json?.message || `HTTP ${res.status}`);
 
-        const drv = json?.details || json?.data || json?.driver || json;
-
-        setDriverDetails(drv);
-        await fetchDriverRating(driverId);
+        if (json?.ok && json?.details) {
+          setDriverDetails(json.details);
+          await fetchDriverRating(driverId);
+        }
       } catch (err) {
         console.log(
           "[OrderDetails] Failed to fetch driver details:",
@@ -2271,10 +3588,10 @@ export default function OrderDetails() {
   }, [driverDetails, driverRating]);
 
   /* ===========================
-     ✅ CHANGE: GRAB selection navigates immediately to NearbyOrdersScreen
-     - No deliver in group
-     - No popup/alert
-     =========================== */
+      ✅ CHANGE: GRAB selection navigates immediately to NearbyOrdersScreen
+      - No deliver in group
+      - No popup/alert
+      =========================== */
   const redirectToNearbyOrders = useCallback(async () => {
     const biz =
       businessId ??
@@ -2339,8 +3656,8 @@ export default function OrderDetails() {
   ]);
 
   /* ===========================
-     SOCKET: accept + arrived + status updates (NO batch matching)
-     =========================== */
+      SOCKET: accept + arrived + status updates (NO batch matching)
+      =========================== */
   useEffect(() => {
     if (!ENV_RIDE_SOCKET) return;
 
@@ -2448,13 +3765,27 @@ export default function OrderDetails() {
       const st = extractStatusFromPayload(payload);
       if (!st) return;
 
+      const norm = normalizeStatus(st);
+
+      // Apply the status immediately to UI
       applySocketStatusToUi(st);
 
-      const norm = normalizeStatus(st);
-      if (norm === "OUT_FOR_DELIVERY")
+      // Update ride message based on status
+      if (norm === "PICKED_UP") {
+        setRideMessage("Driver has picked up your order.");
+        // Force immediate refresh to update UI
+        hydrateFromGrouped();
+      } else if (norm === "OUT_FOR_DELIVERY") {
         setRideMessage("Driver is on the way (Out for delivery).");
-      else if (norm === "COMPLETED")
+        hydrateFromGrouped();
+      } else if (norm === "COMPLETED") {
         setRideMessage("Order delivered (Delivery complete).");
+        hydrateFromGrouped();
+      } else if (norm === "ASSIGNED") {
+        setRideMessage("Driver has been assigned to your order.");
+      } else if (norm === "READY") {
+        setRideMessage("Order is ready for pickup.");
+      }
     };
 
     (async () => {
@@ -2589,14 +3920,32 @@ export default function OrderDetails() {
     return () => sub?.remove?.();
   }, [routeOrderId, order?.id]);
 
-  /* ===========================
-     ✅ CHANGE: When user selects GRAB, do NOT broadcast.
-     Instead: redirect immediately to NearbyOrdersScreen
-     =========================== */
+  // Clear conversation cache when order changes
+  useEffect(() => {
+    return () => {
+      conversationCacheRef.current = {};
+    };
+  }, [routeOrderId]);
+
   const onSetDeliveryChoice = useCallback(
     async (choice) => {
       const nextChoice = String(choice || "").toLowerCase();
       setDeliveryChoice(nextChoice);
+
+      // ✅ Save to SecureStore to persist
+      try {
+        const biz = businessId || paramBusinessId;
+        const orderKey = order?.id || routeOrderId;
+        if (biz && orderKey) {
+          await SecureStore.setItemAsync(
+            `order_delivery_choice_${biz}_${orderKey}`,
+            nextChoice,
+          );
+          console.log("[DELIVERY] Saved choice:", nextChoice);
+        }
+      } catch (e) {
+        console.log("[DELIVERY] Failed to save choice:", e);
+      }
 
       // reset when switching away from grab
       if (nextChoice !== "grab") {
@@ -2615,9 +3964,14 @@ export default function OrderDetails() {
 
       await redirectToNearbyOrders();
     },
-    [redirectToNearbyOrders],
+    [
+      redirectToNearbyOrders,
+      businessId,
+      paramBusinessId,
+      order?.id,
+      routeOrderId,
+    ],
   );
-
   const isCancelledByCustomer = useMemo(() => {
     const rawStatus = normalizeStatus(order?.status);
     const reasonRaw =
@@ -2666,6 +4020,38 @@ export default function OrderDetails() {
   /* ---------------- UI helpers ---------------- */
   const headerTopPad = Math.max(insets.top, S(8)) + S(18);
   const fulfillmentLower = (fulfillment || "").toLowerCase();
+
+  const shouldShowDeliveryOptions = useMemo(() => {
+    // Don't show delivery options for pickup orders
+    if (isPickupFulfillment) return false;
+
+    // Don't show delivery options for declined orders
+    if (status === "DECLINED") return false;
+
+    // Don't show delivery options once driver has accepted
+    if (driverAccepted) return false;
+
+    // Show delivery options when order is CONFIRMED (after merchant accepts)
+    // NOT before CONFIRMED (PENDING), and NOT after READY or later
+    return status === "CONFIRMED" && !isTerminalNegative && !isTerminalSuccess;
+  }, [
+    status,
+    isTerminalNegative,
+    isTerminalSuccess,
+    driverAccepted,
+    isPickupFulfillment,
+  ]);
+
+  // ✅ ADD THIS DEBUG CODE HERE - Right before the return statement
+  console.log("[DEBUG] Pickup button conditions:", {
+    status,
+    isPickupFulfillment,
+    fulfillment,
+    isTerminalNegative,
+    isTerminalSuccess,
+    isCancelledByCustomer,
+    shouldShowPickupButton: status === "READY" && isPickupFulfillment,
+  });
 
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
@@ -2734,7 +4120,13 @@ export default function OrderDetails() {
           </View>
 
           <StatusRail
-            status={status}
+            status={
+              status === "ASSIGNED"
+                ? "CONFIRMED"
+                : status === "PICKED_UP"
+                  ? "READY"
+                  : status
+            }
             statusSequence={STATUS_SEQUENCE}
             isTerminalNegative={isTerminalNegative}
             isTerminalSuccess={isTerminalSuccess}
@@ -2747,6 +4139,17 @@ export default function OrderDetails() {
             status={status}
             fulfillment={fulfillment}
             fulfillmentLower={fulfillmentLower}
+            deliveryOptionDisplay={
+              status === "ASSIGNED"
+                ? "GRAB"
+                : order?.delivery_option === "GRAB"
+                  ? "GRAB"
+                  : order?.delivery_option === "SELF"
+                    ? "SELF"
+                    : deliveryChoice === "self"
+                      ? "SELF"
+                      : "GRAB"
+            }
             ifUnavailableDisplay={ifUnavailableDisplay}
             estimatedArrivalDisplay={estimatedArrivalDisplay}
             etaText={etaText}
@@ -2761,64 +4164,436 @@ export default function OrderDetails() {
 
         {!isScheduledOrder && (
           <>
-            {/* ✅ Only show delivery options after order is READY and not terminal */}
-            {(status === "READY" || status === "OUT_FOR_DELIVERY") &&
-              !isTerminalNegative &&
-              !isTerminalSuccess && (
-                <View style={{ marginTop: S(8) }}>
-                  <DeliveryMethodChooser
-                    status={status}
-                    isBothOption={isBothOption}
-                    isTerminalNegative={isTerminalNegative}
-                    isTerminalSuccess={isTerminalSuccess}
-                    isSelfSelected={isSelfSelected}
-                    isGrabSelected={isGrabSelected}
-                    sendingGrab={false}
-                    rideMessage={rideMessage}
-                    driverSummaryText={driverSummaryText}
-                    driverAccepted={driverAccepted}
-                    setDeliveryChoice={onSetDeliveryChoice}
-                    stopGrabLoop={() => {}}
-                    startGrabLoop={() => {}} // ✅ no popup
-                    // ✅ deliver-in-group removed
-                    showDeliverInGroup={false}
-                    onDeliverInGroup={() => {}}
-                  />
-                </View>
-              )}
-
-            {/* ✅ Show "Update status" ONLY for SELF */}
-            {isSelfSelected && (
-              <View style={{ marginTop: S(12) }}>
-                <UpdateStatusActions
+            {/* Show delivery method chooser ONLY for CONFIRMED status and NOT for pickup orders */}
+            {!isPickupFulfillment && status === "CONFIRMED" && (
+              <View style={{ marginTop: S(8) }}>
+                <DeliveryMethodChooser
                   status={status}
-                  isCancelledByCustomer={isCancelledByCustomer}
+                  isBothOption={isBothOption}
                   isTerminalNegative={isTerminalNegative}
                   isTerminalSuccess={isTerminalSuccess}
-                  isBothOption={isBothOption}
+                  isSelfSelected={isSelfSelected}
                   isGrabSelected={isGrabSelected}
-                  isPlatformDelivery={isPlatformDelivery}
-                  updating={updating}
-                  next={next}
-                  primaryLabel={primaryLabel}
-                  onPrimaryAction={onPrimaryAction}
-                  doUpdate={doUpdate}
-                  onDecline={() => setDeclineOpen(true)}
+                  sendingGrab={false}
+                  rideMessage={isSelfSelected ? "" : rideMessage}
+                  driverSummaryText={driverSummaryText}
                   driverAccepted={driverAccepted}
+                  setDeliveryChoice={onSetDeliveryChoice}
+                  stopGrabLoop={() => {}}
+                  startGrabLoop={() => {}}
+                  showDeliverInGroup={false}
+                  onDeliverInGroup={() => {}}
                 />
               </View>
             )}
+
+            {/* {console.log("[DEBUG] Driver block conditions:", {
+              status,
+              isGrabSelected,
+              driverDetails: !!driverDetails,
+              shouldShow:
+                (status === "ASSIGNED" ||
+                  status === "READY" ||
+                  status === "PICKED_UP" ||
+                  status === "OUT_FOR_DELIVERY") &&
+                isGrabSelected,
+            })} */}
+            {/* Driver tracking block - HIDE for pickup orders */}
+            {!isPickupFulfillment &&
+              ((status === "CONFIRMED" && isGrabSelected && !driverAccepted) ||
+                status === "ASSIGNED" ||
+                status === "READY" ||
+                status === "PICKED_UP" ||
+                status === "OUT_FOR_DELIVERY") &&
+              isGrabSelected && (
+                <View
+                  style={{
+                    marginTop: S(12),
+                    marginBottom: S(8),
+                    padding: S(12),
+                    backgroundColor: "#F3F4F6",
+                    borderRadius: S(12),
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: S(8),
+                      marginBottom: S(8),
+                    }}
+                  >
+                    <Ionicons name="car-outline" size={S(18)} color="#6B7280" />
+                    <Text
+                      style={{
+                        fontSize: S(13),
+                        fontWeight: "500",
+                        color: "#374151",
+                      }}
+                    >
+                      Delivery Status
+                    </Text>
+                  </View>
+
+                  <Text
+                    style={{
+                      fontSize: S(14),
+                      color: "#1F2937",
+                      marginBottom: S(4),
+                    }}
+                  >
+                    Status:{" "}
+                    <Text style={{ fontWeight: "600", color: "#00B14F" }}>
+                      {status === "ASSIGNED"
+                        ? "Driver Assigned"
+                        : status === "READY"
+                          ? "Ready for Pickup"
+                          : status === "PICKED_UP"
+                            ? "Picked Up ✓"
+                            : status === "OUT_FOR_DELIVERY"
+                              ? "Out for Delivery"
+                              : status}
+                    </Text>
+                  </Text>
+
+                  {driverSummaryText && (
+                    <Text
+                      style={{
+                        fontSize: S(12),
+                        color: "#6B7280",
+                        marginTop: S(4),
+                      }}
+                    >
+                      {driverSummaryText}
+                    </Text>
+                  )}
+
+                  {rideMessage && (
+                    <Text
+                      style={{
+                        fontSize: S(12),
+                        color: "#6B7280",
+                        fontStyle: "italic",
+                        marginTop: S(4),
+                      }}
+                    >
+                      {rideMessage}
+                    </Text>
+                  )}
+
+                  {driverArrived && (
+                    <View
+                      style={{
+                        marginTop: S(8),
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: S(6),
+                      }}
+                    >
+                      <Ionicons
+                        name="location-outline"
+                        size={S(14)}
+                        color="#10B981"
+                      />
+                      <Text
+                        style={{
+                          fontSize: S(12),
+                          color: "#10B981",
+                          fontWeight: "500",
+                        }}
+                      >
+                        Driver has arrived
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* ✅ TRACK BUTTON - Only show when driver is assigned (has ride_id) */}
+                  {rideId &&
+                    (status === "ASSIGNED" ||
+                      status === "READY" ||
+                      status === "PICKED_UP" ||
+                      status === "OUT_FOR_DELIVERY") && (
+                      <Pressable
+                        onPress={() => {
+                          // Navigate to batch tracking screen
+                          const biz =
+                            businessId ?? paramBusinessId ?? order?.business_id;
+                          if (!biz) {
+                            Alert.alert("Error", "Business ID not found");
+                            return;
+                          }
+
+                          const orderCode = normalizeOrderCode(
+                            order?.order_code || order?.id || routeOrderId,
+                          );
+
+                          console.log(
+                            "[TRACK] Navigating to BatchRidesScreen with:",
+                            {
+                              rideId: rideId,
+                              businessId: biz,
+                              orderCode: orderCode,
+                              focusRideId: rideId,
+                            },
+                          );
+
+                          navigation.navigate("BatchRidesScreen", {
+                            rideId: rideId,
+                            businessId: biz,
+                            orderId: order?.id || routeOrderId,
+                            orderCode: orderCode,
+                            focusRideId: rideId,
+                            focusOrderId: orderCode,
+                            highlightCard: true,
+                          });
+                        }}
+                        style={({ pressed }) => ({
+                          backgroundColor: pressed ? "#059669" : "#00B14F",
+                          paddingVertical: S(10),
+                          paddingHorizontal: S(16),
+                          borderRadius: S(10),
+                          flexDirection: "row",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: S(8),
+                          marginTop: S(12),
+                        })}
+                      >
+                        <Ionicons
+                          name="map-outline"
+                          size={S(16)}
+                          color="#FFFFFF"
+                        />
+                        <Text
+                          style={{
+                            color: "#FFFFFF",
+                            fontSize: S(14),
+                            fontWeight: "600",
+                          }}
+                        >
+                          Track Driver
+                        </Text>
+                      </Pressable>
+                    )}
+                </View>
+              )}
+
+            {/* Show status update buttons - works for BOTH SELF and GRAB deliveries */}
+            {status !== "DECLINED" &&
+              status !== "CANCELLED" &&
+              status !== "COMPLETED" &&
+              !isTerminalNegative &&
+              !isTerminalSuccess &&
+              !isCancelledByCustomer && (
+                <View style={{ marginTop: S(12) }}>
+                  <Text style={styles.sectionTitle}>Update status</Text>
+
+                  {/* For PENDING status - Show Accept/Decline buttons */}
+                  {status === "PENDING" && (
+                    <View style={styles.actionsRow}>
+                      <Pressable
+                        onPress={() => doUpdate("CONFIRMED")}
+                        disabled={updating}
+                        style={({ pressed }) => [
+                          styles.primaryBtn,
+                          { opacity: updating || pressed ? 0.85 : 1 },
+                        ]}
+                      >
+                        <Ionicons
+                          name="checkmark-circle-outline"
+                          size={18}
+                          color="#fff"
+                        />
+                        <Text style={styles.primaryBtnText}>Accept</Text>
+                      </Pressable>
+
+                      <Pressable
+                        onPress={() => setDeclineOpen(true)}
+                        disabled={updating}
+                        style={({ pressed }) => [
+                          styles.secondaryBtn,
+                          {
+                            borderColor: "#ef4444",
+                            opacity: updating || pressed ? 0.85 : 1,
+                          },
+                        ]}
+                      >
+                        <Ionicons
+                          name="close-circle-outline"
+                          size={18}
+                          color="#b91c1c"
+                        />
+                        <Text
+                          style={[
+                            styles.secondaryBtnText,
+                            { color: "#991b1b" },
+                          ]}
+                        >
+                          Decline
+                        </Text>
+                      </Pressable>
+                    </View>
+                  )}
+                  {/* For ASSIGNED status - Show Ready button */}
+                  {status === "ASSIGNED" && (
+                    <Pressable
+                      onPress={() => doUpdate("READY")}
+                      disabled={updating}
+                      style={({ pressed }) => [
+                        styles.primaryBtn,
+                        { opacity: updating || pressed ? 0.85 : 1 },
+                      ]}
+                    >
+                      <Ionicons
+                        name="checkmark-circle-outline"
+                        size={18}
+                        color="#fff"
+                      />
+                      <Text style={styles.primaryBtnText}>Ready</Text>
+                    </Pressable>
+                  )}
+                  {/* For CONFIRMED status - Show Ready button (enabled for both SELF and GRAB after driver accepts) */}
+                  {status === "CONFIRMED" && (
+                    <Pressable
+                      onPress={() => {
+                        // For GRAB deliveries, check if driver accepted
+                        if (
+                          isGrabSelected &&
+                          !driverAccepted &&
+                          !isSelfSelected
+                        ) {
+                          Alert.alert(
+                            "Waiting for Driver",
+                            "Please wait for a driver to accept this order before marking it as ready.\n\nYou'll be notified when a driver accepts.",
+                          );
+                          return;
+                        }
+                        doUpdate("READY");
+                      }}
+                      disabled={
+                        updating ||
+                        (isGrabSelected && !driverAccepted && !isSelfSelected)
+                      }
+                      style={({ pressed }) => [
+                        styles.primaryBtn,
+                        {
+                          opacity:
+                            updating ||
+                            (isGrabSelected &&
+                              !driverAccepted &&
+                              !isSelfSelected)
+                              ? 0.5
+                              : pressed
+                                ? 0.85
+                                : 1,
+                          backgroundColor:
+                            isGrabSelected && !driverAccepted && !isSelfSelected
+                              ? "#9CA3AF"
+                              : "#00B14F",
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name="checkmark-circle-outline"
+                        size={18}
+                        color="#fff"
+                      />
+                      <Text style={styles.primaryBtnText}>
+                        {isGrabSelected && !driverAccepted && !isSelfSelected
+                          ? "Waiting for Driver..."
+                          : "Ready"}
+                      </Text>
+                    </Pressable>
+                  )}
+
+                  {/* For READY status - Show appropriate button based on fulfillment type */}
+                  {status === "READY" && (
+                    <>
+                      {/* For pickup fulfillment - Show Mark as picked up button */}
+                      {isPickupFulfillment && (
+                        <Pressable
+                          onPress={() => {
+                            setPickedUpByName("");
+                            setPickedUpModalVisible(true);
+                          }}
+                          disabled={updating}
+                          style={({ pressed }) => [
+                            styles.primaryBtn,
+                            { opacity: updating || pressed ? 0.85 : 1 },
+                          ]}
+                        >
+                          <Ionicons
+                            name="checkmark-done-circle-outline"
+                            size={18}
+                            color="#fff"
+                          />
+                          <Text style={styles.primaryBtnText}>
+                            Mark as picked up
+                          </Text>
+                        </Pressable>
+                      )}
+
+                      {/* For self delivery - Show Out for Delivery button */}
+                      {!isPickupFulfillment && isSelfSelected && (
+                        <Pressable
+                          onPress={() => doUpdate("OUT_FOR_DELIVERY")}
+                          disabled={updating}
+                          style={({ pressed }) => [
+                            styles.primaryBtn,
+                            { opacity: updating || pressed ? 0.85 : 1 },
+                          ]}
+                        >
+                          <Ionicons
+                            name="bicycle-outline"
+                            size={18}
+                            color="#fff"
+                          />
+                          <Text style={styles.primaryBtnText}>
+                            Out for Delivery
+                          </Text>
+                        </Pressable>
+                      )}
+                    </>
+                  )}
+
+                  {/* For OUT_FOR_DELIVERY status - Show Complete (only for SELF deliveries) */}
+                  {status === "OUT_FOR_DELIVERY" && isSelfSelected && (
+                    <Pressable
+                      onPress={() => doUpdate("COMPLETED")}
+                      disabled={updating}
+                      style={({ pressed }) => [
+                        styles.primaryBtn,
+                        { opacity: updating || pressed ? 0.85 : 1 },
+                      ]}
+                    >
+                      <Ionicons
+                        name="checkmark-done-circle-outline"
+                        size={18}
+                        color="#fff"
+                      />
+                      <Text style={styles.primaryBtnText}>
+                        Mark as Complete
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+              )}
           </>
         )}
 
         <ItemsBlock
           items={items}
           status={status}
-          ifUnavailableMode={ifUnavailableMode}
+          ifUnavailableMode={effectiveUnavailableMode}
           unavailableMap={itemUnavailableMap}
           replacementMap={itemReplacementMap}
           onToggleUnavailable={handleToggleUnavailable}
+          onMarkItemUnavailable={handleMarkItemUnavailable}
           onOpenSimilarCatalog={handleOpenSimilarCatalog}
+          onChatWithCustomer={openChatFromOrder}
+          money={money}
+          ownerType={ownerType}
+          deliveryFee={feeSnapForUi.delivery_fee || 0}
         />
 
         <TotalsBlock
@@ -2835,6 +4610,125 @@ export default function OrderDetails() {
         onCancel={() => setDeclineOpen(false)}
         onConfirm={confirmDecline}
       />
+      {/* Modal for picking up name */}
+      <Modal
+        visible={pickedUpModalVisible}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setPickedUpModalVisible(false)}
+      >
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            alignItems: "center",
+            backgroundColor: "rgba(0,0,0,0.5)",
+          }}
+        >
+          <View
+            style={{
+              backgroundColor: "white",
+              borderRadius: 20,
+              padding: 20,
+              width: "85%",
+              alignItems: "center",
+            }}
+          >
+            <Text
+              style={{
+                fontSize: 18,
+                fontWeight: "bold",
+                marginBottom: 15,
+              }}
+            >
+              Mark as Picked Up
+            </Text>
+
+            <Text
+              style={{
+                fontSize: 14,
+                color: "#666",
+                marginBottom: 10,
+              }}
+            >
+              Enter the name of the person picking up:
+            </Text>
+
+            <TextInput
+              style={{
+                width: "100%",
+                borderWidth: 1,
+                borderColor: "#ccc",
+                borderRadius: 10,
+                padding: 12,
+                fontSize: 16,
+                marginBottom: 20,
+              }}
+              placeholder="Enter name"
+              value={pickedUpByName}
+              onChangeText={setPickedUpByName}
+              autoFocus={true}
+            />
+
+            <View
+              style={{
+                flexDirection: "row",
+                gap: 10,
+                width: "100%",
+              }}
+            >
+              <Pressable
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 10,
+                  backgroundColor: "#ccc",
+                  alignItems: "center",
+                }}
+                onPress={() => {
+                  setPickedUpModalVisible(false);
+                  setPickedUpByName("");
+                }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "600" }}>Cancel</Text>
+              </Pressable>
+
+              <Pressable
+                style={{
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 10,
+                  backgroundColor: "#00B14F",
+                  alignItems: "center",
+                }}
+                onPress={() => {
+                  const enteredName = pickedUpByName.trim() || "Store Manager"; // Capture and default
+
+                  setPickedUpModalVisible(false); // Close modal immediately
+
+                  // Pass the name as an option to doUpdate
+                  doUpdate("PICKEDUP", { pickupName: enteredName })
+                    .then(() => {
+                      setPickedUpByName(""); // Clear AFTER successful update
+                    })
+                    .catch((err) => {
+                      console.log("[PICKUP] Error:", err);
+                      setPickedUpByName(""); // Clear even on error
+                      Alert.alert(
+                        "Error",
+                        "Failed to update status. Please try again.",
+                      );
+                    });
+                }}
+              >
+                <Text style={{ color: "#fff", fontWeight: "600" }}>
+                  Confirm Pickup
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

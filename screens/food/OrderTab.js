@@ -6,7 +6,7 @@
 // ✅ FIX: If backend sends ON ROAD / ON_ROAD / ONROAD, UI auto-maps to OUT_FOR_DELIVERY everywhere.
 // ✅ UPDATE: Scheduled orders now show schedule time using scheduled_at_local / scheduled_at_utc from API.
 // ✅ UPDATE: Order "total" now matches OrderDetails display total (EXCLUDES platform_fee; includes delivery + merchant_delivery - discount).
-// ✅ FIX: Totals computed robustly from nested totals + item line totals (supports string prices like "Nu. 20")
+// ✅ FIX: Totals computed robustly from nested totals + item line totals (supports string prices like "BTN. 20")
 // ✅ UPDATE: Hide Delivered/Completed orders everywhere (DELIVERED/DELIVERED_* -> COMPLETED -> filtered out)
 // ✅ NEW: Accept/Decline for scheduled orders using dedicated endpoints from .env.
 // ✅ FIX: Parse scheduled order status from API ("ACCEPTED" -> SCHEDULED_ACCEPTED, "REJECTED" -> SCHEDULED_REJECTED).
@@ -36,6 +36,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  BackHandler, // ← Add this if missing
 } from "react-native";
 import {
   useNavigation,
@@ -469,7 +470,7 @@ const OrderItem = ({
   const isAccepted = statusKey === "SCHEDULED_ACCEPTED";
   const isRejected = statusKey === "SCHEDULED_REJECTED";
   const moneyFmt =
-    money || ((n, c = "Nu") => `${c} ${Number(n || 0).toFixed(2)}`);
+    money || ((n, c = "BTN") => `${c} ${Number(n || 0).toFixed(2)}`);
   const scheduledPretty = item?.created_at
     ? `Scheduled • ${showAsGiven(item.created_at)}`
     : "Scheduled";
@@ -499,7 +500,7 @@ const OrderItem = ({
           </Text>
         </View>
         <Text style={[styles.orderTotal, { fontSize: isTablet ? 18 : 17 }]}>
-          {moneyFmt(item.total, "Nu")}
+          {moneyFmt(item.total, "BTN")}
         </Text>
       </View>
 
@@ -529,7 +530,7 @@ const OrderItem = ({
         <View style={styles.rejectionRow}>
           <Ionicons name="alert-circle-outline" size={14} color="#b91c1c" />
           <Text style={styles.rejectionText} numberOfLines={3}>
-            Rejected: {item.rejection_reason}
+            RDeclined: {item.rejection_reason}
           </Text>
         </View>
       )}
@@ -892,7 +893,12 @@ const normalizeScheduledForBiz = (payload, bizId) => {
         ? allItems.filter((it) => String(it.business_id) === String(bizId))
         : allItems;
       if (!itemsForBiz.length) continue;
-
+      const sentAt =
+        job.created_at ||
+        job.createdAt ||
+        payloadOrder.created_at ||
+        payloadOrder.createdAt ||
+        null;
       const itemsStr = itemsForBiz
         .map((it) => `${it.item_name ?? "Item"} ×${Number(it.quantity ?? 1)}`)
         .join(", ");
@@ -957,6 +963,7 @@ const normalizeScheduledForBiz = (payload, bizId) => {
         type:
           payloadOrder.fulfillment_type === "Delivery" ? "Delivery" : "Pickup",
         created_at: scheduledAt,
+        sent_at: sentAt,
         scheduled_at_local: scheduledLocal || null,
         scheduled_at_utc: scheduledUtc || null,
         time: timeLabel,
@@ -981,9 +988,22 @@ const normalizeScheduledForBiz = (payload, bizId) => {
         rejection_reason: payloadOrder.rejection_reason || null,
       });
     }
-    return list.sort(
-      (a, b) => parseForSort(a.created_at) - parseForSort(b.created_at),
-    );
+    return list.sort((a, b) => {
+      const aStatus = normalizeStatusKey(a.status);
+      const bStatus = normalizeStatusKey(b.status);
+
+      const aPending = aStatus === "SCHEDULED";
+      const bPending = bStatus === "SCHEDULED";
+
+      if (aPending && bPending) {
+        return parseForSort(b.sent_at) - parseForSort(a.sent_at);
+      }
+
+      if (aPending && !bPending) return -1;
+      if (!aPending && bPending) return 1;
+
+      return parseForSort(a.created_at) - parseForSort(b.created_at);
+    });
   } catch {
     return [];
   }
@@ -1056,6 +1076,22 @@ export default function MartOrdersTab({
   const [pendingDeclineOrder, setPendingDeclineOrder] = useState(null);
 
   const abortRef = useRef(null);
+
+  // ✅ Hardware back button - redirect to GrabMerchantHomeScreen
+  useFocusEffect(
+    useCallback(() => {
+      const onBackPress = () => {
+        navigation.navigate("GrabMerchantHomeScreen");
+        return true;
+      };
+      const backHandler = BackHandler.addEventListener(
+        "hardwareBackPress",
+        onBackPress,
+      );
+      return () => backHandler.remove();
+    }, [navigation]),
+  );
+
   const today = useMemo(() => {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -1846,7 +1882,16 @@ export default function MartOrdersTab({
           </>
         )}
 
-        {content}
+        {activeChip === "UPCOMING" && filtered.length > 2 && (
+  <View style={styles.scrollHint}>
+    <Ionicons name="chevron-down-circle-outline" size={16} color="#0f766e" />
+    <Text style={styles.scrollHintText}>
+      {filtered.length} scheduled orders • Scroll down to see more
+    </Text>
+  </View>
+)}
+
+{content}
 
         <Modal
           visible={showDateDropdown}
@@ -2356,4 +2401,23 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   acceptedText: { color: "#16a34a", fontWeight: "600", fontSize: 12 },
+  scrollHint: {
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  marginBottom: 10,
+  paddingVertical: 8,
+  paddingHorizontal: 12,
+  borderRadius: 999,
+  backgroundColor: "#ecfeff",
+  borderWidth: 1,
+  borderColor: "#99f6e4",
+},
+
+scrollHintText: {
+  color: "#0f766e",
+  fontSize: 12,
+  fontWeight: "700",
+},
 });
