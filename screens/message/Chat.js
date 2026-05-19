@@ -1,4 +1,4 @@
-// services/transport/Chat.js
+// services/message/Chat.js
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,

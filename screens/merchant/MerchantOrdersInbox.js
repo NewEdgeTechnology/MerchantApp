@@ -9,7 +9,7 @@ import { ORDERS_BASE_URL } from '@env';
 import { onMerchantNotify, ackNotificationDelivered } from '../../utils/merchantSocket';
 
 const currency = (n) =>
-  `Nu. ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  `BTN. ${Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 async function fetchOrderSummary(orderId) {
   // GET /orders/:order_id ⇒ { success, data:[{user:{...}, orders:[{ total_amount, ... }]}] }

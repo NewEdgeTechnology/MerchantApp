@@ -1,4 +1,4 @@
-// screens/food/ChatDetailScreen.js
+// screens/message/ChatDetailScreen.js
 import React, { useMemo, useState } from 'react';
 import {
   View,

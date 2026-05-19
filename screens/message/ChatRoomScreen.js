@@ -1,10 +1,16 @@
-// screens/chat/ChatRoomScreen.js
+// screens/message/ChatRoomScreen.js
 // ✅ Updated to use .env for ALL origins/bases (no hardcoded hosts):
 // - Customer profile base: PROFILE_IMAGE (fallback API_BASE_URL + "/driver")
 // - Chat media base: CHAT_ORIGIN (fallback API_BASE_URL)
 // - Socket config is already handled inside utils/chatSocket (recommended), but we pass ctx as before.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   View,
   Text,
@@ -22,7 +28,10 @@ import {
   Modal,
   Dimensions,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 
@@ -76,14 +85,18 @@ const num = (v) => {
 const CUSTOMER_PROFILE_BASE = (() => {
   const p = String(PROFILE_IMAGE || "").trim();
   if (p) return p.replace(/\/+$/, ""); // keep no trailing slash for join
-  const api = String(API_BASE_URL || "").trim().replace(/\/+$/, "");
+  const api = String(API_BASE_URL || "")
+    .trim()
+    .replace(/\/+$/, "");
   return api ? `${api}/driver` : "";
 })();
 
 const CHAT_MEDIA_ORIGIN = (() => {
   const c = String(CHAT_ORIGIN || "").trim();
   if (c) return c.replace(/\/+$/, "");
-  const api = String(API_BASE_URL || "").trim().replace(/\/+$/, "");
+  const api = String(API_BASE_URL || "")
+    .trim()
+    .replace(/\/+$/, "");
   return api || "";
 })();
 
@@ -146,18 +159,33 @@ const isEmptyMessage = (msg) => {
 const normalizeMessage = (m) => {
   if (!m || typeof m !== "object") return null;
 
-  const message_type = String(m.message_type || m.type || (m.media_url ? "IMAGE" : "TEXT")).toUpperCase();
+  const message_type = String(
+    m.message_type || m.type || (m.media_url ? "IMAGE" : "TEXT"),
+  ).toUpperCase();
   const body = trim(m.body ?? m.message ?? m.text);
   const media_url = trim(m.media_url ?? m.media ?? m.image_url ?? "");
 
-  const rawTs = m.ts ?? m.created_at ?? m.createdAt ?? m.timestamp ?? m.time ?? Date.now();
+  const rawTs =
+    m.ts ?? m.created_at ?? m.createdAt ?? m.timestamp ?? m.time ?? Date.now();
   const tsNum = Number(rawTs);
-  const tsMs = Number.isFinite(tsNum) ? (tsNum < 1e12 ? tsNum * 1000 : tsNum) : Date.now();
+  const tsMs = Number.isFinite(tsNum)
+    ? tsNum < 1e12
+      ? tsNum * 1000
+      : tsNum
+    : Date.now();
 
-  const sender_type = String(m.sender_type || m.senderType || m.from_type || m.fromType || "").toUpperCase();
-  const sender_id = toStr(m.sender_id ?? m.senderId ?? m.from_id ?? m.fromId ?? "");
+  const sender_type = String(
+    m.sender_type || m.senderType || m.from_type || m.fromType || "",
+  ).toUpperCase();
+  const sender_id = toStr(
+    m.sender_id ?? m.senderId ?? m.from_id ?? m.fromId ?? "",
+  );
 
-  const id = m.id ?? m.message_id ?? m.messageId ?? `${tsMs}_${Math.random().toString(16).slice(2)}`;
+  const id =
+    m.id ??
+    m.message_id ??
+    m.messageId ??
+    `${tsMs}_${Math.random().toString(16).slice(2)}`;
 
   return {
     ...m,
@@ -197,10 +225,12 @@ const extractMessageFromSendResponse = (res) => {
   if (!res) return null;
 
   if (res.message && typeof res.message === "object") return res.message;
-  if (res.data?.message && typeof res.data.message === "object") return res.data.message;
+  if (res.data?.message && typeof res.data.message === "object")
+    return res.data.message;
 
   if (res.id || res.message_type || res.body || res.media_url) return res;
-  if (res.data && (res.data.id || res.data.body || res.data.media_url)) return res.data;
+  if (res.data && (res.data.id || res.data.body || res.data.media_url))
+    return res.data;
 
   return null;
 };
@@ -263,7 +293,13 @@ function ImageViewerModal({ visible, uri, onClose }) {
         </View>
 
         <View style={styles.viewerImageArea}>
-          {uri ? <Image source={{ uri }} style={styles.viewerImage} resizeMode="contain" /> : null}
+          {uri ? (
+            <Image
+              source={{ uri }}
+              style={styles.viewerImage}
+              resizeMode="contain"
+            />
+          ) : null}
         </View>
       </View>
     </Modal>
@@ -271,7 +307,16 @@ function ImageViewerModal({ visible, uri, onClose }) {
 }
 
 /* ===================== Caption Modal (Responsive) ===================== */
-function CaptionModal({ visible, imageUri, caption, setCaption, onCancel, onSend, sending, bottomInset }) {
+function CaptionModal({
+  visible,
+  imageUri,
+  caption,
+  setCaption,
+  onCancel,
+  onSend,
+  sending,
+  bottomInset,
+}) {
   return (
     <Modal
       visible={visible}
@@ -280,9 +325,18 @@ function CaptionModal({ visible, imageUri, caption, setCaption, onCancel, onSend
       presentationStyle="overFullScreen"
       onRequestClose={onCancel}
     >
-      <KeyboardAvoidingView style={styles.modalRoot} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
+      <KeyboardAvoidingView
+        style={styles.modalRoot}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
+      >
         <Pressable style={styles.modalBackdrop} onPress={onCancel} />
-        <View style={[styles.modalSheet, { paddingBottom: Math.max(bottomInset, 12) }]}>
+        <View
+          style={[
+            styles.modalSheet,
+            { paddingBottom: Math.max(bottomInset, 12) },
+          ]}
+        >
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Send photo</Text>
             <TouchableOpacity onPress={onCancel} style={styles.modalClose}>
@@ -292,14 +346,23 @@ function CaptionModal({ visible, imageUri, caption, setCaption, onCancel, onSend
 
           <View style={styles.modalPreviewWrap}>
             {imageUri ? (
-              <Image source={{ uri: imageUri }} style={styles.modalPreviewImg} />
+              <Image
+                source={{ uri: imageUri }}
+                style={styles.modalPreviewImg}
+              />
             ) : (
-              <View style={[styles.modalPreviewImg, { backgroundColor: "#f3f4f6" }]} />
+              <View
+                style={[styles.modalPreviewImg, { backgroundColor: "#f3f4f6" }]}
+              />
             )}
           </View>
 
           <View style={styles.modalCaptionRow}>
-            <Ionicons name="chatbubble-ellipses-outline" size={18} color="#6b7280" />
+            <Ionicons
+              name="chatbubble-ellipses-outline"
+              size={18}
+              color="#6b7280"
+            />
             <TextInput
               value={caption}
               onChangeText={setCaption}
@@ -367,7 +430,8 @@ export default function ChatRoomScreen({ route, navigation }) {
   const ctx = useMemo(() => {
     const userType = String(userTypeParam || "").toUpperCase();
     const userId = toStr(userIdParam);
-    const businessIdHeader = userType === "MERCHANT" ? toStr(businessIdParam) : undefined;
+    const businessIdHeader =
+      userType === "MERCHANT" ? toStr(businessIdParam) : undefined;
     return { userType, userId, businessIdHeader };
   }, [userTypeParam, userIdParam, businessIdParam]);
 
@@ -380,7 +444,7 @@ export default function ChatRoomScreen({ route, navigation }) {
         info.token,
         info.jwt,
         info?.user?.token,
-        info?.user?.accessToken
+        info?.user?.accessToken,
       ) || null
     );
   }, []);
@@ -463,7 +527,147 @@ export default function ChatRoomScreen({ route, navigation }) {
     } finally {
       setLoading(false);
     }
-  }, [conversationId, ctx.userType, ctx.userId, ctx.businessIdHeader, getToken, metaParam, scrollToBottom]);
+  }, [
+    conversationId,
+    ctx.userType,
+    ctx.userId,
+    ctx.businessIdHeader,
+    getToken,
+    metaParam,
+    scrollToBottom,
+  ]);
+  // Add this ref at the top with other refs (around line 100)
+  const autoMessageSentRef = useRef(false);
+  const initialMessageSentRef = useRef(false);
+  // In ChatRoomScreen.js, update the sendAutoMessage function:
+
+const sendAutoMessage = useCallback(
+  async (autoMessageText) => {
+    if (!autoMessageText || sending) return;
+
+    setSending(true);
+
+    // Create a unique temp ID
+    const tempId = `tmp_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
+
+    // Add optimistic message with temp ID
+    const now = Date.now();
+    const tempMessage = normalizeMessage({
+      id: tempId,
+      message_type: "TEXT",
+      body: autoMessageText,
+      media_url: "",
+      ts: now,
+      sender_type: ctx.userType,
+      sender_id: ctx.userId,
+      isTemp: true,
+    });
+
+    if (tempMessage && !isEmptyMessage(tempMessage)) {
+      setRows((prev) => [...prev, tempMessage].sort(sortAscByTs));
+      scrollToBottom(true);
+    }
+
+    try {
+      const token = await getToken();
+      
+      // ✅ IMPORTANT: When sending as MERCHANT, we need to include customer_id in the request
+      // or use the correct endpoint with proper authentication
+      const res = await sendTextMessage({
+        conversationId,
+        bodyText: autoMessageText,
+        userType: ctx.userType,
+        userId: ctx.userId,
+        businessIdHeader: ctx.businessIdHeader,
+        token,
+        // ✅ Add customer_id if available (from meta)
+        customerId: meta?.customerId || route.params?.customerId,
+      });
+
+      const msgObj = extractMessageFromSendResponse(res);
+
+      if (msgObj && msgObj.id) {
+        // Replace temp message with real one
+        setRows((prev) => {
+          const tempIndex = prev.findIndex((msg) => msg.id === tempId);
+          if (tempIndex !== -1) {
+            const newRows = [...prev];
+            newRows[tempIndex] = { ...msgObj, isTemp: false };
+            return newRows.sort(sortAscByTs);
+          }
+          if (!prev.some((msg) => msg.id === msgObj.id)) {
+            return [...prev, { ...msgObj, isTemp: false }].sort(sortAscByTs);
+          }
+          return prev;
+        });
+      }
+
+      console.log("[CHAT] Auto-message sent successfully!");
+    } catch (e) {
+      // Silent failure
+      console.log("[CHAT] Auto-message send failed (silent):", e?.message);
+      setRows((prev) => prev.filter((msg) => msg.id !== tempId));
+    } finally {
+      setSending(false);
+    }
+  },
+  [conversationId, ctx, getToken, scrollToBottom, sending, meta, route.params?.customerId],
+);
+
+  // Auto-message from order details - SILENT MODE (no alerts)
+  useEffect(() => {
+    const autoMessage = route.params?.meta?.autoMessage;
+    const autoMessageOnly = route.params?.meta?.autoMessageOnly === true;
+
+    // Only proceed if we have a message, haven't sent it yet, and we have a conversation
+    if (autoMessage && !autoMessageSentRef.current && conversationId) {
+      // Check if this conversation already has this exact message
+      const messageAlreadyExists = rows.some(
+        (msg) =>
+          msg.body === autoMessage &&
+          msg.sender_type === "MERCHANT" &&
+          msg.ts > Date.now() - 60000, // within last 60 seconds
+      );
+
+      if (!messageAlreadyExists) {
+        autoMessageSentRef.current = true;
+
+        // Only send if this hasn't been sent via API (autoMessageOnly flag)
+        if (autoMessageOnly) {
+          console.log(
+            "[CHAT] Sending auto-message from chat screen (silent mode)",
+          );
+          // Add a small delay to ensure socket is ready
+          setTimeout(async () => {
+            try {
+              await sendAutoMessage(autoMessage);
+            } catch (error) {
+              // COMPLETELY SILENT - no alerts
+              console.log(
+                "[CHAT] Auto-message error (suppressed):",
+                error?.message,
+              );
+            }
+          }, 1500);
+        } else {
+          console.log(
+            "[CHAT] Auto-message already sent via API, skipping duplicate",
+          );
+        }
+      } else {
+        console.log(
+          "[CHAT] Auto-message already exists in conversation, skipping duplicate",
+        );
+        autoMessageSentRef.current = true;
+      }
+    }
+  }, [
+    route.params?.meta?.autoMessage,
+    route.params?.meta?.autoMessageOnly,
+    conversationId,
+    rows,
+    sendAutoMessage,
+  ]);
 
   // socket
   useEffect(() => {
@@ -500,7 +704,13 @@ export default function ChatRoomScreen({ route, navigation }) {
       } catch {}
       leaveChatConversation(conversationId);
     };
-  }, [conversationId, ctx.userType, ctx.userId, ctx.businessIdHeader, scrollToBottom]);
+  }, [
+    conversationId,
+    ctx.userType,
+    ctx.userId,
+    ctx.businessIdHeader,
+    scrollToBottom,
+  ]);
 
   useEffect(() => {
     load();
@@ -532,25 +742,39 @@ export default function ChatRoomScreen({ route, navigation }) {
     return () => {
       if (readTimerRef.current) clearTimeout(readTimerRef.current);
     };
-  }, [rows, conversationId, ctx.userType, ctx.userId, ctx.businessIdHeader, getToken]);
+  }, [
+    rows,
+    conversationId,
+    ctx.userType,
+    ctx.userId,
+    ctx.businessIdHeader,
+    getToken,
+  ]);
 
   const optimisticAppend = useCallback(
-    ({ type, body, media_url }) => {
+    ({ type, body, media_url, customId }) => {
       const now = Date.now();
+      const finalId =
+        customId || `tmp_${now}_${Math.random().toString(36).substr(2, 8)}`;
       const temp = normalizeMessage({
-        id: `tmp_${now}_${Math.random().toString(16).slice(2)}`,
+        id: finalId,
         message_type: type,
         body: body || "",
         media_url: media_url || "",
         ts: now,
         sender_type: ctx.userType,
         sender_id: ctx.userId,
+        isTemp: true,
       });
       if (!temp || isEmptyMessage(temp)) return;
-      setRows((prev) => [...prev, temp].sort(sortAscByTs));
+      setRows((prev) => {
+        // Avoid duplicate temp messages
+        if (prev.some((msg) => msg.id === finalId)) return prev;
+        return [...prev, temp].sort(sortAscByTs);
+      });
       scrollToBottom(true);
     },
-    [ctx.userType, ctx.userId, scrollToBottom]
+    [ctx.userType, ctx.userId, scrollToBottom],
   );
 
   const replaceTempIfPossible = useCallback(
@@ -559,13 +783,33 @@ export default function ChatRoomScreen({ route, navigation }) {
       if (!msg || isEmptyMessage(msg)) return;
 
       setRows((prev) => {
-        if (msg?.id && prev.some((x) => String(x?.id) === String(msg.id))) return prev;
-        return [...prev, msg].sort(sortAscByTs);
+        // Check if message already exists
+        if (msg?.id && prev.some((x) => String(x?.id) === String(msg.id))) {
+          return prev;
+        }
+
+        // Try to find a temp message to replace (by body content)
+        const tempIndex = prev.findIndex(
+          (x) =>
+            x.isTemp === true &&
+            x.body === msg.body &&
+            x.sender_type === msg.sender_type,
+        );
+
+        if (tempIndex !== -1) {
+          // Replace the temp message (NO FLICKER)
+          const newRows = [...prev];
+          newRows[tempIndex] = { ...msg, isTemp: false };
+          return newRows.sort(sortAscByTs);
+        }
+
+        // Otherwise just add
+        return [...prev, { ...msg, isTemp: false }].sort(sortAscByTs);
       });
 
       scrollToBottom(true);
     },
-    [scrollToBottom]
+    [scrollToBottom],
   );
 
   const onSendText = async () => {
@@ -642,7 +886,11 @@ export default function ChatRoomScreen({ route, navigation }) {
     if (!pendingImage || sending) return;
 
     setSending(true);
-    optimisticAppend({ type: "IMAGE", body: trim(imageCaption), media_url: pendingImage.uri });
+    optimisticAppend({
+      type: "IMAGE",
+      body: trim(imageCaption),
+      media_url: pendingImage.uri,
+    });
 
     try {
       const token = await getToken();
@@ -686,7 +934,9 @@ export default function ChatRoomScreen({ route, navigation }) {
     const senderType = String(msg?.sender_type || "").toUpperCase();
     const senderId = toStr(msg?.sender_id);
 
-    const mine = senderType === String(ctx.userType).toUpperCase() && senderId === String(ctx.userId);
+    const mine =
+      senderType === String(ctx.userType).toUpperCase() &&
+      senderId === String(ctx.userId);
 
     const type = String(msg?.message_type || "TEXT").toUpperCase();
     const body = trim(msg?.body);
@@ -718,14 +968,27 @@ export default function ChatRoomScreen({ route, navigation }) {
           {type === "IMAGE" ? (
             <>
               {media ? (
-                <Pressable onPress={() => openViewer(media)} style={[styles.imageWrap, { width: imageW, height: imageH }]}>
-                  <Image source={{ uri: media }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+                <Pressable
+                  onPress={() => openViewer(media)}
+                  style={[styles.imageWrap, { width: imageW, height: imageH }]}
+                >
+                  <Image
+                    source={{ uri: media }}
+                    style={{ width: "100%", height: "100%" }}
+                    resizeMode="cover"
+                  />
                 </Pressable>
               ) : (
-                <Text style={[styles.msgText, msgTextStyle]}>[image unavailable]</Text>
+                <Text style={[styles.msgText, msgTextStyle]}>
+                  [image unavailable]
+                </Text>
               )}
 
-              {!!body && <Text style={[styles.msgText, msgTextStyle, { marginTop: 8 }]}>{body}</Text>}
+              {!!body && (
+                <Text style={[styles.msgText, msgTextStyle, { marginTop: 8 }]}>
+                  {body}
+                </Text>
+              )}
             </>
           ) : (
             <Text style={[styles.msgText, msgTextStyle]}>{body}</Text>
@@ -739,9 +1002,18 @@ export default function ChatRoomScreen({ route, navigation }) {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <ChatHeader title={customerName || "Customer"} subtitle={headerSubtitle} logoUrl={customerProfileUrl} onBack={() => navigation.goBack()} />
+      <ChatHeader
+        title={customerName || "Customer"}
+        subtitle={headerSubtitle}
+        logoUrl={customerProfileUrl}
+        onBack={() => navigation.goBack()}
+      />
 
-      <ImageViewerModal visible={viewerVisible} uri={viewerUri} onClose={() => setViewerVisible(false)} />
+      <ImageViewerModal
+        visible={viewerVisible}
+        uri={viewerUri}
+        onClose={() => setViewerVisible(false)}
+      />
 
       <CaptionModal
         visible={captionModalVisible}
@@ -754,7 +1026,11 @@ export default function ChatRoomScreen({ route, navigation }) {
         bottomInset={insets.bottom}
       />
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : "height"} keyboardVerticalOffset={0}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        keyboardVerticalOffset={0}
+      >
         {loading ? (
           <View style={styles.center}>
             <ActivityIndicator />
@@ -771,9 +1047,13 @@ export default function ChatRoomScreen({ route, navigation }) {
             onContentSizeChange={() => scrollToBottom(false)}
           />
         )}
-
         <View style={[styles.inputBar, { paddingBottom: inputBottomPad }]}>
-          <TouchableOpacity onPress={onPickImage} style={styles.iconBtn} disabled={sending} activeOpacity={0.85}>
+          <TouchableOpacity
+            onPress={onPickImage}
+            style={styles.iconBtn}
+            disabled={sending}
+            activeOpacity={0.85}
+          >
             <Ionicons name="image-outline" size={20} color="#00B14F" />
           </TouchableOpacity>
 
@@ -788,8 +1068,17 @@ export default function ChatRoomScreen({ route, navigation }) {
             />
           </View>
 
-          <TouchableOpacity onPress={onSendText} style={styles.sendBtn} disabled={sending || !trim(text)} activeOpacity={0.85}>
-            {sending ? <ActivityIndicator color="#fff" size="small" /> : <Ionicons name="send" size={18} color="#fff" />}
+          <TouchableOpacity
+            onPress={onSendText}
+            style={styles.sendBtn}
+            disabled={sending || !trim(text)}
+            activeOpacity={0.85}
+          >
+            {sending ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Ionicons name="send" size={18} color="#fff" />
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -843,7 +1132,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#F8FAFC",
   },
   headerTitle: { fontSize: 15, fontWeight: "900", color: "#0F172A" },
-  headerSub: { marginTop: 2, fontSize: 11, fontWeight: "800", color: "#64748B" },
+  headerSub: {
+    marginTop: 2,
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#64748B",
+  },
 
   row: { marginBottom: 10 },
   rowLeft: { alignItems: "flex-start" },
@@ -940,7 +1234,10 @@ const styles = StyleSheet.create({
   },
 
   modalRoot: { flex: 1, justifyContent: "flex-end" },
-  modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.35)" },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
   modalSheet: {
     backgroundColor: "#fff",
     borderTopLeftRadius: 18,
