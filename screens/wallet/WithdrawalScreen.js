@@ -83,8 +83,8 @@ const normalizeAmount = (txt) => {
 
 const fmtNu = (v) => {
   const n = Number(v);
-  if (!Number.isFinite(n)) return "Nu. 0.00";
-  return `Nu. ${n.toFixed(2)}`;
+  if (!Number.isFinite(n)) return "BTN. 0.00";
+  return `BTN. ${n.toFixed(2)}`;
 };
 
 const statusMeta = (st) => {
@@ -445,7 +445,7 @@ export default function Withdrawal({ navigation, route }) {
 
   const amountPreview = useMemo(() => {
     const a = normalizeAmount(amountTxt);
-    return a ? fmtNu(a) : "Nu. 0.00";
+    return a ? fmtNu(a) : "BTN. 0.00";
   }, [amountTxt]);
 
   return (
@@ -497,10 +497,10 @@ export default function Withdrawal({ navigation, route }) {
               <Text style={styles.cardTitle}>Withdrawal details</Text>
             </View>
 
-            <Field label="Amount (Nu.)" hint="Enter amount with up to 2 decimals">
+            <Field label="Amount (BTN.)" hint="Enter amount with up to 2 decimals">
               <View style={styles.niceInputWrap}>
                 <Ionicons name="wallet-outline" size={18} color={G.sub} />
-                <Text style={styles.nuPrefix}>Nu.</Text>
+                <Text style={styles.nuPrefix}>BTN.</Text>
                 <TextInput
                   value={amountTxt}
                   onChangeText={setAmountTxt}
