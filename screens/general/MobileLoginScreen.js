@@ -9,6 +9,7 @@
 // ✅ FIX: Login button enabling issue in production APK
 
 import React, { useState, useRef, useEffect, useMemo } from "react";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import {
   View,
   Text,
@@ -276,45 +277,30 @@ export default function MobileLoginScreen() {
 
   // Improved device ID initialization with fallback
   useEffect(() => {
-    const initDeviceId = async () => {
-      try {
-        console.log("Initializing device ID for MobileLogin...");
-        let token = await getValidExpoPushToken();
+   const initDeviceId = async () => {
+  try {
+    console.log("Initializing device ID for MobileLogin...");
 
-        // If token is not a valid Expo token, try again with delay
-        if (!token || !token.startsWith("ExponentPushToken")) {
-          console.log("Invalid Expo token, retrying...");
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          token = await getValidExpoPushToken();
-        }
+    const fallbackId = await getOrCreateLocalDeviceId();
 
-        if (token && token.startsWith("ExponentPushToken")) {
-          setPushToken(token);
-          setDeviceId(token);
-          console.log("✅ Device ID set successfully for MobileLogin:", token);
-        } else {
-          // Fallback: generate a unique device ID if Expo token fails
-          console.warn(
-            "Expo token not available, using fallback device ID for MobileLogin",
-          );
-          const fallbackId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          setDeviceId(fallbackId);
-          setPushToken(null);
-          console.log("Using fallback device ID for MobileLogin:", fallbackId);
-        }
-      } catch (error) {
-        console.error("Failed to get device ID for MobileLogin:", error);
-        // Last resort fallback
-        const fallbackId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        setDeviceId(fallbackId);
-        console.log(
-          "Using emergency fallback device ID for MobileLogin:",
-          fallbackId,
-        );
-      } finally {
-        setDeviceIdLoading(false);
-      }
-    };
+    setDeviceId(fallbackId);
+    setDeviceIdLoading(false);
+
+    const token = await getValidExpoPushToken();
+
+    if (token && token.startsWith("ExponentPushToken")) {
+      setPushToken(token);
+      setDeviceId(token);
+      console.log("✅ Expo push token updated:", token);
+    }
+  } catch (error) {
+    console.error("Failed to get Expo token:", error);
+
+    const fallbackId = await getOrCreateLocalDeviceId();
+    setDeviceId(fallbackId);
+    setDeviceIdLoading(false);
+  }
+};
 
     initDeviceId();
   }, []);
@@ -604,7 +590,7 @@ export default function MobileLoginScreen() {
   if (deviceIdLoading) {
     return (
       <View style={[styles.container, styles.centerContent]}>
-        <ActivityIndicator size="large" color="#00b14f" />
+        <ActivityIndicator size="large" color={BRAND.purple} />
         <Text style={styles.loadingText}>Initializing...</Text>
       </View>
     );
@@ -612,13 +598,14 @@ export default function MobileLoginScreen() {
 
   return (
     <KeyboardAvoidingView style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      <View style={styles.topGlow} />
+      <StatusBar barStyle="dark-content" backgroundColor="#FBF7FF" />
 
       <View style={styles.inner}>
         {loading && (
           <Modal transparent>
             <View style={styles.loadingOverlay}>
-              <ActivityIndicator size="large" color="#00b14f" />
+              <ActivityIndicator size="large" color={BRAND.purple} />
             </View>
           </Modal>
         )}
@@ -645,14 +632,20 @@ export default function MobileLoginScreen() {
             <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
           </TouchableOpacity>
         </View>
-
+        <View style={styles.brandIntro}>
+          <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
+          <Text style={styles.brandTitle}>Welcome</Text>
+          <Text style={styles.brandSubtitle}>
+            Log in using your registered mobile number.
+          </Text>
+        </View>
         <ScrollView
-          contentContainerStyle={{ paddingBottom: 24 }}
+          style={styles.scrollArea}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: 80 }]}
           keyboardShouldPersistTaps="always"
+          showsVerticalScrollIndicator={false}
         >
           <View style={styles.form}>
-            <Text style={styles.title}>Log in with mobile number</Text>
-
             <Text style={styles.label}>Mobile number</Text>
 
             <View style={styles.phoneRow}>
@@ -745,145 +738,255 @@ export default function MobileLoginScreen() {
 
             <View style={{ height: 24 }} />
           </View>
-        </ScrollView>
-
-        {/* Footer — like LoginScreen */}
-        <View
-          style={[
-            styles.footer,
-            { paddingBottom: Math.max(bottomGap, insets.bottom + 8) },
-          ]}
-        >
-          <Text style={styles.forgotText}>
-            Forgot your{" "}
-            <Text
-              style={styles.link}
-              onPress={() => !loading && navigation.navigate("ForgotPassword")}
-            >
-              password
-            </Text>
-            ?
-          </Text>
-
-          <TouchableOpacity
-            style={canSubmit ? styles.loginButton : styles.loginButtonDisabled}
-            disabled={!canSubmit}
-            onPress={handleLogin}
-            activeOpacity={0.85}
+          {/* Footer — like LoginScreen */}
+          <View
+            style={[
+              styles.footer,
+              { paddingBottom: Math.max(bottomGap, insets.bottom + 8) },
+            ]}
           >
-            <Text
+            <Text style={styles.forgotText}>
+              Forgot your{" "}
+              <Text
+                style={styles.link}
+                onPress={() =>
+                  !loading && navigation.navigate("ForgotPassword")
+                }
+              >
+                password
+              </Text>
+              ?
+            </Text>
+
+            <TouchableOpacity
               style={
-                canSubmit
-                  ? styles.loginButtonText
-                  : styles.loginButtonTextDisabled
+                canSubmit ? styles.loginButton : styles.loginButtonDisabled
               }
+              disabled={!canSubmit}
+              onPress={handleLogin}
+              activeOpacity={0.85}
             >
-              Log In
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={
+                  canSubmit
+                    ? styles.loginButtonText
+                    : styles.loginButtonTextDisabled
+                }
+              >
+                Log In
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.loginPhoneButton}
-            onPress={() => !loading && navigation.navigate("LoginScreen")}
-            activeOpacity={0.85}
-            disabled={loading}
-          >
-            <Text style={styles.loginPhoneText}>Log In with Email</Text>
-          </TouchableOpacity>
-        </View>
+            <TouchableOpacity
+              style={styles.loginPhoneButton}
+              onPress={() => !loading && navigation.navigate("LoginScreen")}
+              activeOpacity={0.85}
+              disabled={loading}
+            >
+              <Text style={styles.loginPhoneText}>Log In with Email</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
-  inner: { flex: 1, padding: 20, paddingTop: 40 },
+  container: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.45,
+  },
+
+  inner: {
+    flex: 1,
+    paddingHorizontal: 22,
+    paddingTop: 42,
+  },
+
   centerContent: {
     justifyContent: "center",
     alignItems: "center",
   },
+
   loadingText: {
+    fontFamily: FONT.body,
     marginTop: 12,
     fontSize: 14,
-    color: "#666",
+    color: BRAND.grey,
   },
+
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 20,
+    marginBottom: 26,
   },
-  iconButton: { padding: 8 },
+
+  iconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: BRAND.white,
+    justifyContent: "center",
+    alignItems: "center",
+    ...SHADOW.sm,
+  },
+
   headerTitle: {
+    fontFamily: FONT.header,
     fontSize: 22,
-    fontWeight: "600",
-    color: "#1A1D1F",
-    marginRight: 180,
+    fontWeight: "700",
+    color: BRAND.black,
   },
 
-  form: { flexGrow: 1, padding: 8 },
-  title: {
-    fontSize: 18,
-    fontWeight: "500",
-    color: "#1A1D1F",
-    marginBottom: 15,
+  brandIntro: {
+    marginBottom: 28,
   },
 
-  label: { marginBottom: 6, fontSize: 14, color: "#333" },
-  tip: { marginTop: -4, marginBottom: 10, fontSize: 12, color: "#6B7280" },
+  brandLabel: {
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    color: BRAND.purple,
+    marginBottom: 8,
+  },
 
-  phoneRow: { flexDirection: "row", marginBottom: 6, gap: 8 },
+  brandTitle: {
+    fontFamily: FONT.header,
+    fontSize: 34,
+    fontWeight: "700",
+    color: BRAND.black,
+    marginBottom: 8,
+  },
+
+  brandSubtitle: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    lineHeight: 21,
+    color: BRAND.grey,
+    maxWidth: "92%",
+  },
+
+  form: {
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    padding: 18,
+    ...SHADOW.sm,
+  },
+
+  label: {
+    fontFamily: FONT.body,
+    marginBottom: 6,
+    fontSize: 14,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
+  scrollArea: {
+    flex: 1,
+  },
+
+  scrollContent: {
+    paddingBottom: 80,
+  },
+  tip: {
+    fontFamily: FONT.body,
+    marginTop: -2,
+    marginBottom: 12,
+    fontSize: 12,
+    color: BRAND.grey,
+  },
+
+  phoneRow: {
+    flexDirection: "row",
+    marginBottom: 6,
+    gap: 8,
+  },
+
   countrySelector: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: "#FCFCFC",
     paddingHorizontal: 16,
-    borderRadius: 15,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    height: 50,
+    borderRadius: 18,
+    borderWidth: 1.2,
+    borderColor: BRAND.greyBorder,
+    height: 56,
   },
-  countryCode: { fontSize: 14, fontWeight: "500", color: "#1A1D1F" },
+
+  countryCode: {
+    fontFamily: FONT.body,
+    fontSize: 15,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
 
   inputWrapper: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderRadius: 15,
-    paddingHorizontal: 10,
-    height: 50,
-    borderColor: "#ccc",
-    backgroundColor: "#fff",
+    borderWidth: 1.2,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    height: 56,
+    borderColor: BRAND.greyBorder,
+    backgroundColor: "#FCFCFC",
   },
-  inputError: { borderColor: "#EF4444" },
-  inputField: { flex: 1, fontSize: 14, paddingVertical: 10, color: "#1A1D1F" },
+
+  inputError: {
+    borderColor: BRAND.red,
+  },
+
+  inputField: {
+    flex: 1,
+    fontFamily: FONT.body,
+    fontSize: 15,
+    paddingVertical: 10,
+    color: BRAND.black,
+  },
 
   passwordContainer: {
     flexDirection: "row",
-    borderWidth: 1,
-    borderRadius: 15,
+    borderWidth: 1.2,
+    borderRadius: 18,
     alignItems: "center",
-    paddingHorizontal: 10,
+    paddingHorizontal: 16,
     paddingRight: 14,
-    marginBottom: 8,
-    height: 50,
-    borderColor: "#ccc",
-    backgroundColor: "#fff",
+    marginBottom: 10,
+    height: 56,
+    borderColor: BRAND.greyBorder,
+    backgroundColor: "#FCFCFC",
     marginTop: 2,
   },
+
   passwordInput: {
     flex: 1,
-    fontSize: 14,
+    fontFamily: FONT.body,
+    fontSize: 15,
     paddingVertical: 10,
     paddingRight: 8,
-    color: "#1A1D1F",
+    color: BRAND.black,
   },
-  eyeIcon: { padding: 4 },
+
+  eyeIcon: {
+    padding: 4,
+  },
 
   inlineError: {
-    color: "#DC2626",
+    fontFamily: FONT.body,
+    color: BRAND.red,
     fontSize: 13,
     fontWeight: "600",
     marginTop: 6,
@@ -893,44 +996,82 @@ const styles = StyleSheet.create({
   checkboxContainer: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 10,
-    marginBottom: 10,
+    marginTop: 12,
   },
-  checkboxLabel: { marginLeft: 8, fontSize: 14, opacity: 0.7 },
+
+  checkboxLabel: {
+    fontFamily: FONT.body,
+    marginLeft: 10,
+    fontSize: 14,
+    color: BRAND.grey,
+  },
 
   forgotText: {
+    fontFamily: FONT.body,
     textAlign: "center",
     fontSize: 14,
-    color: "#333",
-    opacity: 0.7,
-    marginBottom: 16,
+    color: BRAND.grey,
+    marginBottom: 18,
   },
-  link: { color: "#007AFF", fontWeight: "500", opacity: 0.8 },
 
-  footer: { marginBottom: 15, paddingHorizontal: 8 },
+  link: {
+    fontFamily: FONT.body,
+    color: BRAND.magenta,
+    fontWeight: "700",
+  },
+
+  footer: {
+    marginTop: 22,
+    marginBottom: 10,
+    paddingHorizontal: 2,
+  },
+
   loginButton: {
-    backgroundColor: "#00b14f",
-    paddingVertical: 14,
-    borderRadius: 25,
+    backgroundColor: BRAND.purple,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 12,
+    ...SHADOW.md,
   },
-  loginButtonText: { color: "#fff", fontSize: 16, fontWeight: "500" },
+
+  loginButtonText: {
+    fontFamily: FONT.body,
+    color: BRAND.white,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+
   loginButtonDisabled: {
-    backgroundColor: "#eee",
-    paddingVertical: 14,
-    borderRadius: 25,
+    backgroundColor: BRAND.greyLight,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 12,
   },
-  loginButtonTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "500" },
+
+  loginButtonTextDisabled: {
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+    fontSize: 16,
+    fontWeight: "600",
+  },
+
   loginPhoneButton: {
-    backgroundColor: "#e9fcf6",
-    paddingVertical: 14,
-    borderRadius: 25,
+    backgroundColor: BRAND.white,
+    borderWidth: 1.5,
+    borderColor: BRAND.purple,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
   },
-  loginPhoneText: { color: "#004d3f", fontSize: 16, fontWeight: "600" },
+
+  loginPhoneText: {
+    fontFamily: FONT.body,
+    color: BRAND.purple,
+    fontSize: 16,
+    fontWeight: "700",
+  },
 
   loadingOverlay: {
     flex: 1,

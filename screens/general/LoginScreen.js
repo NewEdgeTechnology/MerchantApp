@@ -4,6 +4,7 @@
 // ✅ Fixed: Login button enabling issue in production APK
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import {
   View,
   Text,
@@ -216,7 +217,7 @@ const LoginScreen = () => {
   const [pushToken, setPushToken] = useState(null);
   const [deviceId, setDeviceId] = useState("");
   const [deviceIdLoading, setDeviceIdLoading] = useState(true); // Track device ID loading state
-
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   // ✅ kept because it was used by remember-me logic
   const [hasSavedSecret, setHasSavedSecret] = useState(false);
 
@@ -226,7 +227,7 @@ const LoginScreen = () => {
     !!deviceId &&
     !loading &&
     !deviceIdLoading;
-  const bottomGap = useKeyboardGap(8);
+  const bottomGap = 8;
 
   const emailRef = useRef(null);
   const pwdRef = useRef(null);
@@ -237,34 +238,31 @@ const LoginScreen = () => {
     const initDeviceId = async () => {
       try {
         console.log("Initializing device ID...");
-        let token = await getExpoPushTokenAsync();
 
-        // If token is not a valid Expo token, try again with delay
-        if (!token || !token.startsWith("ExponentPushToken")) {
-          console.log("Invalid Expo token, retrying...");
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          token = await getExpoPushTokenAsync();
-        }
+        const fallbackId = `device_${Date.now()}_${Math.random()
+          .toString(36)
+          .substr(2, 9)}`;
+
+        setDeviceId(fallbackId);
+        setDeviceIdLoading(false);
+
+        const token = await getExpoPushTokenAsync();
 
         if (token && token.startsWith("ExponentPushToken")) {
           setPushToken(token);
           setDeviceId(token);
-          console.log("✅ Device ID set successfully:", token);
-        } else {
-          // Fallback: generate a unique device ID if Expo token fails
-          console.warn("Expo token not available, using fallback device ID");
-          const fallbackId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          setDeviceId(fallbackId);
-          setPushToken(null);
-          console.log("Using fallback device ID:", fallbackId);
+          console.log("✅ Expo push token updated:", token);
         }
       } catch (error) {
-        console.error("Failed to get device ID:", error);
-        // Last resort fallback
-        const fallbackId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        setDeviceId(fallbackId);
-        console.log("Using emergency fallback device ID:", fallbackId);
-      } finally {
+        console.error("Failed to get Expo token:", error);
+
+        if (!deviceId) {
+          const fallbackId = `device_${Date.now()}_${Math.random()
+            .toString(36)
+            .substr(2, 9)}`;
+          setDeviceId(fallbackId);
+        }
+
         setDeviceIdLoading(false);
       }
     };
@@ -307,7 +305,20 @@ const LoginScreen = () => {
       setHasSavedSecret(!!(savedPwd || refreshTok));
     } catch {}
   };
+  useEffect(() => {
+    const showSub = Keyboard.addListener("keyboardDidShow", () => {
+      setKeyboardOpen(true);
+    });
 
+    const hideSub = Keyboard.addListener("keyboardDidHide", () => {
+      setKeyboardOpen(false);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
   useEffect(() => {
     loadSavedState();
   }, []);
@@ -683,19 +694,24 @@ const LoginScreen = () => {
   if (deviceIdLoading) {
     return (
       <View style={[styles.container, styles.centerContent]}>
-        <ActivityIndicator size="large" color="#00b14f" />
+        <ActivityIndicator size="large" color={BRAND.purple} />
         <Text style={styles.loadingText}>Initializing...</Text>
       </View>
     );
   }
 
   return (
-    <KeyboardAvoidingView style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={undefined}
+      keyboardVerticalOffset={0}
+    >
+      <View style={styles.topGlow} />
       <View style={styles.inner}>
         {loading && (
           <Modal transparent>
             <View style={styles.loadingOverlay}>
-              <ActivityIndicator size="large" color="#00b14f" />
+              <ActivityIndicator size="large" color={BRAND.purple} />
             </View>
           </Modal>
         )}
@@ -708,7 +724,7 @@ const LoginScreen = () => {
             activeOpacity={0.7}
             disabled={loading}
           >
-            <Icon name="arrow-back" size={24} color="#1A1D1F" />
+            <Icon name="arrow-back" size={24} color={BRAND.black} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Log In</Text>
           <TouchableOpacity
@@ -717,14 +733,25 @@ const LoginScreen = () => {
             activeOpacity={0.7}
             disabled={loading}
           >
-            <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
+            <Icon name="help-circle-outline" size={24} color={BRAND.purple} />
           </TouchableOpacity>
         </View>
-
+        <View style={styles.brandIntro}>
+          <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
+          <Text style={styles.brandTitle}>Welcome</Text>
+          <Text style={styles.brandSubtitle}>
+            Log in to manage your orders, products and business dashboard.
+          </Text>
+        </View>
         {/* Form */}
         <ScrollView
-          contentContainerStyle={{ paddingBottom: 24 }}
+          style={styles.scrollArea}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: keyboardOpen ? 340 : 80 },
+          ]}
           keyboardShouldPersistTaps="always"
+          showsVerticalScrollIndicator={false}
         >
           <View style={styles.form}>
             <Text style={styles.label}>Email</Text>
@@ -734,7 +761,9 @@ const LoginScreen = () => {
             <View
               style={[
                 styles.inputWrapper,
-                { borderColor: isEmailFocused ? "#00b14f" : "#ccc" },
+                {
+                  borderColor: isEmailFocused ? BRAND.purple : BRAND.greyBorder,
+                },
               ]}
             >
               <TextInput
@@ -781,7 +810,7 @@ const LoginScreen = () => {
               }}
               style={({ pressed }) => [
                 styles.passwordContainer,
-                { borderColor: isPwFocused ? "#00b14f" : "#ccc" },
+                { borderColor: isPwFocused ? BRAND.purple : BRAND.greyBorder },
                 isPwFocused && styles.shadowGreen,
                 pressed ? { opacity: 0.98 } : null,
               ]}
@@ -857,52 +886,57 @@ const LoginScreen = () => {
                   }
                 }}
                 disabled={loading}
-                color={savePassword ? "#00b14f" : undefined}
+                color={savePassword ? BRAND.purple : undefined}
               />
               <Text style={styles.checkboxLabel}>Save password</Text>
             </View>
           </View>
-        </ScrollView>
-
-        {/* Footer */}
-        <View style={[styles.footer, { paddingBottom: bottomGap }]}>
-          <Text style={styles.forgotText}>
-            Forgot your{" "}
-            <Text
-              style={styles.link}
-              onPress={() => !loading && navigation.navigate("ForgotPassword")}
-            >
-              password
+          {/* Footer */}
+          <View style={[styles.footer, { paddingBottom: bottomGap }]}>
+            <Text style={styles.forgotText}>
+              Forgot your{" "}
+              <Text
+                style={styles.link}
+                onPress={() =>
+                  !loading && navigation.navigate("ForgotPassword")
+                }
+              >
+                password
+              </Text>
+              ?
             </Text>
-            ?
-          </Text>
 
-          <TouchableOpacity
-            style={canSubmit ? styles.loginButton : styles.loginButtonDisabled}
-            disabled={!canSubmit}
-            onPress={handleLogin}
-            activeOpacity={0.85}
-          >
-            <Text
+            <TouchableOpacity
               style={
-                canSubmit
-                  ? styles.loginButtonText
-                  : styles.loginButtonTextDisabled
+                canSubmit ? styles.loginButton : styles.loginButtonDisabled
               }
+              disabled={!canSubmit}
+              onPress={handleLogin}
+              activeOpacity={0.85}
             >
-              Log In
-            </Text>
-          </TouchableOpacity>
+              <Text
+                style={
+                  canSubmit
+                    ? styles.loginButtonText
+                    : styles.loginButtonTextDisabled
+                }
+              >
+                Log In
+              </Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.loginPhoneButton}
-            onPress={() => !loading && navigation.navigate("MobileLoginScreen")}
-            activeOpacity={0.85}
-            disabled={loading}
-          >
-            <Text style={styles.loginPhoneText}>Log In with Phone</Text>
-          </TouchableOpacity>
-        </View>
+            <TouchableOpacity
+              style={styles.loginPhoneButton}
+              onPress={() =>
+                !loading && navigation.navigate("MobileLoginScreen")
+              }
+              activeOpacity={0.85}
+              disabled={loading}
+            >
+              <Text style={styles.loginPhoneText}>Log In with Phone</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
       </View>
     </KeyboardAvoidingView>
   );
@@ -911,126 +945,281 @@ const LoginScreen = () => {
 export default LoginScreen;
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
-  inner: { flex: 1, padding: 20, paddingTop: 40 },
+  container: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.45,
+  },
+
+  inner: {
+    flex: 1,
+    paddingHorizontal: 22,
+    paddingTop: 42,
+  },
+
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 20,
+    marginBottom: 26,
   },
-  iconButton: { padding: 8 },
+
+  iconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    // marginBottom: 20,
+    backgroundColor: BRAND.white,
+    justifyContent: "center",
+    alignItems: "center",
+    ...SHADOW.sm,
+  },
+
   headerTitle: {
+    fontFamily: FONT.header,
     fontSize: 22,
-    fontWeight: "600",
-    color: "#1A1D1F",
-    marginRight: 180,
+    fontWeight: "700",
+    color: BRAND.black,
   },
+
+  brandIntro: {
+    marginBottom: 28,
+  },
+
+  brandLabel: {
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    color: BRAND.purple,
+    marginBottom: 8,
+  },
+
+  brandTitle: {
+    fontFamily: FONT.header,
+    fontSize: 34,
+    fontWeight: "700",
+    color: BRAND.black,
+    marginBottom: 8,
+  },
+
+  brandSubtitle: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    lineHeight: 21,
+    color: BRAND.grey,
+    maxWidth: "92%",
+  },
+
   centerContent: {
     justifyContent: "center",
     alignItems: "center",
   },
+
   loadingText: {
+    fontFamily: FONT.body,
     marginTop: 12,
     fontSize: 14,
-    color: "#666",
+    color: BRAND.grey,
   },
-  form: { flexGrow: 1, padding: 8 },
-  label: { marginBottom: 6, fontSize: 14, color: "#333" },
-  tip: { marginTop: -4, marginBottom: 10, fontSize: 12, color: "#6B7280" },
+
+  form: {
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    padding: 18,
+    ...SHADOW.sm,
+  },
+
+  label: {
+    fontFamily: FONT.body,
+    marginBottom: 6,
+    fontSize: 14,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
+
+  tip: {
+    fontFamily: FONT.body,
+    marginTop: -2,
+    marginBottom: 12,
+    fontSize: 12,
+    color: BRAND.grey,
+  },
+
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderRadius: 15,
-    paddingHorizontal: 10,
-    marginBottom: 16,
-    height: 50,
+    borderWidth: 1.2,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    marginBottom: 18,
+    height: 56,
+    backgroundColor: "#FCFCFC",
   },
-  inputField: { flex: 1, fontSize: 14, paddingVertical: 10 },
-  clearButton: { paddingLeft: 8 },
+
+  inputField: {
+    flex: 1,
+    fontFamily: FONT.body,
+    fontSize: 15,
+    color: BRAND.black,
+    paddingVertical: 10,
+  },
+
+  clearButton: {
+    paddingLeft: 8,
+  },
+
   clearCircle: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: "#000",
-    opacity: 0.7,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: BRAND.grey,
     justifyContent: "center",
     alignItems: "center",
   },
+
   passwordContainer: {
     flexDirection: "row",
-    borderWidth: 1,
-    borderRadius: 15,
+    borderWidth: 1.2,
+    borderRadius: 18,
     alignItems: "center",
-    paddingHorizontal: 10,
+    paddingHorizontal: 16,
     paddingRight: 14,
-    marginBottom: 8,
-    height: 50,
+    marginBottom: 10,
+    height: 56,
+    backgroundColor: "#FCFCFC",
   },
+
   passwordInput: {
     flex: 1,
-    fontSize: 14,
+    fontFamily: FONT.body,
+    fontSize: 15,
+    color: BRAND.black,
     paddingVertical: 10,
     paddingRight: 8,
   },
-  eyeIcon: { padding: 4 },
+  scrollArea: {
+    flex: 1,
+  },
+
+  scrollContent: {
+    paddingBottom: 80,
+  },
+  eyeIcon: {
+    padding: 4,
+  },
+
   inlineError: {
-    color: "#DC2626",
+    fontFamily: FONT.body,
+    color: BRAND.red,
     fontSize: 13,
     fontWeight: "600",
     marginTop: 6,
     marginBottom: 8,
   },
+
   checkboxContainer: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 24,
-    marginTop: 10,
+    marginTop: 12,
   },
-  checkboxLabel: { marginLeft: 8, fontSize: 14, opacity: 0.7 },
+
+  checkboxLabel: {
+    fontFamily: FONT.body,
+    marginLeft: 10,
+    fontSize: 14,
+    color: BRAND.grey,
+  },
+
   forgotText: {
+    fontFamily: FONT.body,
     textAlign: "center",
     fontSize: 14,
-    color: "#333",
-    opacity: 0.7,
-    marginBottom: 16,
+    color: BRAND.grey,
+    marginBottom: 18,
   },
-  link: { color: "#007AFF", fontWeight: "500", opacity: 0.8 },
+
+  link: {
+    fontFamily: FONT.body,
+    color: BRAND.magenta,
+    fontWeight: "700",
+  },
+
   loginButton: {
-    backgroundColor: "#00b14f",
-    paddingVertical: 14,
-    borderRadius: 25,
+    backgroundColor: BRAND.purple,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 12,
+    ...SHADOW.md,
   },
-  loginButtonText: { color: "#fff", fontSize: 16, fontWeight: "500" },
+
+  loginButtonText: {
+    fontFamily: FONT.body,
+    color: BRAND.white,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+
   loginButtonDisabled: {
-    backgroundColor: "#eee",
-    paddingVertical: 14,
-    borderRadius: 25,
+    backgroundColor: BRAND.greyLight,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
-    marginBottom: 10,
+    marginBottom: 12,
   },
-  loginButtonTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "500" },
+
+  loginButtonTextDisabled: {
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+    fontSize: 16,
+    fontWeight: "600",
+  },
+
   loginPhoneButton: {
-    backgroundColor: "#e9fcf6",
-    paddingVertical: 14,
-    borderRadius: 25,
+    backgroundColor: BRAND.white,
+    borderWidth: 1.5,
+    borderColor: BRAND.purple,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
   },
-  loginPhoneText: { color: "#004d3f", fontSize: 16, fontWeight: "600" },
-  footer: { marginBottom: 15, paddingHorizontal: 8 },
+
+  loginPhoneText: {
+    fontFamily: FONT.body,
+    color: BRAND.purple,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+
+  footer: {
+    marginTop: 22,
+    marginBottom: 10,
+    paddingHorizontal: 2,
+  },
+
   loadingOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.3)",
     justifyContent: "center",
     alignItems: "center",
   },
+
   shadowGreen: {
-    shadowColor: "#00b14f",
-    shadowOpacity: 0.15,
+    shadowColor: BRAND.purple,
+    shadowOpacity: 0.14,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
   },
 });
