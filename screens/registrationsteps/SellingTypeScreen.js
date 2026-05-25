@@ -53,11 +53,11 @@ const SellingTypeScreen = () => {
         <TouchableOpacity style={styles.card} activeOpacity={0.8} onPress={goFood}>
           <Image source={require('../../assets/grabfood.png')} style={styles.image} />
           <View style={styles.textContainer}>
-            <Text style={styles.cardTitle}>Food delivery: TabdheyFood</Text>
+            <Text style={styles.cardTitle}>Food delivery: TàbdeyFood</Text>
             <Text style={styles.cardText}>
               Suitable if you have ready-to-eat food and beverages. For other items such as
               packaged drinks, alcoholic beverages and raw or dry ingredients, please select
-              TabdheyMart instead.
+              TàbdeyMart instead.
             </Text>
           </View>
         </TouchableOpacity>
@@ -66,10 +66,10 @@ const SellingTypeScreen = () => {
         <TouchableOpacity style={styles.card} activeOpacity={0.8} onPress={goMart}>
           <Image source={require('../../assets/grabmart.png')} style={styles.image} />
           <View style={styles.textContainer}>
-            <Text style={styles.cardTitle}>Groceries delivery: TabdheyMart</Text>
+            <Text style={styles.cardTitle}>Groceries delivery: TàbdeyMart</Text>
             <Text style={styles.cardText}>
               Suitable if you are selling groceries, healthcare, beauty products and raw or dry
-              ingredients. For ready-to-eat food and beverages, please select TabdheyFood instead.
+              ingredients. For ready-to-eat food and beverages, please select TàbdeyFood instead.
             </Text>
           </View>
         </TouchableOpacity>

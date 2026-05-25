@@ -38,11 +38,11 @@ const GrabMartScreen = () => {
         </View>
 
         <View style={styles.content}>
-          <Text style={styles.title}>TabdheyMart</Text>
+          <Text style={styles.title}>Tàbdey Mart</Text>
           <Text style={styles.description}>
             Suitable if you are selling groceries, healthcare, beauty products
             and raw or dry ingredients. For ready-to-eat food and beverages,
-            please select TabdheyFood instead.
+            please select Tàbdey Food instead.
           </Text>
 
           <Text style={styles.subheading}>Features</Text>

@@ -47,7 +47,7 @@ export default function DeliveryMethodChooser({
 
   const hintText = (() => {
     if (isSelfSelected) return "Self delivery selected.";
-    if (isGrabSelected) return rideMessage || "Tabdhey delivery selected.";
+    if (isGrabSelected) return rideMessage || "Tàbdey  delivery selected.";
     return "Pick one to continue.";
   })();
 
@@ -120,7 +120,7 @@ export default function DeliveryMethodChooser({
                 { color: isGrabSelected ? "#fff" : "#0f172a" },
               ]}
             >
-              Tabdhey
+              Tàbdey 
             </Text>
           </Pressable>
         </View>

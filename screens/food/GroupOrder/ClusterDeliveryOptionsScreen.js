@@ -1553,7 +1553,7 @@ export default function ClusterDeliveryOptionsScreen() {
       const broadcastUrl = String(ENV_BROADCAST || "").trim();
       if (!broadcastUrl) {
         Alert.alert(
-          "Tabdhey delivery not configured",
+          "Tàbdey  delivery not configured",
           "BATCH_ORDER_BROADCAST_ENDPOINT is missing in .env",
         );
         return;
@@ -1619,7 +1619,7 @@ export default function ClusterDeliveryOptionsScreen() {
       armResendAfterOneMinute();
     } catch (e) {
       setRideMessage("");
-      Alert.alert("Tabdhey delivery failed", String(e?.message || e));
+      Alert.alert("Tàbdey  delivery failed", String(e?.message || e));
     } finally {
       setSendingGrab(false);
     }
@@ -1890,7 +1890,7 @@ export default function ClusterDeliveryOptionsScreen() {
     if (!selectedMethod) {
       Alert.alert(
         "Choose delivery method",
-        "Please select Self delivery or Tabdhey delivery first.",
+        "Please select Self delivery or Tàbdey  delivery first.",
       );
       return;
     }
@@ -2221,9 +2221,9 @@ export default function ClusterDeliveryOptionsScreen() {
             onPress={onSelectGrab}
           >
             <Ionicons name="bicycle-outline" size={28} color="#2563eb" />
-            <Text style={styles.optionTitle}>Tabdhey delivery</Text>
+            <Text style={styles.optionTitle}>Tàbdey  delivery</Text>
             <Text style={styles.optionHint}>
-              Broadcast batch request to Tabdhey riders for all confirmed orders.
+              Broadcast batch request to Tàbdey  riders for all confirmed orders.
             </Text>
             {sendingGrab && (
               <View

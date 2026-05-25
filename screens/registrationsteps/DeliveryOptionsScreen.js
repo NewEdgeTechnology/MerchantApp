@@ -160,9 +160,9 @@ export default function DeliveryOptionsScreen() {
                   <Text style={styles.optionSub}>
                     {opt === "Self Delivery"
                       ? "You handle your own riders and fees."
-                      : opt === "Tabdhey Delivery"
-                      ? "Tabdhey handles riders and logistics."
-                      : "Use both your own riders and Tabdhey riders."}
+                      : opt === "Tàbdey Delivery"
+                      ? "Tàbdey handles riders and logistics."
+                      : "Use both your own riders and Tàbdey riders."}
                   </Text>
                 </View>
               </TouchableOpacity>

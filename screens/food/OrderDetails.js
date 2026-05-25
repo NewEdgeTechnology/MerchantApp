@@ -3140,7 +3140,7 @@ export default function OrderDetails() {
       if (isDriverAssigned && currentStatus !== "ASSIGNED") {
         Alert.alert(
           "Driver controlled",
-          "Driver will update the status for Tabdhey delivery.",
+          "Driver will update the status for Tàbdey  delivery.",
         );
         return;
       }
