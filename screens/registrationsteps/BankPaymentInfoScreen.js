@@ -29,37 +29,37 @@ const BANKS = [
     code: "bdb",
     name: "Bhutan Development Bank Ltd.",
     accountLength: 12,
-    logoSource: require("../../assets/bdb.png"),
+    logoSource: require("../../assets/banks/bdbl.jpeg"),
   },
   {
     code: "bnb",
     name: "Bhutan National Bank Limited",
     accountLength: 9,
-    logoSource: require("../../assets/bnb.png"),
+    logoSource: require("../../assets/banks/bnb.png"),
   },
   {
     code: "bob",
     name: "Bank of Bhutan Limited",
     accountLength: 9,
-    logoSource: require("../../assets/bob.png"),
+    logoSource: require("../../assets/banks/bob.png"),
   },
   {
     code: "drukpnb",
     name: "Druk PNB",
     accountLength: 12,
-    logoSource: require("../../assets/drukpnb.png"),
+    logoSource: require("../../assets/banks/drukpnb.png"),
   },
   {
     code: "tbank",
     name: "T Bank Ltd.",
     accountLength: 9,
-    logoSource: require("../../assets/tbank.png"),
+    logoSource: require("../../assets/banks/tbank.jpeg"),
   },
   {
     code: "dk",
     name: "DK Limited Bank",
     accountLength: 12,
-    logoSource: require("../../assets/dk.png"),
+    logoSource: require("../../assets/banks/dk.png"),
   },
 ];
 
