@@ -1,33 +1,32 @@
 // screens/registrationsteps/HeaderWithSteps.js
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import Icon from 'react-native-vector-icons/Ionicons';
-import { useNavigation } from '@react-navigation/native';
+import React from "react";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import Icon from "react-native-vector-icons/Ionicons";
+import { useNavigation } from "@react-navigation/native";
+import { BRAND, FONT, SHADOW } from "../styles/tabdey_brand";
 
-const HeaderWithSteps = ({ step = 'Step 1 of 7' }) => {
+const HeaderWithSteps = ({ step = "Step 1 of 7" }) => {
   const navigation = useNavigation();
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.iconButton}
-          activeOpacity={0.7}
-        >
-          <Icon name="arrow-back" size={24} color="#1A1D1F" />
-        </TouchableOpacity>
+    <View style={styles.header}>
+      <TouchableOpacity
+        onPress={() => navigation.goBack()}
+        style={styles.iconButton}
+        activeOpacity={0.7}
+      >
+        <Icon name="arrow-back" size={24} color={BRAND.black} />
+      </TouchableOpacity>
 
-        <Text style={styles.headerTitle}>{step}</Text>
+      <Text style={styles.headerTitle}>{step}</Text>
 
-        <TouchableOpacity
-          onPress={() => navigation.navigate('HelpScreen')}
-          style={styles.iconButton}
-          activeOpacity={0.7}
-        >
-          <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
-        </TouchableOpacity>
-      </View>
+      <TouchableOpacity
+        onPress={() => navigation.navigate("HelpScreen")}
+        style={styles.iconButton}
+        activeOpacity={0.7}
+      >
+        <Icon name="help-circle-outline" size={24} color={BRAND.purple} />
+      </TouchableOpacity>
     </View>
   );
 };
@@ -35,24 +34,32 @@ const HeaderWithSteps = ({ step = 'Step 1 of 7' }) => {
 export default HeaderWithSteps;
 
 const styles = StyleSheet.create({
-  container: {
-    // ❗ No paddingTop here — SafeAreaView on the screen handles top inset
-    paddingHorizontal: 12,
-    marginBottom: 20,
-  },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 24,
   },
+
   iconButton: {
-    padding: 8,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: BRAND.white,
+    justifyContent: "center",
+    alignItems: "center",
+    ...SHADOW.sm,
   },
-  headerTitle: {
-    fontSize: 19,
-    fontWeight: '600',
-    color: '#1A1D1F',
-    opacity: 0.7,
-    paddingRight: 180,
-  },
+
+ headerTitle: {
+  position: "absolute",
+  left: 0,
+  right: 0,
+  textAlign: "center",
+  fontFamily: FONT.header,
+  fontSize: 22,
+  fontWeight: "700",
+  color: BRAND.black,
+  zIndex: -1,
+},
 });
