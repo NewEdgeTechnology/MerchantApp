@@ -208,10 +208,10 @@ const styles = StyleSheet.create({
 
   heroTitle: {
     fontFamily: FONT.header,
-    fontSize: 32,
+    fontSize: 26,
     fontWeight: "700",
     color: BRAND.black,
-    lineHeight: 39,
+    lineHeight: 32,
     marginBottom: 10,
   },
 

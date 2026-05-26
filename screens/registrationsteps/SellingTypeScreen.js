@@ -177,10 +177,10 @@ const styles = StyleSheet.create({
 
   title: {
     fontFamily: FONT.header,
-    fontSize: 30,
+    fontSize: 26,
     fontWeight: "700",
     color: BRAND.black,
-    lineHeight: 37,
+    lineHeight: 32,
     marginBottom: 10,
   },
 
