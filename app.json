@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "TabDhey Merchant",
+    "name": "TàbDhey Merchant",
     "slug": "tabdhey-merchant",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.jpg",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -58,7 +58,7 @@
         "android.permission.WRITE_EXTERNAL_STORAGE"
       ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.jpg",
+        "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
@@ -74,13 +74,13 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Allow TabDhey to use your location for business verification and nearby customer features."
+          "locationAlwaysAndWhenInUsePermission": "Allow TàbDhey to use your location for business verification and nearby customer features."
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow TabDhey to access your camera for business logo photos and document uploads."
+          "cameraPermission": "Allow TàbDhey to access your camera for business logo photos and document uploads."
         }
       ],
       [

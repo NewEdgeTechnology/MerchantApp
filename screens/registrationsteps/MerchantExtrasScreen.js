@@ -23,6 +23,7 @@ import { OSMView } from "expo-osm-sdk";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import HeaderWithSteps from "./HeaderWithSteps";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
 const NEXT_ROUTE = "BankPaymentInfoScreen";
 
@@ -90,7 +91,6 @@ export default function MerchantExtrasScreen() {
     .trim()
     .toLowerCase();
 
-  // files
   const [licenseFile, setLicenseFile] = useState(null);
   const [logo, setLogo] = useState(null);
 
@@ -98,7 +98,13 @@ export default function MerchantExtrasScreen() {
   const [address, setAddress] = useState("");
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [pickedCoord, setPickedCoord] = useState(null);
+
   const [mapCenter, setMapCenter] = useState({
+    latitude: 27.4728,
+    longitude: 89.639,
+  });
+
+  const [centerPinCoord, setCenterPinCoord] = useState({
     latitude: 27.4728,
     longitude: 89.639,
   });
@@ -257,40 +263,30 @@ export default function MerchantExtrasScreen() {
     if (!idCardNo || idCardNo.trim().length !== 11) return false;
     return true;
   };
-
-  // ===== Map picking =====
   const openMapPicker = () => {
     setMapError(false);
-    setMapLoading(true);
+    setMapLoading(false);
     setMapInitAttempts(0);
+    setCenterPinCoord(pickedCoord || mapCenter);
     setLocationModalVisible(true);
   };
   const closeMapPicker = () => setLocationModalVisible(false);
 
-  // ✅ FIXED: Update SINGLE merchant marker when tapping on map
-  const handleMapPress = useCallback((event) => {
-    if (event?.coordinate) {
-      const coord = {
-        latitude: event.coordinate.latitude,
-        longitude: event.coordinate.longitude,
-      };
-      // Update the picked coordinates
-      setPickedCoord(coord);
-      // Center map on new location
-      setMapCenter(coord);
-      setMapZoom(16);
-      // ✅ UPDATE THE SINGLE MARKER (replaces the old one)
-      setMapMarkers([
-        {
-          id: "merchant",
-          coordinate: coord,
-          title: "🏪 MERCHANT LOCATION",
-          description: `Lat: ${coord.latitude.toFixed(6)}, Lng: ${coord.longitude.toFixed(6)}`,
-          pinColor: "#EF4444", // Keep it RED
-        },
-      ]);
-    }
-  }, []);
+  const updateMerchantLocation = (coord) => {
+    setPickedCoord(coord);
+    setMapCenter(coord);
+    setMapZoom(16);
+
+    setMapMarkers([
+      {
+        id: "merchant",
+        coordinate: coord,
+        title: "🏪 MERCHANT LOCATION",
+        description: `Lat: ${coord.latitude.toFixed(6)}, Lng: ${coord.longitude.toFixed(6)}`,
+        pinColor: "#EF4444",
+      },
+    ]);
+  };
 
   const reverseGeocode = async (latitude, longitude) => {
     try {
@@ -317,23 +313,69 @@ export default function MerchantExtrasScreen() {
     }
     return "";
   };
+  const extractMapCoord = (eventOrRegion) => {
+    const latitude =
+      eventOrRegion?.latitude ??
+      eventOrRegion?.center?.latitude ??
+      eventOrRegion?.nativeEvent?.latitude ??
+      eventOrRegion?.nativeEvent?.coordinate?.latitude ??
+      eventOrRegion?.nativeEvent?.center?.latitude ??
+      eventOrRegion?.coordinate?.latitude;
 
+    const longitude =
+      eventOrRegion?.longitude ??
+      eventOrRegion?.center?.longitude ??
+      eventOrRegion?.nativeEvent?.longitude ??
+      eventOrRegion?.nativeEvent?.coordinate?.longitude ??
+      eventOrRegion?.nativeEvent?.center?.longitude ??
+      eventOrRegion?.coordinate?.longitude;
+
+    if (latitude == null || longitude == null) return null;
+
+    return {
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+    };
+  };
+
+  const handleMapPick = (eventOrRegion) => {
+    const coord = extractMapCoord(eventOrRegion);
+    if (!coord) return;
+
+    setCenterPinCoord(coord);
+    setMapCenter(coord);
+    setMapZoom(16);
+
+    setMapMarkers([
+      {
+        id: "merchant",
+        coordinate: coord,
+        title: "🏪 MERCHANT LOCATION",
+        description: `Lat: ${coord.latitude.toFixed(6)}, Lng: ${coord.longitude.toFixed(6)}`,
+        pinColor: "#EF4444",
+      },
+    ]);
+  };
   const confirmPickedLocation = async () => {
-    // if (!pickedCoord) {
-    //   Alert.alert("Pick a location", "Tap on the map to drop a pin.");
-    //   return;
-    // }
+    const coordToSave = centerPinCoord || pickedCoord || mapCenter;
+
+    if (!coordToSave?.latitude || !coordToSave?.longitude) {
+      Alert.alert("Pick a location", "Move the map to your business location.");
+      return;
+    }
+
+    updateMerchantLocation(coordToSave);
+
     const line = await reverseGeocode(
-      pickedCoord.latitude,
-      pickedCoord.longitude,
+      coordToSave.latitude,
+      coordToSave.longitude,
     );
+
     setAddress(
       line ||
-        `Located at: ${pickedCoord.latitude.toFixed(
-          5,
-        )}, ${pickedCoord.longitude.toFixed(5)}`,
+        `Located at: ${coordToSave.latitude.toFixed(5)}, ${coordToSave.longitude.toFixed(5)}`,
     );
-    setMapZoom(15);
+
     closeMapPicker();
   };
 
@@ -380,19 +422,8 @@ export default function MerchantExtrasScreen() {
       }
 
       const coord = { latitude, longitude };
-      // Update picked coordinates with current location
-      setPickedCoord(coord);
-      // ✅ UPDATE SINGLE MERCHANT MARKER
-      setMapMarkers([
-        {
-          id: "merchant",
-          coordinate: coord,
-          title: "🏪 MERCHANT LOCATION",
-          description: `Lat: ${latitude.toFixed(6)}, Lng: ${longitude.toFixed(6)}`,
-          pinColor: "#EF4444",
-        },
-      ]);
-      animateTo(latitude, longitude);
+      updateMerchantLocation(coord);
+      setCenterPinCoord(coord);
     } catch {
       setModalLocError("Unable to fetch current location. Try again.");
     } finally {
@@ -536,246 +567,275 @@ export default function MerchantExtrasScreen() {
   const isFormValid = validate();
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-      <HeaderWithSteps step="Step 3 of 7" />
+    <SafeAreaView style={styles.safeArea} edges={["left", "right", "bottom"]}>
+      <View style={styles.topGlow} />
 
-      <View style={styles.fixedTitle}>
-        <Text style={styles.h1}>Business Details</Text>
-      </View>
+      <View style={styles.page}>
+        <HeaderWithSteps step="Step 4 of 7" />
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <View style={{ flex: 1 }}>
-          <ScrollView
-            contentContainerStyle={[
-              styles.container,
-              { paddingBottom: 120 + kbHeight },
-            ]}
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* ===== Business location (map) ===== */}
-            <Text style={[styles.label, { marginTop: 6 }]}>
-              Business location (map) — tap to update
-            </Text>
-
-            <View style={{ marginBottom: 8 }}>
-              <TouchableOpacity
-                style={styles.btnSecondary}
-                onPress={openMapPicker}
-              >
-                <Text style={styles.btnSecondaryText}>
-                  📍 Select on full map
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {pickedCoord ? (
-              <>
-                <View style={styles.mapPreviewWrapperLarge}>
-                  <OSMViewErrorBoundary>
-                    <OSMView
-                      key={mapKey}
-                      style={styles.mapPreview}
-                      initialCenter={mapCenter}
-                      initialZoom={mapZoom}
-                      markers={mapMarkers}
-                      styleUrl="https://tiles.openfreemap.org/styles/liberty"
-                      onPress={handleMapPress}
-                      onMapReady={() => {
-                        console.log("Map preview ready");
-                        setMapLoading(false);
-                        setMapInitAttempts(0);
-                      }}
-                      onError={(error) => {
-                        console.error("Map preview error:", error);
-                        setMapInitAttempts((prev) => prev + 1);
-                        if (mapInitAttempts >= 2) {
-                          setMapError(true);
-                          setMapLoading(false);
-                        }
-                      }}
-                      cacheEnabled={true}
-                      cacheSize={50}
-                      renderToHardwareTextureAndroid={true}
-                    />
-                  </OSMViewErrorBoundary>
-                  <TouchableOpacity
-                    accessible
-                    accessibilityRole="button"
-                    accessibilityLabel="Edit location on full map"
-                    activeOpacity={0.9}
-                    style={styles.previewOverlay}
-                    onPress={openMapPicker}
-                  >
-                    <Text style={styles.previewOverlayText}>
-                      ✏️ Tap to edit on map
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.coordsBlock}>
-                  <View style={styles.coordsRow}>
-                    <Text style={styles.coordsLabel}>📍 Latitude:</Text>
-                    <Text style={styles.coordsValue}>
-                      {pickedCoord.latitude.toFixed(6)}
-                    </Text>
-                  </View>
-                  <View style={styles.coordsRow}>
-                    <Text style={styles.coordsLabel}>📍 Longitude:</Text>
-                    <Text style={styles.coordsValue}>
-                      {pickedCoord.longitude.toFixed(6)}
-                    </Text>
-                  </View>
-                </View>
-              </>
-            ) : (
-              <View style={styles.noLocationCard}>
-                <Text style={styles.noLocationIcon}>🗺️</Text>
-                <Text style={styles.noLocationText}>
-                  No location selected yet.
-                </Text>
-                <Text style={styles.noLocationSubtext}>
-                  Tap "Select on full map" to drop a pin, then Confirm.
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <View style={{ flex: 1 }}>
+            <ScrollView
+              contentContainerStyle={[
+                styles.container,
+                { paddingBottom: 120 + kbHeight },
+              ]}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={styles.heroCard}>
+                <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
+                <Text style={styles.h1}>Business setup</Text>
+                <Text style={styles.subtitle}>
+                  Add your business location, logo and required identification
+                  details.
                 </Text>
               </View>
-            )}
+              {/* ===== Business location (map) ===== */}
+              <Text style={[styles.label, { marginTop: 6 }]}>
+                Business location (map) — tap to update
+              </Text>
 
-            {/* ===== Business Address ===== */}
-            <Field
-              label={
-                <Text>
-                  Business address <Text style={{ color: "red" }}>*</Text>
-                </Text>
-              }
-              placeholder="Street, city, region"
-              value={address}
-              onChangeText={setAddress}
-              onFocus={() => setFocusedField("address")}
-              onBlur={() => setFocusedField(null)}
-              isFocused={focusedField === "address"}
-              hint={
-                pickedCoord
-                  ? "📍 Auto-filled from GPS/map; you can edit."
-                  : undefined
-              }
-            />
+              <View style={{ marginBottom: 8 }}>
+                <TouchableOpacity
+                  style={styles.btnSecondary}
+                  onPress={openMapPicker}
+                >
+                  <Text style={styles.btnSecondaryText}>
+                    📍 Select on full map
+                  </Text>
+                </TouchableOpacity>
+              </View>
 
-            {/* ===== Logo Upload ===== */}
-            <Text style={styles.label}>
-              Business logo <Text style={{ color: "red" }}>*</Text>
-            </Text>
-            <LogoUploader value={logo} onChange={setLogo} />
+              {pickedCoord ? (
+                <>
+                  <View style={styles.mapPreviewWrapperLarge}>
+                    <OSMViewErrorBoundary>
+                      <OSMView
+                        key={mapKey}
+                        style={styles.mapPreview}
+                        initialCenter={mapCenter}
+                        initialZoom={mapZoom}
+                        markers={mapMarkers}
+                        styleUrl="https://tiles.openfreemap.org/styles/liberty"
+                        onRegionChangeComplete={(region) => {
+                          const latitude =
+                            region?.latitude ??
+                            region?.center?.latitude ??
+                            region?.nativeEvent?.latitude ??
+                            region?.nativeEvent?.center?.latitude;
 
-            {/* ===== ID Card number ===== */}
-            <Field
-              label={
-                <Text>
-                  ID card number <Text style={{ color: "red" }}>*</Text>
-                </Text>
-              }
-              placeholder="Enter 11-digit ID number"
-              value={idCardNo}
-              onChangeText={(text) => {
-                const cleaned = text.replace(/[^0-9]/g, "").slice(0, 11);
-                setIdCardNo(cleaned);
-              }}
-              keyboardType="numeric"
-              maxLength={11}
-              onFocus={() => setFocusedField("idCardNo")}
-              onBlur={() => setFocusedField(null)}
-              isFocused={focusedField === "idCardNo"}
-              hint="🆔 Only numbers allowed, exactly 11 digits."
-            />
+                          const longitude =
+                            region?.longitude ??
+                            region?.center?.longitude ??
+                            region?.nativeEvent?.longitude ??
+                            region?.nativeEvent?.center?.longitude;
 
-            {/* ===== Business License number ===== */}
-            <Field
-              label={<Text>Business License number</Text>}
-              placeholder="e.g., BRN-12345"
-              value={regNo}
-              onChangeText={setRegNo}
-              onFocus={() => setFocusedField("regNo")}
-              onBlur={() => setFocusedField(null)}
-              isFocused={focusedField === "regNo"}
-            />
-
-            {/* ===== License Upload ===== */}
-            <Text style={styles.label}>
-              Business license / registration document (optional)
-            </Text>
-            <View style={styles.row}>
-              <TouchableOpacity
-                style={[
-                  styles.btnSecondary,
-                  pickingLicense && styles.btnDisabled,
-                ]}
-                onPress={onPickLicense}
-                disabled={pickingLicense}
-              >
-                {pickingLicense ? (
-                  <ActivityIndicator />
-                ) : (
-                  <Text style={styles.btnSecondaryText}>📄 Choose File</Text>
-                )}
-              </TouchableOpacity>
-              <View style={{ flex: 1 }}>
-                {licenseFile ? (
-                  <View>
-                    <Text style={styles.fileName} numberOfLines={1}>
-                      {licenseFile.name}
-                    </Text>
-                    <Text style={styles.metaText}>
-                      {licenseFile.mimeType || "file"} ·{" "}
-                      {formatSize(licenseFile.size)}
-                    </Text>
-                    <TouchableOpacity onPress={onRemoveLicense}>
-                      <Text style={styles.removeText}>❌ Remove</Text>
+                          if (latitude != null && longitude != null) {
+                            setCenterPinCoord({
+                              latitude: Number(latitude),
+                              longitude: Number(longitude),
+                            });
+                          }
+                        }}
+                        onMapReady={() => {
+                          console.log("Map preview ready");
+                          setMapLoading(false);
+                          setMapInitAttempts(0);
+                        }}
+                        onError={(error) => {
+                          console.error("Map preview error:", error);
+                          setMapInitAttempts((prev) => prev + 1);
+                          if (mapInitAttempts >= 2) {
+                            setMapError(true);
+                            setMapLoading(false);
+                          }
+                        }}
+                        cacheEnabled={true}
+                        cacheSize={50}
+                        renderToHardwareTextureAndroid={true}
+                      />
+                    </OSMViewErrorBoundary>
+                    <View pointerEvents="none" style={styles.centerPin}>
+                      <Text style={styles.centerPinText}>📍</Text>
+                    </View>
+                    <TouchableOpacity
+                      accessible
+                      accessibilityRole="button"
+                      accessibilityLabel="Edit location on full map"
+                      activeOpacity={0.9}
+                      style={styles.previewOverlay}
+                      onPress={openMapPicker}
+                    >
+                      <Text style={styles.previewOverlayText}>
+                        ✏️ Tap to edit on map
+                      </Text>
                     </TouchableOpacity>
                   </View>
-                ) : (
-                  <Text numberOfLines={1} style={styles.fileName}>
-                    No file selected
+
+                  <View style={styles.coordsBlock}>
+                    <View style={styles.coordsRow}>
+                      <Text style={styles.coordsLabel}>📍 Latitude:</Text>
+                      <Text style={styles.coordsValue}>
+                        {pickedCoord.latitude.toFixed(6)}
+                      </Text>
+                    </View>
+                    <View style={styles.coordsRow}>
+                      <Text style={styles.coordsLabel}>📍 Longitude:</Text>
+                      <Text style={styles.coordsValue}>
+                        {pickedCoord.longitude.toFixed(6)}
+                      </Text>
+                    </View>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.noLocationCard}>
+                  <Text style={styles.noLocationIcon}>🗺️</Text>
+                  <Text style={styles.noLocationText}>
+                    No location selected yet.
                   </Text>
-                )}
+                  <Text style={styles.noLocationSubtext}>
+                    Tap "Select on full map" to drop a pin, then Confirm.
+                  </Text>
+                </View>
+              )}
+
+              {/* ===== Business Address ===== */}
+              <Field
+                label={
+                  <Text>
+                    Business address <Text style={{ color: "red" }}>*</Text>
+                  </Text>
+                }
+                placeholder="Street, city, region"
+                value={address}
+                onChangeText={setAddress}
+                onFocus={() => setFocusedField("address")}
+                onBlur={() => setFocusedField(null)}
+                isFocused={focusedField === "address"}
+                hint={
+                  pickedCoord
+                    ? "📍 Auto-filled from GPS/map; you can edit."
+                    : undefined
+                }
+              />
+
+              {/* ===== Logo Upload ===== */}
+              <Text style={styles.label}>
+                Business logo <Text style={{ color: "red" }}>*</Text>
+              </Text>
+              <LogoUploader value={logo} onChange={setLogo} />
+
+              {/* ===== ID Card number ===== */}
+              <Field
+                label={
+                  <Text>
+                    ID card number <Text style={{ color: "red" }}>*</Text>
+                  </Text>
+                }
+                placeholder="Enter 11-digit ID number"
+                value={idCardNo}
+                onChangeText={(text) => {
+                  const cleaned = text.replace(/[^0-9]/g, "").slice(0, 11);
+                  setIdCardNo(cleaned);
+                }}
+                keyboardType="numeric"
+                maxLength={11}
+                onFocus={() => setFocusedField("idCardNo")}
+                onBlur={() => setFocusedField(null)}
+                isFocused={focusedField === "idCardNo"}
+                hint="🆔 Only numbers allowed, exactly 11 digits."
+              />
+
+              {/* ===== Business License number ===== */}
+              <Field
+                label={<Text>Business License number</Text>}
+                placeholder="e.g., BRN-12345"
+                value={regNo}
+                onChangeText={setRegNo}
+                onFocus={() => setFocusedField("regNo")}
+                onBlur={() => setFocusedField(null)}
+                isFocused={focusedField === "regNo"}
+              />
+
+              {/* ===== License Upload ===== */}
+              <Text style={styles.label}>
+                Business license / registration document (optional)
+              </Text>
+              <View style={styles.row}>
+                <TouchableOpacity
+                  style={[
+                    styles.btnSecondary,
+                    pickingLicense && styles.btnDisabled,
+                  ]}
+                  onPress={onPickLicense}
+                  disabled={pickingLicense}
+                >
+                  {pickingLicense ? (
+                    <ActivityIndicator />
+                  ) : (
+                    <Text style={styles.btnSecondaryText}>📄 Choose File</Text>
+                  )}
+                </TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                  {licenseFile ? (
+                    <View>
+                      <Text style={styles.fileName} numberOfLines={1}>
+                        {licenseFile.name}
+                      </Text>
+                      <Text style={styles.metaText}>
+                        {licenseFile.mimeType || "file"} ·{" "}
+                        {formatSize(licenseFile.size)}
+                      </Text>
+                      <TouchableOpacity onPress={onRemoveLicense}>
+                        <Text style={styles.removeText}>❌ Remove</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <Text numberOfLines={1} style={styles.fileName}>
+                      No file selected
+                    </Text>
+                  )}
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Bottom bar: Submit */}
+            <View
+              pointerEvents="box-none"
+              style={[styles.fabWrap, { bottom: kbHeight }]}
+            >
+              <View style={styles.submitContainer}>
+                <TouchableOpacity
+                  style={
+                    isFormValid && !submitting
+                      ? styles.btnPrimary
+                      : styles.btnPrimaryDisabled
+                  }
+                  onPress={onSubmit}
+                  disabled={!isFormValid || submitting}
+                >
+                  {submitting ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text
+                      style={
+                        isFormValid
+                          ? styles.btnPrimaryText
+                          : styles.btnPrimaryTextDisabled
+                      }
+                    >
+                      ✓ Submit
+                    </Text>
+                  )}
+                </TouchableOpacity>
               </View>
             </View>
-          </ScrollView>
-
-          {/* Bottom bar: Submit */}
-          <View
-            pointerEvents="box-none"
-            style={[styles.fabWrap, { bottom: kbHeight }]}
-          >
-            <View style={styles.submitContainer}>
-              <TouchableOpacity
-                style={
-                  isFormValid && !submitting
-                    ? styles.btnPrimary
-                    : styles.btnPrimaryDisabled
-                }
-                onPress={onSubmit}
-                disabled={!isFormValid || submitting}
-              >
-                {submitting ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text
-                    style={
-                      isFormValid
-                        ? styles.btnPrimaryText
-                        : styles.btnPrimaryTextDisabled
-                    }
-                  >
-                    ✓ Submit
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
           </View>
-        </View>
-      </KeyboardAvoidingView>
-
+        </KeyboardAvoidingView>
+      </View>
       {/* ===== Map Picker Modal - SINGLE MERCHANT MARKER that can be updated ===== */}
       <Modal
         visible={locationModalVisible}
@@ -785,44 +845,60 @@ export default function MerchantExtrasScreen() {
       >
         <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>📍 Select Merchant Location</Text>
-            <TouchableOpacity onPress={closeMapPicker}>
-              <Text style={styles.modalClose}>✕ Close</Text>
+            <View>
+              <Text style={styles.modalTitle}>Select Merchant Location</Text>
+              <Text style={styles.modalSubtitle}>
+                Tap the map or use your current location
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.modalCloseButton}
+              onPress={closeMapPicker}
+            >
+              <Text style={styles.modalClose}>Close</Text>
             </TouchableOpacity>
           </View>
 
           {/* Map with single marker that updates on tap */}
           <View style={{ flex: 1 }}>
             {!mapError ? (
-              <OSMViewErrorBoundary>
-                <OSMView
-                  ref={mapRef}
-                  key={mapKey}
-                  style={{ flex: 1 }}
-                  initialCenter={mapCenter}
-                  initialZoom={mapZoom}
-                  markers={mapMarkers}
-                  styleUrl="https://tiles.openfreemap.org/styles/liberty"
-                  onPress={handleMapPress}
-                  onMapReady={() => {
-                    console.log("Map ready in MerchantExtrasScreen");
-                    setMapLoading(false);
-                    setMapInitAttempts(0);
-                  }}
-                  onError={(error) => {
-                    console.error("Map error:", error);
-                    setMapInitAttempts((prev) => prev + 1);
-                    if (mapInitAttempts >= 2) {
-                      setMapError(true);
+              <>
+                <OSMViewErrorBoundary>
+                  <OSMView
+                    ref={mapRef}
+                    key={mapKey}
+                    style={styles.fullMap}
+                    initialCenter={mapCenter}
+                    initialZoom={mapZoom}
+                    markers={mapMarkers}
+                    styleUrl="https://tiles.openfreemap.org/styles/liberty"
+                    onRegionChangeComplete={handleMapPick}
+                    onPress={handleMapPick}
+                    onMapReady={() => {
+                      console.log("Map ready in MerchantExtrasScreen");
                       setMapLoading(false);
-                    }
-                  }}
-                  cacheEnabled={true}
-                  cacheSize={100}
-                  userAgent="YourApp/1.0"
-                  renderToHardwareTextureAndroid={true}
-                />
-              </OSMViewErrorBoundary>
+                      setMapInitAttempts(0);
+                    }}
+                    onError={(error) => {
+                      console.error("Map error:", error);
+                      setMapInitAttempts((prev) => prev + 1);
+                      if (mapInitAttempts >= 2) {
+                        setMapError(true);
+                        setMapLoading(false);
+                      }
+                    }}
+                    cacheEnabled={true}
+                    cacheSize={100}
+                    userAgent="YourApp/1.0"
+                    renderToHardwareTextureAndroid={true}
+                  />
+                </OSMViewErrorBoundary>
+
+                <View pointerEvents="none" style={styles.centerPin}>
+                  <Text style={styles.centerPinText}>📍</Text>
+                </View>
+              </>
             ) : (
               <View style={styles.mapErrorContainerFull}>
                 <Text style={styles.mapErrorTextFull}>
@@ -847,7 +923,7 @@ export default function MerchantExtrasScreen() {
 
             {mapLoading && !mapError && (
               <View style={styles.mapLoadingOverlay}>
-                <ActivityIndicator size="large" color="#00b14f" />
+                <ActivityIndicator size="large" color={BRAND.purple} />
                 <Text style={styles.mapLoadingText}>Loading map...</Text>
                 {mapInitAttempts > 0 && (
                   <Text style={styles.mapLoadingSubtext}>
@@ -869,7 +945,7 @@ export default function MerchantExtrasScreen() {
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <Text style={styles.modalFloatBtnText}>
-                    📍 Use Current Location
+                    Use Current Location
                   </Text>
                 )}
               </TouchableOpacity>
@@ -882,18 +958,33 @@ export default function MerchantExtrasScreen() {
             </Text>
           )}
 
-          {/* <View style={styles.modalFooter}>
+          <View style={styles.modalFooter}>
             <Text style={styles.modalHint}>
-              👆 Tap on the map to move the merchant pin. Press Confirm when
-              done.
+              Tap on the map to move the merchant pin, then confirm the
+              location.
             </Text>
+
             <TouchableOpacity
-              style={styles.btnPrimary}
+              style={
+                centerPinCoord || pickedCoord
+                  ? styles.btnPrimary
+                  : styles.btnPrimaryDisabled
+              }
               onPress={confirmPickedLocation}
+              disabled={!centerPinCoord && !pickedCoord}
+              activeOpacity={0.86}
             >
-              <Text style={styles.btnPrimaryText}>✓ Confirm Location</Text>
+              <Text
+                style={
+                  centerPinCoord || pickedCoord
+                    ? styles.btnPrimaryText
+                    : styles.btnPrimaryTextDisabled
+                }
+              >
+                Confirm Location
+              </Text>
             </TouchableOpacity>
-          </View> */}
+          </View>
         </SafeAreaView>
       </Modal>
     </SafeAreaView>
@@ -1073,7 +1164,8 @@ function Field({
       <View
         style={[
           styles.inputWrapper,
-          { borderColor: isFocused ? "#00b14f" : "#ccc" },
+          { borderColor: isFocused ? BRAND.purple : BRAND.greyBorder },
+          isFocused && styles.inputFocused,
         ]}
       >
         <TextInput
@@ -1140,331 +1232,468 @@ const normalizeCategoryIds = (v) => {
   return [];
 };
 
-// ========== Styles ==========
 const styles = StyleSheet.create({
-  fixedTitle: {
-    backgroundColor: "#fff",
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "#fff",
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
   },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.45,
+  },
+
+  page: {
+    flex: 1,
+    paddingHorizontal: 22,
+    paddingTop: 42,
+  },
+
+  heroCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: 28,
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 18,
+    marginBottom: 18,
+    ...SHADOW.sm,
+  },
+
+  brandLabel: {
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    color: BRAND.purple,
+    marginBottom: 10,
+  },
+
   h1: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#1A1D1F",
+    fontFamily: FONT.header,
+    fontSize: 26,
+    fontWeight: "700",
+    color: BRAND.black,
+    lineHeight: 32,
+    marginBottom: 10,
   },
+
+  subtitle: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    lineHeight: 21,
+    color: BRAND.grey,
+  },
+
   container: {
-    paddingHorizontal: 20,
-    paddingVertical: 20,
+    paddingBottom: 140,
   },
-  label: { fontSize: 14, marginBottom: 6, color: "#333", fontWeight: "600" },
-  fileName: { fontSize: 13, color: "#374151" },
-  metaText: { fontSize: 12, color: "#6b7280", marginTop: 2 },
-  removeText: {
-    marginTop: 4,
-    fontSize: 12,
-    color: "#ef4444",
-    fontWeight: "600",
+
+  label: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    marginBottom: 7,
+    color: BRAND.black,
+    fontWeight: "700",
   },
-  hint: { marginTop: 6, fontSize: 12, color: "#DC2626" },
+
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    height: 50,
-    borderWidth: 1.5,
-    borderRadius: 15,
-    backgroundColor: "#fff",
-    borderColor: "#ccc",
-    paddingHorizontal: 10,
+    height: 56,
+    borderWidth: 1.2,
+    borderRadius: 18,
+    backgroundColor: "#FCFCFC",
+    borderColor: BRAND.greyBorder,
+    paddingHorizontal: 16,
   },
-  inputField: { flex: 1, fontSize: 14, paddingVertical: 10 },
+  inputFocused: {
+    shadowColor: BRAND.purple,
+    shadowOpacity: 0.14,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  inputField: {
+    flex: 1,
+    fontFamily: FONT.body,
+    fontSize: 15,
+    color: BRAND.black,
+    paddingVertical: 10,
+  },
+
+  hint: {
+    marginTop: 6,
+    fontSize: 12,
+    color: BRAND.grey,
+    lineHeight: 18,
+  },
+
   row: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginBottom: 14,
+    marginBottom: 16,
   },
+
   btnSecondary: {
-    backgroundColor: "#f3f4f6",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    paddingVertical: 12,
+    backgroundColor: "#F4ECFF",
+    borderWidth: 1.2,
+    borderColor: BRAND.purple,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    borderRadius: 12,
+    borderRadius: 18,
+    alignItems: "center",
   },
-  btnSecondaryText: { fontWeight: "700", fontSize: 14 },
-  btnDisabled: { opacity: 0.6 },
+
+  btnSecondaryText: {
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontSize: 14,
+    fontFamily: FONT.body,
+  },
+
   mapPreviewWrapperLarge: {
-    borderRadius: 12,
+    borderRadius: 24,
     overflow: "hidden",
-    borderWidth: 2,
-    borderColor: "#00b14f",
-    height: 200,
-    marginBottom: 12,
+    borderWidth: 1.5,
+    borderColor: BRAND.purple,
+    height: 210,
+    marginBottom: 14,
     position: "relative",
     marginTop: 8,
+    ...SHADOW.sm,
   },
-  mapPreview: { flex: 1 },
+
+  mapPreview: {
+    flex: 1,
+  },
+
   previewOverlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     justifyContent: "flex-end",
-    paddingBottom: 12,
-    backgroundColor: "rgba(0,0,0,0.0)",
+    paddingBottom: 14,
   },
+
   previewOverlayText: {
-    fontSize: 13,
+    fontFamily: FONT.body,
+    fontSize: 12,
     fontWeight: "700",
-    backgroundColor: "rgba(0,177,79,0.85)",
-    color: "#fff",
+    color: BRAND.white,
+    backgroundColor: "rgba(0,0,0,0.65)",
     paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
+    paddingVertical: 7,
+    borderRadius: RADIUS.pill,
     overflow: "hidden",
+    letterSpacing: 0.3,
   },
-  coordsBlock: {
-    backgroundColor: "#f8fafc",
-    padding: 12,
-    borderRadius: 12,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
-  coordsRow: {
+  modalHeader: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 14,
+    backgroundColor: BRAND.white,
+    borderBottomWidth: 1,
+    borderBottomColor: "#EFE7F7",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 4,
   },
-  coordsLabel: { fontSize: 12, color: "#6B7280", fontWeight: "600" },
-  coordsValue: { fontSize: 13, color: "#111827", fontWeight: "700" },
-  noLocationCard: {
-    backgroundColor: "#fef3c7",
-    padding: 16,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: "#fde68a",
+
+  modalTitle: {
+    fontFamily: FONT.header,
+    fontSize: 18,
+    fontWeight: "700",
+    color: BRAND.black,
   },
-  noLocationIcon: { fontSize: 32, marginBottom: 8 },
-  noLocationText: { fontSize: 14, fontWeight: "700", color: "#92400e" },
-  noLocationSubtext: {
+
+  modalSubtitle: {
+    fontFamily: FONT.body,
     fontSize: 12,
-    color: "#b45309",
-    marginTop: 4,
+    color: BRAND.grey,
+    marginTop: 3,
+  },
+
+  modalCloseButton: {
+    backgroundColor: "#F4ECFF",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: RADIUS.pill,
+  },
+
+  modalClose: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    fontWeight: "700",
+    color: BRAND.purple,
+  },
+
+  fullMap: {
+    flex: 1,
+    backgroundColor: "#EEF6FF",
+  },
+
+  modalFloatWrap: {
+    position: "absolute",
+    top: 18,
+    right: 18,
+  },
+
+  modalFloatBtn: {
+    backgroundColor: BRAND.purple,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: RADIUS.pill,
+    ...SHADOW.md,
+  },
+  modalFooter: {
+    backgroundColor: BRAND.white,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 20,
+    borderTopWidth: 1,
+    borderTopColor: "#EFE7F7",
+  },
+
+  modalHint: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    lineHeight: 17,
+    marginBottom: 10,
     textAlign: "center",
   },
+  modalFloatBtnText: {
+    fontFamily: FONT.body,
+    color: BRAND.white,
+    fontWeight: "700",
+    fontSize: 13,
+  },
+
+  mapLoadingText: {
+    marginTop: 12,
+    fontFamily: FONT.body,
+    fontSize: 14,
+    color: BRAND.purple,
+    fontWeight: "700",
+  },
+  coordsBlock: {
+    backgroundColor: BRAND.white,
+    padding: 14,
+    borderRadius: 18,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    ...SHADOW.sm,
+  },
+
+  coordsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
+
+  coordsLabel: {
+    fontSize: 12,
+    color: BRAND.grey,
+    fontWeight: "600",
+  },
+
+  coordsValue: {
+    fontSize: 13,
+    color: BRAND.black,
+    fontWeight: "700",
+  },
+
+  noLocationCard: {
+    backgroundColor: BRAND.white,
+    padding: 20,
+    borderRadius: 24,
+    alignItems: "center",
+    marginTop: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#EFE7F7",
+    ...SHADOW.sm,
+  },
+
+  noLocationIcon: {
+    fontSize: 34,
+    marginBottom: 10,
+  },
+
+  noLocationText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
+
+  noLocationSubtext: {
+    fontSize: 12,
+    color: BRAND.grey,
+    marginTop: 4,
+    textAlign: "center",
+    lineHeight: 18,
+  },
+
   logoCard: {
     borderWidth: 1.5,
     borderStyle: "dashed",
-    borderColor: "#d1d5db",
-    borderRadius: 16,
-    paddingVertical: 18,
-    paddingHorizontal: 16,
+    borderColor: BRAND.purple,
+    borderRadius: 24,
+    paddingVertical: 24,
+    paddingHorizontal: 18,
     alignItems: "center",
-    marginBottom: 12,
-    backgroundColor: "#fafafa",
+    marginBottom: 16,
+    backgroundColor: "#FCFCFC",
   },
-  logoCardIcon: { fontSize: 32, lineHeight: 32, color: "#9ca3af" },
+
+  logoCardIcon: {
+    fontSize: 34,
+    color: BRAND.purple,
+  },
+
   logoCardTitle: {
-    marginTop: 8,
-    fontSize: 15,
+    marginTop: 10,
+    fontSize: 16,
     fontWeight: "700",
-    color: "#111827",
+    color: BRAND.black,
   },
-  logoCardHint: { marginTop: 4, fontSize: 12, color: "#6b7280" },
-  logoActionsRow: { marginTop: 12, flexDirection: "row", gap: 10 },
+
+  logoCardHint: {
+    marginTop: 4,
+    fontSize: 12,
+    color: BRAND.grey,
+  },
+
+  logoActionsRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    gap: 10,
+  },
+
   actionBtn: {
-    backgroundColor: "#00b14f",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
+    backgroundColor: BRAND.purple,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: RADIUS.pill,
   },
-  actionBtnText: { color: "#fff", fontWeight: "700" },
+
+  actionBtnText: {
+    color: BRAND.white,
+    fontWeight: "700",
+  },
+
   actionBtnGhost: {
-    backgroundColor: "#f3f4f6",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
+    backgroundColor: BRAND.white,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1.2,
+    borderColor: BRAND.greyBorder,
   },
-  actionBtnGhostText: { color: "#111827", fontWeight: "700" },
-  logoSelectedWrap: { marginBottom: 12, alignItems: "center" },
+
+  actionBtnGhostText: {
+    color: BRAND.black,
+    fontWeight: "700",
+  },
+
+  logoSelectedWrap: {
+    marginBottom: 16,
+    alignItems: "center",
+  },
+
   logoPreviewLargeWrap: {
     width: 128,
     height: 128,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
+    borderRadius: 30,
     overflow: "hidden",
     backgroundColor: "#fff",
+    ...SHADOW.sm,
   },
-  logoPreviewLarge: { width: "100%", height: "100%", resizeMode: "cover" },
-  fabWrap: { position: "absolute", left: 0, right: 0 },
-  submitContainer: {
-    height: 100,
-    backgroundColor: "#fff",
-    padding: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: -2 },
-    elevation: 6,
-  },
-  btnPrimary: {
-    backgroundColor: "#00b14f",
-    paddingVertical: 14,
-    borderRadius: 30,
-    alignItems: "center",
-    justifyContent: "center",
+
+  logoPreviewLarge: {
     width: "100%",
-    marginTop: 6,
-    marginBottom: 10,
-    elevation: 15,
-    shadowColor: "#00b14f",
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
+    height: "100%",
+    resizeMode: "cover",
   },
-  btnPrimaryDisabled: {
-    backgroundColor: "#eee",
-    paddingVertical: 14,
-    borderRadius: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-    marginTop: 6,
-    marginBottom: 6,
-  },
-  btnPrimaryText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  btnPrimaryTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
-  modalHeader: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  modalTitle: { fontSize: 18, fontWeight: "700", color: "#111827" },
-  modalClose: { fontSize: 14, fontWeight: "600", color: "#ef4444" },
-  modalFooter: {
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: "#E5E7EB",
-    backgroundColor: "#fff",
-  },
-  modalHint: { fontSize: 12, color: "#6B7280", marginBottom: 8 },
-  modalFloatWrap: {
-    position: "absolute",
-    top: 12,
-    right: 12,
-  },
-  modalFloatBtn: {
-    backgroundColor: "#00b14f",
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 4,
-  },
-  modalFloatBtnText: {
-    color: "#fff",
-    fontWeight: "700",
+
+  fileName: {
     fontSize: 13,
+    color: BRAND.black,
+    fontWeight: "600",
   },
-  locError: {
+
+  metaText: {
+    fontSize: 12,
+    color: BRAND.grey,
+    marginTop: 2,
+  },
+
+  removeText: {
+    marginTop: 6,
     fontSize: 12,
     color: "#ef4444",
-    marginTop: 6,
-    marginBottom: 4,
+    fontWeight: "700",
   },
-  mapErrorContainer: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#f9fafb",
-    borderRadius: 12,
-  },
-  mapErrorText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#374151",
-  },
-  mapErrorSubtext: {
-    marginTop: 4,
-    fontSize: 11,
-    color: "#6b7280",
-  },
-  mapRetryBtn: {
-    marginTop: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    backgroundColor: "#00b14f",
-    borderRadius: 8,
-  },
-  mapRetryText: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: 12,
-  },
-  mapErrorContainerFull: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#f9fafb",
-  },
-  mapErrorTextFull: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#374151",
-  },
-  mapErrorSubtextFull: {
-    marginTop: 4,
-    fontSize: 12,
-    color: "#6b7280",
-  },
-  mapRetryBtnFull: {
-    marginTop: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    backgroundColor: "#00b14f",
-    borderRadius: 8,
-  },
-  mapRetryTextFull: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-  mapLoadingOverlay: {
+
+  fabWrap: {
     position: "absolute",
-    top: 0,
     left: 0,
     right: 0,
-    bottom: 0,
-    backgroundColor: "rgba(255,255,255,0.95)",
+  },
+
+  submitContainer: {
+    backgroundColor: "#FBF7FF",
+    paddingTop: 14,
+    paddingBottom: 24,
+  },
+
+  btnPrimary: {
+    backgroundColor: BRAND.purple,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
-    zIndex: 10,
+    width: "100%",
+    ...SHADOW.md,
   },
-  mapLoadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: "#00b14f",
+
+  btnPrimaryDisabled: {
+    backgroundColor: BRAND.greyLight,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+  },
+
+  btnPrimaryText: {
+    color: BRAND.white,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+
+  btnPrimaryTextDisabled: {
+    color: BRAND.grey,
+    fontSize: 16,
     fontWeight: "600",
   },
-  mapLoadingSubtext: {
-    marginTop: 4,
-    fontSize: 11,
-    color: "#6b7280",
+  centerPin: {
+    position: "absolute",
+    left: "50%",
+    top: "50%",
+    marginLeft: -18,
+    marginTop: -36,
+    zIndex: 999,
+  },
+
+  centerPinText: {
+    fontSize: 36,
   },
 });

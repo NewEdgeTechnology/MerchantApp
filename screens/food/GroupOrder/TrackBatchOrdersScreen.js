@@ -50,14 +50,18 @@ import {
 } from "./socket";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
-
-const DRIVER_MARKER = require("../../../assets/driver.png");
-const CUSTOMER_MARKER = require("../../../assets/customer.png");
-
 const COLORS = {
-  BUSINESS: "#e71414",
+  BUSINESS: "#e71414", // red
+  DRIVER: "#2563eb", // blue
+  CUSTOMER: "#00b14f", // green
 };
-
+const makePinSvg = (color) =>
+  `data:image/svg+xml;utf8,${encodeURIComponent(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+      <path d="M24 2C15.2 2 8 9.2 8 18c0 11.5 16 28 16 28s16-16.5 16-28C40 9.2 32.8 2 24 2z" fill="${color}"/>
+      <circle cx="24" cy="18" r="6" fill="white"/>
+    </svg>
+  `)}`;
 class OSMViewErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -711,7 +715,7 @@ export default function TrackBatchOrdersScreen() {
           longitude: businessCoords.lng,
         },
         title: "Business",
-        icon: { color: COLORS.BUSINESS, size: 45 },
+        icon: { uri: makePinSvg(COLORS.BUSINESS), size: 42 },
         popupData: {
           type: "business",
           title: "Business Location",
@@ -726,7 +730,7 @@ export default function TrackBatchOrdersScreen() {
           id: `driver-${rid}`,
           coordinate: { latitude: c.lat, longitude: c.lng },
           title: "Driver",
-          icon: { uri: Image.resolveAssetSource(DRIVER_MARKER).uri, size: 50 },
+          icon: { uri: makePinSvg(COLORS.DRIVER), size: 42 },
           popupData: {
             type: "driver",
             title: "Driver",
@@ -740,7 +744,7 @@ export default function TrackBatchOrdersScreen() {
         id: `cust-${g.key}`,
         coordinate: { latitude: g.lat, longitude: g.lng },
         title: `${g.count} Orders`,
-        icon: { uri: Image.resolveAssetSource(CUSTOMER_MARKER).uri, size: 45 },
+        icon: { uri: makePinSvg(COLORS.CUSTOMER), size: 42 },
         popupData: {
           type: "customer",
           title: "Orders",
@@ -1090,7 +1094,31 @@ export default function TrackBatchOrdersScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+      <Modal
+        visible={overlayOpen}
+        animationType="slide"
+        onRequestClose={() => setOverlayOpen(false)}
+      >
+        <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
+          <View style={styles.fullMapHeader}>
+            <Text style={styles.headerTitle}>Full Map</Text>
 
+            <TouchableOpacity onPress={() => setOverlayOpen(false)}>
+              <Ionicons name="close" size={24} color="#0f172a" />
+            </TouchableOpacity>
+          </View>
+
+          <OSMView
+            ref={overlayMapRef}
+            style={{ flex: 1 }}
+            initialCenter={initialMapCenter}
+            initialZoom={initialZoom}
+            markers={markers}
+            polylines={polylines}
+            styleUrl="https://tiles.openfreemap.org/styles/liberty"
+          />
+        </SafeAreaView>
+      </Modal>
       {/* HEADER */}
       <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
         <TouchableOpacity
@@ -1146,6 +1174,11 @@ export default function TrackBatchOrdersScreen() {
             <TouchableOpacity style={styles.fitBtn} onPress={fitAll}>
               <Ionicons name="scan-outline" size={16} color="#fff" />
               <Text style={styles.fitBtnText}>Fit All</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.fullBtn} onPress={openOverlay}>
+              <Ionicons name="expand-outline" size={16} color="#fff" />
+              <Text style={styles.fitBtnText}>Full Map</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1453,5 +1486,24 @@ const styles = StyleSheet.create({
     color: "#6b7280",
     textAlign: "center",
     paddingVertical: 20,
+  },
+  fullBtn: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#2563eb",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+  },
+
+  fullMapHeader: {
+    height: 56,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
   },
 });

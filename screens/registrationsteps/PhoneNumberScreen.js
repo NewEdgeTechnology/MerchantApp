@@ -277,17 +277,20 @@ const styles = StyleSheet.create({
 
   phoneInputContainer: {
     flexDirection: "row",
-    marginBottom: 8,
-    gap: 10,
+    alignItems: "center",
+    marginBottom: 10,
+    gap: 12,
   },
 
   countrySelector: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    minWidth: 110,
     backgroundColor: "#FCFCFC",
     paddingHorizontal: 14,
-    height: 56,
-    borderRadius: 18,
+    height: 54,
+    borderRadius: 16,
     borderWidth: 1.2,
     borderColor: BRAND.greyBorder,
     gap: 8,
@@ -312,11 +315,11 @@ const styles = StyleSheet.create({
   phoneInputWrapper: {
     flex: 1,
     backgroundColor: "#FCFCFC",
-    borderRadius: 18,
+    borderRadius: 16,
     flexDirection: "row",
     alignItems: "center",
     paddingRight: 10,
-    minHeight: 56,
+    minHeight: 54,
     borderWidth: 1.2,
   },
 

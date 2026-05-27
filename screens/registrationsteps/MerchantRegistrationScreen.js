@@ -13,6 +13,8 @@ import {
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { useSafeAreaInsets, SafeAreaView } from "react-native-safe-area-context";
 import HeaderWithSteps from "./HeaderWithSteps";
+import Icon from "react-native-vector-icons/Ionicons";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
 // use .env for admin business type APIs (no fallbacks)
 import {
@@ -210,12 +212,11 @@ export default function MerchantRegistrationScreen() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-      <HeaderWithSteps step="Step 3 of 7" />
+  <SafeAreaView style={styles.safeArea} edges={["left", "right", "bottom"]}>
+    <View style={styles.topGlow} />
 
-      <View style={styles.fixedTitle}>
-        <Text style={styles.h1}>Business Details</Text>
-      </View>
+    <View style={styles.page}>
+      <HeaderWithSteps step="Step 3 of 7" />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
@@ -225,129 +226,141 @@ export default function MerchantRegistrationScreen() {
           <ScrollView
             contentContainerStyle={[
               styles.container,
-              { paddingBottom: 120 + bottomSpace },
+              { paddingBottom:  bottomSpace },
             ]}
-            keyboardShouldPersistTaps="handled"
+            keyboardShouldPersistTaps="always"
             keyboardDismissMode="on-drag"
+            showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.section}>
-              {effectiveServiceType === "mart"
-                ? "Mart Merchant"
-                : "Food Merchant"}
-            </Text>
-
-            {/* ✅ Full Name field with native keyboard caps + smart cleanup */}
-            <Field
-              label={
-                <Text>
-                  Full name <Text style={{ color: "red" }}>*</Text>
-                </Text>
-              }
-              placeholder="e.g., Sonam Dorji"
-              value={fullName}
-              onChangeText={setFullName}
-              onFocus={() => setFocusedField("fullName")}
-              onBlur={() => {
-                setFocusedField(null);
-                setFullName(toTitleCaseSmart(fullName));
-              }}
-              isFocused={focusedField === "fullName"}
-              autoCapitalize="words"
-            />
-
-            {/* ✅ Business Name field, same smart capitalization */}
-            <Field
-              label={
-                <Text>
-                  Business name <Text style={{ color: "red" }}>*</Text>
-                </Text>
-              }
-              placeholder="e.g., Zombala Restaurant"
-              value={businessName}
-              onChangeText={setBusinessName}
-              onFocus={() => setFocusedField("businessName")}
-              onBlur={() => {
-                setFocusedField(null);
-                setBusinessName(toTitleCaseSmart(businessName));
-              }}
-              isFocused={focusedField === "businessName"}
-              autoCapitalize="words"
-            />
-
-            {/* 🔁 Dynamic label here */}
-            <Text style={styles.label}>{typeLabel}</Text>
-            <View style={styles.chipsRow}>
-              {categories.length > 0 ? (
-                categories.map((c) => (
-                  <TouchableOpacity
-                    key={c.id}
-                    style={[
-                      styles.chip,
-                      selectedCategories.includes(String(c.id)) &&
-                        styles.chipActive,
-                    ]}
-                    onPress={() => toggleCategory(c.id)}
-                  >
-                    <Text
-                      style={[
-                        styles.chipText,
-                        selectedCategories.includes(String(c.id)) &&
-                          styles.chipTextActive,
-                      ]}
-                    >
-                      {c.name}
-                    </Text>
-                  </TouchableOpacity>
-                ))
-              ) : selectedCategories.length > 0 ? (
-                selectedCategories.map((id) => (
-                  <TouchableOpacity
-                    key={id}
-                    style={[styles.chip, styles.chipActive]}
-                    onPress={() => toggleCategory(id)}
-                  >
-                    <Text style={[styles.chipText, styles.chipTextActive]}>
-                      {id}
-                    </Text>
-                  </TouchableOpacity>
-                ))
-              ) : null}
+            <View style={styles.heroCard}>
+              <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
+              <Text style={styles.h1}>Business details</Text>
+              <Text style={styles.subtitle}>
+                Add your owner name, business name and business category.
+              </Text>
             </View>
 
-            {!!selectedCategories.length && (
-              <Text style={styles.hint}>
-                {selectedHintPrefix}
-                {selectedNames.join(", ")}
+            <View style={styles.formCard}>
+              <Text style={styles.section}>
+                {effectiveServiceType === "mart"
+                  ? "Mart Merchant"
+                  : "Food Merchant"}
               </Text>
-            )}
+
+              <Field
+                label={
+                  <Text>
+                    Full name <Text style={{ color: BRAND.red }}>*</Text>
+                  </Text>
+                }
+                placeholder="e.g., Sonam Dorji"
+                value={fullName}
+                onChangeText={setFullName}
+                onFocus={() => setFocusedField("fullName")}
+                onBlur={() => {
+                  setFocusedField(null);
+                  setFullName(toTitleCaseSmart(fullName));
+                }}
+                isFocused={focusedField === "fullName"}
+                autoCapitalize="words"
+              />
+
+              <Field
+                label={
+                  <Text>
+                    Business name <Text style={{ color: BRAND.red }}>*</Text>
+                  </Text>
+                }
+                placeholder="e.g., Zombala Restaurant"
+                value={businessName}
+                onChangeText={setBusinessName}
+                onFocus={() => setFocusedField("businessName")}
+                onBlur={() => {
+                  setFocusedField(null);
+                  setBusinessName(toTitleCaseSmart(businessName));
+                }}
+                isFocused={focusedField === "businessName"}
+                autoCapitalize="words"
+              />
+
+              <Text style={styles.label}>{typeLabel}</Text>
+
+              <View style={styles.chipsRow}>
+                {categories.length > 0
+                  ? categories.map((c) => (
+                      <TouchableOpacity
+                        key={c.id}
+                        style={[
+                          styles.chip,
+                          selectedCategories.includes(String(c.id)) &&
+                            styles.chipActive,
+                        ]}
+                        onPress={() => toggleCategory(c.id)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.chipText,
+                            selectedCategories.includes(String(c.id)) &&
+                              styles.chipTextActive,
+                          ]}
+                        >
+                          {c.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))
+                  : selectedCategories.length > 0
+                  ? selectedCategories.map((id) => (
+                      <TouchableOpacity
+                        key={id}
+                        style={[styles.chip, styles.chipActive]}
+                        onPress={() => toggleCategory(id)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[styles.chipText, styles.chipTextActive]}>
+                          {id}
+                        </Text>
+                      </TouchableOpacity>
+                    ))
+                  : null}
+              </View>
+
+              {!!selectedCategories.length && (
+                <Text style={styles.hint}>
+                  {selectedHintPrefix}
+                  {selectedNames.join(", ")}
+                </Text>
+              )}
+            </View>
           </ScrollView>
 
-          <View
-            pointerEvents="box-none"
-            style={[styles.fabWrap, { bottom: bottomSpace }]}
-          >
-            <View style={styles.submitContainer}>
-              <TouchableOpacity
-                style={isValid ? styles.btnPrimary : styles.btnPrimaryDisabled}
-                onPress={goContinue}
-                disabled={!isValid}
+          <View style={styles.submitContainer}>
+            <TouchableOpacity
+              style={isValid ? styles.btnPrimary : styles.btnPrimaryDisabled}
+              onPress={goContinue}
+              disabled={!isValid}
+              activeOpacity={0.86}
+            >
+              <Text
+                style={
+                  isValid
+                    ? styles.btnPrimaryText
+                    : styles.btnPrimaryTextDisabled
+                }
               >
-                <Text
-                  style={
-                    isValid
-                      ? styles.btnPrimaryText
-                      : styles.btnPrimaryTextDisabled
-                  }
-                >
-                  Continue
-                </Text>
-              </TouchableOpacity>
-            </View>
+                Continue
+              </Text>
+
+              {isValid && (
+                <Icon name="arrow-forward" size={20} color={BRAND.white} />
+              )}
+            </TouchableOpacity>
           </View>
         </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
-  );
+    </View>
+  </SafeAreaView>
+);
 }
 
 /* ---------- Field Component ---------- */
@@ -390,79 +403,191 @@ function Field({
   );
 }
 
-/* ---------- Styles ---------- */
 const styles = StyleSheet.create({
-  fixedTitle: {
-    backgroundColor: "#fff",
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "#fff",
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
   },
-  h1: { fontSize: 22, fontWeight: "bold", color: "#1A1D1F" },
-  container: { paddingHorizontal: 20, paddingVertical: 20 },
-  section: { marginTop: 6, marginBottom: 8, fontSize: 16, fontWeight: "700" },
-  label: { fontSize: 14, marginBottom: 6, color: "#333" },
-  hint: { marginTop: 6, fontSize: 12, color: "#067647" },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.45,
+  },
+
+  page: {
+    flex: 1,
+    paddingHorizontal: 22,
+    paddingTop: 42,
+  },
+
+  container: {
+    paddingBottom: 120,
+  },
+
+  heroCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: 28,
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 18,
+    marginBottom: 18,
+    ...SHADOW.sm,
+  },
+
+  brandLabel: {
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    color: BRAND.purple,
+    marginBottom: 10,
+  },
+
+  h1: {
+    fontFamily: FONT.header,
+    fontSize: 26,
+    fontWeight: "700",
+    color: BRAND.black,
+    lineHeight: 32,
+    marginBottom: 10,
+  },
+
+  subtitle: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    lineHeight: 21,
+    color: BRAND.grey,
+  },
+
+  formCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: 26,
+    padding: 18,
+    ...SHADOW.sm,
+  },
+
+  section: {
+    fontFamily: FONT.body,
+    marginBottom: 18,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 1.1,
+    color: BRAND.magenta,
+    textTransform: "uppercase",
+  },
+
+  label: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    marginBottom: 7,
+    color: BRAND.black,
+    fontWeight: "700",
+  },
+
+  hint: {
+    fontFamily: FONT.body,
+    marginTop: 8,
+    fontSize: 12,
+    color: BRAND.purple,
+    lineHeight: 17,
+  },
+
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    height: 50,
-    borderWidth: 1.5,
-    borderRadius: 15,
-    backgroundColor: "#fff",
-    borderColor: "#ccc",
-    paddingHorizontal: 10,
+    height: 56,
+    borderWidth: 1.2,
+    borderRadius: 18,
+    backgroundColor: "#FCFCFC",
+    paddingHorizontal: 16,
   },
-  inputField: { flex: 1, fontSize: 14, paddingVertical: 10 },
+
+  inputField: {
+    flex: 1,
+    fontFamily: FONT.body,
+    fontSize: 15,
+    color: BRAND.black,
+    paddingVertical: 10,
+  },
+
   chipsRow: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 8,
+    gap: 9,
+    marginTop: 4,
     marginBottom: 10,
   },
+
   chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#d0d5dd",
-    backgroundColor: "#fff",
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1.2,
+    borderColor: BRAND.greyBorder,
+    backgroundColor: "#FCFCFC",
   },
-  chipActive: { backgroundColor: "#12b76a22", borderColor: "#12b76a" },
-  chipText: { fontSize: 13, color: "#1f2937" },
-  chipTextActive: { fontSize: 13, fontWeight: "700", color: "#067647" },
-  fabWrap: { position: "absolute", left: 0, right: 0 },
+
+  chipActive: {
+    backgroundColor: "#F4ECFF",
+    borderColor: BRAND.purple,
+  },
+
+  chipText: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: BRAND.grey,
+    fontWeight: "600",
+  },
+
+  chipTextActive: {
+    color: BRAND.purple,
+    fontWeight: "800",
+  },
+
   submitContainer: {
-    height: 100,
-    backgroundColor: "#fff",
-    padding: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
+    backgroundColor: "#FBF7FF",
+    paddingTop: 14,
+    paddingBottom: 24,
   },
+
   btnPrimary: {
-    backgroundColor: "#00b14f",
-    paddingVertical: 14,
-    borderRadius: 30,
+    backgroundColor: BRAND.purple,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
-    marginTop: 6,
-    marginBottom: 10,
-    elevation: 15,
-    shadowColor: "#00b14f",
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
+    flexDirection: "row",
+    gap: 8,
+    ...SHADOW.md,
   },
+
   btnPrimaryDisabled: {
-    backgroundColor: "#eee",
-    paddingVertical: 14,
-    borderRadius: 30,
+    backgroundColor: BRAND.greyLight,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
   },
-  btnPrimaryText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  btnPrimaryTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
+
+  btnPrimaryText: {
+    fontFamily: FONT.body,
+    color: BRAND.white,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+
+  btnPrimaryTextDisabled: {
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+    fontSize: 16,
+    fontWeight: "600",
+  },
 });
