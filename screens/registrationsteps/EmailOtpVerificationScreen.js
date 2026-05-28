@@ -15,9 +15,13 @@ import {
   View,
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { useSafeAreaInsets, SafeAreaView } from "react-native-safe-area-context";
+import {
+  useSafeAreaInsets,
+  SafeAreaView,
+} from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import HeaderWithSteps from "./HeaderWithSteps";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
 import {
   SEND_OTP_ENDPOINT,
@@ -65,7 +69,10 @@ const normalizeCategoryIds = (v) => {
   return [];
 };
 
-const normalizeOwnerType = (s) => String(s || "").trim().toLowerCase();
+const normalizeOwnerType = (s) =>
+  String(s || "")
+    .trim()
+    .toLowerCase();
 
 const normalizeDeliveryUpper = (val) => {
   if (val == null) return null;
@@ -82,7 +89,10 @@ const normalizeDeliveryUpper = (val) => {
 };
 
 // ✅ CID/ID Card (digits only, max 11)
-const normalizeCid11 = (v) => String(v || "").replace(/[^0-9]/g, "").slice(0, 11);
+const normalizeCid11 = (v) =>
+  String(v || "")
+    .replace(/[^0-9]/g, "")
+    .slice(0, 11);
 
 const toHttpUrlOrNull = (val) => {
   if (!val) return null;
@@ -113,7 +123,7 @@ const buildFilePart = (uri, base = "image") => {
   const type = guessMime(uri);
   const name = (uri.split("?")[0].split("/").pop() || base).replace(
     /[^a-z0-9._-]/gi,
-    "_"
+    "_",
   );
   return { uri, name: name.includes(".") ? name : `${name}.jpg`, type };
 };
@@ -174,6 +184,7 @@ const postMultipart = async (url, formData, timeoutMs = 30000) => {
   if (!u) throw new Error("Endpoint missing");
   const id = rid();
   log(`(req:${id}) POST MULTIPART ->`, u);
+  console.log("Multipart FormData:", formData);
 
   const controller = new AbortController();
   const to = setTimeout(() => controller.abort(), timeoutMs);
@@ -216,7 +227,9 @@ const postMultipart = async (url, formData, timeoutMs = 30000) => {
 
 /* ---------------- OTP Channel resolver ---------------- */
 const normalizeOtpChannel = (v) => {
-  const s = String(v || "").trim().toLowerCase();
+  const s = String(v || "")
+    .trim()
+    .toLowerCase();
   if (s === "sms" || s === "phone" || s === "mobile") return "sms";
   if (s === "email" || s === "mail") return "email";
   return "sms";
@@ -250,31 +263,34 @@ export default function EmailOtpVerificationScreen() {
   } = route.params ?? {};
 
   const otpChannel = useMemo(
-    () => normalizeOtpChannel(incomingOtpChannel ?? otp_channel ?? verifyBy ?? method),
-    [incomingOtpChannel, otp_channel, verifyBy, method]
+    () =>
+      normalizeOtpChannel(
+        incomingOtpChannel ?? otp_channel ?? verifyBy ?? method,
+      ),
+    [incomingOtpChannel, otp_channel, verifyBy, method],
   );
 
   const effectivePhone = useMemo(
     () => String(phone || merchant?.phone || "").trim(),
-    [phone, merchant?.phone]
+    [phone, merchant?.phone],
   );
 
   const businessTypeIds = useMemo(
     () => normalizeCategoryIds(merchant?.category ?? initialCategory),
-    [merchant?.category, initialCategory]
+    [merchant?.category, initialCategory],
   );
 
   const ownerType = useMemo(
     () =>
       normalizeOwnerType(
-        incomingOwnerType ?? merchant?.owner_type ?? serviceType ?? "food"
+        incomingOwnerType ?? merchant?.owner_type ?? serviceType ?? "food",
       ),
-    [incomingOwnerType, merchant?.owner_type, serviceType]
+    [incomingOwnerType, merchant?.owner_type, serviceType],
   );
 
   const deliveryOption = useMemo(
     () => normalizeDeliveryUpper(incomingDelivery ?? merchant?.delivery_option),
-    [incomingDelivery, merchant?.delivery_option]
+    [incomingDelivery, merchant?.delivery_option],
   );
 
   // ✅ final cid used for register (backend wants `cid`)
@@ -287,7 +303,13 @@ export default function EmailOtpVerificationScreen() {
       merchant?.id_card_no ??
       null;
     return normalizeCid11(raw);
-  }, [incomingIdCardNo, merchant?.cid, merchant?.id_card_number, merchant?.idCardNo, merchant?.id_card_no]);
+  }, [
+    incomingIdCardNo,
+    merchant?.cid,
+    merchant?.id_card_number,
+    merchant?.idCardNo,
+    merchant?.id_card_no,
+  ]);
 
   const [otp, setOtp] = useState("");
   const [error, setError] = useState("");
@@ -299,12 +321,17 @@ export default function EmailOtpVerificationScreen() {
   const inputRef = useRef(null);
 
   const maskedEmail = useMemo(() => maskEmail(email), [email]);
-  const maskedPhone = useMemo(() => maskPhone(effectivePhone), [effectivePhone]);
+  const maskedPhone = useMemo(
+    () => maskPhone(effectivePhone),
+    [effectivePhone],
+  );
 
   const sendEndpoint =
     otpChannel === "sms" ? SEND_OTP_REGISTER_SMS_ENDPOINT : SEND_OTP_ENDPOINT;
   const verifyEndpoint =
-    otpChannel === "sms" ? VERIFY_OTP_REGISTER_SMS_ENDPOINT : VERIFY_OTP_ENDPOINT;
+    otpChannel === "sms"
+      ? VERIFY_OTP_REGISTER_SMS_ENDPOINT
+      : VERIFY_OTP_ENDPOINT;
 
   useEffect(() => {
     const onShow = (e) => setKbHeight(e.endCoordinates?.height ?? 0);
@@ -442,17 +469,25 @@ export default function EmailOtpVerificationScreen() {
       ...(toHttpUrlOrNull(merchant?.license_image ?? merchant?.license)
         ? {
             license_image: toHttpUrlOrNull(
-              merchant?.license_image ?? merchant?.license
+              merchant?.license_image ?? merchant?.license,
             ),
           }
         : {}),
 
-      ...(merchant?.latitude != null ? { latitude: Number(merchant.latitude) } : {}),
-      ...(merchant?.longitude != null ? { longitude: Number(merchant.longitude) } : {}),
+      ...(merchant?.latitude != null
+        ? { latitude: Number(merchant.latitude) }
+        : {}),
+      ...(merchant?.longitude != null
+        ? { longitude: Number(merchant.longitude) }
+        : {}),
       ...(merchant?.address ? { address: String(merchant.address) } : {}),
 
       ...(toHttpUrlOrNull(merchant?.logo ?? merchant?.business_logo)
-        ? { business_logo: toHttpUrlOrNull(merchant?.logo ?? merchant?.business_logo) }
+        ? {
+            business_logo: toHttpUrlOrNull(
+              merchant?.logo ?? merchant?.business_logo,
+            ),
+          }
         : {}),
 
       delivery_option: deliveryOption ?? undefined,
@@ -460,11 +495,13 @@ export default function EmailOtpVerificationScreen() {
 
       ...(bank?.bank_name ? { bank_name: bank.bank_name } : {}),
       ...(bank?.account_name ? { account_holder_name: bank.account_name } : {}),
-      ...(bank?.account_number ? { account_number: String(bank.account_number) } : {}),
+      ...(bank?.account_number
+        ? { account_number: String(bank.account_number) }
+        : {}),
       ...(toHttpUrlOrNull(bank?.bank_qr ?? bank?.bank_qr_code_image)
         ? {
             bank_qr_code_image: toHttpUrlOrNull(
-              bank?.bank_qr ?? bank?.bank_qr_code_image
+              bank?.bank_qr ?? bank?.bank_qr_code_image,
             ),
           }
         : {}),
@@ -482,7 +519,10 @@ export default function EmailOtpVerificationScreen() {
     fd.append("email", merchant?.email ?? email ?? "");
     fd.append("phone", merchant?.phone ?? effectivePhone ?? "");
     fd.append("password", merchant?.password ?? "");
-    fd.append("business_name", merchant?.business_name ?? merchant?.businessName ?? "");
+    fd.append(
+      "business_name",
+      merchant?.business_name ?? merchant?.businessName ?? "",
+    );
 
     // ✅ BACKEND NEEDS cid
     if (cid) fd.append("cid", cid);
@@ -493,31 +533,39 @@ export default function EmailOtpVerificationScreen() {
     if (deliveryOption) fd.append("delivery_option", deliveryOption);
     if (merchant?.registration_no)
       fd.append("business_license_number", String(merchant.registration_no));
-    if (merchant?.latitude != null) fd.append("latitude", String(Number(merchant.latitude)));
-    if (merchant?.longitude != null) fd.append("longitude", String(Number(merchant.longitude)));
+    if (merchant?.latitude != null)
+      fd.append("latitude", String(Number(merchant.latitude)));
+    if (merchant?.longitude != null)
+      fd.append("longitude", String(Number(merchant.longitude)));
     if (merchant?.address) fd.append("address", String(merchant.address));
     if (bank?.bank_name) fd.append("bank_name", bank.bank_name);
     if (bank?.account_name) fd.append("account_holder_name", bank.account_name);
-    if (bank?.account_number) fd.append("account_number", String(bank.account_number));
+    if (bank?.account_number)
+      fd.append("account_number", String(bank.account_number));
 
-    (businessTypeIds || []).forEach((id) => fd.append("business_type_ids[]", String(id)));
+    (businessTypeIds || []).forEach((id) =>
+      fd.append("business_type_ids[]", String(id)),
+    );
 
     const logoUri = getUri(merchant?.logo ?? merchant?.business_logo);
     const licUri = getUri(merchant?.license_image ?? merchant?.license);
     const bankQrUri = getUri(
-      (merchant?.bank ?? {}).bank_qr ?? (merchant?.bank ?? {}).bank_qr_code_image
+      (merchant?.bank ?? {}).bank_qr ??
+        (merchant?.bank ?? {}).bank_qr_code_image,
     );
 
     if (logoUri) {
       fd.append(
         "business_logo",
-        isLocalFile(logoUri) ? buildFilePart(logoUri, "business_logo") : logoUri
+        isLocalFile(logoUri)
+          ? buildFilePart(logoUri, "business_logo")
+          : logoUri,
       );
     }
     if (licUri) {
       fd.append(
         "license_image",
-        isLocalFile(licUri) ? buildFilePart(licUri, "license_image") : licUri
+        isLocalFile(licUri) ? buildFilePart(licUri, "license_image") : licUri,
       );
     }
     if (bankQrUri) {
@@ -525,7 +573,7 @@ export default function EmailOtpVerificationScreen() {
         "bank_qr_code_image",
         isLocalFile(bankQrUri)
           ? buildFilePart(bankQrUri, "bank_qr_code_image")
-          : bankQrUri
+          : bankQrUri,
       );
     }
 
@@ -550,7 +598,10 @@ export default function EmailOtpVerificationScreen() {
 
     if (!businessTypeIds.length) {
       setError("Please select at least one business type.");
-      Alert.alert("Missing business type", "business_type_ids must be a non-empty array.");
+      Alert.alert(
+        "Missing business type",
+        "business_type_ids must be a non-empty array.",
+      );
       return;
     }
 
@@ -586,7 +637,8 @@ export default function EmailOtpVerificationScreen() {
       const logoUri = getUri(merchant?.logo ?? merchant?.business_logo);
       const licUri = getUri(merchant?.license_image ?? merchant?.license);
       const bankQrUri = getUri(
-        (merchant?.bank ?? {}).bank_qr ?? (merchant?.bank ?? {}).bank_qr_code_image
+        (merchant?.bank ?? {}).bank_qr ??
+          (merchant?.bank ?? {}).bank_qr_code_image,
       );
       const hasAnyImage = !!(logoUri || licUri || bankQrUri);
 
@@ -609,9 +661,21 @@ export default function EmailOtpVerificationScreen() {
         returnTo,
       });
     } catch (e) {
-      logErr("verifyOtpThenRegister failed:", e?.message);
-      setError(e?.message || "Something went wrong. Please try again.");
-    } finally {
+  console.log("========= MERCHANT REGISTER ERROR =========");
+  console.log("Error message:", e?.message);
+  console.log("Full error:", e);
+  console.log("REGISTER_MERCHANT_ENDPOINT:", REGISTER_MERCHANT_ENDPOINT);
+  console.log("merchant logo:", merchant?.logo);
+  console.log("merchant business_logo:", merchant?.business_logo);
+  console.log("merchant license:", merchant?.license);
+  console.log("merchant license_image:", merchant?.license_image);
+  console.log("bank qr:", merchant?.bank?.bank_qr);
+  console.log("bank qr code image:", merchant?.bank?.bank_qr_code_image);
+  console.log("==========================================");
+
+  logErr("verifyOtpThenRegister failed:", e?.message);
+  setError(e?.message || "Something went wrong. Please try again.");
+} finally {
       setSubmitting(false);
     }
   };
@@ -621,114 +685,164 @@ export default function EmailOtpVerificationScreen() {
   const target = otpChannel === "sms" ? maskedPhone : maskedEmail;
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-      <HeaderWithSteps step="Step 7 of 7" title={title} onBack={() => navigation.goBack()} />
+    <SafeAreaView style={styles.safeArea} edges={["left", "right", "bottom"]}>
+      <View style={styles.topGlow} />
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <View style={{ flex: 1 }}>
+      <View style={styles.page}>
+        <HeaderWithSteps
+          step="Step 7 of 7"
+          title={title}
+          onBack={() => navigation.goBack()}
+        />
+
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
           <ScrollView
-            contentContainerStyle={[styles.container, { paddingBottom: 120 + bottomSpace }]}
+            contentContainerStyle={[
+              styles.container,
+              { paddingBottom: 60 + bottomSpace },
+            ]}
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.lead}>
-              Enter the 6-digit code we sent to <Text style={styles.leadStrong}>{target}</Text>.
-            </Text>
-
-            <View style={styles.otpWrap}>
-              <View style={styles.otpBoxesRow}>
-                {Array.from({ length: 6 }).map((_, i) => {
-                  const isActive = i === otp.length;
-                  const char = otp[i] || "";
-                  return (
-                    <TouchableOpacity
-                      key={i}
-                      onPress={() => inputRef.current?.focus()}
-                      activeOpacity={0.8}
-                      style={[styles.otpBox, isActive && styles.otpBoxActive]}
-                    >
-                      <Text style={styles.otpBoxChar}>{char ? char : isActive ? "|" : " "}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              <TextInput
-                ref={inputRef}
-                style={styles.otpHiddenInput}
-                value={otp}
-                onChangeText={(v) => setOtp(v.replace(/[^0-9]/g, "").slice(0, 6))}
-                keyboardType="number-pad"
-                maxLength={6}
-                autoFocus
-                returnKeyType="done"
-                textContentType="oneTimeCode"
-              />
+            <View style={styles.heroCard}>
+              <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
+              <Text style={styles.h1}>{title}</Text>
+              <Text style={styles.subtitle}>
+                Enter the 6-digit code sent to{" "}
+                <Text style={styles.subtitleStrong}>{target}</Text>.
+              </Text>
             </View>
 
-            {!!error && (
-              <View style={styles.errorWrap}>
-                <Ionicons name="warning-outline" size={16} color="#DC2626" />
-                <Text style={styles.errorText}>{error}</Text>
+            <View style={styles.otpCard}>
+              <Text style={styles.otpTitle}>Verification code</Text>
+
+              <View style={styles.otpWrap}>
+                <View style={styles.otpBoxesRow}>
+                  {Array.from({ length: 6 }).map((_, i) => {
+                    const isActive = i === otp.length;
+                    const char = otp[i] || "";
+
+                    return (
+                      <TouchableOpacity
+                        key={i}
+                        onPress={() => inputRef.current?.focus()}
+                        activeOpacity={0.8}
+                        style={[styles.otpBox, isActive && styles.otpBoxActive]}
+                      >
+                        <Text style={styles.otpBoxChar}>
+                          {char ? char : isActive ? "|" : " "}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <TextInput
+                  ref={inputRef}
+                  style={styles.otpHiddenInput}
+                  value={otp}
+                  onChangeText={(v) =>
+                    setOtp(v.replace(/[^0-9]/g, "").slice(0, 6))
+                  }
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  autoFocus
+                  returnKeyType="done"
+                  textContentType="oneTimeCode"
+                />
               </View>
-            )}
 
-            <View style={styles.resendRow}>
-              <Text style={styles.resendHint}>Didn’t get a code?</Text>
-              <TouchableOpacity onPress={resendOtp} disabled={cooldown > 0} activeOpacity={cooldown > 0 ? 1 : 0.8}>
-                <Text style={[styles.resendLink, cooldown > 0 && { color: "#9CA3AF" }]}>
-                  {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend"}
-                </Text>
-              </TouchableOpacity>
-            </View>
+              {!!error && (
+                <View style={styles.errorWrap}>
+                  <Ionicons name="warning-outline" size={16} color="#DC2626" />
+                  <Text style={styles.errorText}>{error}</Text>
+                </View>
+              )}
 
-            {otpChannel === "email" ? (
-              <TouchableOpacity
-                style={styles.editEmail}
-                onPress={() =>
-                  navigation.navigate(EDIT_SIGNUP_ROUTE, {
-                    ...(route.params ?? {}),
-                    initialEmail: email,
-                    initialCategory: businessTypeIds,
-                    merchant: {
-                      ...(merchant ?? {}),
-                      category: businessTypeIds,
-                      owner_type: ownerType,
-                      cid,
-                      id_card_number: cid,
-                    },
-                    idCardNo: cid,
-                    owner_type: ownerType,
-                    returnTo: "ReviewSubmitScreen",
-                  })
-                }
-              >
-                <Ionicons name="mail-outline" size={16} color="#417fa2" />
-                <Text style={styles.editEmailText}>Use a different email</Text>
-              </TouchableOpacity>
-            ) : null}
-          </ScrollView>
-
-          <View pointerEvents="box-none" style={[styles.fabWrap, { bottom: bottomSpace }]}>
-            <View style={styles.submitContainer}>
-              <TouchableOpacity
-                onPress={verifyOtpThenRegister}
-                disabled={!isValid || submitting}
-                style={!isValid || submitting ? styles.btnPrimaryDisabled : styles.btnPrimary}
-                activeOpacity={0.9}
-              >
-                {submitting ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={!isValid ? styles.btnPrimaryTextDisabled : styles.btnPrimaryText}>
-                    Verify
+              <View style={styles.resendRow}>
+                <Text style={styles.resendHint}>Didn’t get a code?</Text>
+                <TouchableOpacity
+                  onPress={resendOtp}
+                  disabled={cooldown > 0}
+                  activeOpacity={cooldown > 0 ? 1 : 0.8}
+                >
+                  <Text
+                    style={[
+                      styles.resendLink,
+                      cooldown > 0 && styles.resendDisabled,
+                    ]}
+                  >
+                    {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend"}
                   </Text>
-                )}
-              </TouchableOpacity>
+                </TouchableOpacity>
+              </View>
+
+              {otpChannel === "email" ? (
+                <TouchableOpacity
+                  style={styles.editEmail}
+                  onPress={() =>
+                    navigation.navigate(EDIT_SIGNUP_ROUTE, {
+                      ...(route.params ?? {}),
+                      initialEmail: email,
+                      initialCategory: businessTypeIds,
+                      merchant: {
+                        ...(merchant ?? {}),
+                        category: businessTypeIds,
+                        owner_type: ownerType,
+                        cid,
+                        id_card_number: cid,
+                      },
+                      idCardNo: cid,
+                      owner_type: ownerType,
+                      returnTo: "ReviewSubmitScreen",
+                    })
+                  }
+                >
+                  <Ionicons
+                    name="mail-outline"
+                    size={16}
+                    color={BRAND.purple}
+                  />
+                  <Text style={styles.editEmailText}>
+                    Use a different email
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
+
+            <TouchableOpacity
+              onPress={verifyOtpThenRegister}
+              disabled={!isValid || submitting}
+              style={
+                !isValid || submitting
+                  ? styles.btnPrimaryDisabled
+                  : styles.btnPrimary
+              }
+              activeOpacity={0.9}
+            >
+              {submitting ? (
+                <ActivityIndicator color={BRAND.white} />
+              ) : (
+                <Text
+                  style={
+                    !isValid || submitting
+                      ? styles.btnPrimaryTextDisabled
+                      : styles.btnPrimaryText
+                  }
+                >
+                  Verify
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <View style={styles.bottomSpacer} />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -747,72 +861,234 @@ function maskPhone(phone = "") {
 }
 
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20, paddingVertical: 20, backgroundColor: "#fff" },
-  lead: { fontSize: 14, color: "#374151", marginBottom: 14, lineHeight: 20 },
-  leadStrong: { fontWeight: "700", color: "#111827" },
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
 
-  otpWrap: { alignItems: "center", marginTop: 6, marginBottom: 16, width: "100%" },
-  otpBoxesRow: { width: "100%", flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.45,
+  },
+
+  page: {
+    flex: 1,
+    paddingHorizontal: 22,
+    paddingTop: 42,
+  },
+
+  container: {
+    flexGrow: 1,
+    paddingTop: 0,
+  },
+
+  heroCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: 28,
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 18,
+    marginBottom: 18,
+    ...SHADOW.sm,
+  },
+
+  brandLabel: {
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    color: BRAND.purple,
+    marginBottom: 10,
+  },
+
+  h1: {
+    fontFamily: FONT.header,
+    fontSize: 26,
+    fontWeight: "700",
+    color: BRAND.black,
+    lineHeight: 32,
+    marginBottom: 10,
+  },
+
+  subtitle: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    lineHeight: 21,
+    color: BRAND.grey,
+  },
+
+  subtitleStrong: {
+    color: BRAND.black,
+    fontWeight: "800",
+  },
+
+  otpCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    ...SHADOW.sm,
+  },
+
+  otpTitle: {
+    fontFamily: FONT.body,
+    fontSize: 15,
+    fontWeight: "800",
+    color: BRAND.black,
+    marginBottom: 14,
+  },
+
+  otpWrap: {
+    alignItems: "center",
+    marginBottom: 16,
+    width: "100%",
+  },
+
+  otpBoxesRow: {
+    width: "100%",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 7,
+  },
+
   otpBox: {
     flex: 1,
-    height: 64,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: "#d0d5dd",
+    height: 58,
+    borderRadius: 16,
+    borderWidth: 1.3,
+    borderColor: BRAND.greyBorder,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#fff",
+    backgroundColor: "#FCFCFC",
   },
+
   otpBoxActive: {
-    borderColor: "#00b14f",
-    shadowColor: "#00b14f",
-    shadowOpacity: 0.25,
-    shadowRadius: 5,
+    borderColor: BRAND.purple,
+    backgroundColor: "#F4ECFF",
+    shadowColor: BRAND.purple,
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
   },
-  otpBoxChar: { fontSize: 24, fontWeight: "700", color: "#111827" },
-  otpHiddenInput: { position: "absolute", opacity: 0, width: "100%", height: 64 },
 
-  errorWrap: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4, marginBottom: 8 },
-  errorText: { color: "#DC2626", fontSize: 13, fontWeight: "600" },
-
-  resendRow: { marginTop: 14, flexDirection: "row", alignItems: "center", gap: 6, justifyContent: "center" },
-  resendHint: { color: "#6B7280", fontSize: 13 },
-  resendLink: { color: "#417fa2", fontWeight: "700", fontSize: 13 },
-
-  editEmail: { marginTop: 18, flexDirection: "row", alignItems: "center", gap: 6, justifyContent: "center" },
-  editEmailText: { color: "#417fa2", fontWeight: "700", fontSize: 13 },
-
-  fabWrap: { position: "absolute", left: 0, right: 0 },
-  submitContainer: {
-    height: 100,
-    backgroundColor: "#fff",
-    padding: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
+  otpBoxChar: {
+    fontFamily: FONT.body,
+    fontSize: 24,
+    fontWeight: "800",
+    color: BRAND.black,
   },
+
+  otpHiddenInput: {
+    position: "absolute",
+    opacity: 0,
+    width: "100%",
+    height: 64,
+  },
+
+  errorWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 4,
+    marginBottom: 8,
+    backgroundColor: "#FEF2F2",
+    borderRadius: 14,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+  },
+
+  errorText: {
+    flex: 1,
+    color: "#DC2626",
+    fontSize: 13,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  resendRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    justifyContent: "center",
+  },
+
+  resendHint: {
+    color: BRAND.grey,
+    fontSize: 13,
+    fontFamily: FONT.body,
+  },
+
+  resendLink: {
+    color: BRAND.purple,
+    fontWeight: "800",
+    fontSize: 13,
+    fontFamily: FONT.body,
+  },
+
+  resendDisabled: {
+    color: "#9CA3AF",
+  },
+
+  editEmail: {
+    marginTop: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    justifyContent: "center",
+  },
+
+  editEmailText: {
+    color: BRAND.purple,
+    fontWeight: "800",
+    fontSize: 13,
+    fontFamily: FONT.body,
+  },
+
   btnPrimary: {
-    backgroundColor: "#00b14f",
-    paddingVertical: 14,
-    borderRadius: 30,
+    backgroundColor: BRAND.purple,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
-    elevation: 15,
-    shadowColor: "#00b14f",
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
+    marginTop: 24,
+    ...SHADOW.md,
   },
+
   btnPrimaryDisabled: {
-    backgroundColor: "#eee",
-    paddingVertical: 14,
-    borderRadius: 30,
+    backgroundColor: BRAND.greyLight,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
+    marginTop: 24,
   },
-  btnPrimaryText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  btnPrimaryTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
+
+  btnPrimaryText: {
+    color: BRAND.white,
+    fontSize: 16,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  btnPrimaryTextDisabled: {
+    color: BRAND.grey,
+    fontSize: 16,
+    fontWeight: "600",
+    fontFamily: FONT.body,
+  },
+
+  bottomSpacer: {
+    height: 80,
+  },
 });

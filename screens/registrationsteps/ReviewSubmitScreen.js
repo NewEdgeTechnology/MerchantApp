@@ -851,7 +851,7 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   bottomSpacer: {
-    height: 100,
+    height: 10,
   },
   heroCard: {
     backgroundColor: BRAND.white,

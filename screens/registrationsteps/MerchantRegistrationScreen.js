@@ -382,7 +382,7 @@ function Field({
       <View
         style={[
           styles.inputWrapper,
-          { borderColor: isFocused ? "#00b14f" : "#ccc" },
+          { borderColor: isFocused ? BRAND.purple : BRAND.greyBorder },
         ]}
       >
         <TextInput

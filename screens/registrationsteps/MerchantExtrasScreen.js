@@ -1130,6 +1130,7 @@ function Field({
   scrollRef,
 }) {
   const inputWrapRef = useRef(null);
+const [isFocused, setIsFocused] = useState(false);
 
   const scrollToField = () => {
     setTimeout(() => {
