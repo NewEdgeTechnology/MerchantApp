@@ -1,7 +1,4 @@
 // screens/food/PrivacyPolicy.js
-// Privacy Policy screen (Bhutan context) for a Grab Merchant-style app
-// Header matches LoginScreen. Accept → LoginScreen, Decline → WelcomeScreen.
-
 import React, { useMemo, useState } from "react";
 import {
   View,
@@ -9,19 +6,17 @@ import {
   StyleSheet,
   ScrollView,
   Pressable,
-  useColorScheme,
   Linking,
   Alert,
   TouchableOpacity,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, CommonActions } from "@react-navigation/native";
-import Icon from "react-native-vector-icons/Ionicons";
 import { Ionicons } from "@expo/vector-icons";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
 export default function PrivacyPolicy() {
   const navigation = useNavigation();
-  const isDark = useColorScheme() === "dark";
   const [agree, setAgree] = useState(false);
 
   const lastUpdated = useMemo(() => {
@@ -42,17 +37,16 @@ export default function PrivacyPolicy() {
 
   const onLink = (url) => {
     Linking.openURL(url).catch(() =>
-      Alert.alert(t.common.openLinkFailedTitle, t.common.openLinkFailedText)
+      Alert.alert(t.common.openLinkFailedTitle, t.common.openLinkFailedText),
     );
   };
 
-  /* Navigation actions */
   const goToLogin = () => {
     navigation.dispatch(
       CommonActions.reset({
         index: 0,
         routes: [{ name: "LoginScreen" }],
-      })
+      }),
     );
   };
 
@@ -61,129 +55,145 @@ export default function PrivacyPolicy() {
       CommonActions.reset({
         index: 0,
         routes: [{ name: "WelcomeScreen" }],
-      })
+      }),
     );
   };
 
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: isDark ? "#0b1220" : "#f8fafc" }]}>
-      {/* ===== Header ===== */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.iconButton}
-          activeOpacity={0.7}
+    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
+      <View style={styles.topGlow} />
+
+      <View style={styles.page}>
+        <View style={styles.header}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backBtn}
+            activeOpacity={0.86}
+          >
+            <Ionicons name="chevron-back" size={22} color={BRAND.black} />
+          </TouchableOpacity>
+
+          <Text style={styles.headerTitle}>Privacy</Text>
+
+          <TouchableOpacity
+            onPress={() => navigation.navigate?.("HelpScreen")}
+            style={styles.backBtn}
+            activeOpacity={0.86}
+          >
+            <Ionicons name="help-circle-outline" size={22} color={BRAND.black} />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
         >
-          <Icon name="arrow-back" size={24} color="#1A1D1F" />
-        </TouchableOpacity>
-
-        <Text style={styles.headerTitle}>Privacy Policy</Text>
-
-        <TouchableOpacity
-          onPress={() => navigation.navigate?.("HelpScreen")}
-          style={styles.iconButton}
-          activeOpacity={0.7}
-        >
-          <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
-        </TouchableOpacity>
-      </View>
-
-      {/* ===== Body ===== */}
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.badgeRow}>
-          <View style={[styles.badge, { backgroundColor: isDark ? "#0f172a" : "#e2e8f0" }]}>
-            <Ionicons name="shield-checkmark-outline" size={16} color={isDark ? "#93c5fd" : "#1d4ed8"} />
-            <Text style={[styles.badgeText, { color: isDark ? "#cbd5e1" : "#334155" }]}>{t.meta.bhutanContext}</Text>
-          </View>
-          <View style={[styles.badge, { backgroundColor: isDark ? "#0f172a" : "#e2e8f0" }]}>
-            <Ionicons name="time-outline" size={16} color={isDark ? "#93c5fd" : "#1d4ed8"} />
-            <Text style={[styles.badgeText, { color: isDark ? "#cbd5e1" : "#334155" }]}>
-              {t.meta.lastUpdated}: {lastUpdated}
+          <View style={styles.heroCard}>
+            <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
+            <Text style={styles.title}>Privacy Policy</Text>
+            <Text style={styles.subtitle}>
+              Review how merchant data is collected, used, protected and shared.
             </Text>
           </View>
-        </View>
 
-        {sections.map((sec, idx) => (
-          <Accordion key={idx} title={sec.title} isDark={isDark} initiallyOpen={idx < 2}>
-            {sec.content(onLink)}
-          </Accordion>
-        ))}
+          <View style={styles.badgeRow}>
+            <View style={styles.badge}>
+              <Ionicons
+                name="shield-checkmark-outline"
+                size={16}
+                color={BRAND.purple}
+              />
+              <Text style={styles.badgeText}>{t.meta.bhutanContext}</Text>
+            </View>
 
-        <View style={[styles.divider, { borderBottomColor: isDark ? "#223046" : "#e2e8f0" }]} />
+            <View style={styles.badge}>
+              <Ionicons name="time-outline" size={16} color={BRAND.purple} />
+              <Text style={styles.badgeText}>
+                {t.meta.lastUpdated}: {lastUpdated}
+              </Text>
+            </View>
+          </View>
 
-        {/* Agreement checkbox */}
-        <Checkbox
-          isDark={isDark}
-          value={agree}
-          onChange={setAgree}
-          label={t.consent.agree}
-        />
+          {sections.map((sec, idx) => (
+            <Accordion key={idx} title={sec.title} initiallyOpen={idx < 2}>
+              {sec.content(onLink)}
+            </Accordion>
+          ))}
 
-        <View style={styles.actions}>
-          <Pressable
-            onPress={() => (agree ? goToLogin() : Alert.alert(t.common.completeConsent))}
-            style={[styles.primaryBtn, { backgroundColor: agree ? "#2563eb" : "#94a3b8" }]}
-          >
-            <Text style={styles.primaryBtnText}>{t.actions.accept}</Text>
-          </Pressable>
+          <View style={styles.divider} />
 
-        <Pressable
-            onPress={goToWelcome}
-            style={[styles.ghostBtn, { borderColor: isDark ? "#334155" : "#cbd5e1" }]}
-          >
-            <Text style={[styles.ghostBtnText, { color: isDark ? "#e2e8f0" : "#0f172a" }]}>{t.actions.decline}</Text>
-          </Pressable>
-        </View>
+          <Checkbox
+            value={agree}
+            onChange={setAgree}
+            label={t.consent.agree}
+          />
 
-        <View style={styles.footerNote}>
-          <Text style={{ color: isDark ? "#94a3b8" : "#475569", fontSize: 12 }}>
-            {t.meta.notice}
-          </Text>
-        </View>
-      </ScrollView>
+          <View style={styles.actions}>
+            <Pressable
+              onPress={() =>
+                agree ? goToLogin() : Alert.alert(t.common.completeConsent)
+              }
+              style={agree ? styles.primaryBtn : styles.primaryBtnDisabled}
+            >
+              <Text
+                style={
+                  agree
+                    ? styles.primaryBtnText
+                    : styles.primaryBtnTextDisabled
+                }
+              >
+                {t.actions.accept}
+              </Text>
+            </Pressable>
+
+            <Pressable onPress={goToWelcome} style={styles.ghostBtn}>
+              <Text style={styles.ghostBtnText}>{t.actions.decline}</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.footerNote}>
+            <Text style={styles.footerText}>{t.meta.notice}</Text>
+          </View>
+
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
 
 /* ---------------- UI Components ---------------- */
 
-function Accordion({ title, children, isDark, initiallyOpen = false }) {
+function Accordion({ title, children, initiallyOpen = false }) {
   const [open, setOpen] = useState(initiallyOpen);
+
   return (
-    <View
-      style={[
-        styles.card,
-        { backgroundColor: isDark ? "#0f172a" : "#ffffff", borderColor: isDark ? "#223046" : "#e2e8f0" },
-      ]}
-    >
+    <View style={styles.card}>
       <Pressable style={styles.cardHeader} onPress={() => setOpen((o) => !o)}>
-        <Text style={[styles.cardTitle, { color: isDark ? "#e2e8f0" : "#0f172a" }]}>{title}</Text>
-        <Ionicons
-          name={open ? "chevron-up-outline" : "chevron-down-outline"}
-          size={18}
-          color={isDark ? "#93c5fd" : "#1d4ed8"}
-        />
+        <Text style={styles.cardTitle}>{title}</Text>
+
+        <View style={styles.chevronCircle}>
+          <Ionicons
+            name={open ? "chevron-up-outline" : "chevron-down-outline"}
+            size={18}
+            color={BRAND.purple}
+          />
+        </View>
       </Pressable>
+
       {open ? <View style={styles.cardBody}>{children}</View> : null}
     </View>
   );
 }
 
-function Checkbox({ value, onChange, label, isDark }) {
+function Checkbox({ value, onChange, label }) {
   return (
     <Pressable style={styles.checkboxRow} onPress={() => onChange(!value)}>
-      <View
-        style={[
-          styles.checkbox,
-          {
-            borderColor: isDark ? "#475569" : "#94a3b8",
-            backgroundColor: value ? (isDark ? "#1e40af" : "#2563eb") : "transparent",
-          },
-        ]}
-      >
-        {value ? <Ionicons name="checkmark" size={14} color="#fff" /> : null}
+      <View style={[styles.checkbox, value && styles.checkboxChecked]}>
+        {value ? <Ionicons name="checkmark" size={14} color={BRAND.purple} /> : null}
       </View>
-      <Text style={{ flex: 1, color: isDark ? "#cbd5e1" : "#334155" }}>{label}</Text>
+
+      <Text style={styles.checkboxText}>{label}</Text>
     </Pressable>
   );
 }
@@ -191,7 +201,7 @@ function Checkbox({ value, onChange, label, isDark }) {
 function Bullet({ children }) {
   return (
     <View style={styles.bulletRow}>
-      <Text style={styles.bulletDot}>•</Text>
+      <View style={styles.bulletDot} />
       <Text style={styles.bulletText}>{children}</Text>
     </View>
   );
@@ -389,83 +399,312 @@ function getSections(t) {
 /* ---------------- Styles ---------------- */
 
 const styles = StyleSheet.create({
-  safe: { flex: 1 },
+  safe: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.45,
+  },
+
+  page: {
+    flex: 1,
+    paddingHorizontal: 22,
+    paddingTop: 42,
+  },
+
   header: {
+    height: 52,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 8,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
-    backgroundColor: "#fff",
+    marginBottom: 14,
   },
-  iconButton: { padding: 8 },
+
+  backBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: BRAND.white,
+    alignItems: "center",
+    justifyContent: "center",
+    ...SHADOW.sm,
+  },
+
   headerTitle: {
-    fontSize: 22,
-    fontWeight: "600",
-    color: "#1A1D1F",
-    marginRight: 180,
+    fontFamily: FONT.header,
+    fontSize: 18,
+    fontWeight: "800",
+    color: BRAND.black,
   },
-  content: { padding: 16, paddingBottom: 32 },
-  badgeRow: { flexDirection: "row", gap: 8, marginBottom: 12, flexWrap: "wrap" },
+
+  content: {
+    flexGrow: 1,
+    paddingBottom: 24,
+  },
+
+  heroCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: 28,
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 18,
+    marginBottom: 14,
+    ...SHADOW.sm,
+  },
+
+  brandLabel: {
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    color: BRAND.purple,
+    marginBottom: 10,
+  },
+
+  title: {
+    fontFamily: FONT.header,
+    fontSize: 26,
+    fontWeight: "700",
+    color: BRAND.black,
+    lineHeight: 32,
+    marginBottom: 10,
+  },
+
+  subtitle: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    lineHeight: 21,
+    color: BRAND.grey,
+  },
+
+  badgeRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 14,
+    flexWrap: "wrap",
+  },
+
   badge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    backgroundColor: "#F4ECFF",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#EFE7F7",
   },
-  badgeText: { fontSize: 12 },
+
+  badgeText: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.purple,
+    fontWeight: "800",
+  },
+
   card: {
     borderWidth: 1,
-    borderRadius: 14,
-    marginBottom: 10,
+    borderRadius: 22,
+    marginBottom: 12,
     overflow: "hidden",
-    borderColor: "#e2e8f0",
-    backgroundColor: "#fff",
+    borderColor: BRAND.greyBorder,
+    backgroundColor: BRAND.white,
+    ...SHADOW.sm,
   },
+
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  cardTitle: { fontSize: 16, fontWeight: "700" },
-  cardBody: { paddingHorizontal: 14, paddingBottom: 14 },
-  p: { fontSize: 14, lineHeight: 20, color: "#64748b", marginBottom: 10 },
-  bulletRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 8, gap: 8 },
-  bulletDot: { width: 16, textAlign: "center", lineHeight: 20, color: "#64748b" },
-  bulletText: { flex: 1, color: "#64748b", fontSize: 14, lineHeight: 20 },
-  divider: { borderBottomWidth: 1, marginVertical: 14, borderBottomColor: "#e2e8f0" },
-  checkboxRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  actions: { flexDirection: "row", gap: 10, marginTop: 12 },
-  primaryBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  primaryBtnText: { color: "white", fontWeight: "700" },
-  ghostBtn: {
-    paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 12,
-    borderWidth: 1,
+    paddingVertical: 15,
+    alignItems: "center",
+    gap: 12,
   },
-  ghostBtnText: { fontWeight: "700" },
-  link: { textDecorationLine: "underline", color: "#2563eb" },
-  footerNote: { marginTop: 16 },
-});
 
+  cardTitle: {
+    flex: 1,
+    fontFamily: FONT.body,
+    fontSize: 15,
+    fontWeight: "800",
+    color: BRAND.black,
+  },
+
+  chevronCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#F4ECFF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  cardBody: {
+    paddingHorizontal: 16,
+    paddingBottom: 15,
+  },
+
+  p: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    lineHeight: 20,
+    color: BRAND.grey,
+    marginBottom: 10,
+  },
+
+  bulletRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginBottom: 8,
+    gap: 9,
+  },
+
+  bulletDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: BRAND.purple,
+    marginTop: 7,
+  },
+
+  bulletText: {
+    flex: 1,
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+    fontSize: 13,
+    lineHeight: 20,
+  },
+
+  divider: {
+    borderBottomWidth: 1,
+    marginVertical: 16,
+    borderBottomColor: "#EFE7F7",
+  },
+
+  checkboxRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+    marginBottom: 10,
+    backgroundColor: BRAND.white,
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    ...SHADOW.sm,
+  },
+
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: BRAND.purple,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.white,
+    marginTop: 1,
+  },
+
+  checkboxChecked: {
+    backgroundColor: "#F4ECFF",
+  },
+
+  checkboxText: {
+    flex: 1,
+    fontFamily: FONT.body,
+    color: BRAND.black,
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
+  actions: {
+    gap: 10,
+    marginTop: 16,
+  },
+
+  primaryBtn: {
+    backgroundColor: BRAND.purple,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    ...SHADOW.md,
+  },
+
+  primaryBtnDisabled: {
+    backgroundColor: BRAND.greyLight,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+  },
+
+  primaryBtnText: {
+    color: BRAND.white,
+    fontSize: 16,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  primaryBtnTextDisabled: {
+    color: BRAND.grey,
+    fontSize: 16,
+    fontWeight: "600",
+    fontFamily: FONT.body,
+  },
+
+  ghostBtn: {
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1.2,
+    borderColor: BRAND.greyBorder,
+    backgroundColor: BRAND.white,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  ghostBtnText: {
+    fontFamily: FONT.body,
+    color: BRAND.black,
+    fontWeight: "800",
+    fontSize: 15,
+  },
+
+  link: {
+    textDecorationLine: "underline",
+    color: BRAND.purple,
+    fontWeight: "800",
+  },
+
+  footerNote: {
+    marginTop: 16,
+    backgroundColor: BRAND.white,
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+  },
+
+  footerText: {
+    color: BRAND.grey,
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: FONT.body,
+  },
+
+  bottomSpacer: {
+    height: 40,
+  },
+});
