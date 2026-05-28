@@ -13,6 +13,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import HeaderWithSteps from "./HeaderWithSteps";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import { SEND_OTP_ENDPOINT, SEND_OTP_REGISTER_SMS_ENDPOINT } from "@env";
 
 /* ───────────────────────── Routes ───────────────────────── */
@@ -53,7 +54,8 @@ const normalizeCategoryIds = (v) => {
       .filter(Boolean);
   }
   if (typeof v === "object") {
-    const id = v.id ?? v.value ?? v.business_type_id ?? v.businessTypeId ?? null;
+    const id =
+      v.id ?? v.value ?? v.business_type_id ?? v.businessTypeId ?? null;
     return id != null && String(id).trim() ? [String(id).trim()] : [];
   }
   return [];
@@ -84,10 +86,10 @@ const deliveryDisplay = (norm) =>
   norm === "self"
     ? "Self Delivery"
     : norm === "grab"
-    ? "Grab Delivery"
-    : norm === "both"
-    ? "Both"
-    : "—";
+      ? "Grab Delivery"
+      : norm === "both"
+        ? "Both"
+        : "—";
 
 /* ─────────────── File presence helpers (uri-ish) ─────────────── */
 const firstNonEmpty = (...vals) =>
@@ -121,7 +123,7 @@ const isUploaded = (v) => {
     v,
     typeof v === "object" ? v?.uri : null,
     typeof v === "object" ? v?.url : null,
-    typeof v === "object" ? v?.path : null
+    typeof v === "object" ? v?.path : null,
   );
   const uri = extractUriLike(picked);
   return !!uri;
@@ -153,7 +155,9 @@ function VerifyChoiceModal({ visible, onClose, onSms, onEmail, emailEnabled }) {
           </TouchableOpacity>
         </View>
 
-        <Text style={modalStyles.subtitle}>Choose how you want to receive the OTP.</Text>
+        <Text style={modalStyles.subtitle}>
+          Choose how you want to receive the OTP.
+        </Text>
 
         {/* SMS FIRST (neutral) */}
         <TouchableOpacity
@@ -162,7 +166,7 @@ function VerifyChoiceModal({ visible, onClose, onSms, onEmail, emailEnabled }) {
           activeOpacity={1}
         >
           <View style={modalStyles.btnRow}>
-            <Text style={modalStyles.neutralText}>SEND  SMS</Text>
+            <Text style={modalStyles.neutralText}>SEND SMS</Text>
             <View style={modalStyles.badge}>
               <Text style={modalStyles.badgeText}>RECOMMENDED</Text>
             </View>
@@ -176,12 +180,13 @@ function VerifyChoiceModal({ visible, onClose, onSms, onEmail, emailEnabled }) {
           activeOpacity={1}
           disabled={!emailEnabled}
         >
-          <Text style={modalStyles.grayText}>SEND  EMAIL  (OPTIONAL)</Text>
+          <Text style={modalStyles.grayText}>SEND EMAIL (OPTIONAL)</Text>
         </TouchableOpacity>
 
         {!emailEnabled ? (
           <Text style={modalStyles.hint}>
-            Add email in Signup + ensure SEND_OTP_ENDPOINT exists to use email OTP.
+            Add email in Signup + ensure SEND_OTP_ENDPOINT exists to use email
+            OTP.
           </Text>
         ) : null}
       </View>
@@ -296,14 +301,16 @@ export default function ReviewSubmitScreen() {
   } = route.params ?? {};
 
   const effectiveOwnerType = useMemo(() => {
-    return String(incomingOwnerType ?? merchant?.owner_type ?? serviceType ?? "food")
+    return String(
+      incomingOwnerType ?? merchant?.owner_type ?? serviceType ?? "food",
+    )
       .trim()
       .toLowerCase();
   }, [incomingOwnerType, merchant?.owner_type, serviceType]);
 
   const deliveryOption = useMemo(
     () => normalizeDeliveryOption(incomingDelivery),
-    [incomingDelivery]
+    [incomingDelivery],
   );
 
   const [agreeTerms, setAgreeTerms] = useState(false);
@@ -318,7 +325,9 @@ export default function ReviewSubmitScreen() {
     normalizedCategoryIds.length && Array.isArray(merchant?.categories)
       ? normalizedCategoryIds
           .map((id) => {
-            const found = merchant.categories.find((c) => String(c.id) === String(id));
+            const found = merchant.categories.find(
+              (c) => String(c.id) === String(id),
+            );
             return found ? (found.name ?? found.category_name ?? id) : id;
           })
           .join(", ")
@@ -333,7 +342,12 @@ export default function ReviewSubmitScreen() {
       merchant?.id_card_no ??
       null;
     return normalizeCid11(raw);
-  }, [merchant?.cid, merchant?.id_card_number, merchant?.idCardNo, merchant?.id_card_no]);
+  }, [
+    merchant?.cid,
+    merchant?.id_card_number,
+    merchant?.idCardNo,
+    merchant?.id_card_no,
+  ]);
 
   const business = {
     fullName: merchant?.full_name ?? "",
@@ -350,7 +364,8 @@ export default function ReviewSubmitScreen() {
   };
 
   const emailEnabled =
-    !!String(business.email || "").trim() && !!String(SEND_OTP_ENDPOINT || "").trim();
+    !!String(business.email || "").trim() &&
+    !!String(SEND_OTP_ENDPOINT || "").trim();
 
   const businessLogoRaw = firstNonEmpty(
     merchant?.business_logo,
@@ -359,7 +374,7 @@ export default function ReviewSubmitScreen() {
     merchant?.merchant_logo,
     merchant?.logo_uri,
     merchant?.logo_url,
-    merchant?.documents?.logo
+    merchant?.documents?.logo,
   );
   const businessLicenseRaw = firstNonEmpty(
     merchant?.business_license,
@@ -370,7 +385,7 @@ export default function ReviewSubmitScreen() {
     merchant?.tradeLicense,
     merchant?.license_uri,
     merchant?.license_url,
-    merchant?.documents?.license
+    merchant?.documents?.license,
   );
 
   const businessLogoUploaded = isUploaded(businessLogoRaw);
@@ -385,7 +400,7 @@ export default function ReviewSubmitScreen() {
 
   const maskedAccount = useMemo(
     () => maskAccount(bank?.account_number),
-    [bank?.account_number]
+    [bank?.account_number],
   );
 
   const buildReview = () => ({
@@ -428,7 +443,7 @@ export default function ReviewSubmitScreen() {
     if (!agreeTerms) {
       Alert.alert(
         "Accept terms",
-        "Please accept Terms & Conditions and Privacy Policy to continue."
+        "Please accept Terms & Conditions and Privacy Policy to continue.",
       );
       return;
     }
@@ -521,7 +536,10 @@ export default function ReviewSubmitScreen() {
       return;
     }
     if (routeName === EDIT_PHONE_ROUTE) {
-      navigation.navigate(routeName, { ...common, initialPhone: business.phone });
+      navigation.navigate(routeName, {
+        ...common,
+        initialPhone: business.phone,
+      });
       return;
     }
     if (routeName === EDIT_BUSINESS_ROUTE) {
@@ -562,166 +580,195 @@ export default function ReviewSubmitScreen() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-      <HeaderWithSteps step="Step 6 of 7" />
-      <View style={styles.fixedTitle}>
-        <Text style={styles.h1}>Review &amp; Submit</Text>
-      </View>
+    <SafeAreaView style={styles.safeArea} edges={["left", "right", "bottom"]}>
+      <View style={styles.topGlow} />
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text style={styles.lead}>
-          Please review your details before submitting. You can edit any section if needed.
-        </Text>
+      <View style={styles.page}>
+        <HeaderWithSteps step="Step 6 of 7" />
 
-        <Section
-          title="Signup (Email & Password)"
-          onEdit={() => jumpTo(EDIT_SIGNUP_ROUTE)}
-          rows={[
-            ["Email", business.email || "—"],
-            [
-              "Password",
-              business.password ? (
-                <View style={styles.secretRow}>
-                  <Text style={styles.secretText}>
-                    {showPassword ? business.password : maskPassword(business.password)}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => setShowPassword((v) => !v)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    activeOpacity={1}
-                  >
-                    <Ionicons
-                      name={showPassword ? "eye-off-outline" : "eye-outline"}
-                      size={18}
-                      color="#6B7280"
-                    />
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                "—"
-              ),
-            ],
-          ]}
-        />
-
-        <Section
-          title="Phone Number"
-          onEdit={() => jumpTo(EDIT_PHONE_ROUTE)}
-          rows={[["Phone", business.phone || "—"]]}
-        />
-
-        <Section
-          title="Business Details"
-          onEdit={() => jumpTo(EDIT_BUSINESS_ROUTE)}
-          rows={[
-            ["Full name", business.fullName || "—"],
-            ["Business name", business.businessName || "—"],
-            ["Category", displayCategory || "—"],
-            ["CID", business.cid || "—"],
-            ["License number", business.regNo || "—"],
-            ["Address", business.address || "—"],
-            [
-              "Coordinates",
-              business.latitude && business.longitude
-                ? `${Number(business.latitude).toFixed(5)}, ${Number(
-                    business.longitude
-                  ).toFixed(5)}`
-                : "—",
-            ],
-            ["Business logo", businessLogoUploaded ? "Uploaded" : "—"],
-            ["Business license", businessLicenseUploaded ? "Uploaded" : "—"],
-          ]}
-        />
-
-        <Section
-          title="Delivery Option"
-          onEdit={() => jumpTo(EDIT_DELIVERY_ROUTE)}
-          rows={[["Selected option", deliveryDisplay(deliveryOption)]]}
-        />
-
-        <Section
-          title="Bank & Payment"
-          onEdit={() => jumpTo(EDIT_BANK_ROUTE)}
-          rows={[
-            ["Account name", bank?.account_name || "—"],
-            [
-              "Account number",
-              bank?.account_number ? (
-                <View style={styles.secretRow}>
-                  <Text style={styles.secretText}>
-                    {showAccountNumber ? bank?.account_number : maskedAccount}
-                  </Text>
-                  <TouchableOpacity
-                    onPress={() => setShowAccountNumber((v) => !v)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    activeOpacity={1}
-                  >
-                    <Ionicons
-                      name={showAccountNumber ? "eye-off-outline" : "eye-outline"}
-                      size={18}
-                      color="#6B7280"
-                    />
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                "—"
-              ),
-            ],
-            ["Bank name", bank?.bank_name || "—"],
-            [
-              "Bank QR",
-              bank?.bank_qr?.uri || bank?.bank_qr?.url || bank?.bank_qr?.path
-                ? "Uploaded"
-                : "—",
-            ],
-          ]}
-        />
-
-        {/* Agreement */}
-        <View style={styles.agreeWrap}>
-          <TouchableOpacity
-            style={[styles.checkbox, agreeTerms && styles.checkboxChecked]}
-            onPress={() => setAgreeTerms((v) => !v)}
-            activeOpacity={1}
-          >
-            {agreeTerms ? <Ionicons name="checkmark" size={16} color="#000" /> : null}
-          </TouchableOpacity>
-
-          {/* ✅ UPDATED: open actual screens */}
-          <Text style={styles.agreeText}>
-            I accept the{" "}
-            <Text style={styles.link} onPress={() => navigation.navigate(TERMS_ROUTE)}>
-              Terms &amp; Conditions
-            </Text>{" "}
-            and{" "}
-            <Text style={styles.link} onPress={() => navigation.navigate(PRIVACY_ROUTE)}>
-              Privacy Policy
-            </Text>
-            .
-          </Text>
-        </View>
-      </ScrollView>
-
-      {/* Submit */}
-      <View style={styles.submitContainer}>
-        <TouchableOpacity
-          onPress={handleSubmit}
-          style={agreeTerms ? styles.btnPrimary : styles.btnPrimaryDisabled}
-          disabled={!agreeTerms || submitting}
-          activeOpacity={0.9}
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {submitting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={agreeTerms ? styles.btnPrimaryText : styles.btnPrimaryTextDisabled}>
-              Submit
+          <View style={styles.heroCard}>
+            <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
+            <Text style={styles.h1}>Review &amp; submit</Text>
+            <Text style={styles.subtitle}>
+              Please check your details before submitting your merchant
+              registration.
             </Text>
-          )}
-        </TouchableOpacity>
-        <Text style={styles.subNote}>Your account will enter verification after submission.</Text>
+          </View>
+
+          <Section
+            title="Signup (Email & Password)"
+            onEdit={() => jumpTo(EDIT_SIGNUP_ROUTE)}
+            rows={[
+              ["Email", business.email || "—"],
+              [
+                "Password",
+                business.password ? (
+                  <View style={styles.secretRow}>
+                    <Text style={styles.secretText}>
+                      {showPassword
+                        ? business.password
+                        : maskPassword(business.password)}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setShowPassword((v) => !v)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      activeOpacity={1}
+                    >
+                      <Ionicons
+                        name={showPassword ? "eye-off-outline" : "eye-outline"}
+                        size={18}
+                        color="#6B7280"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  "—"
+                ),
+              ],
+            ]}
+          />
+
+          <Section
+            title="Phone Number"
+            onEdit={() => jumpTo(EDIT_PHONE_ROUTE)}
+            rows={[["Phone", business.phone || "—"]]}
+          />
+
+          <Section
+            title="Business Details"
+            onEdit={() => jumpTo(EDIT_BUSINESS_ROUTE)}
+            rows={[
+              ["Full name", business.fullName || "—"],
+              ["Business name", business.businessName || "—"],
+              ["Category", displayCategory || "—"],
+              ["CID", business.cid || "—"],
+              ["License number", business.regNo || "—"],
+              ["Address", business.address || "—"],
+              [
+                "Coordinates",
+                business.latitude && business.longitude
+                  ? `${Number(business.latitude).toFixed(5)}, ${Number(
+                      business.longitude,
+                    ).toFixed(5)}`
+                  : "—",
+              ],
+              ["Business logo", businessLogoUploaded ? "Uploaded" : "—"],
+              ["Business license", businessLicenseUploaded ? "Uploaded" : "—"],
+            ]}
+          />
+
+          <Section
+            title="Delivery Option"
+            onEdit={() => jumpTo(EDIT_DELIVERY_ROUTE)}
+            rows={[["Selected option", deliveryDisplay(deliveryOption)]]}
+          />
+
+          <Section
+            title="Bank & Payment"
+            onEdit={() => jumpTo(EDIT_BANK_ROUTE)}
+            rows={[
+              ["Account name", bank?.account_name || "—"],
+              [
+                "Account number",
+                bank?.account_number ? (
+                  <View style={styles.secretRow}>
+                    <Text style={styles.secretText}>
+                      {showAccountNumber ? bank?.account_number : maskedAccount}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setShowAccountNumber((v) => !v)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      activeOpacity={1}
+                    >
+                      <Ionicons
+                        name={
+                          showAccountNumber ? "eye-off-outline" : "eye-outline"
+                        }
+                        size={18}
+                        color="#6B7280"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  "—"
+                ),
+              ],
+              ["Bank name", bank?.bank_name || "—"],
+              [
+                "Bank QR",
+                bank?.bank_qr?.uri || bank?.bank_qr?.url || bank?.bank_qr?.path
+                  ? "Uploaded"
+                  : "—",
+              ],
+            ]}
+          />
+
+          {/* Agreement */}
+          <View style={styles.agreeWrap}>
+            <TouchableOpacity
+              style={[styles.checkbox, agreeTerms && styles.checkboxChecked]}
+              onPress={() => setAgreeTerms((v) => !v)}
+              activeOpacity={1}
+            >
+              {agreeTerms ? (
+                <Ionicons name="checkmark" size={16} color="#000" />
+              ) : null}
+            </TouchableOpacity>
+
+            {/* ✅ UPDATED: open actual screens */}
+            <Text style={styles.agreeText}>
+              I accept the{" "}
+              <Text
+                style={styles.link}
+                onPress={() => navigation.navigate(TERMS_ROUTE)}
+              >
+                Terms &amp; Conditions
+              </Text>{" "}
+              and{" "}
+              <Text
+                style={styles.link}
+                onPress={() => navigation.navigate(PRIVACY_ROUTE)}
+              >
+                Privacy Policy
+              </Text>
+              .
+            </Text>
+          </View>
+          {/* Submit */}
+          <View style={styles.submitWrap}>
+            <TouchableOpacity
+              onPress={handleSubmit}
+              style={agreeTerms ? styles.btnPrimary : styles.btnPrimaryDisabled}
+              disabled={!agreeTerms || submitting}
+              activeOpacity={0.9}
+            >
+              {submitting ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text
+                  style={
+                    agreeTerms
+                      ? styles.btnPrimaryText
+                      : styles.btnPrimaryTextDisabled
+                  }
+                >
+                  Submit
+                </Text>
+              )}
+            </TouchableOpacity>
+
+            <Text style={styles.subNote}>
+              Your account will enter verification after submission.
+            </Text>
+          </View>
+
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
       </View>
 
       <VerifyChoiceModal
@@ -776,43 +823,132 @@ function maskPassword(pw = "") {
   return "•".repeat(len);
 }
 
-/* ───────────────────────── Styles ───────────────────────── */
 const styles = StyleSheet.create({
-  fixedTitle: {
-    backgroundColor: "#fff",
-    paddingHorizontal: 20,
-    borderBottomColor: "#fff",
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
   },
-  h1: { fontSize: 22, fontWeight: "bold", color: "#1A1D1F", marginBottom: 16 },
-  scrollContent: { paddingHorizontal: 20, paddingBottom: 130 },
-  lead: { fontSize: 13, color: "#6b7280", marginBottom: 10 },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.45,
+  },
+
+  page: {
+    flex: 1,
+    paddingHorizontal: 22,
+    paddingTop: 42,
+  },
+
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 40,
+  },
+  bottomSpacer: {
+    height: 100,
+  },
+  heroCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: 28,
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 18,
+    marginBottom: 18,
+    ...SHADOW.sm,
+  },
+
+  brandLabel: {
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    color: BRAND.purple,
+    marginBottom: 10,
+  },
+
+  h1: {
+    fontFamily: FONT.header,
+    fontSize: 26,
+    fontWeight: "700",
+    color: BRAND.black,
+    lineHeight: 32,
+    marginBottom: 10,
+  },
+
+  subtitle: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    lineHeight: 21,
+    color: BRAND.grey,
+  },
 
   card: {
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    borderRadius: 14,
-    backgroundColor: "#fff",
-    padding: 14,
-    marginTop: 12,
+    borderColor: BRAND.greyBorder,
+    borderRadius: 22,
+    backgroundColor: BRAND.white,
+    padding: 16,
+    marginTop: 14,
+    ...SHADOW.sm,
   },
+
   cardHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 6,
+    marginBottom: 8,
   },
-  cardTitle: { fontSize: 16, fontWeight: "700", color: "#111827" },
-  editBtn: { fontSize: 13, fontWeight: "700", color: "#00b14f" },
+
+  cardTitle: {
+    fontFamily: FONT.body,
+    fontSize: 16,
+    fontWeight: "800",
+    color: BRAND.black,
+    flex: 1,
+    paddingRight: 10,
+  },
+
+  editBtn: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    fontWeight: "800",
+    color: BRAND.purple,
+    backgroundColor: "#F4ECFF",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: RADIUS.pill,
+  },
 
   row: {
     flexDirection: "row",
     borderTopWidth: 1,
-    borderTopColor: "#F3F4F6",
-    paddingVertical: 8,
+    borderTopColor: "#F3EEF8",
+    paddingVertical: 10,
     gap: 10,
   },
-  rowLabel: { width: 130, fontSize: 13, color: "#6B7280" },
-  rowValue: { flex: 1, fontSize: 14, color: "#111827", fontWeight: "600" },
+
+  rowLabel: {
+    width: 125,
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    fontWeight: "600",
+  },
+
+  rowValue: {
+    flex: 1,
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: BRAND.black,
+    fontWeight: "700",
+    lineHeight: 19,
+  },
 
   secretRow: {
     flexDirection: "row",
@@ -821,53 +957,97 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 10,
   },
-  secretText: { flex: 1, fontSize: 14, color: "#111827", fontWeight: "600" },
 
-  submitContainer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "#fff",
-    padding: 16,
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
+  secretText: {
+    flex: 1,
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: BRAND.black,
+    fontWeight: "700",
   },
-  btnPrimary: {
-    backgroundColor: "#00b14f",
-    paddingVertical: 14,
-    borderRadius: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    elevation: 8,
-  },
-  btnPrimaryDisabled: {
-    backgroundColor: "#eee",
-    paddingVertical: 14,
-    borderRadius: 30,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  btnPrimaryText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  btnPrimaryTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
-  subNote: { textAlign: "center", fontSize: 12, color: "#6B7280" },
 
   agreeWrap: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 10,
-    marginTop: 10,
+    marginTop: 16,
+    backgroundColor: BRAND.white,
+    borderRadius: 20,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    ...SHADOW.sm,
   },
+
   checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
+    width: 23,
+    height: 23,
+    borderRadius: 7,
     borderWidth: 2,
-    borderColor: "#000",
+    borderColor: BRAND.purple,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: BRAND.white,
+    marginTop: 1,
   },
-  checkboxChecked: { backgroundColor: "#EAF8EE" },
-  agreeText: { flex: 1, color: "#374151", fontSize: 13 },
-  link: { color: "#417fa2ff", fontWeight: "700" },
+
+  checkboxChecked: {
+    backgroundColor: "#F4ECFF",
+  },
+
+  agreeText: {
+    flex: 1,
+    color: BRAND.black,
+    fontSize: 13,
+    fontFamily: FONT.body,
+    lineHeight: 19,
+  },
+
+  link: {
+    color: BRAND.purple,
+    fontWeight: "800",
+  },
+  submitWrap: {
+    marginTop: 22,
+  },
+  btnPrimary: {
+    backgroundColor: BRAND.purple,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    ...SHADOW.md,
+  },
+
+  btnPrimaryDisabled: {
+    backgroundColor: BRAND.greyLight,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+  },
+
+  btnPrimaryText: {
+    color: BRAND.white,
+    fontSize: 16,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  btnPrimaryTextDisabled: {
+    color: BRAND.grey,
+    fontSize: 16,
+    fontWeight: "600",
+    fontFamily: FONT.body,
+  },
+
+  subNote: {
+    textAlign: "center",
+    fontSize: 12,
+    color: BRAND.grey,
+    fontFamily: FONT.body,
+    marginTop: 8,
+  },
 });
