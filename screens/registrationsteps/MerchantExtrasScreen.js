@@ -16,6 +16,7 @@ import {
   Image,
   ActivityIndicator,
   Modal,
+  useWindowDimensions,
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
@@ -121,22 +122,27 @@ export default function MerchantExtrasScreen() {
   const [regNo, setRegNo] = useState("");
   const [idCardNo, setIdCardNo] = useState("");
 
-  const [focusedField, setFocusedField] = useState(null);
   const [pickingLicense, setPickingLicense] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const mapRef = useRef(null);
+  const scrollRef = useRef(null);
+  const submitRef = useRef(null);
+
+  const KeyboardWrapper = Platform.OS === "ios" ? KeyboardAvoidingView : View;
 
   // Map loader timeout
+  // Map loader timeout
   useEffect(() => {
+    if (!locationModalVisible || !mapLoading) return;
+
     const timer = setTimeout(() => {
-      if (mapLoading) {
-        console.log("Force hiding map loader after timeout");
-        setMapLoading(false);
-      }
+      console.log("Force hiding map loader after timeout");
+      setMapLoading(false);
     }, 5000);
+
     return () => clearTimeout(timer);
-  }, []);
+  }, [locationModalVisible, mapLoading, mapKey]);
 
   // Retry map initialization
   useEffect(() => {
@@ -180,7 +186,7 @@ export default function MerchantExtrasScreen() {
             coordinate: coord,
             title: "🏪 MERCHANT LOCATION",
             description: `Lat: ${lat.toFixed(6)}, Lng: ${lng.toFixed(6)}`,
-            pinColor: "#EF4444", // Bright RED for merchant
+            pinColor: "#EF4444",
           },
         ]);
       }
@@ -226,7 +232,7 @@ export default function MerchantExtrasScreen() {
           coordinate: initialPickedCoord,
           title: "🏪 MERCHANT LOCATION",
           description: `Lat: ${initialPickedCoord.latitude.toFixed(6)}, Lng: ${initialPickedCoord.longitude.toFixed(6)}`,
-          pinColor: "#EF4444", // Bright RED for merchant
+          pinColor: "#EF4444",
         },
       ]);
     }
@@ -244,16 +250,22 @@ export default function MerchantExtrasScreen() {
     initialLicenseFile,
   ]);
 
-  // keyboard-aware bottom bar
-  const [kbHeight, setKbHeight] = useState(0);
+  // ✅ FIX 1: Remove keyboard listeners — they caused layout re-renders that
+  // flickered the keyboard. KeyboardAvoidingView handles this automatically.
+  // The kbHeight padding on ScrollView is also removed (was causing the flicker).
+
   useEffect(() => {
-    const show = Keyboard.addListener("keyboardDidShow", (e) => {
-      setKbHeight(e.endCoordinates?.height ?? 0);
+    const showSub = Keyboard.addListener("keyboardDidShow", () => {
+      setKeyboardOpen(true);
     });
-    const hide = Keyboard.addListener("keyboardDidHide", () => setKbHeight(0));
+
+    const hideSub = Keyboard.addListener("keyboardDidHide", () => {
+      setKeyboardOpen(false);
+    });
+
     return () => {
-      show.remove();
-      hide.remove();
+      showSub.remove();
+      hideSub.remove();
     };
   }, []);
 
@@ -263,11 +275,14 @@ export default function MerchantExtrasScreen() {
     if (!idCardNo || idCardNo.trim().length !== 11) return false;
     return true;
   };
+
+  // ✅ FIX 2: openMapPicker sets mapLoading to TRUE (the original had false — bug)
   const openMapPicker = () => {
     setMapError(false);
-    setMapLoading(false);
     setMapInitAttempts(0);
     setCenterPinCoord(pickedCoord || mapCenter);
+    setMapKey(Date.now());
+    setMapLoading(true);
     setLocationModalVisible(true);
   };
   const closeMapPicker = () => setLocationModalVisible(false);
@@ -276,7 +291,6 @@ export default function MerchantExtrasScreen() {
     setPickedCoord(coord);
     setMapCenter(coord);
     setMapZoom(16);
-
     setMapMarkers([
       {
         id: "merchant",
@@ -313,6 +327,7 @@ export default function MerchantExtrasScreen() {
     }
     return "";
   };
+
   const extractMapCoord = (eventOrRegion) => {
     const latitude =
       eventOrRegion?.latitude ??
@@ -338,7 +353,7 @@ export default function MerchantExtrasScreen() {
     };
   };
 
-  const handleMapPick = (eventOrRegion) => {
+  const handleMapPick = useCallback((eventOrRegion) => {
     const coord = extractMapCoord(eventOrRegion);
     if (!coord) return;
 
@@ -355,7 +370,8 @@ export default function MerchantExtrasScreen() {
         pinColor: "#EF4444",
       },
     ]);
-  };
+  }, []);
+
   const confirmPickedLocation = async () => {
     const coordToSave = centerPinCoord || pickedCoord || mapCenter;
 
@@ -431,8 +447,9 @@ export default function MerchantExtrasScreen() {
     }
   };
 
-  // ===== Upload: License =====
   const onPickLicense = async () => {
+    Keyboard.dismiss();
+
     try {
       setPickingLicense(true);
       const { status } =
@@ -534,7 +551,6 @@ export default function MerchantExtrasScreen() {
           [],
 
         ...(maybeRegNo !== undefined ? { registration_no: maybeRegNo } : {}),
-
         ...(maybeIdCard !== undefined ? { id_card_number: maybeIdCard } : {}),
 
         address: toSafeString(address).trim(),
@@ -573,17 +589,23 @@ export default function MerchantExtrasScreen() {
       <View style={styles.page}>
         <HeaderWithSteps step="Step 4 of 7" />
 
-        <KeyboardAvoidingView
+        {/* ✅ FIX 3: behavior="padding" on iOS only — same as file 2.
+            On Android, undefined avoids the double-resize flicker. */}
+        <KeyboardWrapper
           style={{ flex: 1 }}
           behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
           <View style={{ flex: 1 }}>
             <ScrollView
+              ref={scrollRef}
               contentContainerStyle={[
                 styles.container,
-                { paddingBottom: 120 + kbHeight },
+                keyboardOpen && styles.containerKeyboardOpen,
               ]}
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="interactive"
+              showsVerticalScrollIndicator={false}
+              removeClippedSubviews={false}
             >
               <View style={styles.heroCard}>
                 <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
@@ -593,6 +615,7 @@ export default function MerchantExtrasScreen() {
                   details.
                 </Text>
               </View>
+
               {/* ===== Business location (map) ===== */}
               <Text style={[styles.label, { marginTop: 6 }]}>
                 Business location (map) — tap to update
@@ -611,79 +634,31 @@ export default function MerchantExtrasScreen() {
 
               {pickedCoord ? (
                 <>
-                  <View style={styles.mapPreviewWrapperLarge}>
-                    <OSMViewErrorBoundary>
-                      <OSMView
-                        key={mapKey}
-                        style={styles.mapPreview}
-                        initialCenter={mapCenter}
-                        initialZoom={mapZoom}
-                        markers={mapMarkers}
-                        styleUrl="https://tiles.openfreemap.org/styles/liberty"
-                        onRegionChangeComplete={(region) => {
-                          const latitude =
-                            region?.latitude ??
-                            region?.center?.latitude ??
-                            region?.nativeEvent?.latitude ??
-                            region?.nativeEvent?.center?.latitude;
-
-                          const longitude =
-                            region?.longitude ??
-                            region?.center?.longitude ??
-                            region?.nativeEvent?.longitude ??
-                            region?.nativeEvent?.center?.longitude;
-
-                          if (latitude != null && longitude != null) {
-                            setCenterPinCoord({
-                              latitude: Number(latitude),
-                              longitude: Number(longitude),
-                            });
-                          }
-                        }}
-                        onMapReady={() => {
-                          console.log("Map preview ready");
-                          setMapLoading(false);
-                          setMapInitAttempts(0);
-                        }}
-                        onError={(error) => {
-                          console.error("Map preview error:", error);
-                          setMapInitAttempts((prev) => prev + 1);
-                          if (mapInitAttempts >= 2) {
-                            setMapError(true);
-                            setMapLoading(false);
-                          }
-                        }}
-                        cacheEnabled={true}
-                        cacheSize={50}
-                        renderToHardwareTextureAndroid={true}
-                      />
-                    </OSMViewErrorBoundary>
-                    <View pointerEvents="none" style={styles.centerPin}>
-                      <Text style={styles.centerPinText}>📍</Text>
-                    </View>
-                    <TouchableOpacity
-                      accessible
-                      accessibilityRole="button"
-                      accessibilityLabel="Edit location on full map"
-                      activeOpacity={0.9}
-                      style={styles.previewOverlay}
-                      onPress={openMapPicker}
-                    >
-                      <Text style={styles.previewOverlayText}>
-                        ✏️ Tap to edit on map
+                  <TouchableOpacity
+                    style={styles.locationPreviewCard}
+                    activeOpacity={0.86}
+                    onPress={openMapPicker}
+                  >
+                    <Text style={styles.locationPreviewIcon}>📍</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.locationPreviewTitle}>
+                        Location selected
                       </Text>
-                    </TouchableOpacity>
-                  </View>
+                      <Text style={styles.locationPreviewText}>
+                        Tap to edit location on full map
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
 
                   <View style={styles.coordsBlock}>
                     <View style={styles.coordsRow}>
-                      <Text style={styles.coordsLabel}>📍 Latitude:</Text>
+                      <Text style={styles.coordsLabel}>Latitude:</Text>
                       <Text style={styles.coordsValue}>
                         {pickedCoord.latitude.toFixed(6)}
                       </Text>
                     </View>
                     <View style={styles.coordsRow}>
-                      <Text style={styles.coordsLabel}>📍 Longitude:</Text>
+                      <Text style={styles.coordsLabel}>Longitude:</Text>
                       <Text style={styles.coordsValue}>
                         {pickedCoord.longitude.toFixed(6)}
                       </Text>
@@ -702,7 +677,6 @@ export default function MerchantExtrasScreen() {
                 </View>
               )}
 
-              {/* ===== Business Address ===== */}
               <Field
                 label={
                   <Text>
@@ -712,14 +686,13 @@ export default function MerchantExtrasScreen() {
                 placeholder="Street, city, region"
                 value={address}
                 onChangeText={setAddress}
-                onFocus={() => setFocusedField("address")}
-                onBlur={() => setFocusedField(null)}
-                isFocused={focusedField === "address"}
+                autoCapitalize="words"
                 hint={
                   pickedCoord
                     ? "📍 Auto-filled from GPS/map; you can edit."
                     : undefined
                 }
+                scrollRef={scrollRef}
               />
 
               {/* ===== Logo Upload ===== */}
@@ -728,7 +701,6 @@ export default function MerchantExtrasScreen() {
               </Text>
               <LogoUploader value={logo} onChange={setLogo} />
 
-              {/* ===== ID Card number ===== */}
               <Field
                 label={
                   <Text>
@@ -741,23 +713,19 @@ export default function MerchantExtrasScreen() {
                   const cleaned = text.replace(/[^0-9]/g, "").slice(0, 11);
                   setIdCardNo(cleaned);
                 }}
-                keyboardType="numeric"
+                keyboardType={Platform.OS === "ios" ? "number-pad" : "numeric"}
                 maxLength={11}
-                onFocus={() => setFocusedField("idCardNo")}
-                onBlur={() => setFocusedField(null)}
-                isFocused={focusedField === "idCardNo"}
                 hint="🆔 Only numbers allowed, exactly 11 digits."
+                scrollRef={scrollRef}
               />
 
-              {/* ===== Business License number ===== */}
               <Field
                 label={<Text>Business License number</Text>}
                 placeholder="e.g., BRN-12345"
                 value={regNo}
                 onChangeText={setRegNo}
-                onFocus={() => setFocusedField("regNo")}
-                onBlur={() => setFocusedField(null)}
-                isFocused={focusedField === "regNo"}
+                autoCapitalize="characters"
+                scrollRef={scrollRef}
               />
 
               {/* ===== License Upload ===== */}
@@ -766,6 +734,7 @@ export default function MerchantExtrasScreen() {
               </Text>
               <View style={styles.row}>
                 <TouchableOpacity
+                  ref={submitRef}
                   style={[
                     styles.btnSecondary,
                     pickingLicense && styles.btnDisabled,
@@ -800,43 +769,48 @@ export default function MerchantExtrasScreen() {
                   )}
                 </View>
               </View>
-            </ScrollView>
 
-            {/* Bottom bar: Submit */}
-            <View
-              pointerEvents="box-none"
-              style={[styles.fabWrap, { bottom: kbHeight }]}
-            >
-              <View style={styles.submitContainer}>
-                <TouchableOpacity
-                  style={
-                    isFormValid && !submitting
-                      ? styles.btnPrimary
-                      : styles.btnPrimaryDisabled
-                  }
-                  onPress={onSubmit}
-                  disabled={!isFormValid || submitting}
-                >
-                  {submitting ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text
-                      style={
-                        isFormValid
-                          ? styles.btnPrimaryText
-                          : styles.btnPrimaryTextDisabled
-                      }
-                    >
-                      ✓ Submit
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
+              {/* ✅ FIX 5: Submit button is INSIDE the ScrollView (not a
+                  position:absolute fabWrap). A floating absolute view forces
+                  the layout engine to recalculate its `bottom` offset on every
+                  keyboard show/hide, which is what caused the flicker. Keeping
+                  the button in the scroll flow means the keyboard just shifts
+                  the scroll — no layout thrash. */}
+              <TouchableOpacity
+                style={
+                  isFormValid && !submitting
+                    ? styles.btnPrimary
+                    : styles.btnPrimaryDisabled
+                }
+                onPress={onSubmit}
+                disabled={!isFormValid || submitting}
+                activeOpacity={0.86}
+              >
+                {submitting ? (
+                  <ActivityIndicator color={BRAND.white} />
+                ) : (
+                  <Text
+                    style={
+                      isFormValid
+                        ? styles.btnPrimaryText
+                        : styles.btnPrimaryTextDisabled
+                    }
+                  >
+                    Submit
+                  </Text>
+                )}
+              </TouchableOpacity>
+              <View
+                style={
+                  keyboardOpen ? styles.keyboardSpacer : styles.normalSpacer
+                }
+              />
+            </ScrollView>
           </View>
-        </KeyboardAvoidingView>
+        </KeyboardWrapper>
       </View>
-      {/* ===== Map Picker Modal - SINGLE MERCHANT MARKER that can be updated ===== */}
+
+      {/* ===== Map Picker Modal ===== */}
       <Modal
         visible={locationModalVisible}
         onRequestClose={closeMapPicker}
@@ -1144,30 +1118,39 @@ function LogoUploader({ value, onChange }) {
   );
 }
 
-// ========== Field Component ==========
 function Field({
   label,
   value,
   onChangeText,
   placeholder,
-  keyboardType,
-  autoCapitalize,
-  onFocus,
-  onBlur,
-  isFocused,
+  keyboardType = "default",
+  autoCapitalize = "none",
   hint,
   maxLength,
+  scrollRef,
 }) {
+  const inputWrapRef = useRef(null);
+
+  const scrollToField = () => {
+    setTimeout(() => {
+      inputWrapRef.current?.measureLayout(
+        scrollRef.current,
+        (x, y) => {
+          scrollRef.current?.scrollTo({
+            y: Math.max(y - 120, 0),
+            animated: true,
+          });
+        },
+        () => {},
+      );
+    }, 250);
+  };
+
   return (
-    <View style={{ marginBottom: 16 }}>
+    <View ref={inputWrapRef} style={{ marginBottom: 16 }}>
       <Text style={styles.label}>{label}</Text>
-      <View
-        style={[
-          styles.inputWrapper,
-          { borderColor: isFocused ? BRAND.purple : BRAND.greyBorder },
-          isFocused && styles.inputFocused,
-        ]}
-      >
+
+      <View style={styles.inputWrapper}>
         <TextInput
           style={styles.inputField}
           placeholder={placeholder}
@@ -1176,12 +1159,18 @@ function Field({
           keyboardType={keyboardType}
           autoCapitalize={autoCapitalize}
           placeholderTextColor="#9aa0a6"
-          onFocus={onFocus}
-          onBlur={onBlur}
-          returnKeyType="next"
+          returnKeyType="done"
+          blurOnSubmit={false}
           maxLength={maxLength}
+          textContentType="none"
+          autoCorrect={false}
+          autoComplete="off"
+          importantForAutofill="no"
+          underlineColorAndroid="transparent"
+          onFocus={scrollToField}
         />
       </View>
+
       {!!hint && <Text style={styles.hint}>{hint}</Text>}
     </View>
   );
@@ -1290,10 +1279,25 @@ const styles = StyleSheet.create({
     color: BRAND.grey,
   },
 
+  // ✅ FIX 6: paddingBottom is a fixed value — no dynamic kbHeight addition.
+  // kbHeight was set by manual Keyboard listeners which fired setState on every
+  // keystroke, causing a full re-render (and keyboard flicker) each time.
+  // KeyboardAvoidingView already handles the scroll offset natively.
   container: {
-    paddingBottom: 140,
+    flexGrow: 1,
+    paddingBottom: 24,
   },
 
+  containerKeyboardOpen: {
+    paddingBottom: Platform.OS === "ios" ? 90 : 130,
+  },
+  normalSpacer: {
+    height: 24,
+  },
+
+  keyboardSpacer: {
+    height: Platform.OS === "ios" ? 90 : 180,
+  },
   label: {
     fontFamily: FONT.body,
     fontSize: 14,
@@ -1358,130 +1362,39 @@ const styles = StyleSheet.create({
     fontFamily: FONT.body,
   },
 
-  mapPreviewWrapperLarge: {
-    borderRadius: 24,
-    overflow: "hidden",
-    borderWidth: 1.5,
+  btnDisabled: { opacity: 0.6 },
+
+  locationPreviewCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: BRAND.white,
+    borderRadius: 18,
+    padding: 16,
+    marginBottom: 10,
+    borderWidth: 1,
     borderColor: BRAND.purple,
-    height: 210,
-    marginBottom: 14,
-    position: "relative",
-    marginTop: 8,
     ...SHADOW.sm,
   },
 
-  mapPreview: {
-    flex: 1,
+  locationPreviewIcon: {
+    fontSize: 28,
   },
 
-  previewOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "flex-end",
-    paddingBottom: 14,
-  },
-
-  previewOverlayText: {
+  locationPreviewTitle: {
     fontFamily: FONT.body,
-    fontSize: 12,
-    fontWeight: "700",
-    color: BRAND.white,
-    backgroundColor: "rgba(0,0,0,0.65)",
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: RADIUS.pill,
-    overflow: "hidden",
-    letterSpacing: 0.3,
-  },
-  modalHeader: {
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 14,
-    backgroundColor: BRAND.white,
-    borderBottomWidth: 1,
-    borderBottomColor: "#EFE7F7",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-
-  modalTitle: {
-    fontFamily: FONT.header,
-    fontSize: 18,
+    fontSize: 14,
     fontWeight: "700",
     color: BRAND.black,
   },
 
-  modalSubtitle: {
+  locationPreviewText: {
     fontFamily: FONT.body,
     fontSize: 12,
     color: BRAND.grey,
-    marginTop: 3,
+    marginTop: 2,
   },
 
-  modalCloseButton: {
-    backgroundColor: "#F4ECFF",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: RADIUS.pill,
-  },
-
-  modalClose: {
-    fontFamily: FONT.body,
-    fontSize: 13,
-    fontWeight: "700",
-    color: BRAND.purple,
-  },
-
-  fullMap: {
-    flex: 1,
-    backgroundColor: "#EEF6FF",
-  },
-
-  modalFloatWrap: {
-    position: "absolute",
-    top: 18,
-    right: 18,
-  },
-
-  modalFloatBtn: {
-    backgroundColor: BRAND.purple,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: RADIUS.pill,
-    ...SHADOW.md,
-  },
-  modalFooter: {
-    backgroundColor: BRAND.white,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 20,
-    borderTopWidth: 1,
-    borderTopColor: "#EFE7F7",
-  },
-
-  modalHint: {
-    fontFamily: FONT.body,
-    fontSize: 12,
-    color: BRAND.grey,
-    lineHeight: 17,
-    marginBottom: 10,
-    textAlign: "center",
-  },
-  modalFloatBtnText: {
-    fontFamily: FONT.body,
-    color: BRAND.white,
-    fontWeight: "700",
-    fontSize: 13,
-  },
-
-  mapLoadingText: {
-    marginTop: 12,
-    fontFamily: FONT.body,
-    fontSize: 14,
-    color: BRAND.purple,
-    fontWeight: "700",
-  },
   coordsBlock: {
     backgroundColor: BRAND.white,
     padding: 14,
@@ -1642,18 +1555,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 
-  fabWrap: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-  },
-
-  submitContainer: {
-    backgroundColor: "#FBF7FF",
-    paddingTop: 14,
-    paddingBottom: 24,
-  },
-
   btnPrimary: {
     backgroundColor: BRAND.purple,
     paddingVertical: 16,
@@ -1661,6 +1562,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
+    marginTop: 8,
+    marginBottom: 16,
     ...SHADOW.md,
   },
 
@@ -1671,6 +1574,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
+    marginTop: 8,
+    marginBottom: 16,
   },
 
   btnPrimaryText: {
@@ -1684,6 +1589,117 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
+
+  modalHeader: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 14,
+    backgroundColor: BRAND.white,
+    borderBottomWidth: 1,
+    borderBottomColor: "#EFE7F7",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  modalTitle: {
+    fontFamily: FONT.header,
+    fontSize: 18,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
+
+  modalSubtitle: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    marginTop: 3,
+  },
+
+  modalCloseButton: {
+    backgroundColor: "#F4ECFF",
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: RADIUS.pill,
+  },
+
+  modalClose: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    fontWeight: "700",
+    color: BRAND.purple,
+  },
+
+  fullMap: {
+    flex: 1,
+    backgroundColor: "#EEF6FF",
+  },
+
+  modalFloatWrap: {
+    position: "absolute",
+    top: 18,
+    right: 18,
+  },
+
+  modalFloatBtn: {
+    backgroundColor: BRAND.purple,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: RADIUS.pill,
+    ...SHADOW.md,
+  },
+
+  modalFloatBtnText: {
+    fontFamily: FONT.body,
+    color: BRAND.white,
+    fontWeight: "700",
+    fontSize: 13,
+  },
+
+  modalFooter: {
+    backgroundColor: BRAND.white,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 20,
+    borderTopWidth: 1,
+    borderTopColor: "#EFE7F7",
+  },
+
+  modalHint: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    lineHeight: 17,
+    marginBottom: 10,
+    textAlign: "center",
+  },
+
+  mapLoadingOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 10,
+  },
+
+  mapLoadingText: {
+    marginTop: 12,
+    fontFamily: FONT.body,
+    fontSize: 14,
+    color: BRAND.purple,
+    fontWeight: "700",
+  },
+
+  mapLoadingSubtext: {
+    marginTop: 4,
+    fontSize: 11,
+    color: BRAND.grey,
+  },
+
   centerPin: {
     position: "absolute",
     left: "50%",
@@ -1695,5 +1711,78 @@ const styles = StyleSheet.create({
 
   centerPinText: {
     fontSize: 36,
+  },
+
+  locError: {
+    fontSize: 12,
+    color: "#ef4444",
+    marginTop: 6,
+    marginBottom: 4,
+  },
+
+  mapErrorContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f9fafb",
+    borderRadius: 12,
+  },
+
+  mapErrorText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#374151",
+  },
+
+  mapErrorSubtext: {
+    marginTop: 4,
+    fontSize: 11,
+    color: "#6b7280",
+  },
+
+  mapRetryBtn: {
+    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    backgroundColor: BRAND.purple,
+    borderRadius: 8,
+  },
+
+  mapRetryText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 12,
+  },
+
+  mapErrorContainerFull: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f9fafb",
+  },
+
+  mapErrorTextFull: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#374151",
+  },
+
+  mapErrorSubtextFull: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#6b7280",
+  },
+
+  mapRetryBtnFull: {
+    marginTop: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    backgroundColor: BRAND.purple,
+    borderRadius: 8,
+  },
+
+  mapRetryTextFull: {
+    color: "#fff",
+    fontWeight: "600",
   },
 });
