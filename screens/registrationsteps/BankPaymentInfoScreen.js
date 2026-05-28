@@ -19,6 +19,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import HeaderWithSteps from "./HeaderWithSteps";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
 /* ───────── BANKS (logos only; no branches) ─────────
    Account length per your table:
@@ -80,7 +81,7 @@ export default function BankPaymentInfoScreen() {
   } = route.params ?? {};
 
   const effectiveOwnerType = String(
-    owner_type ?? merchant?.owner_type ?? serviceType ?? "food"
+    owner_type ?? merchant?.owner_type ?? serviceType ?? "food",
   )
     .trim()
     .toLowerCase();
@@ -99,18 +100,17 @@ export default function BankPaymentInfoScreen() {
   const [bankModalVisible, setBankModalVisible] = useState(false);
 
   // keyboard spacing for sticky bar
-  const [kbHeight, setKbHeight] = useState(0);
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+
   useEffect(() => {
-    const onShow = (e) => setKbHeight(e.endCoordinates?.height ?? 0);
-    const onHide = () => setKbHeight(0);
-    const showSub =
-      Platform.OS === "ios"
-        ? Keyboard.addListener("keyboardWillShow", onShow)
-        : Keyboard.addListener("keyboardDidShow", onShow);
-    const hideSub =
-      Platform.OS === "ios"
-        ? Keyboard.addListener("keyboardWillHide", onHide)
-        : Keyboard.addListener("keyboardDidHide", onHide);
+    const showSub = Keyboard.addListener("keyboardDidShow", () => {
+      setKeyboardOpen(true);
+    });
+
+    const hideSub = Keyboard.addListener("keyboardDidHide", () => {
+      setKeyboardOpen(false);
+    });
+
     return () => {
       showSub.remove();
       hideSub.remove();
@@ -124,7 +124,9 @@ export default function BankPaymentInfoScreen() {
     const fromMerchant =
       merchant?.id_card_number != null ? String(merchant.id_card_number) : "";
 
-    const cleaned = (fromRoute || fromMerchant).replace(/[^0-9]/g, "").slice(0, 11);
+    const cleaned = (fromRoute || fromMerchant)
+      .replace(/[^0-9]/g, "")
+      .slice(0, 11);
     if (cleaned) setIdCardNo(cleaned);
 
     if (!existingBank) return;
@@ -132,17 +134,24 @@ export default function BankPaymentInfoScreen() {
       existingBank.bank_code ||
       BANKS.find(
         (b) =>
-          b.name.toLowerCase() === String(existingBank.bank_name || "").toLowerCase()
+          b.name.toLowerCase() ===
+          String(existingBank.bank_name || "").toLowerCase(),
       )?.code ||
       "";
     if (incomingCode) setBankCode(incomingCode);
-    if (existingBank.account_number) setAccountNumber(String(existingBank.account_number));
+    if (existingBank.account_number)
+      setAccountNumber(String(existingBank.account_number));
     if (existingBank.account_name) setAccountName(existingBank.account_name);
 
     const normalizeImg = (img, fallbackName) => {
       if (!img) return null;
       if (typeof img === "string") {
-        return { uri: img, name: fallbackName, mimeType: "image/jpeg", size: 0 };
+        return {
+          uri: img,
+          name: fallbackName,
+          mimeType: "image/jpeg",
+          size: 0,
+        };
       }
       return {
         uri: img.uri ?? "",
@@ -151,27 +160,33 @@ export default function BankPaymentInfoScreen() {
         size: img.size ?? 0,
       };
     };
-    if (existingBank.bank_qr) setQrImage(normalizeImg(existingBank.bank_qr, "bank-qr.jpg"));
+    if (existingBank.bank_qr)
+      setQrImage(normalizeImg(existingBank.bank_qr, "bank-qr.jpg"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selectedBank = useMemo(
     () => BANKS.find((b) => b.code === bankCode) || null,
-    [bankCode]
+    [bankCode],
   );
 
   // Account length validation (per bank)
   const requiredLen = selectedBank?.accountLength ?? null;
-  const accountRegex = requiredLen ? new RegExp(`^\\d{${requiredLen}}$`) : /^\d{8,20}$/;
+  const accountRegex = requiredLen
+    ? new RegExp(`^\\d{${requiredLen}}$`)
+    : /^\d{8,20}$/;
   const accountNumberValid =
-    accountNumber.trim().length === 0 ? true : accountRegex.test(accountNumber.trim());
+    accountNumber.trim().length === 0
+      ? true
+      : accountRegex.test(accountNumber.trim());
 
   // ✅ ID card validation (exact 11 digits)
   const idCardValid = /^\d{11}$/.test(idCardNo.trim());
 
   const validate = () => {
     if (!bankCode) return false;
-    if (!accountNumber.trim() || !accountRegex.test(accountNumber.trim())) return false;
+    if (!accountNumber.trim() || !accountRegex.test(accountNumber.trim()))
+      return false;
     if (!accountName.trim()) return false;
     if (!qrImage?.uri) return false;
 
@@ -196,7 +211,10 @@ export default function BankPaymentInfoScreen() {
         .filter(Boolean);
     }
     if (typeof v === "string") {
-      return v.split(",").map((s) => s.trim()).filter(Boolean);
+      return v
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
     }
     if (typeof v === "object") {
       const id = v.id ?? v.value ?? v.business_type_id ?? null;
@@ -209,7 +227,10 @@ export default function BankPaymentInfoScreen() {
     if (!validate()) {
       // more specific messages
       if (!idCardNo.trim()) {
-        Alert.alert("Missing info", "Please enter your 11-digit ID card number.");
+        Alert.alert(
+          "Missing info",
+          "Please enter your 11-digit ID card number.",
+        );
         return;
       }
       if (!idCardValid) {
@@ -224,7 +245,7 @@ export default function BankPaymentInfoScreen() {
       (route.params?.merchant && route.params?.merchant.category) ??
         route.params?.initialCategory ??
         route.params?.category ??
-        []
+        [],
     );
 
     const payload = {
@@ -233,7 +254,8 @@ export default function BankPaymentInfoScreen() {
       id_card_number: idCardNo.trim(),
 
       category: normalizedCategoryIds,
-      categories: merchant?.categories ?? route.params?.merchant?.categories ?? [],
+      categories:
+        merchant?.categories ?? route.params?.merchant?.categories ?? [],
       bank: {
         bank_name: selectedBank?.name ?? "",
         bank_code: selectedBank?.code ?? "",
@@ -264,57 +286,90 @@ export default function BankPaymentInfoScreen() {
   const isFormValid = validate();
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
-      <HeaderWithSteps step="Step 4 of 7" />
-      <View style={styles.fixedTitle}>
-        <Text style={styles.h1}>Bank & Payment Information</Text>
-      </View>
+    <SafeAreaView style={styles.safeArea} edges={["left", "right", "bottom"]}>
+      <View style={styles.topGlow} />
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <View style={{ flex: 1 }}>
+      <View style={styles.page}>
+        <HeaderWithSteps step="Step 4 of 7" />
+
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
           <ScrollView
             keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
-            contentContainerStyle={[styles.container, { paddingBottom: 120 }]}
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={[
+              styles.container,
+              keyboardOpen && styles.containerKeyboardOpen,
+            ]}
+            removeClippedSubviews={false}
           >
-            {/* 1) Bank (simple list dropdown) */}
+            <View style={styles.heroCard}>
+              <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
+              <Text style={styles.h1}>Bank & payment setup</Text>
+              <Text style={styles.subtitle}>
+                Add your bank account and QR code for receiving merchant
+                payments.
+              </Text>
+            </View>
+
             <Text style={styles.label}>
               Bank <Text style={{ color: "red" }}>*</Text>
             </Text>
-            <Pressable style={styles.selectWrapper} onPress={() => setBankModalVisible(true)}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
+
+            <Pressable
+              style={styles.selectWrapper}
+              onPress={() => setBankModalVisible(true)}
+            >
+              <View style={styles.selectLeft}>
                 {selectedBank?.logoSource ? (
-                  <Image source={selectedBank.logoSource} style={styles.logoSm} />
+                  <Image
+                    source={selectedBank.logoSource}
+                    style={styles.logoSm}
+                  />
                 ) : (
-                  <View style={[styles.logoSm, { backgroundColor: "#f3f4f6" }]} />
+                  <View
+                    style={[styles.logoSm, { backgroundColor: "#f3f4f6" }]}
+                  />
                 )}
+
                 <Text
-                  style={[styles.selectText, !selectedBank && { color: "#9aa0a6" }]}
+                  style={[
+                    styles.selectText,
+                    !selectedBank && { color: "#9aa0a6" },
+                  ]}
                   numberOfLines={1}
                 >
                   {selectedBank?.name || "Select bank"}
                 </Text>
               </View>
-              {/* Bigger dropdown icon */}
+
               <View style={styles.dropdownIcon}>
                 <Text allowFontScaling={false} style={styles.dropdownIconText}>
                   ▾
                 </Text>
               </View>
             </Pressable>
+
             {!!requiredLen && (
-              <Text style={styles.helperText}>Must be exactly {requiredLen} digits.</Text>
+              <Text style={styles.helperText}>
+                Must be exactly {requiredLen} digits.
+              </Text>
             )}
 
-            {/* 2) Account Number */}
             <View style={{ marginBottom: 6 }}>
               <Text style={styles.label}>
                 Bank Account Number <Text style={{ color: "red" }}>*</Text>
               </Text>
-              <View style={[styles.inputWrapper, !accountNumberValid && styles.inputErrorBorder]}>
+
+              <View
+                style={[
+                  styles.inputWrapper,
+                  !accountNumberValid && styles.inputErrorBorder,
+                ]}
+              >
                 <TextInput
                   style={styles.inputField}
                   placeholder={
@@ -323,7 +378,9 @@ export default function BankPaymentInfoScreen() {
                       : "Enter account number"
                   }
                   value={accountNumber}
-                  onChangeText={(t) => setAccountNumber(t.replace(/[^0-9]/g, ""))}
+                  onChangeText={(t) =>
+                    setAccountNumber(t.replace(/[^0-9]/g, ""))
+                  }
                   keyboardType="number-pad"
                   autoCapitalize="none"
                   placeholderTextColor="#9aa0a6"
@@ -332,13 +389,13 @@ export default function BankPaymentInfoScreen() {
                 />
               </View>
             </View>
+
             {!accountNumberValid && accountNumber.length > 0 && (
               <Text style={styles.errorText}>
                 Account number must be exactly {requiredLen} digits.
               </Text>
             )}
 
-            {/* 3) Account Holder Name */}
             <Field
               label={
                 <Text>
@@ -351,40 +408,50 @@ export default function BankPaymentInfoScreen() {
               autoCapitalize="words"
             />
 
-            {/* 4) Bank QR — same style as Business Logo section */}
             <Text style={styles.label}>
               Bank QR Code <Text style={{ color: "red" }}>*</Text>
             </Text>
+
             <QRUploader value={qrImage} onChange={setQrImage} />
-          </ScrollView>
 
-          {/* Sticky action bar */}
-          <View pointerEvents="box-none" style={[styles.fabWrap, { bottom: kbHeight }]}>
-            <View style={styles.submitContainer}>
-              <TouchableOpacity
-                style={isFormValid ? styles.btnPrimary : styles.btnPrimaryDisabled}
-                onPress={onSubmit}
-                disabled={!isFormValid}
+            <TouchableOpacity
+              style={
+                isFormValid ? styles.btnPrimary : styles.btnPrimaryDisabled
+              }
+              onPress={onSubmit}
+              disabled={!isFormValid}
+              activeOpacity={0.86}
+            >
+              <Text
+                style={
+                  isFormValid
+                    ? styles.btnPrimaryText
+                    : styles.btnPrimaryTextDisabled
+                }
               >
-                <Text style={isFormValid ? styles.btnPrimaryText : styles.btnPrimaryTextDisabled}>
-                  Save & Continue
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
+                Save & Continue
+              </Text>
+            </TouchableOpacity>
 
-      {/* ───────── Simple Bank Picker Modal (no search, no recent) ───────── */}
+            <View
+              style={keyboardOpen ? styles.keyboardSpacer : styles.normalSpacer}
+            />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </View>
+
       <Modal
         transparent
         animationType="fade"
         visible={bankModalVisible}
         onRequestClose={() => setBankModalVisible(false)}
       >
-        <Pressable style={styles.modalBackdrop} onPress={() => setBankModalVisible(false)} />
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setBankModalVisible(false)}
+        />
+
         <View style={styles.modalSheet}>
-          {/* Close × button */}
           <TouchableOpacity
             onPress={() => setBankModalVisible(false)}
             style={styles.modalCloseX}
@@ -395,9 +462,17 @@ export default function BankPaymentInfoScreen() {
           </TouchableOpacity>
 
           <Text style={styles.modalTitle}>Select Bank</Text>
-          <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 440 }}>
+          <Text style={styles.modalSubtitle}>
+            Choose the bank where merchant payments should be settled.
+          </Text>
+
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            style={{ maxHeight: 440 }}
+          >
             {BANKS.map((b) => {
               const active = bankCode === b.code;
+
               return (
                 <TouchableOpacity
                   key={b.code}
@@ -409,13 +484,22 @@ export default function BankPaymentInfoScreen() {
                 >
                   <View style={styles.bankRowLeft}>
                     <Image source={b.logoSource} style={styles.logoLg} />
-                    <Text
-                      style={[styles.bankText, active && { fontWeight: "700" }]}
-                      numberOfLines={2}
-                    >
-                      {b.name}
-                    </Text>
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[
+                          styles.bankText,
+                          active && { color: BRAND.purple },
+                        ]}
+                        numberOfLines={2}
+                      >
+                        {b.name}
+                      </Text>
+                      <Text style={styles.bankSubText}>
+                        {b.accountLength}-digit account number
+                      </Text>
+                    </View>
                   </View>
+
                   {active ? <Text style={styles.checkMark}>✓</Text> : null}
                 </TouchableOpacity>
               );
@@ -428,7 +512,14 @@ export default function BankPaymentInfoScreen() {
 }
 
 /* ---------- Reusable Field ---------- */
-function Field({ label, value, onChangeText, placeholder, keyboardType, autoCapitalize }) {
+function Field({
+  label,
+  value,
+  onChangeText,
+  placeholder,
+  keyboardType,
+  autoCapitalize,
+}) {
   return (
     <View style={{ marginBottom: 16 }}>
       <Text style={styles.label}>{label}</Text>
@@ -501,7 +592,9 @@ function QRUploader({ value, onChange }) {
       <View style={styles.logoCard}>
         <Text style={[styles.logoCardIcon, { color: "#9ca3af" }]}>＋</Text>
         <Text style={styles.logoCardTitle}>Add Bank QR</Text>
-        <Text style={styles.logoCardHint}>Square image works best (1:1). Max 5MB.</Text>
+        <Text style={styles.logoCardHint}>
+          Square image works best (1:1). Max 5MB.
+        </Text>
         <View style={styles.logoActionsRow}>
           <TouchableOpacity
             style={styles.actionBtn}
@@ -559,189 +652,422 @@ function QRUploader({ value, onChange }) {
   );
 }
 
-/* ---------- Styles ---------- */
 const styles = StyleSheet.create({
-  fixedTitle: { backgroundColor: "#fff", paddingHorizontal: 20 },
-  container: { paddingHorizontal: 20, backgroundColor: "#fff" },
-  h1: { fontSize: 22, fontWeight: "bold", color: "#1A1D1F", marginBottom: 16 },
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
 
-  label: { fontSize: 14, marginBottom: 6, color: "#333" },
-  helperText: { fontSize: 12, color: "#6b7280", marginBottom: 8 },
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.45,
+  },
+
+  page: {
+    flex: 1,
+    paddingHorizontal: 22,
+    paddingTop: 42,
+  },
+
+  container: {
+    flexGrow: 1,
+    paddingBottom: 24,
+  },
+  containerKeyboardOpen: {
+    paddingBottom: Platform.OS === "ios" ? 90 : 130,
+  },
+
+  normalSpacer: {
+    height: 24,
+  },
+
+  keyboardSpacer: {
+    height: Platform.OS === "ios" ? 120 : 220,
+  },
+  heroCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: 28,
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 18,
+    marginBottom: 18,
+    ...SHADOW.sm,
+  },
+
+  brandLabel: {
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    color: BRAND.purple,
+    marginBottom: 10,
+  },
+
+  h1: {
+    fontFamily: FONT.header,
+    fontSize: 26,
+    fontWeight: "700",
+    color: BRAND.black,
+    lineHeight: 32,
+    marginBottom: 10,
+  },
+
+  subtitle: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    lineHeight: 21,
+    color: BRAND.grey,
+  },
+
+  label: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    marginBottom: 7,
+    color: BRAND.black,
+    fontWeight: "700",
+  },
+
+  helperText: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    marginBottom: 14,
+    marginTop: -4,
+  },
 
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    height: 50,
-    borderWidth: 1.5,
-    borderRadius: 15,
-    borderColor: "#ccc",
-    paddingHorizontal: 10,
-    backgroundColor: "#fff",
+    height: 56,
+    borderWidth: 1.2,
+    borderRadius: 18,
+    backgroundColor: "#FCFCFC",
+    borderColor: BRAND.greyBorder,
+    paddingHorizontal: 16,
   },
-  inputField: { flex: 1, fontSize: 14, color: "#111827", paddingVertical: 10 },
-  inputErrorBorder: { borderColor: "#ef4444" },
-  errorText: { color: "#ef4444", fontSize: 12, marginBottom: 8 },
 
-  /* Select (simple) */
+  inputField: {
+    flex: 1,
+    fontFamily: FONT.body,
+    fontSize: 15,
+    color: BRAND.black,
+    paddingVertical: 10,
+  },
+
+  inputErrorBorder: {
+    borderColor: "#ef4444",
+  },
+
+  errorText: {
+    color: "#ef4444",
+    fontSize: 12,
+    marginBottom: 10,
+    fontFamily: FONT.body,
+  },
+
   selectWrapper: {
-    height: 50,
-    borderWidth: 1.5,
-    borderRadius: 15,
-    borderColor: "#ccc",
-    paddingHorizontal: 12,
-    backgroundColor: "#fff",
+    height: 58,
+    borderWidth: 1.2,
+    borderRadius: 18,
+    borderColor: BRAND.greyBorder,
+    paddingHorizontal: 14,
+    backgroundColor: BRAND.white,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 12,
+    ...SHADOW.sm,
   },
-  selectText: { fontSize: 14, color: "#111827", flex: 1, paddingRight: 10 },
 
-  // Bigger dropdown icon (fix for tiny triangle)
+  selectLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+  },
+
+  selectText: {
+    fontFamily: FONT.body,
+    fontSize: 15,
+    color: BRAND.black,
+    flex: 1,
+    paddingRight: 10,
+    fontWeight: "600",
+  },
+
   dropdownIcon: {
-    width: 28,
-    height: 28,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#F4ECFF",
     alignItems: "center",
     justifyContent: "center",
   },
+
   dropdownIconText: {
     fontSize: 24,
     lineHeight: 24,
-    color: "#6b7280",
+    color: BRAND.purple,
+    fontWeight: "700",
   },
 
-  /* Logos / QR card */
-  logoSm: { width: 24, height: 24, borderRadius: 6, resizeMode: "contain" },
-  logoLg: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
+  logoSm: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
     resizeMode: "contain",
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
   },
 
-  fileName: { fontSize: 13, color: "#374151" },
-  metaText: { fontSize: 12, color: "#6b7280", marginTop: 2 },
+  logoLg: {
+    width: 46,
+    height: 46,
+    borderRadius: 12,
+    resizeMode: "contain",
+    backgroundColor: BRAND.white,
+  },
+
+  fileName: {
+    fontSize: 13,
+    color: BRAND.black,
+    fontWeight: "600",
+    fontFamily: FONT.body,
+  },
+
+  metaText: {
+    fontSize: 12,
+    color: BRAND.grey,
+    marginTop: 2,
+    fontFamily: FONT.body,
+  },
 
   logoCard: {
     borderWidth: 1.5,
     borderStyle: "dashed",
-    borderColor: "#d1d5db",
-    borderRadius: 16,
-    paddingVertical: 18,
-    paddingHorizontal: 16,
+    borderColor: BRAND.purple,
+    borderRadius: 24,
+    paddingVertical: 24,
+    paddingHorizontal: 18,
     alignItems: "center",
     marginBottom: 16,
-    backgroundColor: "#fafafa",
+    backgroundColor: "#FCFCFC",
   },
-  logoCardIcon: { fontSize: 32, lineHeight: 32 },
-  logoCardTitle: { marginTop: 8, fontSize: 15, fontWeight: "700", color: "#111827" },
-  logoCardHint: { marginTop: 4, fontSize: 12, color: "#6b7280" },
-  logoActionsRow: { marginTop: 12, flexDirection: "row", gap: 10 },
+
+  logoCardIcon: {
+    fontSize: 34,
+    color: BRAND.purple,
+  },
+
+  logoCardTitle: {
+    marginTop: 10,
+    fontSize: 16,
+    fontWeight: "700",
+    color: BRAND.black,
+    fontFamily: FONT.body,
+  },
+
+  logoCardHint: {
+    marginTop: 4,
+    fontSize: 12,
+    color: BRAND.grey,
+    fontFamily: FONT.body,
+  },
+
+  logoActionsRow: {
+    marginTop: 14,
+    flexDirection: "row",
+    gap: 10,
+  },
+
   actionBtn: {
-    backgroundColor: "#00b14f",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
+    backgroundColor: BRAND.purple,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: RADIUS.pill,
   },
-  actionBtnText: { color: "#fff", fontWeight: "700" },
+
+  actionBtnText: {
+    color: BRAND.white,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
   actionBtnGhost: {
-    backgroundColor: "#f3f4f6",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
+    backgroundColor: BRAND.white,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1.2,
+    borderColor: BRAND.greyBorder,
   },
-  actionBtnGhostText: { color: "#111827", fontWeight: "700" },
 
-  logoSelectedWrap: { marginBottom: 16, alignItems: "center" },
+  actionBtnGhostText: {
+    color: BRAND.black,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  logoSelectedWrap: {
+    marginBottom: 16,
+    alignItems: "center",
+  },
+
   logoPreviewLargeWrap: {
-    width: 160,
-    height: 160,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
+    width: 150,
+    height: 150,
+    borderRadius: 30,
     overflow: "hidden",
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
+    ...SHADOW.sm,
   },
-  logoPreviewLarge: { width: "100%", height: "100%", resizeMode: "cover" },
 
-  /* Sticky submit bar */
-  fabWrap: { position: "absolute", left: 0, right: 0 },
-  submitContainer: {
-    height: 100,
-    backgroundColor: "#fff",
-    padding: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
+  logoPreviewLarge: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
   },
+
   btnPrimary: {
-    backgroundColor: "#00b14f",
-    paddingVertical: 14,
-    borderRadius: 30,
+    backgroundColor: BRAND.purple,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
+    marginTop: 8,
+    marginBottom: 16,
+    ...SHADOW.md,
   },
-  btnPrimaryDisabled: {
-    backgroundColor: "#eee",
-    paddingVertical: 14,
-    borderRadius: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-  },
-  btnPrimaryText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  btnPrimaryTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
 
-  /* Modal (simple list) */
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)" },
+  btnPrimaryDisabled: {
+    backgroundColor: BRAND.greyLight,
+    paddingVertical: 16,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    marginTop: 8,
+    marginBottom: 16,
+  },
+
+  btnPrimaryText: {
+    color: BRAND.white,
+    fontSize: 16,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  btnPrimaryTextDisabled: {
+    color: BRAND.grey,
+    fontSize: 16,
+    fontWeight: "600",
+    fontFamily: FONT.body,
+  },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+
   modalSheet: {
     position: "absolute",
     left: 20,
     right: 20,
-    top: 100,
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 16,
+    top: 95,
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    padding: 18,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
+    borderColor: "#EFE7F7",
+    ...SHADOW.md,
   },
-  modalTitle: { color: "#111827", fontSize: 16, fontWeight: "700", marginBottom: 10 },
 
-  /* Floating close × on overlay */
+  modalTitle: {
+    color: BRAND.black,
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 4,
+    fontFamily: FONT.header,
+  },
+
+  modalSubtitle: {
+    color: BRAND.grey,
+    fontSize: 12,
+    marginBottom: 12,
+    fontFamily: FONT.body,
+  },
+
   modalCloseX: {
     position: "absolute",
-    top: 8,
-    right: 8,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "rgba(17,24,39,0.85)",
+    top: 10,
+    right: 10,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#F4ECFF",
     alignItems: "center",
     justifyContent: "center",
     zIndex: 10,
   },
+
   modalCloseXText: {
-    color: "#fff",
-    fontSize: 18,
-    lineHeight: 18,
+    color: BRAND.purple,
+    fontSize: 20,
+    lineHeight: 20,
     fontWeight: "700",
   },
 
   bankRow: {
     paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f3f4f6",
+    paddingHorizontal: 10,
+    borderRadius: 18,
+    marginBottom: 8,
+    backgroundColor: "#FCFCFC",
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
   },
-  bankRowActive: { backgroundColor: "#f9fafb" },
-  bankRowLeft: { flexDirection: "row", alignItems: "center", gap: 12, flex: 1 },
-  bankText: { color: "#111827", fontSize: 14, flex: 1, paddingRight: 8 },
-  checkMark: { fontSize: 16, color: "#00b14f", fontWeight: "700" },
+
+  bankRowActive: {
+    backgroundColor: "#F4ECFF",
+    borderColor: BRAND.purple,
+  },
+
+  bankRowLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    flex: 1,
+  },
+
+  bankText: {
+    color: BRAND.black,
+    fontSize: 14,
+    flex: 1,
+    paddingRight: 8,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  bankSubText: {
+    color: BRAND.grey,
+    fontSize: 11,
+    marginTop: 3,
+    fontFamily: FONT.body,
+  },
+
+  checkMark: {
+    fontSize: 18,
+    color: BRAND.purple,
+    fontWeight: "800",
+  },
 });
