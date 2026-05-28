@@ -1,4 +1,4 @@
-// ResetPasswordNumber.js  ✅ header style updated to match ResetPasswordScreen.js (email one)
+// ResetPasswordNumber.js
 import React, { useMemo, useState } from "react";
 import {
   View,
@@ -10,13 +10,13 @@ import {
   KeyboardAvoidingView,
   StatusBar,
   ScrollView,
-  Image,
   ActivityIndicator,
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import { SEND_OTP_FPW_SMS_ENDPOINT } from "@env";
 
 const ALLOWED_PREFIXES = ["77", "17", "16"];
@@ -37,15 +37,19 @@ const ResetPasswordNumber = () => {
   const [loading, setLoading] = useState(false);
 
   const handleChange = (text) => {
-    let digits = text.replace(/\D/g, "").slice(0, 8);
+    const digits = text.replace(/\D/g, "").slice(0, 8);
     setPhoneNumber(digits);
   };
 
   const prefix = useMemo(() => phoneNumber.slice(0, 2), [phoneNumber]);
-  const isValidPrefix = useMemo(() => ALLOWED_PREFIXES.includes(prefix), [prefix]);
+  const isValidPrefix = useMemo(
+    () => ALLOWED_PREFIXES.includes(prefix),
+    [prefix],
+  );
+
   const isValidPhone = useMemo(
     () => phoneNumber.length === 8 && isValidPrefix,
-    [phoneNumber, isValidPrefix]
+    [phoneNumber, isValidPrefix],
   );
 
   const handleClear = () => setPhoneNumber("");
@@ -54,8 +58,12 @@ const ResetPasswordNumber = () => {
     if (!isValidPhone || loading) return;
 
     const endpoint = String(SEND_OTP_FPW_SMS_ENDPOINT || "").trim();
+
     if (!endpoint) {
-      Alert.alert("Config missing", "SEND_OTP_FPW_SMS_ENDPOINT is not set in .env");
+      Alert.alert(
+        "Config missing",
+        "SEND_OTP_FPW_SMS_ENDPOINT is not set in .env",
+      );
       return;
     }
 
@@ -82,14 +90,21 @@ const ResetPasswordNumber = () => {
 
       if (!res.ok) {
         const msg =
-          (data && (data.message || data.error || data.msg)) ||
+          data?.message ||
+          data?.error ||
+          data?.msg ||
           `Failed to send OTP (HTTP ${res.status})`;
+
         Alert.alert("OTP not sent", msg);
         return;
       }
 
       const otpId =
-        data?.otp_id ?? data?.otpId ?? data?.data?.otp_id ?? data?.data?.otpId ?? null;
+        data?.otp_id ??
+        data?.otpId ??
+        data?.data?.otp_id ??
+        data?.data?.otpId ??
+        null;
 
       navigation.navigate("PasswordSentScreen", {
         phoneNumber,
@@ -105,58 +120,77 @@ const ResetPasswordNumber = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["top", "right", "left", "bottom"]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
+    <SafeAreaView style={styles.container} edges={["left", "right", "bottom"]}>
+      <StatusBar barStyle="dark-content" backgroundColor="#FBF7FF" />
+      <View style={styles.topGlow} />
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 10}
       >
-        <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
-          {/* Header (same style as ResetPasswordScreen.js) */}
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.header}>
             <TouchableOpacity
               onPress={() => navigation.goBack()}
               style={styles.iconButton}
               accessibilityLabel="Go back"
+              activeOpacity={0.86}
               disabled={loading}
             >
               <Ionicons name="arrow-back" size={24} color="#1A1D1F" />
             </TouchableOpacity>
 
+            <Text style={styles.headerTitle}>Reset</Text>
+
             <TouchableOpacity
               onPress={() => navigation.navigate("HelpScreen")}
               style={styles.iconButton}
               accessibilityLabel="Help"
+              activeOpacity={0.86}
               disabled={loading}
             >
-              <Ionicons name="help-circle-outline" size={24} color="#1A1D1F" />
+              <Ionicons
+                name="help-circle-outline"
+                size={24}
+                color="#1A1D1F"
+              />
             </TouchableOpacity>
           </View>
 
-          {/* Content */}
-          <View style={styles.content}>
+          <View style={styles.heroCard}>
+            <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
             <Text style={styles.title}>Reset password</Text>
-            <Text style={styles.subtitle}>Enter your registered mobile number</Text>
+            <Text style={styles.subtitle}>
+              Enter your registered mobile number. We’ll send you an OTP to
+              reset your password.
+            </Text>
+          </View>
 
-            {/* Phone Input */}
+          <View style={styles.formCard}>
+            <Text style={styles.label}>Mobile number</Text>
+
             <View
               style={[
-                styles.inputWrapper,
-                { borderColor: isFocused ? "#00b14f" : "#E5E7EB", borderWidth: 1.5, opacity: loading ? 0.7 : 1 },
+                styles.phoneRow,
+                {
+                  borderColor: isFocused ? BRAND.purple : BRAND.greyBorder,
+                  opacity: loading ? 0.7 : 1,
+                },
               ]}
             >
-              <View style={styles.flagContainer}>
-                <View style={styles.flagBox}>
-                  <Image source={{ uri: "https://flagcdn.com/w40/bt.png" }} style={styles.flag} />
-                </View>
-                <Text style={styles.dialCode}>+975</Text>
+              <View style={styles.countrySelector}>
+                <Text style={styles.countryCode}>+975</Text>
               </View>
 
               <TextInput
                 style={styles.input}
-                placeholder="Enter phone number"
+                placeholder="Enter mobile number"
+                placeholderTextColor="#9CA3AF"
                 keyboardType="number-pad"
                 inputMode="numeric"
                 maxLength={8}
@@ -172,38 +206,63 @@ const ResetPasswordNumber = () => {
               />
 
               {phoneNumber.length > 0 && !loading && (
-                <TouchableOpacity onPress={handleClear} style={styles.clearButton}>
-                  <Ionicons name="close-circle" size={20} color="#aaa" />
+                <TouchableOpacity
+                  onPress={handleClear}
+                  style={styles.clearButton}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close-circle" size={20} color={BRAND.grey} />
                 </TouchableOpacity>
               )}
             </View>
 
+            <Text style={styles.tip}>Format: 77/17/16 XXXXXX (8 digits)</Text>
+
             {phoneNumber.length >= 2 && !isValidPrefix && (
               <Text style={styles.warningText}>
-                Please enter a valid Bhutanese number (starts with 77, 17, or 16)
+                Please enter a valid Bhutanese number starting with 77, 17, or
+                16.
               </Text>
             )}
 
-            <TouchableOpacity onPress={() => navigation.navigate("ForgotPassword")} disabled={loading}>
-              <Text style={[styles.link, { opacity: loading ? 0.5 : 0.9 }]}>Use email instead</Text>
+            <TouchableOpacity
+              onPress={() => navigation.navigate("ForgotPassword")}
+              activeOpacity={0.86}
+              disabled={loading}
+            >
+              <Text style={[styles.link, { opacity: loading ? 0.5 : 1 }]}>
+                Use email instead
+              </Text>
             </TouchableOpacity>
           </View>
-        </ScrollView>
 
-        {/* Bottom */}
-        <View style={styles.bottomSticky}>
           <TouchableOpacity
-            style={isValidPhone && !loading ? styles.submitButton : styles.submitButtonDisabled}
+            style={
+              isValidPhone && !loading
+                ? styles.submitButton
+                : styles.submitButtonDisabled
+            }
             onPress={sendOtp}
             disabled={!isValidPhone || loading}
+            activeOpacity={0.9}
           >
             {loading ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator color={BRAND.white} />
             ) : (
-              <Text style={isValidPhone ? styles.submitButtonText : styles.submitTextDisabled}>Next</Text>
+              <Text
+                style={
+                  isValidPhone
+                    ? styles.submitButtonText
+                    : styles.submitTextDisabled
+                }
+              >
+                Next
+              </Text>
             )}
           </TouchableOpacity>
-        </View>
+
+          <View style={styles.bottomSpacer} />
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -212,84 +271,200 @@ const ResetPasswordNumber = () => {
 export default ResetPasswordNumber;
 
 const styles = StyleSheet.create({
-  // ✅ container/header/content spacing now matches ResetPasswordScreen.js
-  container: { flex: 1, backgroundColor: "#f8f9fa", paddingHorizontal: 12 },
+  container: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.45,
+  },
+
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 22,
+    paddingTop: 42,
+    paddingBottom: 24,
+  },
+
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 20,
+    marginBottom: 26,
   },
-  iconButton: { padding: 8, justifyContent: "center", alignItems: "center" },
 
-  content: { flex: 1, paddingHorizontal: 8, marginTop: -5 },
-
-  title: { fontSize: 26, fontWeight: "700", color: "#1A1D1F", marginBottom: 15, lineHeight: 38 },
-  subtitle: { fontSize: 15, color: "#666", marginBottom: 24 },
-
-  inputWrapper: {
-    flexDirection: "row",
+  iconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: BRAND.white,
+    justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "white",
-    paddingHorizontal: 15,
-    paddingVertical: 5,
-    borderRadius: 12,
-    marginBottom: 12,
-    justifyContent: "space-between",
+    ...SHADOW.sm,
   },
-  warningText: {
-    color: "#d9534f",
-    fontSize: 13,
+
+  headerTitle: {
+    fontFamily: FONT.header,
+    fontSize: 22,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
+
+  heroCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: 28,
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 18,
+    marginBottom: 18,
+    ...SHADOW.sm,
+  },
+
+  brandLabel: {
+    fontFamily: FONT.body,
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+    color: BRAND.purple,
     marginBottom: 10,
-    marginLeft: 5,
   },
 
-  flagContainer: {
+  title: {
+    fontFamily: FONT.header,
+    fontSize: 26,
+    fontWeight: "700",
+    color: BRAND.black,
+    lineHeight: 32,
+    marginBottom: 10,
+  },
+
+  subtitle: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    lineHeight: 21,
+    color: BRAND.grey,
+  },
+
+  formCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    ...SHADOW.sm,
+  },
+
+  label: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    marginBottom: 7,
+    color: BRAND.black,
+    fontWeight: "700",
+  },
+
+  phoneRow: {
     flexDirection: "row",
     alignItems: "center",
+    height: 56,
+    borderWidth: 1.2,
+    borderRadius: 18,
+    backgroundColor: "#FCFCFC",
+    paddingHorizontal: 12,
+  },
+
+  countrySelector: {
+    paddingRight: 12,
     marginRight: 10,
+    borderRightWidth: 1,
+    borderRightColor: BRAND.greyBorder,
   },
-  flagBox: {
-    width: 30,
-    height: 23,
-    marginRight: 12,
-    borderRadius: 3,
-    borderWidth: 1,
-    borderColor: "#ccc",
-    overflow: "hidden",
+
+  countryCode: {
+    fontFamily: FONT.body,
+    fontSize: 15,
+    fontWeight: "700",
+    color: BRAND.black,
   },
-  flag: { width: "100%", height: "100%", resizeMode: "cover" },
-  dialCode: { fontSize: 16, fontWeight: "400" },
 
-  input: { flex: 1, fontSize: 16, color: "#1A1D1F", fontWeight: "400" },
-  clearButton: { paddingLeft: 10 },
-
-  link: { color: "#007bff", fontSize: 14, marginTop: 10, fontWeight: "bold" },
-
-  bottomSticky: {
-    paddingHorizontal: 24,
-    paddingBottom: Platform.OS === "android" ? 20 : 20,
-    borderRadius: 15,
-    marginBottom: 8,
+  input: {
+    flex: 1,
+    fontFamily: FONT.body,
+    fontSize: 15,
+    color: BRAND.black,
+    paddingVertical: 10,
   },
+
+  clearButton: {
+    paddingLeft: 10,
+  },
+
+  tip: {
+    fontFamily: FONT.body,
+    marginTop: 8,
+    fontSize: 12,
+    color: BRAND.grey,
+  },
+
+  warningText: {
+    fontFamily: FONT.body,
+    color: BRAND.red,
+    fontSize: 13,
+    marginTop: 8,
+    fontWeight: "600",
+  },
+
+  link: {
+    color: BRAND.purple,
+    fontSize: 13,
+    marginTop: 14,
+    fontWeight: "800",
+    fontFamily: FONT.body,
+  },
+
   submitButton: {
-    backgroundColor: "#00b14f",
+    backgroundColor: BRAND.purple,
     paddingVertical: 16,
-    borderRadius: 30,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
-    marginTop: 10,
+    marginTop: 24,
+    ...SHADOW.md,
   },
+
   submitButtonDisabled: {
-    backgroundColor: "#eee",
+    backgroundColor: BRAND.greyLight,
     paddingVertical: 16,
-    borderRadius: 30,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
-    marginTop: 10,
+    marginTop: 24,
   },
-  submitButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  submitTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
+
+  submitButtonText: {
+    color: BRAND.white,
+    fontSize: 16,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  submitTextDisabled: {
+    color: BRAND.grey,
+    fontSize: 16,
+    fontWeight: "600",
+    fontFamily: FONT.body,
+  },
+
+  bottomSpacer: {
+    height: 50,
+  },
 });
