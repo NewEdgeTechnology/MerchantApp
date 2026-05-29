@@ -29,6 +29,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import {
   LOGIN_USERNAME_MERCHANT_ENDPOINT,
   PROFILE_ENDPOINT,
@@ -413,12 +414,12 @@ const HeaderBar = React.memo(function HeaderBar({
 
   return (
     <LinearGradient
-      colors={["#00b14f", "#4de6de"]}
+      colors={[BRAND.purple, BRAND.magenta]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={{
-        paddingTop: (isTablet ? 24 : 18) + (insets.top || 0),
-        paddingBottom: isTablet ? 16 : 12,
+        paddingTop: (isTablet ? 12 : 6) + (insets.top || 0),
+        paddingBottom: isTablet ? 12 : 10,
         paddingHorizontal: isTablet ? 24 : 18,
       }}
     >
@@ -449,7 +450,7 @@ const HeaderBar = React.memo(function HeaderBar({
                   top: avatarSize / 2 - 12,
                 }}
                 size="small"
-                color="#00b14f"
+                color={BRAND.purple}
               />
             )}
           </TouchableOpacity>
@@ -482,9 +483,16 @@ const HeaderBar = React.memo(function HeaderBar({
       </View>
 
       {!!businessAddress && (
-        <View style={{ marginTop: 10, alignItems: "center", width: "100%" }}>
+        <View
+          style={{
+            marginTop: 10,
+            marginBottom: 10,
+            alignItems: "center",
+            width: "100%",
+          }}
+        >
           <View style={styles.addressChip}>
-            <Ionicons name="location-outline" size={16} color="#00b14f" />
+            <Ionicons name="location-outline" size={16} color={BRAND.purple} />
             <Text
               style={styles.addressText}
               numberOfLines={1}
@@ -2048,7 +2056,7 @@ export default function GrabMerchantHomeScreen() {
             },
           ]}
         >
-          <Ionicons name="chatbubble-ellipses" size={22} color="#fff" />
+          <Ionicons name="chatbubble-ellipses" size={22} color={BRAND.purple} />
         </TouchableOpacity>
       )}
 
@@ -2062,81 +2070,116 @@ export default function GrabMerchantHomeScreen() {
   );
 }
 
-/* ───────────────────────── Styles ───────────────────────── */
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#00b14f" },
-  container: { backgroundColor: "#f6f7f8" },
-  profileCircle: { borderRadius: 9999, backgroundColor: "#fff" },
+  safe: { flex: 1, backgroundColor: BRAND.purple },
+
+  container: {
+    backgroundColor: BRAND.white,
+  },
+
+  tabWrap: {
+    flex: 1,
+    backgroundColor: BRAND.white,
+  },
+
+  profileCircle: {
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    borderWidth: 2,
+    borderColor: BRAND.purpleLight,
+  },
+
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginTop: 2,
+    width: "100%",
   },
-  inlineRow: { flexDirection: "row", alignItems: "center" },
+
+  inlineRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 1,
+  },
+
   hi: {
-    fontSize: 20,
-    color: "#e8fff6",
-    opacity: 0.9,
-    fontWeight: "900",
+    fontFamily: FONT.header,
+    fontSize: 18,
+    color: BRAND.white,
+    opacity: 0.92,
+    fontWeight: "800",
     marginBottom: 2,
   },
-  merchantName: { color: "white", fontWeight: "700" },
-  avatar: { borderRadius: 12, backgroundColor: "#fff" },
+
+  merchantName: {
+    flexShrink: 1,
+    maxWidth: "78%",
+    color: BRAND.white,
+    fontFamily: FONT.header,
+    fontSize: 18,
+    fontWeight: "800",
+  },
+
+  avatar: {
+    borderRadius: RADIUS.md,
+    backgroundColor: BRAND.white,
+    borderWidth: 2,
+    borderColor: BRAND.purpleLight,
+  },
+
+  addressChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.lg,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    maxWidth: "100%",
+    alignSelf: "center",
+    ...SHADOW.sm,
+  },
+
   addressText: {
-    color: "#2d2d2d",
+    flexShrink: 1,
+    color: BRAND.black,
+    fontFamily: FONT.body,
     fontSize: 13,
     fontWeight: "700",
-    maxWidth: 260,
+    maxWidth: 280,
   },
-  tabWrap: { flex: 1, backgroundColor: "#f6f7f8" },
+
   fab: {
     position: "absolute",
     right: 16,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: "#00b14f",
+    backgroundColor: BRAND.purple,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderRadius: 999,
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 5,
-  },
-  fabText: { color: "#fff", fontWeight: "700" },
-  addressChip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    maxWidth: "100%",
-    shadowColor: "#000",
-    shadowOpacity: 0.07,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 2,
+    borderRadius: RADIUS.full,
+    ...SHADOW.md,
   },
 
-  // ✅ Floating message bubble
+  fabText: {
+    color: BRAND.white,
+    fontFamily: FONT.body,
+    fontWeight: "700",
+  },
+
   messageFab: {
     position: "absolute",
     width: 54,
     height: 54,
-    borderRadius: 999,
-    backgroundColor: "#00b14f",
+    borderRadius: RADIUS.full,
+    backgroundColor: "#F3E4FF",
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
     alignItems: "center",
     justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.22,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    ...SHADOW.md,
     zIndex: 999,
   },
 });

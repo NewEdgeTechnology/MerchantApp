@@ -3,6 +3,7 @@ import React, { useMemo } from "react";
 import { View, Text, StyleSheet, Platform, Pressable } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
 export default function MerchantBottomBar({
   items = [],
@@ -18,7 +19,10 @@ export default function MerchantBottomBar({
   const safeItems = useMemo(() => {
     if (!Array.isArray(items)) {
       if (__DEV__)
-        console.error('MerchantBottomBar: "items" must be an array, got:', items);
+        console.error(
+          'MerchantBottomBar: "items" must be an array, got:',
+          items,
+        );
       return [];
     }
 
@@ -26,7 +30,10 @@ export default function MerchantBottomBar({
       .map((it, idx) => {
         if (!it || typeof it !== "object" || Array.isArray(it)) {
           if (__DEV__)
-            console.error(`MerchantBottomBar: item[${idx}] is not an object:`, it);
+            console.error(
+              `MerchantBottomBar: item[${idx}] is not an object:`,
+              it,
+            );
           return null;
         }
 
@@ -36,7 +43,7 @@ export default function MerchantBottomBar({
           if (__DEV__)
             console.error(
               `MerchantBottomBar: item[${idx}].key must be a non-empty string.`,
-              it
+              it,
             );
           return null;
         }
@@ -44,7 +51,7 @@ export default function MerchantBottomBar({
           if (__DEV__)
             console.error(
               `MerchantBottomBar: item[${idx}].icon must be a non-empty string.`,
-              it
+              it,
             );
           return null;
         }
@@ -67,8 +74,8 @@ export default function MerchantBottomBar({
     typeof softKeyPad === "number"
       ? softKeyPad
       : Platform.OS === "android"
-      ? 8
-      : 16;
+        ? 8
+        : 16;
 
   const bottomPad = Math.max(pad, insets.bottom || 0);
   const height = base + bottomPad;
@@ -89,7 +96,9 @@ export default function MerchantBottomBar({
   };
 
   return (
-    <View style={[styles.bottomBar, { height, paddingBottom: bottomPad }, style]}>
+    <View
+      style={[styles.bottomBar, { height, paddingBottom: bottomPad }, style]}
+    >
       {safeItems.map((item) => {
         const active = activeKey === item.key;
         const isAddButton = item.key === "Add Menu";
@@ -102,18 +111,20 @@ export default function MerchantBottomBar({
               isAddButton && styles.addButtonWrap,
               pressed && styles.pressed,
             ]}
-            android_ripple={{ color: "#e5e7eb", borderless: false }}
+            android_ripple={{ color: BRAND.greyLight, borderless: false }}
             onPress={() => typeof onChange === "function" && onChange(item.key)}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
             accessibilityLabel={String(item.label || item.key)}
           >
             {isAddButton ? (
-              <View style={[styles.addButton, isTablet && styles.addButtonTablet]}>
+              <View
+                style={[styles.addButton, isTablet && styles.addButtonTablet]}
+              >
                 <Ionicons
                   name={item.icon || "add"}
                   size={isTablet ? 34 : 30}
-                  color="#fff"
+                  color={BRAND.white}
                 />
               </View>
             ) : (
@@ -122,7 +133,7 @@ export default function MerchantBottomBar({
                   <Ionicons
                     name={item.icon}
                     size={isTablet ? 22 : 20}
-                    color={active ? "#0b8f66" : "#64748b"}
+                    color={active ? BRAND.purple : BRAND.grey}
                   />
                   {renderBadge(item.badge)}
                 </View>
@@ -131,7 +142,9 @@ export default function MerchantBottomBar({
                   style={[
                     styles.bottomLabel,
                     { fontSize: isTablet ? 12 : 11 },
-                    active ? styles.bottomLabelActive : styles.bottomLabelInactive,
+                    active
+                      ? styles.bottomLabelActive
+                      : styles.bottomLabelInactive,
                   ]}
                   numberOfLines={1}
                   ellipsizeMode="tail"
@@ -153,35 +166,46 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "#ffffff",
+    backgroundColor: BRAND.white,
     flexDirection: "row",
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#e2e8f0",
-    paddingTop: 8,
+    borderTopColor: BRAND.greyLight,
+    paddingTop: 6,
+    ...SHADOW.md,
   },
+
+  pressed: { opacity: Platform.OS === "ios" ? 0.6 : 1 },
 
   bottomItem: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 6,
+    paddingVertical: 4,
   },
-
-  pressed: { opacity: Platform.OS === "ios" ? 0.6 : 1 },
 
   iconBox: {
     position: "relative",
     alignItems: "center",
     justifyContent: "center",
-    minWidth: 28,
+    minWidth: 30,
     minHeight: 24,
   },
 
-  bottomLabel: { marginTop: 4, fontWeight: "600" },
-  bottomLabelInactive: { color: "#64748b" },
-  bottomLabelActive: { color: "#0b8f66", fontWeight: "700" },
+  bottomLabel: {
+    marginTop: 3,
+    fontFamily: FONT.body,
+    fontWeight: "800",
+  },
 
-  // ✅ Badge
+  bottomLabelInactive: {
+    color: BRAND.grey,
+  },
+
+  bottomLabelActive: {
+    color: BRAND.purple,
+    fontWeight: "900",
+  },
+
   badge: {
     position: "absolute",
     top: -6,
@@ -189,12 +213,19 @@ const styles = StyleSheet.create({
     minWidth: 18,
     height: 18,
     paddingHorizontal: 5,
-    borderRadius: 9,
-    backgroundColor: "#ef4444",
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.red,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "#ffffff",
+    borderColor: BRAND.white,
+  },
+
+  badgeText: {
+    color: BRAND.white,
+    fontFamily: FONT.body,
+    fontWeight: "900",
+    fontSize: 10,
   },
   badgeTablet: {
     top: -7,
@@ -204,32 +235,28 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 6,
   },
-  badgeText: { color: "#fff", fontWeight: "800", fontSize: 10 },
   badgeTextTablet: { fontSize: 11 },
 
-  // TikTok-like Add button styles
   addButtonWrap: {
     alignItems: "center",
     justifyContent: "flex-start",
   },
+
   addButton: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: "#00b14f",
+    width: 56,
+    height: 56,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.purple,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 20,
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 4,
+    marginBottom: 18,
+    ...SHADOW.md,
   },
+
   addButtonTablet: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    marginBottom: 22,
+    width: 62,
+    height: 62,
+    borderRadius: RADIUS.full,
+    marginBottom: 20,
   },
 });

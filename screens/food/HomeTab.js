@@ -1,5 +1,11 @@
 // screens/food/HomeTab.js
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   View,
   Text,
@@ -12,10 +18,15 @@ import {
   Pressable,
   ScrollView,
   RefreshControl,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
-import * as SecureStore from 'expo-secure-store';
+} from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import {
+  useNavigation,
+  useFocusEffect,
+  useRoute,
+} from "@react-navigation/native";
+import * as SecureStore from "expo-secure-store";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import {
   DISPLAY_MENU_ENDPOINT as ENV_DISPLAY_MENU_ENDPOINT,
   DISPLAY_ITEM_ENDPOINT as ENV_DISPLAY_ITEM_ENDPOINT,
@@ -26,61 +37,112 @@ import {
   ITEM_IMAGE_ENDPOINT as ENV_ITEM_IMAGE_ENDPOINT,
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
   TOTAL_SALES_ENDPOINT as ENV_TOTAL_SALES_ENDPOINT,
-} from '@env';
+} from "@env";
 
 /* ---------------- constants for Quick Actions ---------------- */
-const KEY_QUICK_ACTIONS = 'quick_actions_v1';
+const KEY_QUICK_ACTIONS = "quick_actions_v1";
 const ALL_ACTIONS = [
-  { key: 'menu', icon: 'restaurant-outline', label: 'Menu' },
-  { key: 'promos', icon: 'pricetags-outline', label: 'Promotions' },
-  { key: 'payouts', icon: 'card-outline', label: 'Payouts' },
-  { key: 'settings', icon: 'settings-outline', label: 'Settings' },
-  { key: 'orders', icon: 'receipt-outline', label: 'Orders' },
-  { key: 'addItem', icon: 'add-circle-outline', label: 'Add item' },
+  { key: "menu", icon: "restaurant-outline", label: "Menu" },
+  { key: "promos", icon: "pricetags-outline", label: "Promotions" },
+  { key: "payouts", icon: "card-outline", label: "Payouts" },
+  { key: "settings", icon: "settings-outline", label: "Settings" },
+  { key: "orders", icon: "receipt-outline", label: "Orders" },
+  { key: "addItem", icon: "add-circle-outline", label: "Add item" },
 ];
-const DEFAULT_ACTIONS = ['menu', 'promos', 'payouts', 'settings'];
+const DEFAULT_ACTIONS = ["menu", "promos", "payouts", "settings"];
 
 /* ---------------- order status meta (match OrdersTab) ---------------- */
 const BASE_STATUS_LABELS = [
-  { key: 'PENDING', label: 'Pending' },
-  { key: 'CONFIRMED', label: 'Confirmed' },
-  { key: 'PREPARING', label: 'Preparing' }, // hidden for Mart
-  { key: 'READY', label: 'Ready' },
-  { key: 'OUT_FOR_DELIVERY', label: 'Out for delivery' },
-  { key: 'COMPLETED', label: 'Completed' },
-  { key: 'REJECTED', label: 'Rejected' },
+  { key: "PENDING", label: "Pending" },
+  { key: "CONFIRMED", label: "Confirmed" },
+  { key: "PREPARING", label: "Preparing" }, // hidden for Mart
+  { key: "READY", label: "Ready" },
+  { key: "OUT_FOR_DELIVERY", label: "Out for delivery" },
+  { key: "COMPLETED", label: "Completed" },
+  { key: "REJECTED", label: "Rejected" },
 ];
 
-/* ---------------- Small UI bits ---------------- */
-const KpiCard = ({ icon, label, value, sub, isTablet, onPress }) => {
-  const size = isTablet ? 40 : 36;
-  const Container = onPress ? Pressable : View;
+const KpiCard = ({
+  icon,
+  label,
+  value,
+  sub,
+  tone = "purple",
+  isTablet,
+  onPress,
+}) => {
+  const toneMap = {
+    pink: { bg: "#FFE1F0", color: "#E91E73" },
+    purple: { bg: "#F3E4FF", color: BRAND.purple },
+    orange: { bg: "#FFF1CF", color: "#F59E0B" },
+    red: { bg: "#FFE4EC", color: "#E11D48" },
+  };
+
+  const t = toneMap[tone] || toneMap.purple;
 
   return (
-    <Container
+    <Pressable
       onPress={onPress}
-      android_ripple={onPress ? { color: 'rgba(0,0,0,0.06)', borderless: false } : undefined}
-      style={[styles.kpiCard, { width: isTablet ? '23.5%' : '48%' }]}
-      accessibilityRole={onPress ? 'button' : undefined}
+      android_ripple={onPress ? { color: BRAND.greyLight } : undefined}
+      style={[styles.kpiCard, { width: isTablet ? "23.5%" : "48%" }]}
     >
-      <View style={[styles.kpiIconWrap, { width: size, height: size, borderRadius: size / 2 }]}>
-        <Ionicons name={icon} size={isTablet ? 20 : 18} color="#0f172a" />
+      <View style={styles.kpiTop}>
+        <View style={[styles.kpiIconWrap, { backgroundColor: t.bg }]}>
+          <Ionicons name={icon} size={isTablet ? 24 : 22} color={t.color} />
+        </View>
+
+        {!!sub && (
+          <View style={[styles.kpiPill, { backgroundColor: t.bg }]}>
+            <Text style={[styles.kpiPillText, { color: t.color }]}>{sub}</Text>
+          </View>
+        )}
       </View>
-      <Text style={[styles.kpiLabel, { fontSize: isTablet ? 13 : 12 }]}>{label}</Text>
-      <Text style={[styles.kpiValue, { fontSize: isTablet ? 22 : 20 }]}>{value}</Text>
-      {!!sub && <Text style={[styles.kpiSub, { fontSize: isTablet ? 12 : 11 }]}>{sub}</Text>}
-    </Container>
+
+      <Text style={[styles.kpiLabel, { fontSize: isTablet ? 13 : 12 }]}>
+        {label}
+      </Text>
+
+      <Text
+        style={[styles.kpiValue, { fontSize: isTablet ? 24 : 22 }]}
+        numberOfLines={2}
+      >
+        {value}
+      </Text>
+    </Pressable>
   );
 };
 
-const Shortcut = ({ icon, label, onPress = () => {}, isTablet }) => (
-  <TouchableOpacity style={styles.shortcut} onPress={onPress} activeOpacity={0.9}>
-    <View style={styles.shortcutIcon}>
-      <Ionicons name={icon} size={isTablet ? 22 : 20} color="#0f172a" />
-    </View>
-    <Text style={[styles.shortcutText, { fontSize: isTablet ? 13 : 12 }]}>{label}</Text>
-  </TouchableOpacity>
-);
+const Shortcut = ({
+  icon,
+  label,
+  onPress = () => {},
+  isTablet,
+  tone = "purple",
+}) => {
+  const toneMap = {
+    pink: { bg: "#FFE1F0", color: "#E91E63" },
+    purple: { bg: "#F3E4FF", color: BRAND.purple },
+    orange: { bg: "#FFF1CF", color: "#F59E0B" },
+    red: { bg: "#FFE4EC", color: "#E11D48" },
+  };
+
+  const t = toneMap[tone] || toneMap.purple;
+
+  return (
+    <TouchableOpacity
+      style={styles.shortcut}
+      onPress={onPress}
+      activeOpacity={0.9}
+    >
+      <View style={[styles.shortcutIcon, { backgroundColor: t.bg }]}>
+        <Ionicons name={icon} size={isTablet ? 28 : 25} color={t.color} />
+      </View>
+      <Text style={[styles.shortcutText, { fontSize: isTablet ? 13 : 12 }]}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+};
 
 const StatusChip = ({ label, count = 0, onPress, active = false }) => (
   <TouchableOpacity
@@ -89,9 +151,15 @@ const StatusChip = ({ label, count = 0, onPress, active = false }) => (
     style={[styles.statusChip, active && styles.statusChipActive]}
     hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
   >
-    <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>{label}</Text>
+    <Text
+      style={[styles.statusChipText, active && styles.statusChipTextActive]}
+    >
+      {label}
+    </Text>
     <View style={[styles.badge, active && styles.badgeActive]}>
-      <Text style={[styles.badgeText, active && styles.badgeTextActive]}>{count}</Text>
+      <Text style={[styles.badgeText, active && styles.badgeTextActive]}>
+        {count}
+      </Text>
     </View>
   </TouchableOpacity>
 );
@@ -99,58 +167,84 @@ const StatusChip = ({ label, count = 0, onPress, active = false }) => (
 // Menu/Item card
 const MenuItem = ({ item, isTablet, money, onPress = () => {} }) => {
   const price =
-    typeof item?.price === 'number' ? money(item.price, item.currency || 'BTN') : item?.price ?? '';
+    typeof item?.price === "number"
+      ? money(item.price, item.currency || "BTN")
+      : (item?.price ?? "");
   const inStock = item?.inStock ?? true;
-  const cat = item?.category || item?.categoryName || '';
+  const cat = item?.category || item?.categoryName || "";
 
   return (
     <Pressable
       onPress={() => onPress(item)}
       style={styles.menuCard}
-      android_ripple={{ color: 'rgba(0,0,0,0.06)', borderless: false }}
+      android_ripple={{ color: BRAND.greyLight, borderless: false }}
     >
       {item?.image ? (
         <Image
           source={{ uri: item.image }}
           style={styles.menuThumb}
           onError={(e) => {
-            console.warn('[MenuItem] Image failed:', item.image, e?.nativeEvent?.error);
+            console.warn(
+              "[MenuItem] Image failed:",
+              item.image,
+              e?.nativeEvent?.error,
+            );
           }}
         />
       ) : (
         <View style={[styles.menuThumb, styles.menuThumbFallback]}>
-          <Ionicons name="image-outline" size={18} color="#64748b" />
+          <Ionicons name="image-outline" size={18} color={BRAND.grey} />
         </View>
       )}
 
       <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={[styles.menuTitle, { fontSize: isTablet ? 15 : 14 }]}>
-          {item?.name || item?.title || 'Unnamed item'}
+        <Text
+          numberOfLines={1}
+          style={[styles.menuTitle, { fontSize: isTablet ? 15 : 14 }]}
+        >
+          {item?.name || item?.title || "Unnamed item"}
         </Text>
         {!!cat && (
-          <Text numberOfLines={1} style={[styles.menuMeta, { fontSize: isTablet ? 12 : 11 }]}>
+          <Text
+            numberOfLines={1}
+            style={[styles.menuMeta, { fontSize: isTablet ? 12 : 11 }]}
+          >
             {cat}
           </Text>
         )}
-        {!!price && <Text style={[styles.menuPrice, { fontSize: isTablet ? 14 : 13 }]}>{price}</Text>}
+        {!!price && (
+          <Text style={[styles.menuPrice, { fontSize: isTablet ? 14 : 13 }]}>
+            {price}
+          </Text>
+        )}
       </View>
 
       {Number(item?.discount) > 0 && (
-        <View style={[styles.badge, { backgroundColor: '#fde68a', marginLeft: 8 }]}>
-          <Text style={[styles.badgeText, { color: '#92400e' }]}>{`${Math.round(
-            Number(item.discount)
+        <View
+          style={[styles.badge, { backgroundColor: "#fde68a", marginLeft: 8 }]}
+        >
+          <Text style={[styles.badgeText, { color: "#92400e" }]}>{`${Math.round(
+            Number(item.discount),
           )}% OFF`}</Text>
         </View>
       )}
 
-      <View style={[styles.stockPill, { backgroundColor: inStock ? '#dcfce7' : '#fee2e2' }]}>
+      <View
+        style={[
+          styles.stockPill,
+          { backgroundColor: inStock ? "#dcfce7" : "#fee2e2" },
+        ]}
+      >
         <Text
           style={[
             styles.stockText,
-            { color: inStock ? '#166534' : '#991b1b', fontSize: isTablet ? 12 : 11 },
+            {
+              color: inStock ? "#166534" : "#991b1b",
+              fontSize: isTablet ? 12 : 11,
+            },
           ]}
         >
-          {inStock ? 'In stock' : 'Out of stock'}
+          {inStock ? "In stock" : "Out of stock"}
         </Text>
       </View>
     </Pressable>
@@ -158,10 +252,12 @@ const MenuItem = ({ item, isTablet, money, onPress = () => {} }) => {
 };
 
 const BannerItem = ({ b, isTablet }) => {
-  const img = b.image || '';
+  const img = b.image || "";
   const inactive =
     Number(b.is_active) !== 1 ||
-    (b?.end_date ? String(b.end_date).slice(0, 10) <= new Date().toISOString().slice(0, 10) : false);
+    (b?.end_date
+      ? String(b.end_date).slice(0, 10) <= new Date().toISOString().slice(0, 10)
+      : false);
 
   return (
     <View style={styles.bannerCard}>
@@ -169,34 +265,54 @@ const BannerItem = ({ b, isTablet }) => {
         <Image
           source={{ uri: img }}
           style={styles.bannerThumb}
-          onError={(e) => console.warn('[Banner] Image failed:', img, e?.nativeEvent?.error)}
+          onError={(e) =>
+            console.warn("[Banner] Image failed:", img, e?.nativeEvent?.error)
+          }
         />
       ) : (
         <View style={[styles.bannerThumb, styles.menuThumbFallback]}>
-          <Ionicons name="image-outline" size={18} color="#64748b" />
+          <Ionicons name="image-outline" size={18} color={BRAND.grey} />
         </View>
       )}
       <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={[styles.bannerTitle, { fontSize: isTablet ? 15 : 14 }]}>
-          {b.title || '—'}
+        <Text
+          numberOfLines={1}
+          style={[styles.bannerTitle, { fontSize: isTablet ? 15 : 14 }]}
+        >
+          {b.title || "—"}
         </Text>
         {!!b.description && (
-          <Text numberOfLines={2} style={[styles.bannerDesc, { fontSize: isTablet ? 12 : 11 }]}>
+          <Text
+            numberOfLines={2}
+            style={[styles.bannerDesc, { fontSize: isTablet ? 12 : 11 }]}
+          >
             {b.description}
           </Text>
         )}
-        <Text numberOfLines={1} style={[styles.bannerDates, { fontSize: isTablet ? 12 : 11 }]}>
-          {(b.start_date || '').slice(0, 10) || '—'} → {(b.end_date || '').slice(0, 10) || '—'}
+        <Text
+          numberOfLines={1}
+          style={[styles.bannerDates, { fontSize: isTablet ? 12 : 11 }]}
+        >
+          {(b.start_date || "").slice(0, 10) || "—"} →{" "}
+          {(b.end_date || "").slice(0, 10) || "—"}
         </Text>
       </View>
-      <View style={[styles.badge, { backgroundColor: inactive ? '#f3f4f6' : '#e8f5e9', marginLeft: 8 }]}>
+      <View
+        style={[
+          styles.badge,
+          { backgroundColor: inactive ? "#f3f4f6" : "#e8f5e9", marginLeft: 8 },
+        ]}
+      >
         <Text
           style={[
             styles.badgeText,
-            { color: inactive ? '#334155' : '#166534', fontSize: isTablet ? 12 : 11 },
+            {
+              color: inactive ? "#334155" : "#166534",
+              fontSize: isTablet ? 12 : 11,
+            },
           ]}
         >
-          {inactive ? 'Inactive' : 'Active'}
+          {inactive ? "Inactive" : "Active"}
         </Text>
       </View>
     </View>
@@ -205,11 +321,14 @@ const BannerItem = ({ b, isTablet }) => {
 
 /* ---------------- Utils ---------------- */
 const normalizeHost = (url) => {
-  if (!url) return '';
+  if (!url) return "";
   try {
     const u = new URL(url);
-    if (Platform.OS === 'android' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1')) {
-      u.hostname = '10.0.2.2';
+    if (
+      Platform.OS === "android" &&
+      (u.hostname === "localhost" || u.hostname === "127.0.0.1")
+    ) {
+      u.hostname = "10.0.2.2";
     }
     return u.toString();
   } catch {
@@ -220,22 +339,32 @@ const normalizeHost = (url) => {
 
 async function getStoredOwnerId() {
   try {
-    const raw = await SecureStore.getItemAsync('merchant_login');
-    if (!raw) return '';
+    const raw = await SecureStore.getItemAsync("merchant_login");
+    if (!raw) return "";
     const json = JSON.parse(raw);
-    const candidates = [json?.user?.id, json?.merchant?.id, json?.merchant_id, json?.owner_id, json?.id];
-    const found = candidates.find((v) => v !== undefined && v !== null && String(v).trim() !== '');
-    return found ? String(found) : '';
+    const candidates = [
+      json?.user?.id,
+      json?.merchant?.id,
+      json?.merchant_id,
+      json?.owner_id,
+      json?.id,
+    ];
+    const found = candidates.find(
+      (v) => v !== undefined && v !== null && String(v).trim() !== "",
+    );
+    return found ? String(found) : "";
   } catch {
-    return '';
+    return "";
   }
 }
 
 const normalizeOwnerType = (v) => {
-  const s = String(v ?? '').trim().toLowerCase();
-  if (s === '2' || s === 'mart') return 'mart';
-  if (s === '1' || s === 'food') return 'food';
-  return s || 'food';
+  const s = String(v ?? "")
+    .trim()
+    .toLowerCase();
+  if (s === "2" || s === "mart") return "mart";
+  if (s === "1" || s === "food") return "food";
+  return s || "food";
 };
 
 /* ---------------- KPI helpers ---------------- */
@@ -246,14 +375,18 @@ const isTodayLocal = (isoOrDateLike) => {
   const d = new Date(isoOrDateLike);
   if (Number.isNaN(d.getTime())) return false;
   const n = new Date();
-  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+  return (
+    d.getFullYear() === n.getFullYear() &&
+    d.getMonth() === n.getMonth() &&
+    d.getDate() === n.getDate()
+  );
 };
 
 const normalizeBusinessId = (v) => {
-  const s = String(v ?? '').trim();
+  const s = String(v ?? "").trim();
   if (!s) return null;
   const lower = s.toLowerCase();
-  if (lower === 'null' || lower === 'undefined') return null;
+  if (lower === "null" || lower === "undefined") return null;
   return s;
 };
 const isValidBusinessId = (v) => !!normalizeBusinessId(v);
@@ -270,10 +403,11 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
       json = looksLikeHtml ? null : text ? JSON.parse(text) : null;
     } catch {}
     if (!res.ok || looksLikeHtml) {
-      const msg =
-        looksLikeHtml
-          ? '404 page not found'
-          : (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
+      const msg = looksLikeHtml
+        ? "404 page not found"
+        : (json && (json.message || json.error)) ||
+          text ||
+          `HTTP ${res.status}`;
       throw new Error(msg);
     }
     return json;
@@ -285,11 +419,11 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
 const buildOrdersUrlSmart = (
   base,
   businessId,
-  { appendOwnerType = true, ownerType = 'food', altParam = 'business_id' } = {}
+  { appendOwnerType = true, ownerType = "food", altParam = "business_id" } = {},
 ) => {
   if (!base || !isValidBusinessId(businessId)) return null;
   const id = encodeURIComponent(normalizeBusinessId(businessId));
-  const b = String(base).trim().replace(/\/+$/, '');
+  const b = String(base).trim().replace(/\/+$/, "");
   let replaced = b
     .replace(/\{\s*businessId\s*\}/g, id)
     .replace(/\{\s*business_id\s*\}/gi, id)
@@ -299,20 +433,23 @@ const buildOrdersUrlSmart = (
   if (replaced === b) {
     if (/\/business$/i.test(b)) replaced = `${b}/${id}`;
     else if (!b.endsWith(`/${id}`)) {
-      const sep = b.includes('?') ? '&' : '?';
+      const sep = b.includes("?") ? "&" : "?";
       replaced = `${b}${sep}${altParam}=${id}`;
     }
   }
   if (appendOwnerType) {
-    const sep2 = replaced.includes('?') ? '&' : '?';
+    const sep2 = replaced.includes("?") ? "&" : "?";
     replaced = `${replaced}${sep2}owner_type=${encodeURIComponent(ownerType)}`;
   }
   return replaced;
 };
 
-const getCreated = (o) => o?.created_at || o?.createdAt || o?.ordered_at || o?.order_date || null;
-const getTotal = (o) => toNumber(o?.total_amount ?? o?.total ?? o?.grand_total ?? o?.amount ?? 0);
-const getStatus = (o) => String(o?.status ?? o?.order_status ?? '').toUpperCase();
+const getCreated = (o) =>
+  o?.created_at || o?.createdAt || o?.ordered_at || o?.order_date || null;
+const getTotal = (o) =>
+  toNumber(o?.total_amount ?? o?.total ?? o?.grand_total ?? o?.amount ?? 0);
+const getStatus = (o) =>
+  String(o?.status ?? o?.order_status ?? "").toUpperCase();
 
 const pluckOrdersLight = (payload) => {
   try {
@@ -321,32 +458,53 @@ const pluckOrdersLight = (payload) => {
       for (const block of payload.data) {
         const orders = block?.orders || block?.rows || block?.result || [];
         if (Array.isArray(orders)) {
-          for (const o of orders) out.push({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) });
+          for (const o of orders)
+            out.push({
+              status: getStatus(o),
+              total: getTotal(o),
+              created_at: getCreated(o),
+            });
         }
       }
       if (out.length) return out;
     }
     if (Array.isArray(payload))
-      return payload.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
+      return payload.map((o) => ({
+        status: getStatus(o),
+        total: getTotal(o),
+        created_at: getCreated(o),
+      }));
     if (Array.isArray(payload?.orders))
-      return payload.orders.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
+      return payload.orders.map((o) => ({
+        status: getStatus(o),
+        total: getTotal(o),
+        created_at: getCreated(o),
+      }));
     if (Array.isArray(payload?.rows))
-      return payload.rows.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
+      return payload.rows.map((o) => ({
+        status: getStatus(o),
+        total: getTotal(o),
+        created_at: getCreated(o),
+      }));
     if (Array.isArray(payload?.result))
-      return payload.result.map((o) => ({ status: getStatus(o), total: getTotal(o), created_at: getCreated(o) }));
+      return payload.result.map((o) => ({
+        status: getStatus(o),
+        total: getTotal(o),
+        created_at: getCreated(o),
+      }));
   } catch {}
   return [];
 };
 
-const UP = (s) => String(s || '').toUpperCase();
+const UP = (s) => String(s || "").toUpperCase();
 
-const countKpisLikeOrdersTab = (rows, kind = 'food') => {
+const countKpisLikeOrdersTab = (rows, kind = "food") => {
   const ACTIVE_SET = new Set(
-    String(kind).toLowerCase() === 'mart'
-      ? ['PENDING', 'CONFIRMED', 'READY', 'OUT_FOR_DELIVERY']
-      : ['PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY']
+    String(kind).toLowerCase() === "mart"
+      ? ["PENDING", "CONFIRMED", "READY", "OUT_FOR_DELIVERY"]
+      : ["PENDING", "CONFIRMED", "PREPARING", "READY", "OUT_FOR_DELIVERY"],
   );
-  const ACCEPTED_SET = new Set([...ACTIVE_SET, 'COMPLETED']);
+  const ACCEPTED_SET = new Set([...ACTIVE_SET, "COMPLETED"]);
 
   let active = 0;
   let cancelledToday = 0;
@@ -361,7 +519,13 @@ const countKpisLikeOrdersTab = (rows, kind = 'food') => {
     statusCounts[st] = (statusCounts[st] || 0) + 1;
 
     if (ACTIVE_SET.has(st)) active += 1;
-    if ((st === 'CANCELLED' || st === 'CANCELED' || st === 'REJECTED' || st === 'DECLINED') && today) {
+    if (
+      (st === "CANCELLED" ||
+        st === "CANCELED" ||
+        st === "REJECTED" ||
+        st === "DECLINED") &&
+      today
+    ) {
       cancelledToday += 1;
     }
     if (ACCEPTED_SET.has(st)) accepted += 1;
@@ -371,16 +535,20 @@ const countKpisLikeOrdersTab = (rows, kind = 'food') => {
   const acceptanceRate = denom > 0 ? Math.round((accepted / denom) * 100) : 0;
 
   return {
-    kpis: { activeOrders: active, cancellations: cancelledToday, acceptanceRate },
+    kpis: {
+      activeOrders: active,
+      cancellations: cancelledToday,
+      acceptanceRate,
+    },
     statusCounts,
   };
 };
 
 /* ---------------- ✅ TOTAL SALES (Today) from merchant-earnings ---------------- */
 const buildTotalSalesUrl = (base, businessId) => {
-  if (!base || !isValidBusinessId(businessId)) return '';
+  if (!base || !isValidBusinessId(businessId)) return "";
   const id = encodeURIComponent(normalizeBusinessId(businessId));
-  const b = String(base).trim().replace(/\/+$/, '');
+  const b = String(base).trim().replace(/\/+$/, "");
 
   let u = b
     .replace(/\{\s*business_id\s*\}/gi, id)
@@ -397,7 +565,8 @@ const sumTodayFromEarningsRows = (rows) => {
   let total = 0;
   for (const r of arr) {
     const d = r?.date;
-    if (isTodayLocal(d)) total += toNumber(r?.total_amount ?? r?.total ?? r?.amount ?? 0);
+    if (isTodayLocal(d))
+      total += toNumber(r?.total_amount ?? r?.total ?? r?.amount ?? 0);
   }
   return total;
 };
@@ -407,121 +576,153 @@ const originOf = (u) => {
   try {
     return new URL(u).origin;
   } catch {
-    return '';
+    return "";
   }
 };
 
 const sanitizePath = (p) => {
-  let path = String(p || '');
-  path = path.replace(/^\/(mart\/)?uploads\/uploads\//i, '/$1uploads/');
-  path = path.replace(/([^:]\/)\/+/g, '$1');
+  let path = String(p || "");
+  path = path.replace(/^\/(mart\/)?uploads\/uploads\//i, "/$1uploads/");
+  path = path.replace(/([^:]\/)\/+/g, "$1");
   return path;
 };
 
 const encodePathSegments = (p) =>
-  String(p || '')
-    .split('/')
-    .map((seg) => (seg ? encodeURIComponent(seg) : ''))
-    .join('/');
+  String(p || "")
+    .split("/")
+    .map((seg) => (seg ? encodeURIComponent(seg) : ""))
+    .join("/");
 
 const absJoin = (base, raw) => {
-  const s = String(raw || '').trim();
-  if (!s) return '';
+  const s = String(raw || "").trim();
+  if (!s) return "";
   if (/^https?:\/\/\S+/i.test(s)) return normalizeHost(s);
 
-  const baseNorm = String(normalizeHost(base || '')).replace(/\/+$/, '');
-  let path = s.startsWith('/') ? s : `/${s}`;
+  const baseNorm = String(normalizeHost(base || "")).replace(/\/+$/, "");
+  let path = s.startsWith("/") ? s : `/${s}`;
 
-  if (/\/(?:mart\/)?uploads$/i.test(baseNorm) && /^\/(?:mart\/)?uploads\//i.test(path)) {
-    path = path.replace(/^\/(?:mart\/)?uploads/i, '');
+  if (
+    /\/(?:mart\/)?uploads$/i.test(baseNorm) &&
+    /^\/(?:mart\/)?uploads\//i.test(path)
+  ) {
+    path = path.replace(/^\/(?:mart\/)?uploads/i, "");
   }
 
   path = sanitizePath(path);
   const encodedPath = encodePathSegments(path);
-  const joined = `${baseNorm}${encodedPath.startsWith('/') ? '' : '/'}${encodedPath}`.replace(/([^:]\/)\/+/g, '$1');
+  const joined =
+    `${baseNorm}${encodedPath.startsWith("/") ? "" : "/"}${encodedPath}`.replace(
+      /([^:]\/)\/+/g,
+      "$1",
+    );
   return joined;
 };
 
 const hostOnly = (u) => {
-  const norm = normalizeHost(u || '');
-  return originOf(norm || '') || '';
+  const norm = normalizeHost(u || "");
+  return originOf(norm || "") || "";
 };
 
 const IMAGE_BASES = (owner) =>
   ({
     food: {
-      item: normalizeHost(ENV_MENU_IMAGE_ENDPOINT) || originOf(ENV_DISPLAY_MENU_ENDPOINT || ''),
-      promo: normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT) || originOf(ENV_BANNERS_ENDPOINT || ''),
+      item:
+        normalizeHost(ENV_MENU_IMAGE_ENDPOINT) ||
+        originOf(ENV_DISPLAY_MENU_ENDPOINT || ""),
+      promo:
+        normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT) ||
+        originOf(ENV_BANNERS_ENDPOINT || ""),
     },
     mart: {
-      item: normalizeHost(ENV_ITEM_IMAGE_ENDPOINT) || originOf(ENV_DISPLAY_ITEM_ENDPOINT || ''),
-      promo: normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT) || originOf(ENV_BANNERS_ENDPOINT || ''),
+      item:
+        normalizeHost(ENV_ITEM_IMAGE_ENDPOINT) ||
+        originOf(ENV_DISPLAY_ITEM_ENDPOINT || ""),
+      promo:
+        normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT) ||
+        originOf(ENV_BANNERS_ENDPOINT || ""),
     },
-  }[owner] || { item: '', promo: '' });
+  })[owner] || { item: "", promo: "" };
 
 const baseWithServicePrefix = (u) => {
   try {
-    const url = new URL(normalizeHost(u || ''));
-    const firstSeg = url.pathname.split('/').filter(Boolean)[0];
-    if (firstSeg === 'food' || firstSeg === 'mart') return `${url.origin}/${firstSeg}`;
+    const url = new URL(normalizeHost(u || ""));
+    const firstSeg = url.pathname.split("/").filter(Boolean)[0];
+    if (firstSeg === "food" || firstSeg === "mart")
+      return `${url.origin}/${firstSeg}`;
     return url.origin;
   } catch {
-    return originOf(normalizeHost(u || '')) || '';
+    return originOf(normalizeHost(u || "")) || "";
   }
 };
 
 const useBuildImg = (ownerType, listBase) => {
   const bases = useMemo(() => IMAGE_BASES(ownerType), [ownerType]);
-  const fallbackBase = useMemo(() => baseWithServicePrefix(listBase), [listBase]);
+  const fallbackBase = useMemo(
+    () => baseWithServicePrefix(listBase),
+    [listBase],
+  );
 
   return useCallback(
     (kind, raw) => {
-      if (!raw) return '';
+      if (!raw) return "";
       if (/^https?:\/\//i.test(raw)) return normalizeHost(raw);
 
-      const chosenBase = (kind === 'promo' ? bases.promo || fallbackBase : bases.item || fallbackBase) || '';
-      const baseNorm = String(normalizeHost(chosenBase)).replace(/\/+$/, '');
-      let path = raw.startsWith('/') ? raw : `/${raw}`;
+      const chosenBase =
+        (kind === "promo"
+          ? bases.promo || fallbackBase
+          : bases.item || fallbackBase) || "";
+      const baseNorm = String(normalizeHost(chosenBase)).replace(/\/+$/, "");
+      let path = raw.startsWith("/") ? raw : `/${raw}`;
 
-      if (/\/food$/i.test(baseNorm) && /^\/food\//i.test(path)) path = path.replace(/^\/food/i, '');
-      if (/\/mart$/i.test(baseNorm) && /^\/mart\//i.test(path)) path = path.replace(/^\/mart/i, '');
+      if (/\/food$/i.test(baseNorm) && /^\/food\//i.test(path))
+        path = path.replace(/^\/food/i, "");
+      if (/\/mart$/i.test(baseNorm) && /^\/mart\//i.test(path))
+        path = path.replace(/^\/mart/i, "");
 
-      if (kind === 'item') {
+      if (kind === "item") {
         const baseIsFoodOrMart = /\/(food|mart)$/i.test(baseNorm);
-        const missingUploads = !/^\/(?:uploads|merchant\/uploads)\//i.test(path);
+        const missingUploads = !/^\/(?:uploads|merchant\/uploads)\//i.test(
+          path,
+        );
         if (baseIsFoodOrMart && missingUploads) path = `/uploads${path}`;
-        if (/\/uploads$/i.test(baseNorm) && /^\/uploads\//i.test(path)) path = path.replace(/^\/uploads/i, '');
+        if (/\/uploads$/i.test(baseNorm) && /^\/uploads\//i.test(path))
+          path = path.replace(/^\/uploads/i, "");
       }
 
       path = sanitizePath(path);
       return absJoin(baseNorm, path);
     },
-    [bases, fallbackBase]
+    [bases, fallbackBase],
   );
 };
 
 const buildBannerImg = (raw, bannerImgBase, endpointByBiz, endpointAll) => {
-  if (!raw) return '';
+  if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return normalizeHost(raw);
 
   const baseHost =
     hostOnly(bannerImgBase) ||
-    originOf(normalizeHost(endpointByBiz || '')) ||
-    originOf(normalizeHost(endpointAll || '')) ||
-    '';
+    originOf(normalizeHost(endpointByBiz || "")) ||
+    originOf(normalizeHost(endpointAll || "")) ||
+    "";
 
   const needsMerchant =
-    /\/merchant(\/|$)/i.test(String(endpointByBiz || '')) || /\/merchant(\/|$)/i.test(String(endpointAll || ''));
+    /\/merchant(\/|$)/i.test(String(endpointByBiz || "")) ||
+    /\/merchant(\/|$)/i.test(String(endpointAll || ""));
 
-  let path = raw.startsWith('/') ? raw : `/${raw}`;
+  let path = raw.startsWith("/") ? raw : `/${raw}`;
 
-  if (needsMerchant && /^\/uploads\//i.test(path) && !/^\/merchant\//i.test(path)) {
+  if (
+    needsMerchant &&
+    /^\/uploads\//i.test(path) &&
+    !/^\/merchant\//i.test(path)
+  ) {
     path = `/merchant${path}`;
   }
 
   const baseHasMerchantUploads = /\/merchant\/uploads$/i.test(baseHost);
   if (baseHasMerchantUploads && /^\/merchant\/uploads\//i.test(path)) {
-    path = path.replace(/^\/merchant\/uploads/i, '');
+    path = path.replace(/^\/merchant\/uploads/i, "");
   }
 
   path = sanitizePath(path);
@@ -530,24 +731,27 @@ const buildBannerImg = (raw, bannerImgBase, endpointByBiz, endpointAll) => {
 
 /* ---------------- per-context storage key ---------------- */
 const menusStoreKey = (bizId, ownerId, ownerType) =>
-  `menus_${String(bizId || 'na')}_${String(ownerId || 'na')}_${String(ownerType || 'food')}`;
+  `menus_${String(bizId || "na")}_${String(ownerId || "na")}_${String(ownerType || "food")}`;
 
 const baseOriginFromEnvLists = () => {
-  const src = normalizeHost(ENV_DISPLAY_MENU_ENDPOINT || ENV_DISPLAY_ITEM_ENDPOINT || '');
+  const src = normalizeHost(
+    ENV_DISPLAY_MENU_ENDPOINT || ENV_DISPLAY_ITEM_ENDPOINT || "",
+  );
   try {
     return new URL(src).origin;
   } catch {
-    return '';
+    return "";
   }
 };
 
 const buildBaseCandidates = (kind, serviceOrdersBase) => {
   const origin = baseOriginFromEnvLists();
-  const fromEnv = normalizeHost(ENV_ORDER_ENDPOINT || '');
-  const fromService = normalizeHost(serviceOrdersBase || '');
+  const fromEnv = normalizeHost(ENV_ORDER_ENDPOINT || "");
+  const fromService = normalizeHost(serviceOrdersBase || "");
   const base = normalizeHost(origin);
 
-  const swapFoodMart = (u) => (u ? u.replace(/\/food\//g, '/mart/').replace(/\/mart\//g, '/food/') : u);
+  const swapFoodMart = (u) =>
+    u ? u.replace(/\/food\//g, "/mart/").replace(/\/mart\//g, "/food/") : u;
 
   const candidates = [
     fromEnv,
@@ -560,36 +764,48 @@ const buildBaseCandidates = (kind, serviceOrdersBase) => {
     `${base}/orders`,
   ]
     .filter(Boolean)
-    .map((u) => u.replace(/\/+$/, ''));
+    .map((u) => u.replace(/\/+$/, ""));
 
   return Array.from(new Set(candidates));
 };
 
 async function probeOrdersPayload({ baseCandidates, businessId, kind }) {
-  const idParams = ['business_id', 'businessId', 'id'];
-  const typeParams = ['owner_type', 'ownerType', 'kind'];
+  const idParams = ["business_id", "businessId", "id"];
+  const typeParams = ["owner_type", "ownerType", "kind"];
   const tries = [];
 
   for (const base of baseCandidates) {
     idParams.forEach((idKey) => {
-      tries.push(buildOrdersUrlSmart(base, businessId, { appendOwnerType: true, ownerType: kind, altParam: idKey }));
+      tries.push(
+        buildOrdersUrlSmart(base, businessId, {
+          appendOwnerType: true,
+          ownerType: kind,
+          altParam: idKey,
+        }),
+      );
     });
     idParams.forEach((idKey) => {
       typeParams.forEach((tKey) => {
         const id = encodeURIComponent(normalizeBusinessId(businessId));
-        const b = String(base).trim().replace(/\/+$/, '');
-        const sep = b.includes('?') ? '&' : '?';
-        tries.push(`${b}${sep}${idKey}=${id}&${tKey}=${encodeURIComponent(kind)}`);
+        const b = String(base).trim().replace(/\/+$/, "");
+        const sep = b.includes("?") ? "&" : "?";
+        tries.push(
+          `${b}${sep}${idKey}=${id}&${tKey}=${encodeURIComponent(kind)}`,
+        );
       });
     });
-    tries.push(`${base}/business/${encodeURIComponent(normalizeBusinessId(businessId))}`);
+    tries.push(
+      `${base}/business/${encodeURIComponent(normalizeBusinessId(businessId))}`,
+    );
   }
 
   const candidates = Array.from(new Set(tries.filter(Boolean)));
   let lastErr = null;
   for (const url of candidates) {
     try {
-      const payload = await fetchJSON(url, { headers: { Accept: 'application/json' } });
+      const payload = await fetchJSON(url, {
+        headers: { Accept: "application/json" },
+      });
       const rows = pluckOrdersLight(payload);
       return rows;
     } catch (e) {
@@ -624,48 +840,76 @@ export default function HomeTab({
   const route = useRoute();
 
   const categoriesPayload = useMemo(
-    () => route?.params?.categoriesPayload ?? route?.params?.categories ?? route?.params?.categoryData ?? null,
-    [route?.params]
+    () =>
+      route?.params?.categoriesPayload ??
+      route?.params?.categories ??
+      route?.params?.categoryData ??
+      null,
+    [route?.params],
   );
 
   const ownerType = useMemo(
-    () => normalizeOwnerType(ownerTypeProp ?? route?.params?.owner_type ?? route?.params?.ownerType ?? 'food'),
-    [ownerTypeProp, route?.params?.owner_type, route?.params?.ownerType]
+    () =>
+      normalizeOwnerType(
+        ownerTypeProp ??
+          route?.params?.owner_type ??
+          route?.params?.ownerType ??
+          "food",
+      ),
+    [ownerTypeProp, route?.params?.owner_type, route?.params?.ownerType],
   );
-  const isMart = ownerType === 'mart';
+  const isMart = ownerType === "mart";
 
   const nouns = useMemo(() => {
     const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-    const base = isMart ? 'item' : 'menu';
-    const plural = isMart ? 'items' : 'menus';
+    const base = isMart ? "item" : "menu";
+    const plural = isMart ? "items" : "menus";
     return {
       noun: base,
       nounCap: cap(base),
       nounPlural: plural,
       nounPluralCap: cap(plural),
-      quickActionTitle: isMart ? 'Items' : 'Menu',
-      addBtn: isMart ? 'Add item' : 'Add menu',
-      headerAdded: isMart ? 'Added items' : 'Added menus',
-      emptyText: isMart ? 'No items available for your account.' : 'No menus available for your account.',
-      emptyListTitle: isMart ? 'No items yet' : 'No menu items yet',
-      emptyListSub: 'Add your first item to start selling.',
+      quickActionTitle: isMart ? "Items" : "Menu",
+      addBtn: isMart ? "Add item" : "Add menu",
+      headerAdded: isMart ? "Added items" : "Added menus",
+      emptyText: isMart
+        ? "No items available for your account."
+        : "No menus available for your account.",
+      emptyListTitle: isMart ? "No items yet" : "No menu items yet",
+      emptyListSub: "Add your first item to start selling.",
     };
   }, [isMart]);
 
   const BUSINESS_ID_RAW = useMemo(() => {
     const p = route?.params ?? {};
-    return (businessIdProp || p.businessId || p.business_id || p.merchant?.businessId || p.merchant?.id || '')
+    return (
+      businessIdProp ||
+      p.businessId ||
+      p.business_id ||
+      p.merchant?.businessId ||
+      p.merchant?.id ||
+      ""
+    )
       .toString()
       .trim();
   }, [businessIdProp, route?.params]);
-  const BUSINESS_ID = useMemo(() => String(BUSINESS_ID_RAW || ''), [BUSINESS_ID_RAW]);
+  const BUSINESS_ID = useMemo(
+    () => String(BUSINESS_ID_RAW || ""),
+    [BUSINESS_ID_RAW],
+  );
 
   const USER_ID = useMemo(() => {
     const p = route?.params ?? {};
-    return String(userId || p.user_id || p.userId || p.merchant?.user_id || p.merchant?.id || '').trim();
+    return String(
+      userId ||
+        p.user_id ||
+        p.userId ||
+        p.merchant?.user_id ||
+        p.merchant?.id ||
+        "",
+    ).trim();
   }, [route?.params, userId]);
 
-  // ✅ build SAME context payload used by GrabMerchantHomeScreen header
   const ctxPayload = useCallback(
     () => ({
       user_id: USER_ID,
@@ -674,10 +918,27 @@ export default function HomeTab({
       businessId: BUSINESS_ID,
       owner_type: ownerType,
       ownerType,
+
       business_name: businessName || route?.params?.business_name,
+      businessName:
+        businessName ||
+        route?.params?.businessName ||
+        route?.params?.business_name,
+
       business_logo: logoUrl || route?.params?.business_logo,
+      logoUrl:
+        logoUrl || route?.params?.logoUrl || route?.params?.business_logo,
+
       business_address: address || route?.params?.business_address,
+      address:
+        address || route?.params?.address || route?.params?.business_address,
+
       business_license: businessLicense || route?.params?.business_license,
+      businessLicense:
+        businessLicense ||
+        route?.params?.businessLicense ||
+        route?.params?.business_license,
+
       authContext: authContext || route?.params?.authContext,
       delivery_option: delivery_option || route?.params?.delivery_option,
       deliveryOption: delivery_option || route?.params?.deliveryOption,
@@ -693,17 +954,18 @@ export default function HomeTab({
       authContext,
       delivery_option,
       route?.params,
-    ]
+    ],
   );
-
-  const [ownerId, setOwnerId] = useState('');
-  const [allMenus, setAllMenus] = useState(() => (Array.isArray(menus) ? menus : []));
+  const [ownerId, setOwnerId] = useState("");
+  const [allMenus, setAllMenus] = useState(() =>
+    Array.isArray(menus) ? menus : [],
+  );
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState("");
 
   const [kpis, setKpis] = useState({
     salesToday: 0,
-    salesCurrency: 'BTN',
+    salesCurrency: "BTN",
     activeOrders: 0,
     acceptanceRate: 0,
     cancellations: 0,
@@ -711,13 +973,16 @@ export default function HomeTab({
   const [statusCounts, setStatusCounts] = useState({});
 
   const [quickActions, setQuickActions] = useState(DEFAULT_ACTIONS);
-  const actionMeta = useCallback((key) => ALL_ACTIONS.find((a) => a.key === key), []);
+  const actionMeta = useCallback(
+    (key) => ALL_ACTIONS.find((a) => a.key === key),
+    [],
+  );
 
   const [banners, setBanners] = useState([]);
   const [bannersLoading, setBannersLoading] = useState(false);
-  const [bannersError, setBannersError] = useState('');
+  const [bannersError, setBannersError] = useState("");
 
-  const contextKey = `${String(BUSINESS_ID || '')}|${String(ownerId || '')}|${String(ownerType || '')}`;
+  const contextKey = `${String(BUSINESS_ID || "")}|${String(ownerId || "")}|${String(ownerType || "")}`;
   const latestContextRef = useRef(contextKey);
   useEffect(() => {
     latestContextRef.current = contextKey;
@@ -743,7 +1008,8 @@ export default function HomeTab({
     (async () => {
       try {
         const key = menusStoreKey(BUSINESS_ID, ownerId, ownerType);
-        if (allMenus.length > 0) await SecureStore.setItemAsync(key, JSON.stringify(allMenus));
+        if (allMenus.length > 0)
+          await SecureStore.setItemAsync(key, JSON.stringify(allMenus));
       } catch {}
     })();
   }, [allMenus, BUSINESS_ID, ownerId, ownerType]);
@@ -755,7 +1021,8 @@ export default function HomeTab({
         try {
           const raw = await SecureStore.getItemAsync(KEY_QUICK_ACTIONS);
           const arr = raw ? JSON.parse(raw) : DEFAULT_ACTIONS;
-          if (isActive && Array.isArray(arr) && arr.length) setQuickActions(arr);
+          if (isActive && Array.isArray(arr) && arr.length)
+            setQuickActions(arr);
         } catch {
           if (isActive) setQuickActions(DEFAULT_ACTIONS);
         }
@@ -763,12 +1030,12 @@ export default function HomeTab({
       return () => {
         isActive = false;
       };
-    }, [])
+    }, []),
   );
 
   useFocusEffect(
     useCallback(() => {
-      if (Platform.OS !== 'android') return undefined;
+      if (Platform.OS !== "android") return undefined;
       const onBack = () => {
         if (navigation.canGoBack()) {
           navigation.goBack();
@@ -776,45 +1043,63 @@ export default function HomeTab({
         }
         return false;
       };
-      const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+      const sub = BackHandler.addEventListener("hardwareBackPress", onBack);
       return () => sub.remove();
-    }, [navigation])
+    }, [navigation]),
   );
 
   const ENV_LIST_BASE = useMemo(() => {
-    const foodBase = normalizeHost((ENV_DISPLAY_MENU_ENDPOINT || '').replace(/\/+$/, ''));
-    const martBase = normalizeHost((ENV_DISPLAY_ITEM_ENDPOINT || '').replace(/\/+$/, ''));
+    const foodBase = normalizeHost(
+      (ENV_DISPLAY_MENU_ENDPOINT || "").replace(/\/+$/, ""),
+    );
+    const martBase = normalizeHost(
+      (ENV_DISPLAY_ITEM_ENDPOINT || "").replace(/\/+$/, ""),
+    );
     return isMart ? martBase : foodBase;
   }, [isMart]);
 
   const CONFIG_LIST = useMemo(() => {
     const sc = route?.params?.serviceConfig || serviceConfig || {};
-    return isMart ? sc.itemsList || sc.menus || '' : sc.menusList || sc.menus || '';
+    return isMart
+      ? sc.itemsList || sc.menus || ""
+      : sc.menusList || sc.menus || "";
   }, [route?.params?.serviceConfig, serviceConfig, isMart]);
 
   const LIST_BASE = useMemo(() => {
-    const chosen = (ENV_LIST_BASE && ENV_LIST_BASE.length) || !CONFIG_LIST ? ENV_LIST_BASE : CONFIG_LIST || '';
-    return normalizeHost((chosen || '').replace(/\/+$/, ''));
+    const chosen =
+      (ENV_LIST_BASE && ENV_LIST_BASE.length) || !CONFIG_LIST
+        ? ENV_LIST_BASE
+        : CONFIG_LIST || "";
+    return normalizeHost((chosen || "").replace(/\/+$/, ""));
   }, [ENV_LIST_BASE, CONFIG_LIST]);
 
   const buildImg = useBuildImg(ownerType, LIST_BASE);
 
   const buildFetchUrl = useCallback(() => {
-    if (!LIST_BASE || !BUSINESS_ID) return '';
+    if (!LIST_BASE || !BUSINESS_ID) return "";
     if (/\/business$/i.test(LIST_BASE)) {
       return `${LIST_BASE}/${encodeURIComponent(BUSINESS_ID)}`;
     }
-    const sep = LIST_BASE.includes('?') ? '&' : '?';
+    const sep = LIST_BASE.includes("?") ? "&" : "?";
     return `${LIST_BASE}${sep}business_id=${encodeURIComponent(BUSINESS_ID)}`;
   }, [LIST_BASE, BUSINESS_ID]);
 
   const extractItemsFromResponse = useCallback((raw) => {
     const seen = new Set();
     const dfs = (obj) => {
-      if (obj == null || typeof obj !== 'object' || seen.has(obj)) return null;
+      if (obj == null || typeof obj !== "object" || seen.has(obj)) return null;
       seen.add(obj);
       if (Array.isArray(obj)) return obj;
-      for (const k of ['data', 'items', 'menus', 'menu', 'rows', 'result', 'payload', 'list']) {
+      for (const k of [
+        "data",
+        "items",
+        "menus",
+        "menu",
+        "rows",
+        "result",
+        "payload",
+        "list",
+      ]) {
         if (Array.isArray(obj?.[k])) return obj[k];
       }
       for (const v of Object.values(obj)) {
@@ -834,75 +1119,101 @@ export default function HomeTab({
       const price = Number.isFinite(numericActual)
         ? numericActual
         : Number.isFinite(numericBase)
-        ? numericBase
-        : typeof x?.price === 'number'
-        ? x.price
-        : Number(x?.price ?? 0);
+          ? numericBase
+          : typeof x?.price === "number"
+            ? x.price
+            : Number(x?.price ?? 0);
 
-      const hasPromo = Number(x?.discount_percentage) > 0 || Boolean(x?.has_promo) || Boolean(x?.promo_active);
+      const hasPromo =
+        Number(x?.discount_percentage) > 0 ||
+        Boolean(x?.has_promo) ||
+        Boolean(x?.promo_active);
 
-      const rawPromoImg = x?.promo_image || x?.promoImage || x?.banner_image || '';
-      const rawItemImg = x?.image_url ?? x?.item_image_url ?? x?.item_image ?? x?.image ?? '';
+      const rawPromoImg =
+        x?.promo_image || x?.promoImage || x?.banner_image || "";
+      const rawItemImg =
+        x?.image_url ?? x?.item_image_url ?? x?.item_image ?? x?.image ?? "";
 
-      const absImage = hasPromo && rawPromoImg ? buildImg('promo', rawPromoImg) : buildImg('item', rawItemImg);
+      const absImage =
+        hasPromo && rawPromoImg
+          ? buildImg("promo", rawPromoImg)
+          : buildImg("item", rawItemImg);
 
-      const bizId = x?.business_id ?? x?.businessId ?? x?.merchant_business_id ?? x?.restaurant_id ?? x?.store_id;
-      const ownId = x?.owner_id ?? x?.ownerId ?? x?.merchant_id ?? x?.merchantId ?? x?.created_by ?? x?.user_id;
+      const bizId =
+        x?.business_id ??
+        x?.businessId ??
+        x?.merchant_business_id ??
+        x?.restaurant_id ??
+        x?.store_id;
+      const ownId =
+        x?.owner_id ??
+        x?.ownerId ??
+        x?.merchant_id ??
+        x?.merchantId ??
+        x?.created_by ??
+        x?.user_id;
 
       return {
         id: String(x?.id ?? x?._id ?? x?.menu_id ?? idx),
-        name: x?.item_name ?? x?.name ?? x?.title ?? 'Unnamed item',
+        name: x?.item_name ?? x?.name ?? x?.title ?? "Unnamed item",
         title: x?.title ?? undefined,
         price,
-        discount: x?.discount_percentage ?? '',
-        taxRate: x?.tax_rate ?? '',
-        currency: x?.currency ?? 'BTN',
+        discount: x?.discount_percentage ?? "",
+        taxRate: x?.tax_rate ?? "",
+        currency: x?.currency ?? "BTN",
         inStock: (x?.is_available ?? x?.inStock ?? 1) ? true : false,
-        category: x?.category_name ?? x?.category ?? x?.categoryName ?? '',
-        categoryName: x?.category_name ?? x?.category ?? x?.categoryName ?? '',
+        category: x?.category_name ?? x?.category ?? x?.categoryName ?? "",
+        categoryName: x?.category_name ?? x?.category ?? x?.categoryName ?? "",
         image: absImage,
-        description: x?.description ?? '',
-        businessId: bizId ? String(bizId) : '',
-        ownerId: ownId ? String(ownId) : '',
+        description: x?.description ?? "",
+        businessId: bizId ? String(bizId) : "",
+        ownerId: ownId ? String(ownId) : "",
         _raw: x,
       };
     },
-    [buildImg]
+    [buildImg],
   );
 
   const filterMenusForOwner = useCallback(
     (arr) => {
       if (!ownerId && !BUSINESS_ID) return arr;
       return arr.filter((it) => {
-        const matchBusiness = BUSINESS_ID ? String(it.businessId || '') === String(BUSINESS_ID) : true;
-        const matchOwner = ownerId ? String(it.ownerId || '') === String(ownerId) : true;
+        const matchBusiness = BUSINESS_ID
+          ? String(it.businessId || "") === String(BUSINESS_ID)
+          : true;
+        const matchOwner = ownerId
+          ? String(it.ownerId || "") === String(ownerId)
+          : true;
         return matchBusiness && matchOwner;
       });
     },
-    [ownerId, BUSINESS_ID]
+    [ownerId, BUSINESS_ID],
   );
 
   const fetchMenus = useCallback(async () => {
     if (!LIST_BASE) {
-      setErrorMsg('Missing list endpoint (.env or serviceConfig).');
+      setErrorMsg("Missing list endpoint (.env or serviceConfig).");
       return;
     }
     if (!BUSINESS_ID) {
-      setErrorMsg('Missing businessId.');
+      setErrorMsg("Missing businessId.");
       return;
     }
 
     const myKey = latestContextRef.current;
     setLoading(true);
-    setErrorMsg('');
+    setErrorMsg("");
     try {
-      const token = (await SecureStore.getItemAsync('auth_token')) || '';
+      const token = (await SecureStore.getItemAsync("auth_token")) || "";
       const url = buildFetchUrl();
-      if (!url) throw new Error('Could not build URL');
+      if (!url) throw new Error("Could not build URL");
 
       const res = await fetch(url, {
-        method: 'GET',
-        headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
       });
 
       const text = await res.text();
@@ -914,7 +1225,10 @@ export default function HomeTab({
       }
 
       if (!res.ok) {
-        const msg = (parsed && (parsed.message || parsed.error)) || text || `HTTP ${res.status}`;
+        const msg =
+          (parsed && (parsed.message || parsed.error)) ||
+          text ||
+          `HTTP ${res.status}`;
         throw new Error(msg);
       }
 
@@ -929,10 +1243,11 @@ export default function HomeTab({
         setErrorMsg(nouns.emptyText);
       } else {
         setAllMenus(filtered);
-        setErrorMsg('');
+        setErrorMsg("");
       }
     } catch (e) {
-      if (latestContextRef.current === myKey) setErrorMsg(`Error fetching ${nouns.nounPlural}: ${e.message}`);
+      if (latestContextRef.current === myKey)
+        setErrorMsg(`Error fetching ${nouns.nounPlural}: ${e.message}`);
     } finally {
       if (latestContextRef.current === myKey) setLoading(false);
     }
@@ -951,14 +1266,27 @@ export default function HomeTab({
     const id = normalizeBusinessId(BUSINESS_ID);
     if (!isValidBusinessId(id)) return;
 
-    const token = (await SecureStore.getItemAsync('auth_token')) || '';
-    const headers = { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+    const token = (await SecureStore.getItemAsync("auth_token")) || "";
+    const headers = {
+      Accept: "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
 
     const ordersPromise = (async () => {
       try {
-        const baseCandidates = buildBaseCandidates(ownerType, serviceConfig?.orders);
-        const rows = await probeOrdersPayload({ baseCandidates, businessId: id, kind: ownerType });
-        const { kpis: computed, statusCounts: counts } = countKpisLikeOrdersTab(rows, ownerType);
+        const baseCandidates = buildBaseCandidates(
+          ownerType,
+          serviceConfig?.orders,
+        );
+        const rows = await probeOrdersPayload({
+          baseCandidates,
+          businessId: id,
+          kind: ownerType,
+        });
+        const { kpis: computed, statusCounts: counts } = countKpisLikeOrdersTab(
+          rows,
+          ownerType,
+        );
         return { computed, counts };
       } catch {
         return { computed: null, counts: null };
@@ -967,21 +1295,24 @@ export default function HomeTab({
 
     const salesPromise = (async () => {
       try {
-        const base = normalizeHost(ENV_TOTAL_SALES_ENDPOINT || '');
+        const base = normalizeHost(ENV_TOTAL_SALES_ENDPOINT || "");
         const url = buildTotalSalesUrl(base, id);
         if (!url) return null;
 
-        const payload = await fetchJSON(url, { method: 'GET', headers });
+        const payload = await fetchJSON(url, { method: "GET", headers });
         const rows = Array.isArray(payload?.rows) ? payload.rows : [];
         const todayTotal = sumTodayFromEarningsRows(rows);
 
-        return { salesToday: todayTotal, salesCurrency: 'BTN' };
+        return { salesToday: todayTotal, salesCurrency: "BTN" };
       } catch {
         return null;
       }
     })();
 
-    const [ordersRes, salesRes] = await Promise.all([ordersPromise, salesPromise]);
+    const [ordersRes, salesRes] = await Promise.all([
+      ordersPromise,
+      salesPromise,
+    ]);
 
     if (ordersRes?.counts) setStatusCounts(ordersRes.counts);
     if (ordersRes?.computed || salesRes) {
@@ -993,60 +1324,76 @@ export default function HomeTab({
     }
   }, [BUSINESS_ID, ownerType, serviceConfig?.orders]);
 
-  const BANNERS_ENDPOINT = useMemo(() => normalizeHost(ENV_BANNERS_ENDPOINT || ''), []);
-  const BANNERS_BY_BUSINESS_ENDPOINT = useMemo(() => normalizeHost(ENV_BANNERS_BY_BUSINESS_ENDPOINT || ''), []);
-  const BANNERS_IMG_BASE = useMemo(() => normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT || ''), []);
+  const BANNERS_ENDPOINT = useMemo(
+    () => normalizeHost(ENV_BANNERS_ENDPOINT || ""),
+    [],
+  );
+  const BANNERS_BY_BUSINESS_ENDPOINT = useMemo(
+    () => normalizeHost(ENV_BANNERS_BY_BUSINESS_ENDPOINT || ""),
+    [],
+  );
+  const BANNERS_IMG_BASE = useMemo(
+    () => normalizeHost(ENV_BANNERS_IMAGE_ENDPOINT || ""),
+    [],
+  );
   const originFromUrl = (u) => {
     try {
       return new URL(u).origin;
     } catch {
-      return '';
+      return "";
     }
   };
 
   const todayISO = () => new Date().toISOString().slice(0, 10);
 
   const normalizeBanner = (b, imgBase) => {
-    const rawImg = b?.banner_image || b?.image || b?.image_url || '';
+    const rawImg = b?.banner_image || b?.image || b?.image_url || "";
     return {
-      id: String(b?.id ?? b?._id ?? ''),
-      title: b?.title ?? '',
-      description: b?.description ?? '',
-      image: buildBannerImg(rawImg, imgBase, BANNERS_BY_BUSINESS_ENDPOINT, BANNERS_ENDPOINT),
+      id: String(b?.id ?? b?._id ?? ""),
+      title: b?.title ?? "",
+      description: b?.description ?? "",
+      image: buildBannerImg(
+        rawImg,
+        imgBase,
+        BANNERS_BY_BUSINESS_ENDPOINT,
+        BANNERS_ENDPOINT,
+      ),
       is_active: Number(b?.is_active ?? 1),
-      start_date: b?.start_date ? String(b.start_date).slice(0, 10) : '',
-      end_date: b?.end_date ? String(b.end_date).slice(0, 10) : '',
-      owner_type: (b?.owner_type || '').toLowerCase(),
-      business_id: String(b?.business_id ?? b?.businessId ?? ''),
+      start_date: b?.start_date ? String(b.start_date).slice(0, 10) : "",
+      end_date: b?.end_date ? String(b.end_date).slice(0, 10) : "",
+      owner_type: (b?.owner_type || "").toLowerCase(),
+      business_id: String(b?.business_id ?? b?.businessId ?? ""),
     };
   };
 
   const fetchBanners = useCallback(async () => {
     if (!BUSINESS_ID) {
       setBanners([]);
-      setBannersError('');
+      setBannersError("");
       return;
     }
     if (!BANNERS_ENDPOINT && !BANNERS_BY_BUSINESS_ENDPOINT) {
       setBanners([]);
-      setBannersError('');
+      setBannersError("");
       return;
     }
 
     const myKey = latestContextRef.current;
     setBannersLoading(true);
-    setBannersError('');
+    setBannersError("");
 
-    const byBizBase = (BANNERS_BY_BUSINESS_ENDPOINT || '').replace(/\/+$/, '');
-    const allBase = (BANNERS_ENDPOINT || '').replace(/\/+$/, '');
-    const imgOriginByBiz = originFromUrl(BANNERS_BY_BUSINESS_ENDPOINT || '');
-    const imgOriginAll = originFromUrl(BANNERS_ENDPOINT || '');
+    const byBizBase = (BANNERS_BY_BUSINESS_ENDPOINT || "").replace(/\/+$/, "");
+    const allBase = (BANNERS_ENDPOINT || "").replace(/\/+$/, "");
+    const imgOriginByBiz = originFromUrl(BANNERS_BY_BUSINESS_ENDPOINT || "");
+    const imgOriginAll = originFromUrl(BANNERS_ENDPOINT || "");
 
     const imgBaseByBiz = BANNERS_IMG_BASE || imgOriginByBiz;
     const imgBaseAll = BANNERS_IMG_BASE || imgOriginAll;
 
-    const sameBiz = (b) => String(b?.business_id ?? b?.businessId ?? '') === String(BUSINESS_ID);
-    const isActiveNow = (b) => Number(b.is_active) === 1 && (!b.end_date || b.end_date > todayISO());
+    const sameBiz = (b) =>
+      String(b?.business_id ?? b?.businessId ?? "") === String(BUSINESS_ID);
+    const isActiveNow = (b) =>
+      Number(b.is_active) === 1 && (!b.end_date || b.end_date > todayISO());
 
     try {
       let list = [];
@@ -1057,8 +1404,14 @@ export default function HomeTab({
         const raw = await res.text();
         if (res.ok) {
           const json = raw ? JSON.parse(raw) : [];
-          const arr = Array.isArray(json) ? json : Array.isArray(json.data) ? json.data : [];
-          list = (arr || []).map((b) => normalizeBanner(b, imgBaseByBiz)).filter(sameBiz);
+          const arr = Array.isArray(json)
+            ? json
+            : Array.isArray(json.data)
+              ? json.data
+              : [];
+          list = (arr || [])
+            .map((b) => normalizeBanner(b, imgBaseByBiz))
+            .filter(sameBiz);
         }
       }
 
@@ -1068,24 +1421,38 @@ export default function HomeTab({
         const raw = await res.text();
         if (res.ok) {
           const json = raw ? JSON.parse(raw) : [];
-          const arr = Array.isArray(json) ? json : Array.isArray(json.data) ? json.data : [];
-          list = (arr || []).map((b) => normalizeBanner(b, imgBaseAll)).filter(sameBiz);
+          const arr = Array.isArray(json)
+            ? json
+            : Array.isArray(json.data)
+              ? json.data
+              : [];
+          list = (arr || [])
+            .map((b) => normalizeBanner(b, imgBaseAll))
+            .filter(sameBiz);
         }
       }
 
       if (latestContextRef.current !== myKey) return;
       setBanners(list.filter(isActiveNow));
-      setBannersError('');
+      setBannersError("");
     } catch {
       if (latestContextRef.current !== myKey) return;
       setBanners([]);
-      setBannersError('');
+      setBannersError("");
     } finally {
       if (latestContextRef.current === myKey) setBannersLoading(false);
     }
-  }, [BUSINESS_ID, BANNERS_ENDPOINT, BANNERS_BY_BUSINESS_ENDPOINT, BANNERS_IMG_BASE]);
+  }, [
+    BUSINESS_ID,
+    BANNERS_ENDPOINT,
+    BANNERS_BY_BUSINESS_ENDPOINT,
+    BANNERS_IMG_BASE,
+  ]);
 
-  const ready = useMemo(() => Boolean(BUSINESS_ID && LIST_BASE), [BUSINESS_ID, LIST_BASE]);
+  const ready = useMemo(
+    () => Boolean(BUSINESS_ID && LIST_BASE),
+    [BUSINESS_ID, LIST_BASE],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -1093,7 +1460,7 @@ export default function HomeTab({
         fetchMenus();
         fetchBanners();
       }
-    }, [ready, fetchMenus, fetchBanners])
+    }, [ready, fetchMenus, fetchBanners]),
   );
   useEffect(() => {
     if (ready) {
@@ -1105,22 +1472,28 @@ export default function HomeTab({
   useFocusEffect(
     useCallback(() => {
       if (BUSINESS_ID) fetchKpis();
-    }, [BUSINESS_ID, ownerType, fetchKpis])
+    }, [BUSINESS_ID, ownerType, fetchKpis]),
   );
   useEffect(() => {
     if (BUSINESS_ID) fetchKpis();
   }, [BUSINESS_ID, ownerType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fmtMoney = useCallback(
-    (n, ccy = 'BTN') => (typeof moneyProp === 'function' ? moneyProp(n, ccy) : `${ccy} ${Number(n || 0).toFixed(2)}`),
-    [moneyProp]
+    (n, ccy = "BTN") =>
+      typeof moneyProp === "function"
+        ? moneyProp(n, ccy)
+        : `${ccy} ${Number(n || 0).toFixed(2)}`,
+    [moneyProp],
   );
-  const pct = useCallback((v) => `${Math.round(Number.isFinite(v) ? v : 0)}%`, []);
+  const pct = useCallback(
+    (v) => `${Math.round(Number.isFinite(v) ? v : 0)}%`,
+    [],
+  );
 
-  const eff = (obj) => (obj && typeof obj === 'object' ? obj : {});
+  const eff = (obj) => (obj && typeof obj === "object" ? obj : {});
   const mergedKpis = {
     salesToday: 0,
-    salesCurrency: 'BTN',
+    salesCurrency: "BTN",
     activeOrders: 0,
     acceptanceRate: 0,
     cancellations: 0,
@@ -1128,9 +1501,11 @@ export default function HomeTab({
     ...eff(kpisProp),
   };
   const salesToday = Number(mergedKpis.salesToday ?? 0);
-  const salesCurrency = mergedKpis.salesCurrency || 'BTN';
+  const salesCurrency = mergedKpis.salesCurrency || "BTN";
   const activeOrders = Number(mergedKpis.activeOrders ?? 0);
-  const acceptanceRate = Number.isFinite(mergedKpis.acceptanceRate) ? mergedKpis.acceptanceRate : 0;
+  const acceptanceRate = Number.isFinite(mergedKpis.acceptanceRate)
+    ? mergedKpis.acceptanceRate
+    : 0;
   const cancellations = Number(mergedKpis.cancellations ?? 0);
 
   const visibleMenus = useMemo(() => allMenus.slice(0, 3), [allMenus]);
@@ -1145,23 +1520,33 @@ export default function HomeTab({
     (key) => {
       // prefer openTab from parent so header/logo stays mounted
       try {
-        if (typeof onPressNav === 'function') {
+        if (typeof onPressNav === "function") {
           onPressNav(key, ctxPayload());
           return true;
         }
       } catch {}
       return false;
     },
-    [onPressNav, ctxPayload]
+    [onPressNav, ctxPayload],
   );
 
   const goOrdersTab = useCallback(() => {
-    if (openTabSafe('Orders')) return;
+    if (openTabSafe("Orders")) return;
 
-    const candidates = ['OrdersTab', 'Orders', 'OrderTab', 'FoodOrdersTab', 'OrdersScreen'];
+    const candidates = [
+      "OrdersTab",
+      "Orders",
+      "OrderTab",
+      "FoodOrdersTab",
+      "OrdersScreen",
+    ];
     for (const name of candidates) {
       try {
-        navigation.navigate(name, { ...ctxPayload(), owner_type: ownerType, businessId: BUSINESS_ID });
+        navigation.navigate(name, {
+          ...ctxPayload(),
+          owner_type: ownerType,
+          businessId: BUSINESS_ID,
+        });
         return;
       } catch {}
     }
@@ -1169,10 +1554,14 @@ export default function HomeTab({
 
   const goPayoutTab = useCallback(() => {
     // ✅ FIX: switch tab instead of navigation.navigate (prevents logo reload)
-    if (openTabSafe('PayoutTab')) return;
+    if (openTabSafe("PayoutTab")) return;
 
-    const payload = { ...ctxPayload(), owner_type: ownerType, businessId: BUSINESS_ID };
-    const candidates = ['PayoutTab', 'Payouts', 'PayoutsTab', 'PayoutScreen'];
+    const payload = {
+      ...ctxPayload(),
+      owner_type: ownerType,
+      businessId: BUSINESS_ID,
+    };
+    const candidates = ["PayoutTab", "Payouts", "PayoutsTab", "PayoutScreen"];
     for (const name of candidates) {
       try {
         navigation.navigate(name, payload);
@@ -1183,10 +1572,19 @@ export default function HomeTab({
 
   const goSalesAnalytics = useCallback(() => {
     // ✅ FIX: open "Sales" tab inside same screen (keeps header/logo)
-    if (openTabSafe('Sales')) return;
+    if (openTabSafe("Sales")) return;
 
-    const payload = { ...ctxPayload(), owner_type: ownerType, businessId: BUSINESS_ID };
-    const candidates = ['SalesAnalytics', 'SalesAnalyticsScreen', 'SalesAnalyticsTab', 'SalesScreen'];
+    const payload = {
+      ...ctxPayload(),
+      owner_type: ownerType,
+      businessId: BUSINESS_ID,
+    };
+    const candidates = [
+      "SalesAnalytics",
+      "SalesAnalyticsScreen",
+      "SalesAnalyticsTab",
+      "SalesScreen",
+    ];
     for (const name of candidates) {
       try {
         navigation.navigate(name, payload);
@@ -1198,29 +1596,32 @@ export default function HomeTab({
   const onShortcutPress = useCallback(
     (key) => {
       switch (key) {
-        case 'menu':
-          navigation.navigate('MenuScreen', {
-            businessId: BUSINESS_ID || 'YOUR_BUSINESS_ID',
+        case "menu":
+          navigation.navigate("MenuScreen", {
+            businessId: BUSINESS_ID || "YOUR_BUSINESS_ID",
             owner_type: ownerType,
             categoriesPayload,
           });
           break;
-        case 'promos':
+        case "promos":
           // ✅ inside same screen
-          openTabSafe('Promos');
+          openTabSafe("Promos");
           break;
-        case 'payouts':
+        case "payouts":
           goPayoutTab(); // ✅ now opens tab (no remount)
           break;
-        case 'settings':
-          navigation.navigate('AccountSettings', { ...ctxPayload(), businessId: BUSINESS_ID });
+        case "settings":
+          navigation.navigate("AccountSettings", {
+            ...ctxPayload(),
+            businessId: BUSINESS_ID,
+          });
           break;
-        case 'orders':
+        case "orders":
           goOrdersTab(); // ✅ now opens tab (no remount)
           break;
-        case 'addItem':
+        case "addItem":
           // ✅ open Add Menu/Add Item inside same screen
-          openTabSafe('Add Menu');
+          openTabSafe("Add Menu");
           break;
         default:
           break;
@@ -1235,67 +1636,86 @@ export default function HomeTab({
       goPayoutTab,
       openTabSafe,
       ctxPayload,
-    ]
+    ],
   );
 
   const actionLabelFor = useCallback(
     (meta) => {
-      if (!meta) return '';
-      if (meta.key === 'menu') return nouns.quickActionTitle;
-      if (meta.key === 'addItem') return nouns.addBtn;
+      if (!meta) return "";
+      if (meta.key === "menu") return nouns.quickActionTitle;
+      if (meta.key === "addItem") return nouns.addBtn;
       return meta.label;
     },
-    [nouns]
+    [nouns],
   );
 
   const actionIconFor = useCallback(
     (meta) => {
-      if (!meta) return 'help-outline';
-      if (meta.key === 'menu') return isMart ? 'cube-outline' : 'restaurant-outline';
+      if (!meta) return "help-outline";
+      if (meta.key === "menu")
+        return isMart ? "cube-outline" : "restaurant-outline";
       return meta.icon;
     },
-    [isMart]
+    [isMart],
   );
 
   const totalStatusCount = useMemo(
-    () => Object.values(statusCounts || {}).reduce((a, b) => a + (Number(b) || 0), 0),
-    [statusCounts]
+    () =>
+      Object.values(statusCounts || {}).reduce(
+        (a, b) => a + (Number(b) || 0),
+        0,
+      ),
+    [statusCounts],
   );
 
   const Header = useMemo(
     () => (
       <>
-        <View style={[styles.kpiRow, { marginHorizontal: isTablet ? 20 : 12, marginTop: isTablet ? 20 : 16 }]}>
+        <View
+          style={[
+            styles.kpiRow,
+            {
+              marginHorizontal: isTablet ? 20 : 12,
+              marginTop: isTablet ? 20 : 16,
+            },
+          ]}
+        >
           <KpiCard
             isTablet={isTablet}
             icon="cash-outline"
-            label="Today"
+            label="Today's Sales"
             value={fmtMoney(salesToday, salesCurrency)}
             sub="Sales"
+            tone="pink"
             onPress={goSalesAnalytics}
           />
           <KpiCard
             isTablet={isTablet}
             icon="receipt-outline"
-            label="Active"
+            label="Active Orders"
             value={String(activeOrders)}
             sub="Orders"
+            tone="purple"
             onPress={goOrdersTab}
           />
+
           <KpiCard
             isTablet={isTablet}
             icon="trending-up-outline"
-            label="Accept"
+            label="Acceptance Rate"
             value={pct(acceptanceRate)}
             sub="Rate"
+            tone="orange"
             onPress={goOrdersTab}
           />
+
           <KpiCard
             isTablet={isTablet}
             icon="alert-circle-outline"
-            label="Cancel"
+            label="Cancelled Today"
             value={String(cancellations)}
-            sub="Today"
+            sub="Orders"
+            tone="red"
             onPress={goOrdersTab}
           />
         </View>
@@ -1304,7 +1724,11 @@ export default function HomeTab({
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{ alignItems: 'center', paddingVertical: 6, gap: 8 }}
+            contentContainerStyle={{
+              alignItems: "center",
+              paddingVertical: 6,
+              gap: 8,
+            }}
           >
             {/* you can render StatusChip here if you want */}
           </ScrollView>
@@ -1312,14 +1736,27 @@ export default function HomeTab({
 
         <View style={styles.section}>
           <View style={styles.sectionHead}>
-            <Text style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}>Quick actions</Text>
-            <TouchableOpacity style={styles.linkRow} onPress={() => navigation.navigate('ManageQuickActions')}>
-              <Text style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}>Manage</Text>
-              <Ionicons name="chevron-forward" size={isTablet ? 18 : 16} color="#00b14f" />
+            <Text
+              style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}
+            >
+              Quick actions
+            </Text>
+            <TouchableOpacity
+              style={styles.linkRow}
+              onPress={() => navigation.navigate("ManageQuickActions")}
+            >
+              <Text style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}>
+                Manage
+              </Text>
+              <Ionicons
+                name="chevron-forward"
+                size={isTablet ? 18 : 16}
+                color={BRAND.purple}
+              />
             </TouchableOpacity>
           </View>
 
-          <View style={[styles.shortcutsRow, { flexWrap: 'wrap' }]}>
+          <View style={[styles.shortcutsRow, { flexWrap: "wrap" }]}>
             {quickActions.map((k) => {
               const meta = actionMeta(k);
               if (!meta) return null;
@@ -1330,6 +1767,17 @@ export default function HomeTab({
                   icon={actionIconFor(meta)}
                   label={actionLabelFor(meta)}
                   onPress={() => onShortcutPress(k)}
+                  tone={
+                    k === "promos"
+                      ? "pink"
+                      : k === "payouts"
+                        ? "purple"
+                        : k === "orders"
+                          ? "orange"
+                          : k === "settings"
+                            ? "red"
+                            : "purple"
+                  }
                 />
               );
             })}
@@ -1338,39 +1786,77 @@ export default function HomeTab({
 
         <View style={styles.section}>
           <View style={styles.sectionHead}>
-            <Text style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}>{nouns.headerAdded}</Text>
+            <Text
+              style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}
+            >
+              {nouns.headerAdded}
+            </Text>
             <TouchableOpacity
               style={styles.linkRow}
               onPress={() =>
-                navigation.navigate('MenuScreen', {
-                  businessId: BUSINESS_ID || 'YOUR_BUSINESS_ID',
+                navigation.navigate("MenuScreen", {
+                  businessId: BUSINESS_ID || "YOUR_BUSINESS_ID",
                   owner_type: ownerType,
                   categoriesPayload,
                 })
               }
             >
-              <Text style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}>View all</Text>
-              <Ionicons name="chevron-forward" size={isTablet ? 18 : 16} color="#00b14f" />
+              <Text style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}>
+                View all
+              </Text>
+              <Ionicons
+                name="chevron-forward"
+                size={isTablet ? 18 : 16}
+                color={BRAND.purple}
+              />
             </TouchableOpacity>
           </View>
 
-          {showCountNote && <Text style={styles.countNote}>{`Showing 3 of ${allMenus.length} ${nouns.nounPlural}`}</Text>}
+          {showCountNote && (
+            <Text
+              style={styles.countNote}
+            >{`Showing 3 of ${allMenus.length} ${nouns.nounPlural}`}</Text>
+          )}
 
           {!loading && !errorMsg && visibleMenus.length === 0 && (
-            <View style={[styles.section, styles.emptyBox, { marginHorizontal: 0, marginTop: 10 }]}>
-              <Ionicons name={isMart ? 'cube-outline' : 'fast-food-outline'} size={isTablet ? 30 : 28} color="#0f172a" />
-              <Text style={[styles.emptyTitle, { fontSize: isTablet ? 15 : 14 }]}>{nouns.emptyListTitle}</Text>
-              <Text style={[styles.emptySub, { fontSize: isTablet ? 13 : 12 }]}>{nouns.emptyListSub}</Text>
+            <View
+              style={[
+                styles.section,
+                styles.emptyBox,
+                { marginHorizontal: 0, marginTop: 10 },
+              ]}
+            >
+              <Ionicons
+                name={isMart ? "cube-outline" : "fast-food-outline"}
+                size={isTablet ? 30 : 28}
+                color="#0f172a"
+              />
+              <Text
+                style={[styles.emptyTitle, { fontSize: isTablet ? 15 : 14 }]}
+              >
+                {nouns.emptyListTitle}
+              </Text>
+              <Text style={[styles.emptySub, { fontSize: isTablet ? 13 : 12 }]}>
+                {nouns.emptyListSub}
+              </Text>
             </View>
           )}
 
           {!!errorMsg && (
-            <View style={[styles.emptyBox, { marginHorizontal: 0, marginTop: 10 }]}>
+            <View
+              style={[styles.emptyBox, { marginHorizontal: 0, marginTop: 10 }]}
+            >
               <Ionicons name="warning-outline" size={20} color="#ef4444" />
-              <Text style={[styles.emptyTitle, { color: '#ef4444' }]} selectable>
+              <Text
+                style={[styles.emptyTitle, { color: "#ef4444" }]}
+                selectable
+              >
                 {errorMsg}
               </Text>
-              <TouchableOpacity onPress={fetchMenus} style={[styles.badge, { marginTop: 8 }]}>
+              <TouchableOpacity
+                onPress={fetchMenus}
+                style={[styles.badge, { marginTop: 8 }]}
+              >
                 <Text style={styles.badgeText}>Retry</Text>
               </TouchableOpacity>
             </View>
@@ -1406,49 +1892,82 @@ export default function HomeTab({
       categoriesPayload,
       goOrdersTab,
       goSalesAnalytics,
-    ]
+    ],
   );
 
   const renderRow = useCallback(
     (item) => {
-      if (item?.__type === 'bannersSection') {
+      if (item?.__type === "bannersSection") {
         return (
           <View style={[styles.section, { marginTop: 16 }]}>
             <View style={styles.sectionHead}>
-              <Text style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}>Promo banners</Text>
-              <TouchableOpacity style={styles.linkRow} onPress={() => openTabSafe('Promos')}>
-                <Text style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}>View all</Text>
-                <Ionicons name="chevron-forward" size={isTablet ? 18 : 16} color="#00b14f" />
+              <Text
+                style={[styles.sectionTitle, { fontSize: isTablet ? 18 : 16 }]}
+              >
+                Promo banners
+              </Text>
+              <TouchableOpacity
+                style={styles.linkRow}
+                onPress={() => openTabSafe("Promos")}
+              >
+                <Text
+                  style={[styles.linkText, { fontSize: isTablet ? 14 : 13 }]}
+                >
+                  View all
+                </Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={isTablet ? 18 : 16}
+                  color={BRAND.purple}
+                />
               </TouchableOpacity>
             </View>
 
             {bannersLoading ? (
               <View style={[styles.emptyBox, { marginHorizontal: 0 }]}>
                 <ActivityIndicator />
-                <Text style={[styles.emptySub, { marginTop: 6 }]}>Loading banners…</Text>
+                <Text style={[styles.emptySub, { marginTop: 6 }]}>
+                  Loading banners…
+                </Text>
               </View>
             ) : bannersError ? (
               <View style={[styles.emptyBox, { marginHorizontal: 0 }]}>
                 <Ionicons name="warning-outline" size={20} color="#ef4444" />
-                <Text style={[styles.emptyTitle, { color: '#ef4444' }]} selectable>
+                <Text
+                  style={[styles.emptyTitle, { color: "#ef4444" }]}
+                  selectable
+                >
                   {bannersError}
                 </Text>
-                <TouchableOpacity onPress={fetchBanners} style={[styles.badge, { marginTop: 8 }]}>
+                <TouchableOpacity
+                  onPress={fetchBanners}
+                  style={[styles.badge, { marginTop: 8 }]}
+                >
                   <Text style={styles.badgeText}>Retry</Text>
                 </TouchableOpacity>
               </View>
             ) : (
               <>
-                {banners.length > 3 && <Text style={styles.countNote}>Showing 3 of {banners.length} banners</Text>}
+                {banners.length > 3 && (
+                  <Text style={styles.countNote}>
+                    Showing 3 of {banners.length} banners
+                  </Text>
+                )}
                 <View style={{ gap: 12, marginTop: 8 }}>
                   {banners.slice(0, 3).map((b) => (
                     <BannerItem key={b.id} b={b} isTablet={isTablet} />
                   ))}
                   {banners.slice(0, 3).length === 0 && (
                     <View style={[styles.emptyBox, { marginHorizontal: 0 }]}>
-                      <Ionicons name="image-outline" size={24} color="#64748b" />
+                      <Ionicons
+                        name="image-outline"
+                        size={24}
+                        color="#64748b"
+                      />
                       <Text style={styles.emptyTitle}>No banners yet</Text>
-                      <Text style={styles.emptySub}>Create your first banner in Promotions.</Text>
+                      <Text style={styles.emptySub}>
+                        Create your first banner in Promotions.
+                      </Text>
                     </View>
                   )}
                 </View>
@@ -1464,8 +1983,8 @@ export default function HomeTab({
           money={fmtMoney}
           item={item}
           onPress={(it) =>
-            navigation.navigate('MenuScreen', {
-              businessId: BUSINESS_ID || 'YOUR_BUSINESS_ID',
+            navigation.navigate("MenuScreen", {
+              businessId: BUSINESS_ID || "YOUR_BUSINESS_ID",
               editItem: it,
               owner_type: ownerType,
               categoriesPayload,
@@ -1486,18 +2005,25 @@ export default function HomeTab({
       ownerType,
       categoriesPayload,
       openTabSafe,
-    ]
+    ],
   );
 
-  const listData = useMemo(() => [...visibleMenus, { __type: 'bannersSection', id: '__banners__' }], [visibleMenus]);
+  const listData = useMemo(
+    () => [...visibleMenus, { __type: "bannersSection", id: "__banners__" }],
+    [visibleMenus],
+  );
 
   const keyFor = useCallback(
-    (item, i) => String(item?.id ?? item?._id ?? item?.slug ?? item?.name ?? item?.__type ?? i),
-    []
+    (item, i) =>
+      String(
+        item?.id ?? item?._id ?? item?.slug ?? item?.name ?? item?.__type ?? i,
+      ),
+    [],
   );
 
   const onRefreshBoth = useCallback(async () => {
     setLoading(true);
+    
     setBannersLoading(true);
     await Promise.allSettled([fetchMenus(), fetchBanners(), fetchKpis()]);
     setLoading(false);
@@ -1506,9 +2032,17 @@ export default function HomeTab({
 
   return (
     <ScrollView
-      contentContainerStyle={{ paddingBottom: 75 }}
+      contentContainerStyle={{
+        paddingBottom: 24,
+        backgroundColor: BRAND.white,
+      }}
       nestedScrollEnabled
-      refreshControl={<RefreshControl refreshing={loading || bannersLoading} onRefresh={onRefreshBoth} />}
+      refreshControl={
+        <RefreshControl
+          refreshing={loading || bannersLoading}
+          onRefresh={onRefreshBoth}
+        />
+      }
     >
       {Header}
 
@@ -1522,151 +2056,315 @@ export default function HomeTab({
   );
 }
 
-/* ---------------- styles ---------------- */
 const styles = StyleSheet.create({
-  section: { marginTop: 16, paddingHorizontal: 16 },
-  sectionHead: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  section: {
+    marginTop: 10,
+    paddingHorizontal: 16,
+  },
+
+  sectionTitle: {
+    fontFamily: FONT.header,
+    fontWeight: "900",
+    color: BRAND.black,
+    letterSpacing: -0.3,
+  },
+
+  linkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+
+  linkText: {
+    fontFamily: FONT.body,
+    color: BRAND.purple,
+    fontWeight: "900",
+  },
+
+  kpiRow: {
+    backgroundColor: "transparent",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+
+  kpiCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.lg,
+    padding: 14,
+    minHeight: 128,
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
+    justifyContent: "space-between",
+    ...SHADOW.sm,
+  },
+
+  kpiTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
     marginBottom: 10,
   },
-  sectionTitle: { fontWeight: '700', color: '#0f172a' },
-  linkRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  linkText: { color: '#00b14f', fontWeight: '600' },
-  countNote: { color: '#64748b', marginTop: -6, paddingHorizontal: 2 },
 
-  statusChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  kpiIconWrap: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  kpiLabel: {
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+    fontWeight: "800",
+    lineHeight: 16,
+  },
+
+  kpiValue: {
+    fontFamily: FONT.header,
+    fontWeight: "900",
+    marginTop: 6,
+    color: BRAND.black,
+    letterSpacing: -0.4,
+  },
+
+  kpiPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+
+  kpiPillText: {
+    fontFamily: FONT.body,
+    fontWeight: "900",
+    fontSize: 11,
+  },
+
+  shortcutsRow: {
+    flexDirection: "row",
+    gap: 12,
+    paddingHorizontal: 0,
+  },
+
+  shortcut: {
+    width: "22.5%",
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.lg,
+    paddingVertical: 10,
+    minHeight: 104,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
+    ...SHADOW.sm,
+  },
+
+  shortcutIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 7,
+  },
+
+  shortcutText: {
+    fontFamily: FONT.body,
+    fontWeight: "900",
+    color: BRAND.black,
+    textAlign: "center",
+  },
+  sectionHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  menuCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.lg,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderColor: BRAND.greyLight,
+    ...SHADOW.sm,
+  },
+
+  menuThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: RADIUS.md,
+    backgroundColor: BRAND.greyLight,
+  },
+
+  menuThumbFallback: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  menuTitle: {
+    fontFamily: FONT.body,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+
+  menuMeta: {
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+    marginTop: 2,
+    fontWeight: "600",
+  },
+
+  menuPrice: {
+    fontFamily: FONT.body,
+    color: BRAND.purple,
+    fontWeight: "900",
+    marginTop: 4,
+  },
+
+  stockPill: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: '#f1f5f9',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
+    marginLeft: 8,
   },
-  statusChipActive: { backgroundColor: '#16a34a1A', borderColor: '#16a34a' },
-  statusChipText: { color: '#0f172a', fontWeight: '700', fontSize: 14 },
-  statusChipTextActive: { color: '#065f46' },
 
-  badge: {
-    minWidth: 16,
-    height: 16,
-    paddingHorizontal: 6,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#e2e8f0',
-    marginLeft: 6,
+  stockText: {
+    fontFamily: FONT.body,
+    fontWeight: "900",
   },
-  badgeActive: { backgroundColor: '#16a34a' },
-  badgeText: { color: '#0f172a', fontSize: 12, fontWeight: '700' },
-  badgeTextActive: { color: 'white' },
-
-  kpiRow: {
-    marginTop: -10,
-    backgroundColor: 'transparent',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  kpiCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  kpiIconWrap: {
-    alignSelf: 'flex-start',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f1f5f9',
-    marginBottom: 8,
-  },
-  kpiLabel: { color: '#6b7280' },
-  kpiValue: { fontWeight: '700', marginTop: 2, color: '#0f172a' },
-  kpiSub: { color: '#9ca3af', marginTop: 2 },
-
-  shortcutsRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 16 },
-  shortcut: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-    marginHorizontal: 0,
-  },
-  shortcutIcon: {
-    padding: 10,
-    borderRadius: 999,
-    backgroundColor: '#f1f5f9',
-    marginBottom: 8,
-  },
-  shortcutText: { fontWeight: '600', color: '#0f172a' },
-
-  menuCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-    marginHorizontal: 16,
-  },
-  menuThumb: { width: 48, height: 48, borderRadius: 8, backgroundColor: '#e2e8f0' },
-  menuThumbFallback: { alignItems: 'center', justifyContent: 'center' },
-  menuTitle: { fontWeight: '700', color: '#111827' },
-  menuMeta: { color: '#6b7280', marginTop: 2 },
-  menuPrice: { color: '#0f172a', fontWeight: '700', marginTop: 4 },
-  stockPill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, marginLeft: 8 },
-  stockText: { fontWeight: '700' },
 
   bannerCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.lg,
     padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
     marginHorizontal: 16,
+    borderWidth: 1,
+    borderColor: BRAND.greyLight,
+    ...SHADOW.sm,
   },
-  bannerThumb: { width: 64, height: 48, borderRadius: 8, backgroundColor: '#e2e8f0' },
-  bannerTitle: { fontWeight: '800', color: '#111827' },
-  bannerDesc: { color: '#6b7280', marginTop: 2 },
-  bannerDates: { color: '#94a3b8', marginTop: 2 },
+
+  bannerThumb: {
+    width: 70,
+    height: 52,
+    borderRadius: RADIUS.md,
+    backgroundColor: BRAND.greyLight,
+  },
+
+  bannerTitle: {
+    fontFamily: FONT.body,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+
+  bannerDesc: {
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+    marginTop: 2,
+  },
+
+  bannerDates: {
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+    marginTop: 3,
+    fontWeight: "600",
+  },
 
   emptyBox: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.lg,
     padding: 24,
-    alignItems: 'center',
+    alignItems: "center",
     gap: 6,
     marginHorizontal: 16,
+    borderWidth: 1,
+    borderColor: BRAND.greyLight,
+    ...SHADOW.sm,
   },
-  emptyTitle: { fontWeight: '700', color: '#0f172a' },
-  emptySub: { color: '#6b7280' },
 
-  badgeTextAlt: { color: '#fff', fontWeight: '700' },
-  badgeAlt: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: '#00b14f' },
+  emptyTitle: {
+    fontFamily: FONT.body,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+  emptySub: {
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+    textAlign: "center",
+  },
+
+  statusChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    borderWidth: 1,
+    borderColor: BRAND.greyLight,
+    ...SHADOW.sm,
+  },
+
+  statusChipActive: {
+    backgroundColor: BRAND.purpleLight,
+    borderColor: BRAND.purple,
+  },
+  statusChipText: {
+    fontFamily: FONT.body,
+    color: BRAND.black,
+    fontWeight: "800",
+    fontSize: 14,
+  },
+
+  statusChipTextActive: {
+    color: BRAND.purple,
+  },
+
+  badge: {
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 6,
+    borderRadius: RADIUS.full,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: BRAND.purpleLight,
+    marginLeft: 6,
+  },
+
+  badgeActive: {
+    backgroundColor: BRAND.purple,
+  },
+
+  badgeTextActive: {
+    color: BRAND.white,
+  },
+
+  badgeTextAlt: {
+    color: BRAND.white,
+    fontWeight: "800",
+  },
+  badgeTextActive: {
+    color: "#FFFFFF",
+  },
+
+  badgeTextAlt: {
+    color: "#FFFFFF",
+    fontWeight: "800",
+  },
+
+  badgeAlt: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: BRAND.purple,
+  },
 });
