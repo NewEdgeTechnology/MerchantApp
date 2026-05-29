@@ -277,30 +277,30 @@ export default function MobileLoginScreen() {
 
   // Improved device ID initialization with fallback
   useEffect(() => {
-   const initDeviceId = async () => {
-  try {
-    console.log("Initializing device ID for MobileLogin...");
+    const initDeviceId = async () => {
+      try {
+        console.log("Initializing device ID for MobileLogin...");
 
-    const fallbackId = await getOrCreateLocalDeviceId();
+        const fallbackId = await getOrCreateLocalDeviceId();
 
-    setDeviceId(fallbackId);
-    setDeviceIdLoading(false);
+        setDeviceId(fallbackId);
+        setDeviceIdLoading(false);
 
-    const token = await getValidExpoPushToken();
+        const token = await getValidExpoPushToken();
 
-    if (token && token.startsWith("ExponentPushToken")) {
-      setPushToken(token);
-      setDeviceId(token);
-      console.log("✅ Expo push token updated:", token);
-    }
-  } catch (error) {
-    console.error("Failed to get Expo token:", error);
+        if (token && token.startsWith("ExponentPushToken")) {
+          setPushToken(token);
+          setDeviceId(token);
+          console.log("✅ Expo push token updated:", token);
+        }
+      } catch (error) {
+        console.error("Failed to get Expo token:", error);
 
-    const fallbackId = await getOrCreateLocalDeviceId();
-    setDeviceId(fallbackId);
-    setDeviceIdLoading(false);
-  }
-};
+        const fallbackId = await getOrCreateLocalDeviceId();
+        setDeviceId(fallbackId);
+        setDeviceIdLoading(false);
+      }
+    };
 
     initDeviceId();
   }, []);
@@ -427,7 +427,7 @@ export default function MobileLoginScreen() {
       }
 
       const data = out.data || {};
-
+      console.log("data",data)
       // ✅ token extraction
       const tokenObj = data?.token || data?.data?.token || {};
       const accessToken =
@@ -444,7 +444,8 @@ export default function MobileLoginScreen() {
         data?.refresh_token ||
         data?.refreshToken ||
         "";
-
+      console.log("✅ ACCESS TOKEN:", accessToken);
+      console.log("✅ REFRESH TOKEN:", refreshToken);
       if (accessToken) {
         await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
       }

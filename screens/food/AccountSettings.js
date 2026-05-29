@@ -22,6 +22,7 @@ import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 // ✅ Use legacy API to avoid deprecation warnings in SDK 54+
 import * as FileSystem from "expo-file-system/legacy";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
 import {
   PROFILE_ENDPOINT,
@@ -90,9 +91,7 @@ async function fetchJSON(url, options = {}, timeoutMs = 15000) {
     } catch {}
     if (!res.ok) {
       const msg =
-        (json && (json.message || json.error)) ||
-        text ||
-        `HTTP ${res.status}`;
+        (json && (json.message || json.error)) || text || `HTTP ${res.status}`;
       throw new Error(msg);
     }
     return json;
@@ -146,7 +145,7 @@ async function wipeAllSecureStore() {
       console.log("🔐 Logout: SecureStore keys discovered:", keys);
     } else {
       console.log(
-        "🔐 Logout: SecureStore.getAllKeysAsync not available, wiping known keys only."
+        "🔐 Logout: SecureStore.getAllKeysAsync not available, wiping known keys only.",
       );
     }
   } catch (e) {
@@ -162,7 +161,7 @@ async function wipeAllSecureStore() {
       try {
         await SecureStore.deleteItemAsync(String(k));
       } catch {}
-    })
+    }),
   );
 
   // extra: verify (best effort)
@@ -180,7 +179,7 @@ async function clearCredentialStores() {
   // ✅ keep your existing behavior
   try {
     await Promise.allSettled(
-      SECURE_KEYS.map((k) => SecureStore.deleteItemAsync(k))
+      SECURE_KEYS.map((k) => SecureStore.deleteItemAsync(k)),
     );
   } catch {}
   try {
@@ -224,7 +223,12 @@ function resetLocalState(setters) {
 function getExistingMerchantSocket() {
   try {
     const mod = require("../realtime/merchantSocket");
-    return mod?.getMerchantSocket?.() || mod?.socket || global?.merchantSocket || null;
+    return (
+      mod?.getMerchantSocket?.() ||
+      mod?.socket ||
+      global?.merchantSocket ||
+      null
+    );
   } catch {
     return global?.merchantSocket || null;
   }
@@ -251,7 +255,8 @@ async function disconnectSocketGracefully({ userId, businessId }) {
     try {
       sock.close?.();
     } catch {}
-  } catch {} finally {
+  } catch {
+  } finally {
     try {
       if (global?.merchantSocket) global.merchantSocket = null;
     } catch {}
@@ -291,6 +296,21 @@ async function attemptServerLogout({ explicitEndpoint, userId }) {
     } catch {}
   }
 }
+const SettingsRow = ({ icon, title, onPress, last = false }) => (
+  <TouchableOpacity
+    style={[styles.settingsRow, last && styles.settingsRowLast]}
+    onPress={onPress}
+    activeOpacity={0.8}
+  >
+    <View style={styles.rowIcon}>
+      <Ionicons name={icon} size={20} color={BRAND.purple} />
+    </View>
+
+    <Text style={styles.rowTitle}>{title}</Text>
+
+    <Ionicons name="chevron-forward" size={21} color={BRAND.grey} />
+  </TouchableOpacity>
+);
 
 const AccountSettings = () => {
   const route = useRoute();
@@ -303,13 +323,13 @@ const AccountSettings = () => {
   const [imgVersion, setImgVersion] = useState(null);
 
   const [userId, setUserId] = useState(
-    route?.params?.user_id ? String(route.params.user_id) : ""
+    route?.params?.user_id ? String(route.params.user_id) : "",
   );
   const [businessId, setBusinessId] = useState(
-    route?.params?.business_id ? String(route.params.business_id) : ""
+    route?.params?.business_id ? String(route.params.business_id) : "",
   );
   const [authContext, setAuthContext] = useState(
-    route?.params?.authContext || null
+    route?.params?.authContext || null,
   );
 
   const [biz, setBiz] = useState({
@@ -323,12 +343,15 @@ const AccountSettings = () => {
   });
 
   const [businessLicense, setBusinessLicense] = useState(
-    route?.params?.business_license || ""
+    route?.params?.business_license || "",
   );
 
   const buildProfileUrl = useCallback((uid) => {
     if (!uid || !PROFILE_ENDPOINT) return "";
-    const base = normalizeHost((PROFILE_ENDPOINT || "").trim()).replace(/\/+$/, "");
+    const base = normalizeHost((PROFILE_ENDPOINT || "").trim()).replace(
+      /\/+$/,
+      "",
+    );
     return `${base}/${encodeURIComponent(String(uid))}`;
   }, []);
 
@@ -339,7 +362,9 @@ const AccountSettings = () => {
       return;
     }
     try {
-      const abs = isLocalOrData(raw) ? raw : makeAbsolute(String(raw), PROFILE_IMAGE_ENDPOINT);
+      const abs = isLocalOrData(raw)
+        ? raw
+        : makeAbsolute(String(raw), PROFILE_IMAGE_ENDPOINT);
       const final = isLocalOrData(abs) ? abs : withVersion(abs, version);
       setImageUri(final || DEFAULT_AVATAR);
       setImgError(null);
@@ -460,7 +485,10 @@ const AccountSettings = () => {
         if (data?.user_name) setName(String(data.user_name));
 
         const version =
-          data?.profile_image_version || data?.updated_at || data?.user_updated_at || null;
+          data?.profile_image_version ||
+          data?.updated_at ||
+          data?.user_updated_at ||
+          null;
 
         if (data?.profile_image) {
           await setAvatarFrom(String(data.profile_image), version);
@@ -469,7 +497,8 @@ const AccountSettings = () => {
         const bid = data?.business_id ?? data?.id ?? null;
         if (bid && !businessId) setBusinessId(String(bid));
 
-        const license = data?.business_license || data?.business_license_number || "";
+        const license =
+          data?.business_license || data?.business_license_number || "";
         if (license) setBusinessLicense(String(license));
 
         const mergedBiz = {
@@ -504,7 +533,8 @@ const AccountSettings = () => {
               user_name: data?.user_name ?? blob?.user?.user_name,
               display_name: data?.user_name ?? blob?.user?.display_name,
               profile_image: data?.profile_image ?? blob?.user?.profile_image,
-              profile_image_version: version ?? blob?.user?.profile_image_version,
+              profile_image_version:
+                version ?? blob?.user?.profile_image_version,
               business_id: bid ?? blob?.user?.business_id,
               updated_at: data?.user_updated_at ?? blob?.user?.updated_at,
             },
@@ -519,16 +549,22 @@ const AccountSettings = () => {
               longitude: mergedBiz.longitude,
             },
           };
-          await SecureStore.setItemAsync(KEY_MERCHANT_LOGIN, JSON.stringify(merged));
+          await SecureStore.setItemAsync(
+            KEY_MERCHANT_LOGIN,
+            JSON.stringify(merged),
+          );
         } catch {}
       } catch {}
     },
-    [buildProfileUrl, biz, businessId, setAvatarFrom]
+    [buildProfileUrl, biz, businessId, setAvatarFrom],
   );
 
   useEffect(() => {
     if (route?.params?.authContext) {
-      setAuthContext((prev) => ({ ...(prev || {}), ...route.params.authContext }));
+      setAuthContext((prev) => ({
+        ...(prev || {}),
+        ...route.params.authContext,
+      }));
     }
   }, [route?.params?.authContext]);
 
@@ -548,16 +584,24 @@ const AccountSettings = () => {
   }, [navigation, userId, loadFromStore, loadFromBackend]);
 
   useEffect(() => {
-    const subA = DeviceEventEmitter.addListener("profile-updated", async (payload) => {
-      if (payload?.name) setName(String(payload.name));
-      const v = payload?.profile_image_version || imgVersion || null;
-      if (payload?.profile_image) await setAvatarFrom(payload.profile_image, v);
-      if (userId) await loadFromBackend(userId);
-    });
-    const subB = DeviceEventEmitter.addListener("business-updated", async (payload) => {
-      if (payload && typeof payload === "object") setBiz((prev) => ({ ...prev, ...payload }));
-      if (userId) await loadFromBackend(userId);
-    });
+    const subA = DeviceEventEmitter.addListener(
+      "profile-updated",
+      async (payload) => {
+        if (payload?.name) setName(String(payload.name));
+        const v = payload?.profile_image_version || imgVersion || null;
+        if (payload?.profile_image)
+          await setAvatarFrom(payload.profile_image, v);
+        if (userId) await loadFromBackend(userId);
+      },
+    );
+    const subB = DeviceEventEmitter.addListener(
+      "business-updated",
+      async (payload) => {
+        if (payload && typeof payload === "object")
+          setBiz((prev) => ({ ...prev, ...payload }));
+        if (userId) await loadFromBackend(userId);
+      },
+    );
     return () => {
       subA.remove();
       subB.remove();
@@ -567,7 +611,10 @@ const AccountSettings = () => {
   const pickImage = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert("Permission required", "We need permission to access your gallery.");
+      Alert.alert(
+        "Permission required",
+        "We need permission to access your gallery.",
+      );
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -709,12 +756,31 @@ const AccountSettings = () => {
   }, [handleLogoutNow]);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContainer}>
-        <View style={styles.profileHeader}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
+      <View style={styles.topGlow} />
+      <View style={[styles.headerBar]}>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="arrow-back" size={22} color={BRAND.black} />
+        </TouchableOpacity>
+
+        <Text style={styles.headerTitle}>Account Settings</Text>
+
+        <View style={styles.backBtnPlaceholder} />
+      </View>
+      <ScrollView
+        contentContainerStyle={styles.scrollContainer}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.profileCard}>
           <TouchableOpacity
             style={styles.profileIconContainer}
-            activeOpacity={0.7}
+            activeOpacity={0.8}
             onPress={goToPersonalInformation}
             onLongPress={pickImage}
           >
@@ -728,65 +794,77 @@ const AccountSettings = () => {
                 }}
               />
             ) : (
-              <View style={{ alignItems: "center", justifyContent: "center" }}>
-                <Ionicons name="person-circle-outline" size={80} color="#16a34a" />
-                {imgError ? (
-                  <Text
-                    style={{ color: "#ef4444", fontSize: 12, marginTop: 4 }}
-                    numberOfLines={1}
-                  >
-                    {imgError}
-                  </Text>
-                ) : null}
-              </View>
+              <Ionicons
+                name="person-circle-outline"
+                size={82}
+                color={BRAND.purple}
+              />
             )}
+
+            <View style={styles.cameraBadge}>
+              <Ionicons name="camera-outline" size={15} color={BRAND.white} />
+            </View>
           </TouchableOpacity>
 
-          <View style={styles.nameContainer}>
-            <Text style={styles.name}>{name}</Text>
+          <View style={styles.profileInfo}>
+            <Text style={styles.name} numberOfLines={1}>
+              {name}
+            </Text>
+            <Text style={styles.subText} numberOfLines={1}>
+              {biz.business_name || "TabDey Merchant"}
+            </Text>
           </View>
 
-          <TouchableOpacity style={styles.editButton} onPress={goToPersonalInformation}>
-            <Ionicons name="create-outline" size={20} color="#fff" />
+          <TouchableOpacity
+            style={styles.editButton}
+            onPress={goToPersonalInformation}
+          >
+            <Ionicons name="create-outline" size={18} color={BRAND.white} />
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity style={styles.section} onPress={goToPersonalInformation}>
-          <Text style={styles.text}>Personal Information</Text>
-          <Ionicons name="chevron-forward" size={24} color="#16a34a" />
-        </TouchableOpacity>
+        <View style={styles.menuCard}>
+          <SettingsRow
+            icon="person-outline"
+            title="Personal Information"
+            onPress={goToPersonalInformation}
+          />
 
-        <TouchableOpacity style={styles.section} onPress={goToBusinessDetails}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.text}>Business Details</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={24} color="#16a34a" />
-        </TouchableOpacity>
+          <SettingsRow
+            icon="storefront-outline"
+            title="Business Details"
+            onPress={goToBusinessDetails}
+          />
+
+          <SettingsRow
+            icon="lock-closed-outline"
+            title="Password Management"
+            onPress={() =>
+              navigation.navigate("PasswordManagement", { authContext })
+            }
+          />
+
+          <SettingsRow
+            icon="wallet-outline"
+            title="Wallet"
+            onPress={() => navigation.navigate("Wallet", { authContext })}
+          />
+
+          <SettingsRow
+            icon="star-outline"
+            title="Feedback and Rating"
+            onPress={goToFeedback}
+            last
+          />
+        </View>
 
         <TouchableOpacity
-          style={styles.section}
-          onPress={() => navigation.navigate("PasswordManagement", { authContext })}
+          style={styles.logoutButton}
+          onPress={logOut}
+          activeOpacity={0.85}
         >
-          <Text style={styles.text}>Password Management</Text>
-          <Ionicons name="chevron-forward" size={24} color="#16a34a" />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.section}
-          onPress={() => navigation.navigate("Wallet", { authContext })}
-        >
-          <Text style={styles.text}>Wallet</Text>
-          <Ionicons name="chevron-forward" size={24} color="#16a34a" />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.section} onPress={goToFeedback}>
-          <Text style={styles.text}>Feedback and Rating</Text>
-          <Ionicons name="chevron-forward" size={24} color="#16a34a" />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.logoutSection} onPress={logOut}>
-          <Text style={[styles.text, styles.logoutText]}>Log Out</Text>
-          <Ionicons name="log-out-outline" size={24} color="#F44336" />
+          <Ionicons name="log-out-outline" size={21} color={BRAND.red} />
+          <Text style={styles.logoutText}>Log Out</Text>
         </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
@@ -794,47 +872,192 @@ const AccountSettings = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f9f9f9" },
-  scrollContainer: { paddingHorizontal: 20, paddingTop: 8 },
-  profileHeader: {
+  safe: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  }, 
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
+
+  scrollContainer: {
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 36,
+  },
+
+  headerBar: {
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 30,
-    marginTop: 20,
+    backgroundColor: "transparent",
   },
+
+  backBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    alignItems: "center",
+    justifyContent: "center",
+    ...SHADOW.sm,
+  },
+
+  backBtnPlaceholder: {
+    width: 42,
+    height: 42,
+  },
+
+   headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+
+  profileCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: BRAND.white,
+    borderRadius: 26,
+    padding: 16,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    // ...SHADOW.md,
+  },
+
   profileIconContainer: {
-    marginRight: 20,
+    width: 82,
+    height: 82,
+    borderRadius: 41,
+    backgroundColor: "#F4E9FF",
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: 2,
-    borderColor: "#ddd",
-    borderRadius: 50,
-    padding: 2,
-    backgroundColor: "#fff",
+    borderColor: BRAND.purpleLight,
   },
-  profileImage: { width: 80, height: 80, borderRadius: 40 },
-  nameContainer: { flex: 1 },
-  name: { fontSize: width > 400 ? 22 : 18, fontWeight: "bold", color: "#333" },
-  editButton: { backgroundColor: "#16a34a", borderRadius: 20, padding: 8, marginLeft: 10 },
-  section: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+
+  profileImage: {
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+  },
+
+  cameraBadge: {
+    position: "absolute",
+    right: -2,
+    bottom: 2,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: BRAND.purple,
     alignItems: "center",
-    paddingVertical: 18,
-    borderBottomWidth: 1,
-    borderColor: "#ddd",
-    marginBottom: 10,
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: BRAND.white,
   },
-  logoutSection: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+
+  profileInfo: {
+    flex: 1,
+    marginLeft: 14,
+  },
+
+  name: {
+    fontFamily: FONT.header,
+    fontSize: width > 400 ? 21 : 19,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+
+  subText: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    fontWeight: "600",
+    color: BRAND.grey,
+    marginTop: 5,
+  },
+
+  editButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: BRAND.purple,
     alignItems: "center",
-    paddingVertical: 18,
-    borderBottomWidth: 1,
-    borderColor: "#ddd",
-    marginBottom: 10,
-    marginTop: 30,
+    justifyContent: "center",
+    ...SHADOW.sm,
   },
-  text: { fontSize: width > 400 ? 18 : 16, color: "#333", fontWeight: "600" },
-  logoutText: { color: "#F44336" },
+
+  menuCard: {
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    // ...SHADOW.sm,
+  },
+
+  settingsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1E8F8",
+  },
+
+  settingsRowLast: {
+    borderBottomWidth: 0,
+  },
+
+  rowIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 16,
+    backgroundColor: "#F4E9FF",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+
+  rowTitle: {
+    flex: 1,
+    fontFamily: FONT.body,
+    fontSize: width > 400 ? 16 : 15,
+    fontWeight: "800",
+    color: BRAND.black,
+  },
+
+  logoutButton: {
+    marginTop: 22,
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.pill,
+    paddingVertical: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: "#FFE1E6",
+    // ...SHADOW.sm,
+  },
+
+  logoutText: {
+    fontFamily: FONT.body,
+    fontSize: 16,
+    fontWeight: "900",
+    color: BRAND.red,
+  },
 });
 
 export default AccountSettings;

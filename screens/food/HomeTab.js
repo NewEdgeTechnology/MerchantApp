@@ -2098,7 +2098,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: BRAND.purpleLight,
     justifyContent: "space-between",
-    ...SHADOW.sm,
+    // ...SHADOW.sm,
   },
 
   kpiTop: {
@@ -2159,7 +2159,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 1,
     borderColor: BRAND.purpleLight,
-    ...SHADOW.sm,
+    // ...SHADOW.sm,
   },
 
   shortcutIcon: {

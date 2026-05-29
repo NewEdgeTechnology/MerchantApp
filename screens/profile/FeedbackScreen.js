@@ -5,7 +5,13 @@
 // ✅ Strict URL guards (no empty url)
 // ✅ Shows ONLY backend message
 
-import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+} from "react";
 import {
   View,
   Text,
@@ -25,8 +31,12 @@ import {
   Keyboard,
 } from "react-native";
 import { useRoute, useNavigation } from "@react-navigation/native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import * as SecureStore from "expo-secure-store";
 import {
   FEEDBACK_ENDPOINT,
@@ -63,7 +73,9 @@ function coerceHttpsForGrab(url) {
 }
 
 function normalizeRatingType(v) {
-  const s = String(v ?? "").trim().toLowerCase();
+  const s = String(v ?? "")
+    .trim()
+    .toLowerCase();
   if (s === "mart" || s === "grocery" || s === "grocer" || s.includes("mart"))
     return "mart";
   if (
@@ -170,7 +182,8 @@ async function getAccessTokenFromStore() {
     const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed?.token?.access_token) return String(parsed.token.access_token).trim();
+      if (parsed?.token?.access_token)
+        return String(parsed.token.access_token).trim();
       if (typeof parsed?.token === "string") return String(parsed.token).trim();
     }
     const direct = await SecureStore.getItemAsync(KEY_AUTH_TOKEN);
@@ -184,7 +197,9 @@ async function getAccessTokenFromStore() {
 async function getBearerToken(authContext) {
   let token = authContext?.token || (await getAccessTokenFromStore());
   if (!token) throw new Error("Missing access token from login info.");
-  const bare = String(token).replace(/^Bearer\s+/i, "").trim();
+  const bare = String(token)
+    .replace(/^Bearer\s+/i, "")
+    .trim();
   return `Bearer ${bare}`;
 }
 
@@ -193,7 +208,7 @@ const DEFAULT_AVATAR =
   "https://images.unsplash.com/photo-1612198182421-3f5dff0c9b40?q=80&w=400&auto=format&fit=crop";
 
 const PROFILE_BASE = normalizeHostLoose(
-  String(PROFILE_IMAGE_ENDPOINT || MEDIA_BASE_URL || "").replace(/\/+$/, "")
+  String(PROFILE_IMAGE_ENDPOINT || MEDIA_BASE_URL || "").replace(/\/+$/, ""),
 );
 
 const FEEDBACK_ORIGIN = (() => {
@@ -231,8 +246,8 @@ export default function RestaurantFeedbackScreen() {
   const businessIdNum = Number.isInteger(businessIdRaw)
     ? businessIdRaw
     : /^\d+$/.test(businessIdStr)
-    ? parseInt(businessIdStr, 10)
-    : NaN;
+      ? parseInt(businessIdStr, 10)
+      : NaN;
 
   // ✅ owner_type normalized to food|mart
   const ownerTypeParam = normalizeRatingType(
@@ -240,7 +255,7 @@ export default function RestaurantFeedbackScreen() {
       authContext?.owner_type ||
       authContext?.user?.owner_type ||
       authContext?.raw?.owner_type ||
-      "food"
+      "food",
   );
 
   useEffect(() => {
@@ -249,7 +264,10 @@ export default function RestaurantFeedbackScreen() {
     console.log("[Feedback] REPORT_REPLY =", REPORT_REPLY);
   }, [ownerTypeParam]);
 
-  const endpointTpl = useMemo(() => normalizeHostLoose(FEEDBACK_ENDPOINT || ""), []);
+  const endpointTpl = useMemo(
+    () => normalizeHostLoose(FEEDBACK_ENDPOINT || ""),
+    [],
+  );
 
   const [items, setItems] = useState([]);
   const [meta, setMeta] = useState(null);
@@ -284,7 +302,9 @@ export default function RestaurantFeedbackScreen() {
       const h = e?.endCoordinates?.height || 0;
       setReportKbdOffset(Math.max(0, h - 12));
     });
-    const hide = Keyboard.addListener("keyboardWillHide", () => setReportKbdOffset(0));
+    const hide = Keyboard.addListener("keyboardWillHide", () =>
+      setReportKbdOffset(0),
+    );
     return () => {
       show.remove();
       hide.remove();
@@ -298,7 +318,10 @@ export default function RestaurantFeedbackScreen() {
       .replace(/\{business_id\}/gi, String(businessIdNum))
       .replace(/%7Bbusiness_id%7D/gi, String(businessIdNum));
     if (/\/ratings\/?$/i.test(base) && !/\/\d+(\?|$)/.test(base)) {
-      base = base.replace(/\/?$/, `/${encodeURIComponent(String(businessIdNum))}`);
+      base = base.replace(
+        /\/?$/,
+        `/${encodeURIComponent(String(businessIdNum))}`,
+      );
     }
     return coerceHttpsForGrab(base);
   }, [endpointTpl, businessIdNum]);
@@ -317,7 +340,9 @@ export default function RestaurantFeedbackScreen() {
       const url = buildUrl();
       const payload = await fetchJSON(url);
 
-      const listRaw = Array.isArray(payload) ? payload : payload?.data || payload?.items || [];
+      const listRaw = Array.isArray(payload)
+        ? payload
+        : payload?.data || payload?.items || [];
 
       const mapped = listRaw.map((it, idx) => ({
         id: it.id ?? it.notification_id ?? `${it.user?.user_id || "u"}_${idx}`,
@@ -330,7 +355,8 @@ export default function RestaurantFeedbackScreen() {
         owner_type: normalizeRatingType(it.owner_type || ownerTypeParam),
         business_id: it.business_id || null,
         likes_count: it.likes_count ?? 0,
-        reply_count: it.reply_count ?? (Array.isArray(it.replies) ? it.replies.length : 0),
+        reply_count:
+          it.reply_count ?? (Array.isArray(it.replies) ? it.replies.length : 0),
         replies: Array.isArray(it.replies) ? it.replies : [],
       }));
 
@@ -387,10 +413,16 @@ export default function RestaurantFeedbackScreen() {
     try {
       setPostingReply(true);
 
-      const notificationId = replyingItem.id ?? replyingItem.notification_id ?? replyingItem.rating_id;
-      if (!notificationId) throw new Error("Missing notification_id (rating id)");
+      const notificationId =
+        replyingItem.id ??
+        replyingItem.notification_id ??
+        replyingItem.rating_id;
+      if (!notificationId)
+        throw new Error("Missing notification_id (rating id)");
 
-      const ratingType = normalizeRatingType(replyingItem?.owner_type || ownerTypeParam);
+      const ratingType = normalizeRatingType(
+        replyingItem?.owner_type || ownerTypeParam,
+      );
 
       let url = String(FEEDBACK_REPLY_ENDPOINT || "").trim();
       if (!url) throw new Error("Missing FEEDBACK_REPLY_ENDPOINT");
@@ -400,12 +432,21 @@ export default function RestaurantFeedbackScreen() {
           .replace(/\{owner_type\}/gi, ratingType)
           .replace(/%7Bowner_type%7D/gi, ratingType);
       } else {
-        url = url.replace(/\/ratings\/(food|mart)\//i, `/ratings/${ratingType}/`);
+        url = url.replace(
+          /\/ratings\/(food|mart)\//i,
+          `/ratings/${ratingType}/`,
+        );
       }
 
       url = url
-        .replace(/\{notification_id\}/gi, encodeURIComponent(String(notificationId)))
-        .replace(/%7Bnotification_id%7D/gi, encodeURIComponent(String(notificationId)));
+        .replace(
+          /\{notification_id\}/gi,
+          encodeURIComponent(String(notificationId)),
+        )
+        .replace(
+          /%7Bnotification_id%7D/gi,
+          encodeURIComponent(String(notificationId)),
+        );
 
       url = coerceHttpsForGrab(url);
 
@@ -427,7 +468,10 @@ export default function RestaurantFeedbackScreen() {
       load();
     } catch (e) {
       console.error("[Feedback] reply error", e);
-      Alert.alert("Reply failed", userFacingMessage(e, "Failed to send reply."));
+      Alert.alert(
+        "Reply failed",
+        userFacingMessage(e, "Failed to send reply."),
+      );
     } finally {
       setPostingReply(false);
     }
@@ -446,7 +490,7 @@ export default function RestaurantFeedbackScreen() {
       setReportReasonId(null);
       setReportOtherText("");
     },
-    [ownerTypeParam]
+    [ownerTypeParam],
   );
 
   const openReportForReply = useCallback(
@@ -454,7 +498,9 @@ export default function RestaurantFeedbackScreen() {
       const replyId = rep?.reply_id ?? rep?.id ?? rep?.replyId;
       if (!replyId) return Alert.alert("Report failed", "Missing reply id.");
 
-      const type = normalizeRatingType(parentItem?.owner_type || ownerTypeParam); // ✅ type = owner_type
+      const type = normalizeRatingType(
+        parentItem?.owner_type || ownerTypeParam,
+      ); // ✅ type = owner_type
 
       // prevent stacked modal freeze
       if (replyModalVisible && replyingItem) setReplyReopenItem(replyingItem);
@@ -468,7 +514,7 @@ export default function RestaurantFeedbackScreen() {
       setReportReasonId(null);
       setReportOtherText("");
     },
-    [ownerTypeParam, replyModalVisible, replyingItem]
+    [ownerTypeParam, replyModalVisible, replyingItem],
   );
 
   const closeReportSheet = useCallback(() => {
@@ -571,7 +617,7 @@ export default function RestaurantFeedbackScreen() {
 
         if (
           /already\s*reported|already\s*report|reported\s*already|duplicate|only\s*once|once/i.test(
-            String(msg)
+            String(msg),
           )
         ) {
           closeReportSheet();
@@ -585,7 +631,10 @@ export default function RestaurantFeedbackScreen() {
       closeReportSheet();
       Alert.alert("Reported", "Your report has been submitted successfully.");
     } catch (e) {
-      Alert.alert("Report failed", userFacingMessage(e, "Could not submit your report."));
+      Alert.alert(
+        "Report failed",
+        userFacingMessage(e, "Could not submit your report."),
+      );
     } finally {
       setPostingReport(false);
     }
@@ -637,13 +686,19 @@ export default function RestaurantFeedbackScreen() {
       <View style={styles.card}>
         <View style={styles.cardHead}>
           <View style={styles.userRow}>
-            <Image source={{ uri: avatar }} style={styles.avatar} resizeMode="cover" />
+            <Image
+              source={{ uri: avatar }}
+              style={styles.avatar}
+              resizeMode="cover"
+            />
             <View>
               <Text style={styles.userName} numberOfLines={1}>
                 {item.user_name}
               </Text>
               {created ? (
-                <Text style={styles.cardTimeSmall}>{created.toLocaleDateString()}</Text>
+                <Text style={styles.cardTimeSmall}>
+                  {created.toLocaleDateString()}
+                </Text>
               ) : null}
             </View>
           </View>
@@ -659,12 +714,16 @@ export default function RestaurantFeedbackScreen() {
 
             <View style={styles.ratingPill}>
               <Ionicons name="star" size={14} color="#f59e0b" />
-              <Text style={styles.ratingText}>{Number(item.rating ?? 0)}/5</Text>
+              <Text style={styles.ratingText}>
+                {Number(item.rating ?? 0)}/5
+              </Text>
             </View>
           </View>
         </View>
 
-        {item.comment ? <Text style={styles.cardBody}>{item.comment}</Text> : null}
+        {item.comment ? (
+          <Text style={styles.cardBody}>{item.comment}</Text>
+        ) : null}
 
         <View style={styles.cardFoot}>
           <View style={styles.cardFootLeft}>
@@ -673,24 +732,37 @@ export default function RestaurantFeedbackScreen() {
               <Text style={styles.iconStatText}>{likesCount}</Text>
             </View>
             <View style={styles.iconStat}>
-              <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0ea5e9" />
+              <Ionicons
+                name="chatbubble-ellipses-outline"
+                size={14}
+                color="#0ea5e9"
+              />
               <Text style={styles.iconStatText}>
                 {item.reply_count ?? (item.replies || []).length ?? 0}
               </Text>
             </View>
           </View>
 
-          <TouchableOpacity style={styles.replyBtn} activeOpacity={0.7} onPress={() => openReplyModal(item)}>
+          <TouchableOpacity
+            style={styles.replyBtn}
+            activeOpacity={0.7}
+            onPress={() => openReplyModal(item)}
+          >
             <Ionicons name="arrow-undo-outline" size={16} color="#0284c7" />
             <Text style={styles.replyBtnText}>Reply</Text>
           </TouchableOpacity>
         </View>
 
         {hasReplies && !expanded && (
-          <TouchableOpacity style={styles.viewRepliesRow} activeOpacity={0.7} onPress={toggleExpand}>
+          <TouchableOpacity
+            style={styles.viewRepliesRow}
+            activeOpacity={0.7}
+            onPress={toggleExpand}
+          >
             <View style={styles.viewRepliesLine} />
             <Text style={styles.viewRepliesText}>
-              View {item.replies.length} {item.replies.length === 1 ? "reply" : "replies"}
+              View {item.replies.length}{" "}
+              {item.replies.length === 1 ? "reply" : "replies"}
             </Text>
           </TouchableOpacity>
         )}
@@ -706,12 +778,19 @@ export default function RestaurantFeedbackScreen() {
                   rep.hours_ago === 0
                     ? "Just now"
                     : rep.hours_ago != null
-                    ? `${rep.hours_ago}h ago`
-                    : "";
+                      ? `${rep.hours_ago}h ago`
+                      : "";
 
                 return (
-                  <View key={String(rep.id ?? rep.reply_id)} style={styles.replyRow}>
-                    <Image source={{ uri: rAvatar }} style={styles.replyAvatar} resizeMode="cover" />
+                  <View
+                    key={String(rep.id ?? rep.reply_id)}
+                    style={styles.replyRow}
+                  >
+                    <Image
+                      source={{ uri: rAvatar }}
+                      style={styles.replyAvatar}
+                      resizeMode="cover"
+                    />
                     <View style={styles.replyBubble}>
                       <View style={styles.replyHeaderRow}>
                         <Text style={styles.replyName}>{rName}</Text>
@@ -722,7 +801,11 @@ export default function RestaurantFeedbackScreen() {
                             activeOpacity={0.7}
                             onPress={() => openReportForReply(item, rep)}
                           >
-                            <Ionicons name="flag-outline" size={14} color="#ef4444" />
+                            <Ionicons
+                              name="flag-outline"
+                              size={14}
+                              color="#ef4444"
+                            />
                           </TouchableOpacity>
                           <Ionicons
                             name="checkmark-done-outline"
@@ -739,7 +822,10 @@ export default function RestaurantFeedbackScreen() {
                 );
               })}
 
-              <TouchableOpacity style={styles.hideRepliesRow} onPress={toggleExpand}>
+              <TouchableOpacity
+                style={styles.hideRepliesRow}
+                onPress={toggleExpand}
+              >
                 <Text style={styles.hideRepliesText}>Hide replies</Text>
               </TouchableOpacity>
             </View>
@@ -766,12 +852,19 @@ export default function RestaurantFeedbackScreen() {
     otherTooLong;
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 8) + 18 }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn} activeOpacity={0.7}>
+    <SafeAreaView style={styles.safe} edges={["top","left", "right", "bottom"]}>
+      <View style={styles.topGlow} />
+      <View style={styles.header}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+          activeOpacity={0.7}
+        >
           <Ionicons name="arrow-back" size={22} color="#0f172a" />
         </TouchableOpacity>
-        <Text style={styles.title}>{businessName ? `${businessName} Feedback` : "Feedback"}</Text>
+        <Text style={styles.title}>
+          {businessName ? `${businessName} Feedback` : "Feedback"}
+        </Text>
         <View style={{ width: 40 }} />
       </View>
 
@@ -789,7 +882,9 @@ export default function RestaurantFeedbackScreen() {
             </View>
           ) : null
         }
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
         ListFooterComponent={
           loading ? (
             <View style={{ paddingVertical: 16 }}>
@@ -800,8 +895,15 @@ export default function RestaurantFeedbackScreen() {
       />
 
       {/* Reply modal */}
-      <Modal visible={replyModalVisible} {...modalCommon} onRequestClose={closeReplyModal}>
-        <KeyboardAvoidingView style={styles.kav} behavior={Platform.OS === "ios" ? "padding" : "height"}>
+      <Modal
+        visible={replyModalVisible}
+        {...modalCommon}
+        onRequestClose={closeReplyModal}
+      >
+        <KeyboardAvoidingView
+          style={styles.kav}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+        >
           <Pressable style={styles.modalBackdrop} onPress={closeReplyModal}>
             <Pressable style={styles.modalContent} onPress={() => {}}>
               <Text style={styles.modalTitle}>Reply to feedback</Text>
@@ -837,7 +939,11 @@ export default function RestaurantFeedbackScreen() {
                   onPress={submitReply}
                   disabled={postingReply}
                 >
-                  {postingReply ? <ActivityIndicator size="small" /> : <Text style={styles.modalBtnSendText}>Send</Text>}
+                  {postingReply ? (
+                    <ActivityIndicator size="small" />
+                  ) : (
+                    <Text style={styles.modalBtnSendText}>Send</Text>
+                  )}
                 </TouchableOpacity>
               </View>
             </Pressable>
@@ -846,7 +952,11 @@ export default function RestaurantFeedbackScreen() {
       </Modal>
 
       {/* Report bottom sheet */}
-      <Modal visible={reportOpen} {...modalCommon} onRequestClose={closeReportSheet}>
+      <Modal
+        visible={reportOpen}
+        {...modalCommon}
+        onRequestClose={closeReportSheet}
+      >
         <KeyboardAvoidingView
           style={styles.kav}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -855,11 +965,13 @@ export default function RestaurantFeedbackScreen() {
           <Pressable style={styles.menuBackdrop} onPress={closeReportSheet}>
             <Pressable style={styles.reportSheet} onPress={() => {}}>
               <Text style={styles.reportTitle}>
-                {reportTarget?.kind === "reply" ? "Report Reply" : "Report Comment"}
+                {reportTarget?.kind === "reply"
+                  ? "Report Reply"
+                  : "Report Comment"}
               </Text>
               <Text style={styles.reportSubtitle}>
-                A reported item will be assessed according to our guidelines before any action is taken.
-                Your report will be anonymous.
+                A reported item will be assessed according to our guidelines
+                before any action is taken. Your report will be anonymous.
               </Text>
 
               <ScrollView
@@ -880,7 +992,11 @@ export default function RestaurantFeedbackScreen() {
                       }}
                     >
                       <Ionicons
-                        name={selected ? "radio-button-on-outline" : "radio-button-off-outline"}
+                        name={
+                          selected
+                            ? "radio-button-on-outline"
+                            : "radio-button-off-outline"
+                        }
                         size={20}
                         color={selected ? BLUE : "#9ca3af"}
                         style={{ marginRight: 10 }}
@@ -896,21 +1012,35 @@ export default function RestaurantFeedbackScreen() {
                       style={styles.reportOtherInput}
                       placeholder="Write your reason (max 30 words)…"
                       value={reportOtherText}
-                      onChangeText={(t) => setReportOtherText(clampToWords(t, REPORT_OTHER_MAX_WORDS))}
+                      onChangeText={(t) =>
+                        setReportOtherText(
+                          clampToWords(t, REPORT_OTHER_MAX_WORDS),
+                        )
+                      }
                       multiline
                       textAlignVertical="top"
                       returnKeyType="done"
                     />
                     <View style={styles.reportOtherMetaRow}>
-                      <Text style={[styles.reportOtherCounter, otherTooLong && styles.reportOtherCounterBad]}>
-                        {Math.min(otherWords, REPORT_OTHER_MAX_WORDS)}/{REPORT_OTHER_MAX_WORDS} words
+                      <Text
+                        style={[
+                          styles.reportOtherCounter,
+                          otherTooLong && styles.reportOtherCounterBad,
+                        ]}
+                      >
+                        {Math.min(otherWords, REPORT_OTHER_MAX_WORDS)}/
+                        {REPORT_OTHER_MAX_WORDS} words
                       </Text>
                       {!!reportOtherText.trim() && (
                         <TouchableOpacity
                           onPress={() => setReportOtherText("")}
                           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                         >
-                          <Ionicons name="close-circle" size={18} color="#9ca3af" />
+                          <Ionicons
+                            name="close-circle"
+                            size={18}
+                            color="#9ca3af"
+                          />
                         </TouchableOpacity>
                       )}
                     </View>
@@ -926,7 +1056,11 @@ export default function RestaurantFeedbackScreen() {
                   (reportDisabled || postingReport) && styles.reportBtnDisabled,
                 ]}
               >
-                {postingReport ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.reportBtnTxt}>Report</Text>}
+                {postingReport ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.reportBtnTxt}>Report</Text>
+                )}
               </TouchableOpacity>
             </Pressable>
           </Pressable>
@@ -938,134 +1072,311 @@ export default function RestaurantFeedbackScreen() {
 
 /* ===================== styles ===================== */
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
   header: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomColor: "#e2e8f0",
-    borderBottomWidth: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
   },
-  backBtn: { height: 40, width: 40, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  title: { flex: 1, textAlign: "center", fontSize: 17, fontWeight: "700", color: "#0f172a" },
-  listPad: { paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
+  backBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    alignItems: "center",
+    justifyContent: "center",
+    ...SHADOW.sm,
+  },
+  title: {
+    flex: 1,
+    textAlign: "center",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+  listPad: {
+    paddingHorizontal: 18,
+    paddingTop: 6,
+    paddingBottom: 20,
+  },
 
   summary: {
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    padding: 16,
+    marginVertical: 8,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 12,
-    padding: 12,
-    marginVertical: 6,
-    backgroundColor: "#f8fafc",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    borderColor: "#F3E8FF",
+    ...SHADOW.sm,
   },
   summaryLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
   summaryScore: { fontWeight: "800", color: "#0f172a" },
   summaryText: { color: "#475569" },
 
-  card: { borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 12, padding: 12, marginVertical: 6, backgroundColor: "#fff" },
-  cardHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  card: {
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    padding: 16,
+    marginVertical: 8,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    ...SHADOW.sm,
+  },
+  cardHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 6,
+  },
   userRow: { flexDirection: "row", alignItems: "center", gap: 10, flex: 1 },
-  avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#e5e7eb" },
-  userName: { color: "#0f172a", fontWeight: "700", flexShrink: 1 },
+  avatar: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: "#F4E9FF",
+  },
+  userName: {
+    fontFamily: FONT.body,
+    fontSize: 15,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
   cardTimeSmall: { fontSize: 11, color: "#94a3b8", marginTop: 2 },
 
   rightHead: { flexDirection: "row", alignItems: "center", gap: 10 },
   reportIconBtn: {
-    height: 34,
-    width: 34,
-    borderRadius: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 14,
+    backgroundColor: "#FFE7EE",
+    borderWidth: 1,
+    borderColor: "#FFD4DD",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#fff1f2",
-    borderWidth: 1,
-    borderColor: "#fecdd3",
   },
   ratingPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: "#fff7ed",
-    borderWidth: 1,
-    borderColor: "#fed7aa",
-  },
-  ratingText: { color: "#92400e", fontWeight: "800" },
-  cardBody: { color: "#0f172a", fontSize: 15, marginTop: 6, marginBottom: 8 },
-
-  cardFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
-  cardFootLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
-  iconStat: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 6, paddingVertical: 3, borderRadius: 999, backgroundColor: "#f9fafb" },
-  iconStatText: { fontSize: 11, fontWeight: "600", color: "#0f172a" },
-
-  replyBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
+    backgroundColor: "#FFF3D6",
     borderWidth: 1,
-    borderColor: "#bae6fd",
-    backgroundColor: "#eff6ff",
+    borderColor: "#FFE4A3",
   },
-  replyBtnText: { fontSize: 12, fontWeight: "600", color: "#0284c7" },
+  ratingText: { color: "#92400e", fontWeight: "800" },
+  cardBody: { color: "#0f172a", fontSize: 15, marginTop: 6, marginBottom: 8 },
 
-  empty: { alignItems: "center", justifyContent: "center", paddingVertical: 36 },
+  cardFoot: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 4,
+  },
+  cardFootLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
+  iconStat: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: "#f9fafb",
+  },
+  iconStatText: { fontSize: 11, fontWeight: "600", color: "#0f172a" },
+
+  replyBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#F4E9FF",
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+  },
+  replyBtnText: {
+    color: BRAND.purple,
+    fontWeight: "900",
+    fontSize: 12,
+  },
+
+  empty: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 36,
+  },
   emptyText: { color: "#64748b", marginTop: 10, fontWeight: "600" },
 
-  viewRepliesRow: { flexDirection: "row", alignItems: "center", marginTop: 6, marginLeft: 40, gap: 6 },
+  viewRepliesRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 6,
+    marginLeft: 40,
+    gap: 6,
+  },
   viewRepliesLine: { width: 18, height: 1, backgroundColor: "#cbd5f5" },
   viewRepliesText: { fontSize: 12, color: "#2563eb", fontWeight: "500" },
 
   replyThreadContainer: { flexDirection: "row", marginTop: 6, marginLeft: 24 },
-  threadBar: { width: 2, borderRadius: 999, backgroundColor: "#e5e7eb", marginRight: 8 },
+  threadBar: {
+    width: 2,
+    borderRadius: 999,
+    backgroundColor: "#e5e7eb",
+    marginRight: 8,
+  },
   replyList: { flex: 1 },
   replyRow: { flexDirection: "row", alignItems: "flex-start", marginTop: 4 },
-  replyAvatar: { width: 24, height: 24, borderRadius: 12, backgroundColor: "#e5e7eb", marginRight: 6 },
-  replyBubble: { flex: 1, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: "#f3f4f6" },
-  replyHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 2 },
+  replyAvatar: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: "#e5e7eb",
+    marginRight: 6,
+  },
+  replyBubble: {
+    flex: 1,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: "#f3f4f6",
+  },
+  replyHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 2,
+  },
   replyName: { fontSize: 12, fontWeight: "700", color: "#0f172a" },
   replyMetaRight: { flexDirection: "row", alignItems: "center" },
   replyTime: { fontSize: 11, color: "#9ca3af" },
   replyText: { fontSize: 13, color: "#111827", marginTop: 2 },
-  replyReportBtn: { marginLeft: 6, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 999, backgroundColor: "#fff1f2", borderWidth: 1, borderColor: "#fecdd3" },
+  replyReportBtn: {
+    marginLeft: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: "#fff1f2",
+    borderWidth: 1,
+    borderColor: "#fecdd3",
+  },
   hideRepliesRow: { marginTop: 6 },
   hideRepliesText: { fontSize: 11, color: "#6b7280", fontWeight: "500" },
 
   // modals
   kav: { flex: 1, justifyContent: "flex-end" },
-  modalBackdrop: { flex: 1, backgroundColor: "rgba(15,23,42,0.45)", alignItems: "center", justifyContent: "center", paddingHorizontal: 16 },
-  modalContent: { width: "100%", maxWidth: 400, borderRadius: 16, padding: 16, backgroundColor: "#fff" },
-  modalTitle: { fontSize: 16, fontWeight: "700", color: "#0f172a", marginBottom: 6 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15,23,42,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  modalContent: {
+    width: "100%",
+    maxWidth: 400,
+    borderRadius: 16,
+    padding: 16,
+    backgroundColor: "#fff",
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#0f172a",
+    marginBottom: 6,
+  },
   modalOriginal: { fontSize: 13, color: "#475569", marginBottom: 8 },
-  modalInput: { minHeight: 80, maxHeight: 150, borderWidth: 1, borderColor: "#e2e8f0", borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8, fontSize: 14, textAlignVertical: "top", color: "#0f172a", marginBottom: 10 },
+  modalInput: {
+    minHeight: 80,
+    maxHeight: 150,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    textAlignVertical: "top",
+    color: "#0f172a",
+    marginBottom: 10,
+  },
   modalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
   modalBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999 },
   modalBtnCancel: { backgroundColor: "#e5e7eb" },
-  modalBtnSend: { backgroundColor: "#0ea5e9" },
+  modalBtnSend: {
+    backgroundColor: BRAND.purple,
+  },
   modalBtnCancelText: { fontSize: 13, fontWeight: "600", color: "#0f172a" },
   modalBtnSendText: { fontSize: 13, fontWeight: "600", color: "#f9fafb" },
 
   // report sheet
-  menuBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.25)", justifyContent: "flex-end" },
-  reportSheet: { backgroundColor: "#fff", padding: 16, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: "88%" },
-  reportTitle: { fontSize: 18, fontWeight: "800", color: "#111827", marginBottom: 4 },
+  menuBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.25)",
+    justifyContent: "flex-end",
+  },
+  reportSheet: {
+    backgroundColor: "#fff",
+    padding: 16,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: "88%",
+  },
+  reportTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#111827",
+    marginBottom: 4,
+  },
   reportSubtitle: { fontSize: 13, color: "#6b7280", marginBottom: 12 },
   reportRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8 },
   reportRowTxt: { flex: 1, fontSize: 14, color: "#111827" },
-  reportBtn: { marginTop: 12, backgroundColor: BLUE, borderRadius: 999, paddingVertical: 10, alignItems: "center" },
+  reportBtn: {
+    marginTop: 14,
+    backgroundColor: BRAND.purple,
+    borderRadius: RADIUS.pill,
+    paddingVertical: 14,
+    alignItems: "center",
+    ...SHADOW.sm,
+  },
   reportBtnDisabled: { opacity: 0.5 },
   reportBtnTxt: { color: "#fff", fontWeight: "700", fontSize: 15 },
-  reportOtherInput: { borderWidth: 1, borderColor: "#E5E7EB", backgroundColor: "#F9FAFB", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 13, color: "#111827", minHeight: 44, maxHeight: 120 },
-  reportOtherMetaRow: { marginTop: 6, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  reportOtherInput: {
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#F9FAFB",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    color: "#111827",
+    minHeight: 44,
+    maxHeight: 120,
+  },
+  reportOtherMetaRow: {
+    marginTop: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   reportOtherCounter: { fontSize: 12, color: "#6b7280", fontWeight: "600" },
   reportOtherCounterBad: { color: "#ef4444" },
 });

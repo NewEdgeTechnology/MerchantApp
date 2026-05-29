@@ -20,11 +20,15 @@ import {
   Pressable,
   Dimensions,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { useRoute, useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
 import { BUSINESS_DETAILS, MERCHANT_LOGO } from "@env";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
@@ -55,9 +59,14 @@ async function getAccessTokenFromSecureStore() {
           obj?.jwt ||
           obj?.data?.accessToken ||
           obj?.data?.token;
-        if (maybe) return String(maybe).replace(/^Bearer\s+/i, "").trim();
+        if (maybe)
+          return String(maybe)
+            .replace(/^Bearer\s+/i, "")
+            .trim();
       } catch {
-        return String(v).replace(/^Bearer\s+/i, "").trim();
+        return String(v)
+          .replace(/^Bearer\s+/i, "")
+          .trim();
       }
     }
   }
@@ -79,7 +88,10 @@ async function getAccessTokenFromSecureStore() {
         obj?.session?.token ||
         obj?.data?.accessToken ||
         obj?.data?.token;
-      if (maybe) return String(maybe).replace(/^Bearer\s+/i, "").trim();
+      if (maybe)
+        return String(maybe)
+          .replace(/^Bearer\s+/i, "")
+          .trim();
     } catch {
       // ignore
     }
@@ -122,12 +134,36 @@ const safeText = (v, fallback = "—") => (isNilish(v) ? fallback : String(v));
 const formatTime = (t) => {
   const s = String(t || "").trim();
   if (!s) return "—";
-  if (/^\d{2}:\d{2}:\d{2}$/.test(s)) return s.slice(0, 5);
-  return s;
+
+  let hh = null;
+  let mm = null;
+
+  // ISO DateTime: 1970-01-01T09:00:00.000Z
+  const isoMatch = s.match(/T(\d{2}):(\d{2})/);
+  if (isoMatch) {
+    hh = Number(isoMatch[1]);
+    mm = Number(isoMatch[2]);
+  }
+
+  // Time only: 09:00:00
+  const timeMatch = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (timeMatch) {
+    hh = Number(timeMatch[1]);
+    mm = Number(timeMatch[2]);
+  }
+
+  if (hh === null || mm === null) return s;
+
+  const period = hh >= 12 ? "PM" : "AM";
+  const hour12 = hh % 12 || 12;
+
+  return `${hour12}:${String(mm).padStart(2, "0")} ${period}`;
 };
 
 const deliveryLabel = (opt) => {
-  const v = String(opt || "").toUpperCase().trim();
+  const v = String(opt || "")
+    .toUpperCase()
+    .trim();
   if (!v) return "Not set";
   if (v === "BOTH") return "In-house + Grab delivery";
   if (v === "GRAB") return "Grab delivery";
@@ -149,13 +185,11 @@ const pct = (v) => {
   return `${n}%`;
 };
 
-/* ---------------- UI atoms (style-only changes) ---------------- */
-
 const Section = ({ title, icon, children }) => (
   <View style={styles.card}>
     <View style={styles.sectionHeader}>
       <View style={styles.sectionIcon}>
-        <Ionicons name={icon} size={16} color="#0f172a" />
+        <Ionicons name={icon} size={17} color={BRAND.purple} />
       </View>
       <Text style={styles.sectionTitle}>{title}</Text>
     </View>
@@ -172,7 +206,7 @@ const Row = ({ label, value, icon, onPress }) => (
   >
     <View style={styles.rowLeft}>
       <View style={styles.rowIcon}>
-        <Ionicons name={icon} size={16} color="#0f172a" />
+        <Ionicons name={icon} size={16} color={BRAND.purple} />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={styles.rowLabel}>{label}</Text>
@@ -181,7 +215,9 @@ const Row = ({ label, value, icon, onPress }) => (
         </Text>
       </View>
     </View>
-    {onPress ? <Ionicons name="chevron-forward" size={18} color="#94a3b8" /> : null}
+    {onPress ? (
+      <Ionicons name="chevron-forward" size={18} color={BRAND.grey} />
+    ) : null}
   </TouchableOpacity>
 );
 
@@ -190,8 +226,8 @@ const Badge = ({ text, icon, tone = "neutral" }) => {
     tone === "good"
       ? styles.badgeGood
       : tone === "warn"
-      ? styles.badgeWarn
-      : styles.badgeNeutral;
+        ? styles.badgeWarn
+        : styles.badgeNeutral;
 
   return (
     <View style={[styles.badge, toneStyle]}>
@@ -291,7 +327,7 @@ export default function ProfileBusinessDetails() {
         isRefresh ? setRefreshing(false) : setLoading(false);
       }
     },
-    [businessIdParam]
+    [businessIdParam],
   );
 
   useEffect(() => {
@@ -300,7 +336,7 @@ export default function ProfileBusinessDetails() {
 
   const onRefresh = useCallback(
     () => fetchDetails({ isRefresh: true }),
-    [fetchDetails]
+    [fetchDetails],
   );
 
   const openMaps = useCallback(async () => {
@@ -312,7 +348,7 @@ export default function ProfileBusinessDetails() {
       return;
     }
     const label = encodeURIComponent(
-      safeText(details?.business_name, "Business")
+      safeText(details?.business_name, "Business"),
     );
     const url = Platform.select({
       ios: `maps:0,0?q=${label}@${lat},${lng}`,
@@ -339,12 +375,11 @@ export default function ProfileBusinessDetails() {
     });
   }, [navigation, details, businessIdParam]);
 
-  const headerTopPad = Math.max(insets.top, 8) + 18;
 
   if (loading) {
     return (
       <View style={styles.centerWrap}>
-        <ActivityIndicator size="large" color="#16a34a" />
+        <ActivityIndicator size="large" color={BRAND.purple} />
         <Text style={styles.muted}>Loading…</Text>
       </View>
     );
@@ -368,7 +403,8 @@ export default function ProfileBusinessDetails() {
   const hasLogo = !!imageUrls.logoUrl;
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
+    <SafeAreaView style={styles.safe} edges={["top","left", "right", "bottom"]}>
+      <View style={styles.topGlow} />
       {/* Image popup */}
       <Modal
         visible={imgModalOpen}
@@ -408,23 +444,31 @@ export default function ProfileBusinessDetails() {
       </Modal>
 
       {/* Header (matches PersonalInformation style) */}
-      <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
+      <View style={[styles.headerBar]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backBtn}
           activeOpacity={0.7}
         >
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+          <Ionicons name="arrow-back" size={22} color={BRAND.black} />
         </TouchableOpacity>
 
         <Text style={styles.headerTitle}>Business Details</Text>
 
         <View style={styles.headerRight}>
-          <TouchableOpacity onPress={goEdit} style={styles.iconBtn} activeOpacity={0.7}>
-            <Ionicons name="create-outline" size={20} color="#0f172a" />
+          <TouchableOpacity
+            onPress={goEdit}
+            style={styles.iconBtn}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="create-outline" size={20} color={BRAND.black} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={onRefresh} style={styles.iconBtn} activeOpacity={0.7}>
-            <Ionicons name="refresh" size={20} color="#0f172a" />
+          <TouchableOpacity
+            onPress={onRefresh}
+            style={styles.iconBtn}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="refresh" size={20} color={BRAND.black} />
           </TouchableOpacity>
         </View>
       </View>
@@ -461,7 +505,11 @@ export default function ProfileBusinessDetails() {
                 />
               ) : (
                 <View style={styles.heroLogoPlaceholder}>
-                  <Ionicons name="storefront-outline" size={26} color="#64748b" />
+                  <Ionicons
+                    name="storefront-outline"
+                    size={26}
+                    color="#64748b"
+                  />
                 </View>
               )}
             </View>
@@ -477,7 +525,8 @@ export default function ProfileBusinessDetails() {
                   text={deliveryOpt}
                   icon="car-outline"
                   tone={
-                    String(details?.delivery_option || "").toUpperCase() === "BOTH"
+                    String(details?.delivery_option || "").toUpperCase() ===
+                    "BOTH"
                       ? "good"
                       : "neutral"
                   }
@@ -585,7 +634,9 @@ export default function ProfileBusinessDetails() {
             {hasLicense ? (
               <TouchableOpacity
                 style={styles.viewBtn}
-                onPress={() => openImageModal("License Image", imageUrls.licenseUrl)}
+                onPress={() =>
+                  openImageModal("License Image", imageUrls.licenseUrl)
+                }
                 activeOpacity={0.9}
               >
                 <Ionicons name="eye-outline" size={18} color="#0f172a" />
@@ -597,7 +648,9 @@ export default function ProfileBusinessDetails() {
           {hasLicense ? (
             <TouchableOpacity
               activeOpacity={0.9}
-              onPress={() => openImageModal("License Image", imageUrls.licenseUrl)}
+              onPress={() =>
+                openImageModal("License Image", imageUrls.licenseUrl)
+              }
               style={{ marginTop: 12 }}
             >
               <Image
@@ -609,7 +662,9 @@ export default function ProfileBusinessDetails() {
           ) : (
             <View style={styles.emptyDoc}>
               <Ionicons name="document-outline" size={22} color="#64748b" />
-              <Text style={styles.emptyDocText}>No license image uploaded.</Text>
+              <Text style={styles.emptyDocText}>
+                No license image uploaded.
+              </Text>
             </View>
           )}
         </Section>
@@ -620,112 +675,176 @@ export default function ProfileBusinessDetails() {
   );
 }
 
-/* ---------------- styles (updated to match PersonalInformation) ---------------- */
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
 
   headerBar: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomColor: "#e5e7eb",
-    borderBottomWidth: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
   },
+
   backBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
+    ...SHADOW.sm,
   },
+
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
   },
-  headerRight: { width: 90, flexDirection: "row", justifyContent: "flex-end", gap: 8 },
+
+  headerRight: {
+    width: 90,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+  },
+
   iconBtn: {
     height: 40,
     width: 40,
-    borderRadius: 12,
+    borderRadius: RADIUS.full,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: BRAND.white,
+    ...SHADOW.sm,
   },
 
-  scrollInner: { padding: 18 },
+  scrollInner: {
+    paddingHorizontal: 18,
+    paddingBottom: 30,
+  },
 
   centerWrap: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
-    backgroundColor: "#fff",
+    backgroundColor: "#FBF7FF",
   },
-  muted: { marginTop: 10, color: "#475569" },
+
+  muted: {
+    fontFamily: FONT.body,
+    marginTop: 10,
+    color: BRAND.grey,
+    fontWeight: "600",
+  },
 
   errorCard: {
     borderWidth: 1,
-    borderColor: "#fecaca",
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 14,
+    borderColor: "#FFE1E6",
+    backgroundColor: BRAND.white,
+    borderRadius: 20,
+    padding: 16,
     marginBottom: 16,
+    ...SHADOW.sm,
   },
+
   errorTitle: {
+    fontFamily: FONT.header,
     fontSize: 16,
-    fontWeight: "700",
-    color: "#b91c1c",
+    fontWeight: "900",
+    color: BRAND.red,
     marginBottom: 6,
   },
-  errorText: { color: "#7f1d1d" },
+
+  errorText: {
+    fontFamily: FONT.body,
+    color: BRAND.red,
+  },
 
   saveButton: {
-    backgroundColor: "#16a34a",
-    padding: 15,
-    borderRadius: 10,
+    backgroundColor: BRAND.purple,
+    paddingVertical: 15,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
-    elevation: 1,
+    ...SHADOW.md,
   },
+
   saveButtonText: {
-    color: "#fff",
-    fontSize: SCREEN_W > 400 ? 18 : 16,
-    fontWeight: "700",
+    fontFamily: FONT.body,
+    color: BRAND.white,
+    fontSize: SCREEN_W > 400 ? 17 : 16,
+    fontWeight: "900",
   },
 
   hero: {
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 12,
-    padding: 14,
-    backgroundColor: "#fff",
+    borderColor: "#F3E8FF",
+    borderRadius: 26,
+    padding: 16,
+    backgroundColor: BRAND.white,
     marginBottom: 16,
+    // ...SHADOW.md,
   },
-  heroTop: { flexDirection: "row", gap: 12, alignItems: "center" },
+
+  heroTop: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "center",
+  },
+
   heroLogoWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     overflow: "hidden",
-    backgroundColor: "#f1f5f9",
+    backgroundColor: "#F4E9FF",
     borderWidth: 2,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
   },
-  heroLogo: { width: "100%", height: "100%" },
-  heroLogoPlaceholder: { flex: 1, alignItems: "center", justifyContent: "center" },
+
+  heroLogo: {
+    width: "100%",
+    height: "100%",
+  },
+
+  heroLogoPlaceholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
   heroName: {
-    fontSize: SCREEN_W > 400 ? 18 : 16,
-    fontWeight: "800",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: SCREEN_W > 400 ? 20 : 18,
+    fontWeight: "900",
+    color: BRAND.black,
     marginBottom: 8,
   },
 
-  badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  badgeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
 
   badge: {
     flexDirection: "row",
@@ -733,91 +852,173 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 10,
     paddingVertical: 7,
-    borderRadius: 999,
+    borderRadius: RADIUS.full,
     borderWidth: 1,
   },
-  badgeText: { fontSize: 12, fontWeight: "700", color: "#0f172a" },
-  badgeNeutral: { backgroundColor: "#f8fafc", borderColor: "#e2e8f0" },
-  badgeGood: { backgroundColor: "#ecfdf5", borderColor: "#bbf7d0" },
-  badgeWarn: { backgroundColor: "#fffbeb", borderColor: "#fde68a" },
 
-  heroBottom: { flexDirection: "row", gap: 10, marginTop: 14 },
+  badgeText: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    fontWeight: "800",
+    color: BRAND.black,
+  },
+
+  badgeNeutral: {
+    backgroundColor: "#F4E9FF",
+    borderColor: "#F3E8FF",
+  },
+
+  badgeGood: {
+    backgroundColor: "#F0FFF5",
+    borderColor: "#D5F5DD",
+  },
+
+  badgeWarn: {
+    backgroundColor: "#FFF3D6",
+    borderColor: "#FFE4A3",
+  },
+
+  heroBottom: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+  },
+
   miniCard: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    backgroundColor: "#fff",
-    borderRadius: 12,
+    borderColor: "#F3E8FF",
+    backgroundColor: "#FCFCFC",
+    borderRadius: 18,
     padding: 12,
     gap: 4,
   },
+
   miniIcon: {
-    height: 28,
-    width: 28,
-    borderRadius: 8,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
+    height: 30,
+    width: 30,
+    borderRadius: 12,
+    backgroundColor: "#F4E9FF",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 2,
   },
-  miniLabel: { fontSize: 12, color: "#64748b", fontWeight: "700" },
-  miniValue: { fontSize: 13, color: "#0f172a", fontWeight: "800" },
+
+  miniLabel: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    fontWeight: "800",
+  },
+
+  miniValue: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: BRAND.black,
+    fontWeight: "900",
+  },
 
   card: {
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 14,
+    borderColor: "#F3E8FF",
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    padding: 16,
     marginBottom: 16,
+    // ...SHADOW.sm,
   },
-  sectionHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+
+  sectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+
   sectionIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
+    width: 34,
+    height: 34,
+    borderRadius: 14,
+    backgroundColor: "#F4E9FF",
     alignItems: "center",
     justifyContent: "center",
   },
+
   sectionTitle: {
-    fontSize: SCREEN_W > 400 ? 16 : 15,
-    fontWeight: "800",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: SCREEN_W > 400 ? 17 : 16,
+    fontWeight: "900",
+    color: BRAND.black,
   },
 
   row: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: 10,
+    paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e5e7eb",
+    borderBottomColor: "#F1E8F8",
     gap: 12,
   },
-  rowLeft: { flexDirection: "row", gap: 10, alignItems: "center", flex: 1 },
+
+  rowLeft: {
+    flexDirection: "row",
+    gap: 10,
+    alignItems: "center",
+    flex: 1,
+  },
+
   rowIcon: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
+    width: 32,
+    height: 32,
+    borderRadius: 13,
+    backgroundColor: "#F4E9FF",
     alignItems: "center",
     justifyContent: "center",
   },
-  rowLabel: { fontSize: 12, color: "#64748b", fontWeight: "700" },
-  rowValue: { marginTop: 2, fontSize: 13, color: "#0f172a", fontWeight: "700" },
 
-  hint: { marginTop: 8, fontSize: 12, color: "#64748b" },
+  rowLabel: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    fontWeight: "800",
+  },
 
-  docRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  docTitle: { fontSize: 13, fontWeight: "800", color: "#0f172a" },
-  docSub: { marginTop: 4, fontSize: 12, color: "#64748b", fontWeight: "700" },
+  rowValue: {
+    fontFamily: FONT.body,
+    marginTop: 2,
+    fontSize: 13,
+    color: BRAND.black,
+    fontWeight: "800",
+  },
+
+  hint: {
+    fontFamily: FONT.body,
+    marginTop: 8,
+    fontSize: 12,
+    color: BRAND.grey,
+    fontWeight: "600",
+  },
+
+  docRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+
+  docTitle: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+
+  docSub: {
+    fontFamily: FONT.body,
+    marginTop: 4,
+    fontSize: 12,
+    color: BRAND.grey,
+    fontWeight: "700",
+  },
 
   viewBtn: {
     flexDirection: "row",
@@ -825,33 +1026,46 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 9,
-    borderRadius: 10,
-    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    backgroundColor: "#F4E9FF",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: "#F3E8FF",
   },
-  viewBtnText: { fontSize: 12, fontWeight: "800", color: "#0f172a" },
+
+  viewBtnText: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    fontWeight: "900",
+    color: BRAND.purple,
+  },
 
   licensePreview: {
     width: "100%",
     height: 180,
-    borderRadius: 12,
-    backgroundColor: "#e2e8f0",
+    borderRadius: 18,
+    backgroundColor: "#F4E9FF",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: "#F3E8FF",
   },
+
   emptyDoc: {
     marginTop: 12,
     height: 150,
-    borderRadius: 12,
-    backgroundColor: "#f8fafc",
+    borderRadius: 18,
+    backgroundColor: "#FCFCFC",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: "#F3E8FF",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
   },
-  emptyDocText: { fontSize: 12, color: "#64748b", fontWeight: "800" },
+
+  emptyDocText: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    fontWeight: "800",
+  },
 
   modalBackdrop: {
     flex: 1,
@@ -860,43 +1074,61 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 16,
   },
+
   modalCard: {
     width: Math.min(SCREEN_W - 32, 420),
     maxHeight: SCREEN_H * 0.78,
-    backgroundColor: "#fff",
-    borderRadius: 12,
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
     overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
   },
+
   modalHeader: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e5e7eb",
-    backgroundColor: "#fff",
+    borderBottomColor: "#F1E8F8",
+    backgroundColor: BRAND.white,
   },
+
   modalTitle: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 14,
+    fontWeight: "900",
+    color: BRAND.black,
     flex: 1,
     marginRight: 10,
   },
+
   modalCloseBtn: {
     width: 34,
     height: 34,
-    borderRadius: 10,
-    backgroundColor: "#f8fafc",
+    borderRadius: 14,
+    backgroundColor: "#F4E9FF",
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
   },
-  modalImage: { width: "100%", height: SCREEN_H * 0.55, backgroundColor: "#0f172a" },
-  modalEmpty: { height: 260, alignItems: "center", justifyContent: "center", gap: 8 },
-  modalEmptyText: { fontSize: 12, color: "#64748b", fontWeight: "800" },
+
+  modalImage: {
+    width: "100%",
+    height: SCREEN_H * 0.55,
+    backgroundColor: BRAND.black,
+  },
+
+  modalEmpty: {
+    height: 260,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+
+  modalEmptyText: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    fontWeight: "800",
+  },
 });

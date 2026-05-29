@@ -36,6 +36,7 @@ import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import { OSMView } from "expo-osm-sdk";
 import { useNavigation, useRoute } from "@react-navigation/native";
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 import { BUSINESS_DETAILS, MERCHANT_LOGO } from "@env";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
@@ -165,17 +166,30 @@ const to24hHHmmss = (input) => {
 const toAmPmLabel = (t) => {
   const raw = String(t || "").trim();
   if (!raw) return "";
-  const m = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-  if (!m) return raw;
 
-  let hh = Number(m[1]);
-  const mm = Number(m[2]);
+  let hh = null;
+  let mm = null;
+
+  // ISO DateTime: 1970-01-01T09:30:00.000Z
+  const isoMatch = raw.match(/T(\d{2}):(\d{2})/);
+  if (isoMatch) {
+    hh = Number(isoMatch[1]);
+    mm = Number(isoMatch[2]);
+  }
+
+  // Time only: 09:30:00 or 09:30
+  const timeMatch = raw.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (timeMatch) {
+    hh = Number(timeMatch[1]);
+    mm = Number(timeMatch[2]);
+  }
+
   if (!Number.isFinite(hh) || !Number.isFinite(mm)) return raw;
 
   const ap = hh >= 12 ? "PM" : "AM";
-  hh = hh % 12;
-  if (hh === 0) hh = 12;
-  return `${hh}:${pad2(mm)} ${ap}`;
+  const hour12 = hh % 12 || 12;
+
+  return `${hour12}:${pad2(mm)} ${ap}`;
 };
 
 const splitAmPm = (label) => {
@@ -212,12 +226,10 @@ const normalizeTime = (t) => {
   const s = String(t || "").trim();
   if (!s) return null;
 
-  const out = to24hHHmmss(s);
-  if (out) return out;
+  const hhmmss = to24hHHmmss(s);
+  if (!hhmmss) return null;
 
-  if (/^\d{2}:\d{2}$/.test(s)) return s + ":00";
-  if (/^\d{2}:\d{2}:\d{2}$/.test(s)) return s;
-  return s;
+  return `1970-01-01T${hhmmss}.000Z`;
 };
 
 const guessMime = (uri) => {
@@ -254,78 +266,15 @@ const pickFirstString = (...vals) => {
 
 async function getAccessTokenFromLogin() {
   try {
-    const raw = await SecureStore.getItemAsync(KEY_MERCHANT_LOGIN);
-    if (raw) {
-      const parsed = tryParseJson(raw);
-
-      const tokenNode =
-        parsed?.token ??
-        parsed?.data?.token ??
-        parsed?.auth ??
-        parsed?.jwt ??
-        parsed?.access_token ??
-        parsed?.accessToken ??
-        parsed?.token ??
-        parsed?.jwt;
-
-      const tokenMaybeParsed =
-        typeof tokenNode === "string"
-          ? tryParseJson(tokenNode) || tokenNode
-          : tokenNode;
-
-      const candidate = pickFirstString(
-        tokenMaybeParsed?.access_token,
-        tokenMaybeParsed?.accessToken,
-        tokenMaybeParsed?.token,
-        tokenMaybeParsed?.jwt,
-        typeof tokenMaybeParsed === "string" ? tokenMaybeParsed : null,
-        parsed?.access_token,
-        parsed?.accessToken,
-        parsed?.token,
-        parsed?.jwt,
-      );
-
-      if (candidate) return stripBearer(candidate);
-    }
-  } catch {}
-
-  try {
     const raw = await SecureStore.getItemAsync(KEY_AUTH_TOKEN);
-    if (raw) {
-      const parsed = tryParseJson(raw);
-      const candidate = pickFirstString(
-        parsed?.access_token,
-        parsed?.accessToken,
-        parsed?.token,
-        typeof raw === "string" ? raw : null,
-      );
-      if (candidate) return stripBearer(candidate);
-    }
-  } catch {}
+    if (!raw) return null;
 
-  const keysToTry = [
-    "access_token",
-    "ACCESS_TOKEN",
-    "token",
-    "authToken",
-    "AUTH_TOKEN",
-  ];
-  for (const k of keysToTry) {
-    try {
-      const raw = await SecureStore.getItemAsync(k);
-      if (!raw) continue;
-      const parsed = tryParseJson(raw);
-      const candidate = pickFirstString(
-        parsed?.access_token,
-        parsed?.accessToken,
-        parsed?.token,
-        typeof raw === "string" ? raw : null,
-      );
-      if (candidate) return stripBearer(candidate);
-    } catch {}
+    return String(raw)
+      .replace(/^Bearer\s+/i, "")
+      .trim();
+  } catch {
+    return null;
   }
-
-  return null;
 }
 
 /* ---------------- picker helpers ---------------- */
@@ -551,7 +500,6 @@ export default function EditBusinessDetails() {
   useEffect(() => {
     const timer = setTimeout(() => {
       if (mapLoading) {
-        console.log("Force hiding map loader after timeout");
         setMapLoading(false);
       }
     }, 5000);
@@ -562,9 +510,6 @@ export default function EditBusinessDetails() {
   useEffect(() => {
     if (mapInitAttempts < 3 && mapLoading && mapInitAttempts > 0) {
       const retryTimer = setTimeout(() => {
-        console.log(
-          `Retrying map initialization (attempt ${mapInitAttempts + 1})`,
-        );
         setMapKey(Date.now());
         setMapError(false);
       }, 2000);
@@ -681,44 +626,44 @@ export default function EditBusinessDetails() {
     [reverseGeocodeToAddress],
   );
 
- const extractMapCoord = useCallback((eventOrRegion) => {
-  const latitude =
-    eventOrRegion?.latitude ??
-    eventOrRegion?.center?.latitude ??
-    eventOrRegion?.nativeEvent?.latitude ??
-    eventOrRegion?.nativeEvent?.coordinate?.latitude ??
-    eventOrRegion?.nativeEvent?.center?.latitude ??
-    eventOrRegion?.coordinate?.latitude;
+  const extractMapCoord = useCallback((eventOrRegion) => {
+    const latitude =
+      eventOrRegion?.latitude ??
+      eventOrRegion?.center?.latitude ??
+      eventOrRegion?.nativeEvent?.latitude ??
+      eventOrRegion?.nativeEvent?.coordinate?.latitude ??
+      eventOrRegion?.nativeEvent?.center?.latitude ??
+      eventOrRegion?.coordinate?.latitude;
 
-  const longitude =
-    eventOrRegion?.longitude ??
-    eventOrRegion?.center?.longitude ??
-    eventOrRegion?.nativeEvent?.longitude ??
-    eventOrRegion?.nativeEvent?.coordinate?.longitude ??
-    eventOrRegion?.nativeEvent?.center?.longitude ??
-    eventOrRegion?.coordinate?.longitude;
+    const longitude =
+      eventOrRegion?.longitude ??
+      eventOrRegion?.center?.longitude ??
+      eventOrRegion?.nativeEvent?.longitude ??
+      eventOrRegion?.nativeEvent?.coordinate?.longitude ??
+      eventOrRegion?.nativeEvent?.center?.longitude ??
+      eventOrRegion?.coordinate?.longitude;
 
-  if (latitude == null || longitude == null) return null;
+    if (latitude == null || longitude == null) return null;
 
-  return {
-    latitude: Number(latitude),
-    longitude: Number(longitude),
-  };
-}, []);
+    return {
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+    };
+  }, []);
 
-const handleMapPick = useCallback(
-  (eventOrRegion) => {
-    const coord = extractMapCoord(eventOrRegion);
-    if (!coord) return;
+  const handleMapPick = useCallback(
+    (eventOrRegion) => {
+      const coord = extractMapCoord(eventOrRegion);
+      if (!coord) return;
 
-    setCenterPinCoord(coord);
-    setTempSelectedCoords(coord);
-    setMapCenter(coord);
-    setMapZoom(16);
-    updateMapMarker(coord.latitude, coord.longitude);
-  },
-  [extractMapCoord, updateMapMarker],
-);
+      setCenterPinCoord(coord);
+      setTempSelectedCoords(coord);
+      setMapCenter(coord);
+      setMapZoom(16);
+      updateMapMarker(coord.latitude, coord.longitude);
+    },
+    [extractMapCoord, updateMapMarker],
+  );
   const closeMapPicker = useCallback(() => {
     setMapOpen(false);
     setTempSelectedCoords(null);
@@ -841,9 +786,9 @@ const handleMapPick = useCallback(
     });
 
     setMapCenter(coordToSave);
-setCenterPinCoord(coordToSave);
-setTempSelectedCoords(coordToSave);
-setConfirmedCoord(coordToSave);
+    setCenterPinCoord(coordToSave);
+    setTempSelectedCoords(coordToSave);
+    setConfirmedCoord(coordToSave);
 
     updateMapMarker(coordToSave.latitude, coordToSave.longitude);
 
@@ -1007,7 +952,6 @@ setConfirmedCoord(coordToSave);
     min_amount_for_fd,
     special_celebration,
     special_celebration_discount_percentage,
-    
   ]);
 
   const BACKEND_KEYS = useMemo(
@@ -1034,13 +978,13 @@ setConfirmedCoord(coordToSave);
 
     const payload = {
       business_name: business_name.trim(),
-     latitude: confirmedCoord?.latitude
-  ? String(confirmedCoord.latitude.toFixed(6))
-  : latitude.trim() || null,
+      latitude: confirmedCoord?.latitude
+        ? String(confirmedCoord.latitude.toFixed(6))
+        : latitude.trim() || null,
 
-longitude: confirmedCoord?.longitude
-  ? String(confirmedCoord.longitude.toFixed(6))
-  : longitude.trim() || null,
+      longitude: confirmedCoord?.longitude
+        ? String(confirmedCoord.longitude.toFixed(6))
+        : longitude.trim() || null,
       address: address.trim() || null,
       delivery_option: delivery_option.trim().toUpperCase() || null,
       complementary: complementary.trim() || null,
@@ -1176,7 +1120,6 @@ longitude: confirmedCoord?.longitude
             type: guessMime(pickedLicense.uri),
           });
         }
-
         res = await fetch(detailsUrl, {
           method: "PUT",
           headers: {
@@ -1207,9 +1150,7 @@ longitude: confirmedCoord?.longitude
         const msg =
           json?.message || json?.error || `Update failed (${res.status})`;
         if (res.status === 401 || /expired|invalid/i.test(msg)) {
-          throw new Error(
-            "Invalid or expired token. Please logout and login again.",
-          );
+          throw new Error(msg);
         }
         throw new Error(msg);
       }
@@ -1234,10 +1175,7 @@ longitude: confirmedCoord?.longitude
     valueForCompare,
     confirmedCoord,
   ]);
-
-  const headerTopPad = Math.max(insets.top, 8) + 18;
-
-  const EXTRA_KB_SPACE = 140 + (insets?.bottom ?? 0);
+  const EXTRA_KB_SPACE = 24 + (insets?.bottom ?? 0);
 
   if (loading) {
     return (
@@ -1249,7 +1187,8 @@ longitude: confirmedCoord?.longitude
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
+    <SafeAreaView style={styles.safe} edges={["top","left", "right", "bottom"]}>
+      <View style={styles.topGlow} />
       {/* FULLSCREEN MAP PICKER MODAL with OSMView - FIXED location picking */}
       <Modal
         visible={mapOpen}
@@ -1294,9 +1233,8 @@ longitude: confirmedCoord?.longitude
                     markers={mapMarkers}
                     styleUrl="https://tiles.openfreemap.org/styles/liberty"
                     onRegionChangeComplete={handleMapPick}
-onPress={handleMapPick}
+                    onPress={handleMapPick}
                     onMapReady={() => {
-                      console.log("Map ready in EditBusinessDetails");
                       setMapLoading(false);
                       setMapInitAttempts(0);
                     }}
@@ -1571,7 +1509,7 @@ onPress={handleMapPick}
       </Modal>
 
       {/* Header */}
-      <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
+      <View style={[styles.headerBar]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backBtn}
@@ -1589,17 +1527,12 @@ onPress={handleMapPick}
         </TouchableOpacity>
       </View>
 
-      {/* Keyboard-safe scroll */}
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-        keyboardVerticalOffset={headerTopPad}
-      >
+      <View style={{ flex: 1 }}>
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={[
             styles.scrollInner,
-            { flexGrow: 1, paddingBottom: EXTRA_KB_SPACE },
+            { paddingBottom: EXTRA_KB_SPACE },
           ]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -1609,8 +1542,6 @@ onPress={handleMapPick}
             Platform.OS === "ios" ? "interactive" : "on-drag"
           }
           scrollIndicatorInsets={{ bottom: EXTRA_KB_SPACE }}
-          contentInset={{ bottom: EXTRA_KB_SPACE }}
-          contentInsetAdjustmentBehavior="always"
         >
           {/* Images */}
           <View style={styles.card}>
@@ -1803,150 +1734,133 @@ onPress={handleMapPick}
                 <Text style={styles.locBtnText}>Pick on Map</Text>
               </TouchableOpacity>
             </View>
-
-            <View style={styles.grid2}>
-              <View style={{ flex: 1 }}>
-                <Label>Latitude</Label>
-                <Input
-                  value={latitude}
-                  onChangeText={setLatitude}
-                  placeholder="27.47..."
-                  keyboardType="numeric"
-                  isFocused={focusedKey === "latitude"}
-                  onFocus={() => setFocusedKey("latitude")}
-                  onBlur={() => setFocusedKey(null)}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Label>Longitude</Label>
-                <Input
-                  value={longitude}
-                  onChangeText={setLongitude}
-                  placeholder="89.63..."
-                  keyboardType="numeric"
-                  isFocused={focusedKey === "longitude"}
-                  onFocus={() => setFocusedKey("longitude")}
-                  onBlur={() => setFocusedKey(null)}
-                />
-              </View>
-            </View>
           </View>
 
           {/* Operations - TIME INPUTS IMPROVED */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Operations</Text>
 
-            <View style={styles.grid2}>
-              <View style={{ flex: 1 }}>
+            <View style={styles.timeSection}>
+              <View style={styles.timeBlock}>
                 <Label>Opening Time</Label>
                 <View style={styles.timeRow}>
-                  <View style={{ flex: 1 }}>
-                    <TextInput
-                      style={[styles.input, { textAlign: "center" }]}
-                      value={openingHour}
-                      onChangeText={(text) => {
-                        let val = text.replace(/[^0-9]/g, "");
-                        if (val.length > 2) val = val.slice(0, 2);
-                        let num = parseInt(val, 10);
-                        if (val !== "" && (num < 1 || num > 12)) {
-                          if (num < 1) val = "1";
-                          if (num > 12) val = "12";
-                        }
-                        setOpeningHour(val);
-                      }}
-                      placeholder="HH"
-                      keyboardType="number-pad"
-                      maxLength={2}
-                      onFocus={() => setFocusedKey("openingHour")}
-                      onBlur={() => setFocusedKey(null)}
-                    />
-                  </View>
+                  <TextInput
+                    style={[
+                      styles.timeInput,
+                      focusedKey === "openingHour" && styles.timeInputFocused,
+                    ]}
+                    value={openingHour}
+                    onChangeText={(text) => {
+                      let val = text.replace(/[^0-9]/g, "");
+                      if (val.length > 2) val = val.slice(0, 2);
+                      let num = parseInt(val, 10);
+                      if (val !== "" && (num < 1 || num > 12))
+                        val = num > 12 ? "12" : "1";
+                      setOpeningHour(val);
+                    }}
+                    placeholder="HH"
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    onFocus={() => setFocusedKey("openingHour")}
+                    onBlur={() => setFocusedKey(null)}
+                  />
+
                   <Text style={styles.colon}>:</Text>
-                  <View style={{ flex: 1 }}>
-                    <TextInput
-                      style={[styles.input, { textAlign: "center" }]}
-                      value={openingMinute}
-                      onChangeText={(text) => {
-                        let val = text.replace(/[^0-9]/g, "");
-                        if (val.length > 2) val = val.slice(0, 2);
-                        let num = parseInt(val, 10);
-                        if (val !== "" && (num < 0 || num > 59)) {
-                          if (num < 0) val = "0";
-                          if (num > 59) val = "59";
-                        }
-                        setOpeningMinute(val);
-                      }}
-                      placeholder="MM"
-                      keyboardType="number-pad"
-                      maxLength={2}
-                      onFocus={() => setFocusedKey("openingMinute")}
-                      onBlur={() => setFocusedKey(null)}
-                    />
-                  </View>
+
+                  <TextInput
+                    style={[
+                      styles.timeInput,
+                      focusedKey === "openingMinute" && styles.timeInputFocused,
+                    ]}
+                    value={openingMinute}
+                    onChangeText={(text) => {
+                      let val = text.replace(/[^0-9]/g, "");
+                      if (val.length > 2) val = val.slice(0, 2);
+                      let num = parseInt(val, 10);
+                      if (val !== "" && (num < 0 || num > 59))
+                        val = num > 59 ? "59" : "0";
+                      setOpeningMinute(val);
+                    }}
+                    placeholder="MM"
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    onFocus={() => setFocusedKey("openingMinute")}
+                    onBlur={() => setFocusedKey(null)}
+                  />
+
                   <TouchableOpacity
                     style={styles.ampmBtn}
                     onPress={() => openAmPmModal("opening")}
                     activeOpacity={0.9}
                   >
                     <Text style={styles.ampmText}>{openingMeridiem}</Text>
-                    <Ionicons name="chevron-down" size={16} color="#0f172a" />
+                    <Ionicons
+                      name="chevron-down"
+                      size={16}
+                      color={BRAND.purple}
+                    />
                   </TouchableOpacity>
                 </View>
               </View>
 
-              <View style={{ flex: 1 }}>
+              <View style={styles.timeBlock}>
                 <Label>Closing Time</Label>
                 <View style={styles.timeRow}>
-                  <View style={{ flex: 1 }}>
-                    <TextInput
-                      style={[styles.input, { textAlign: "center" }]}
-                      value={closingHour}
-                      onChangeText={(text) => {
-                        let val = text.replace(/[^0-9]/g, "");
-                        if (val.length > 2) val = val.slice(0, 2);
-                        let num = parseInt(val, 10);
-                        if (val !== "" && (num < 1 || num > 12)) {
-                          if (num < 1) val = "1";
-                          if (num > 12) val = "12";
-                        }
-                        setClosingHour(val);
-                      }}
-                      placeholder="HH"
-                      keyboardType="number-pad"
-                      maxLength={2}
-                      onFocus={() => setFocusedKey("closingHour")}
-                      onBlur={() => setFocusedKey(null)}
-                    />
-                  </View>
+                  <TextInput
+                    style={[
+                      styles.timeInput,
+                      focusedKey === "closingHour" && styles.timeInputFocused,
+                    ]}
+                    value={closingHour}
+                    onChangeText={(text) => {
+                      let val = text.replace(/[^0-9]/g, "");
+                      if (val.length > 2) val = val.slice(0, 2);
+                      let num = parseInt(val, 10);
+                      if (val !== "" && (num < 1 || num > 12))
+                        val = num > 12 ? "12" : "1";
+                      setClosingHour(val);
+                    }}
+                    placeholder="HH"
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    onFocus={() => setFocusedKey("closingHour")}
+                    onBlur={() => setFocusedKey(null)}
+                  />
+
                   <Text style={styles.colon}>:</Text>
-                  <View style={{ flex: 1 }}>
-                    <TextInput
-                      style={[styles.input, { textAlign: "center" }]}
-                      value={closingMinute}
-                      onChangeText={(text) => {
-                        let val = text.replace(/[^0-9]/g, "");
-                        if (val.length > 2) val = val.slice(0, 2);
-                        let num = parseInt(val, 10);
-                        if (val !== "" && (num < 0 || num > 59)) {
-                          if (num < 0) val = "0";
-                          if (num > 59) val = "59";
-                        }
-                        setClosingMinute(val);
-                      }}
-                      placeholder="MM"
-                      keyboardType="number-pad"
-                      maxLength={2}
-                      onFocus={() => setFocusedKey("closingMinute")}
-                      onBlur={() => setFocusedKey(null)}
-                    />
-                  </View>
+
+                  <TextInput
+                    style={[
+                      styles.timeInput,
+                      focusedKey === "closingMinute" && styles.timeInputFocused,
+                    ]}
+                    value={closingMinute}
+                    onChangeText={(text) => {
+                      let val = text.replace(/[^0-9]/g, "");
+                      if (val.length > 2) val = val.slice(0, 2);
+                      let num = parseInt(val, 10);
+                      if (val !== "" && (num < 0 || num > 59))
+                        val = num > 59 ? "59" : "0";
+                      setClosingMinute(val);
+                    }}
+                    placeholder="MM"
+                    keyboardType="number-pad"
+                    maxLength={2}
+                    onFocus={() => setFocusedKey("closingMinute")}
+                    onBlur={() => setFocusedKey(null)}
+                  />
+
                   <TouchableOpacity
                     style={styles.ampmBtn}
                     onPress={() => openAmPmModal("closing")}
                     activeOpacity={0.9}
                   >
                     <Text style={styles.ampmText}>{closingMeridiem}</Text>
-                    <Ionicons name="chevron-down" size={16} color="#0f172a" />
+                    <Ionicons
+                      name="chevron-down"
+                      size={16}
+                      color={BRAND.purple}
+                    />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -2038,110 +1952,140 @@ onPress={handleMapPick}
 
           <View style={{ height: 18 }} />
         </ScrollView>
-      </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 }
 
-/* ---------------- styles ---------------- */
-
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
 
   headerBar: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomColor: "#e5e7eb",
-    borderBottomWidth: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
   },
+
   backBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
+    ...SHADOW.sm,
   },
+
   iconBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
+    height: 42,
+    width: 42,
+    borderRadius: RADIUS.full,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: BRAND.white,
+    ...SHADOW.sm,
   },
+
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
   },
 
-  scrollInner: { padding: 18, paddingBottom: 28 },
+  scrollInner: {
+    paddingHorizontal: 18,
+    paddingBottom: 30,
+  },
 
+  card: {
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    padding: 16,
+    marginBottom: 16,
+  },
   centerWrap: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
   },
-  muted: { marginTop: 10, color: "#475569" },
+  muted: {
+    marginTop: 10,
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+  },
 
-  card: {
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 16,
-  },
   cardTitle: {
-    fontSize: SCREEN_W > 400 ? 16 : 15,
-    fontWeight: "800",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: SCREEN_W > 400 ? 17 : 16,
+    fontWeight: "900",
+    color: BRAND.black,
     marginBottom: 10,
   },
 
   label: {
-    fontSize: 12,
-    color: "#64748b",
-    fontWeight: "700",
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: BRAND.black,
+    fontWeight: "600",
     marginTop: 10,
     marginBottom: 6,
   },
 
   inputWrap: {
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: "#e2e8f0",
+    backgroundColor: BRAND.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
   },
+
   inputWrapFocused: {
-    borderColor: "#00b14f",
+    borderColor: BRAND.purple,
+    backgroundColor: "#FCF7FF",
   },
   input: {
-    paddingHorizontal: 12,
+    fontFamily: FONT.body,
+    paddingHorizontal: 14,
     paddingVertical: 12,
-    fontSize: SCREEN_W > 400 ? 16 : 14,
-    color: "#0f172a",
+    fontSize: SCREEN_W > 400 ? 15 : 14,
+    color: BRAND.black,
   },
-  inputMultiline: { minHeight: 90, textAlignVertical: "top" },
+  inputMultiline: { minHeight: 88, textAlignVertical: "top" },
 
-  grid2: { flexDirection: "row", gap: 1, marginTop: 4 },
+  grid2: { flexDirection: "row", gap: 10, marginTop: 4 },
 
   imageRow: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
   imageBox: {
-    width: 160,
-    height: 120,
-    borderRadius: 12,
-    backgroundColor: "#f8fafc",
+    width: 150,
+    height: 112,
+    borderRadius: RADIUS.lg,
+    backgroundColor: "#FCF7FF",
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
   },
   image: { width: "100%", height: "100%" },
   imageEmpty: {
@@ -2149,9 +2093,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#FCF7FF",
   },
-  emptyText: { fontSize: 12, color: "#64748b", fontWeight: "700" },
+  emptyText: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    fontWeight: "600",
+  },
 
   actionBtn: {
     flexDirection: "row",
@@ -2159,10 +2108,10 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: "#f8fafc",
+    borderRadius: RADIUS.md,
+    backgroundColor: "#F3E4FF",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
   },
   actionBtnSoft: {
     flexDirection: "row",
@@ -2170,46 +2119,102 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: "#fff",
+    borderRadius: RADIUS.md,
+    backgroundColor: BRAND.white,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.greyLight,
   },
-  actionText: { fontSize: 12, fontWeight: "700", color: "#0f172a" },
+  actionText: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    fontWeight: "600",
+    color: BRAND.black,
+  },
 
   divider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: "#e5e7eb",
-    marginVertical: 12,
+    backgroundColor: BRAND.greyLight,
+    marginVertical: 14,
   },
 
-  timeRow: { flexDirection: "row", alignItems: "center", gap: 1 },
-  colon: { fontSize: 18, fontWeight: "bold", color: "#0f172a" },
-  ampmBtn: {
-    height: 46,
-    paddingHorizontal: 6,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    backgroundColor: "#f8fafc",
+  timeRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  colon: { fontSize: 18, fontWeight: "700", color: BRAND.purple },
+  timeSection: {
+    gap: 12,
+    marginTop: 4,
+  },
+
+  timeBlock: {
+    width: "100%",
+  },
+
+  timeRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 8,
   },
-  ampmText: { fontSize: 12, fontWeight: "700", color: "#0f172a" },
+
+  timeInput: {
+    width: 74,
+    height: 52,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    backgroundColor: BRAND.white,
+    textAlign: "center",
+    fontFamily: FONT.body,
+    fontSize: 15,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
+
+  timeInputFocused: {
+    borderColor: BRAND.purple,
+    backgroundColor: "#FCF7FF",
+  },
+
+  colon: {
+    fontSize: 22,
+    fontWeight: "900",
+    color: BRAND.purple,
+    marginHorizontal: 2,
+  },
+
+  ampmBtn: {
+    height: 52,
+    minWidth: 82,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
+    backgroundColor: "#F3E4FF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+
+  ampmText: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    fontWeight: "900",
+    color: BRAND.purple,
+  },
 
   saveBtn: {
     marginTop: 6,
-    backgroundColor: "#16a34a",
-    borderRadius: 10,
-    paddingVertical: 14,
+    backgroundColor: BRAND.purple,
+    borderRadius: RADIUS.pill,
+    paddingVertical: 15,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 10,
+    ...SHADOW.md,
   },
   saveText: {
-    color: "#fff",
+    fontFamily: FONT.body,
+    color: BRAND.white,
     fontWeight: "700",
     fontSize: SCREEN_W > 400 ? 16 : 14,
   },
@@ -2224,11 +2229,11 @@ const styles = StyleSheet.create({
   modalCard: {
     width: Math.min(SCREEN_W - 32, 420),
     maxHeight: SCREEN_H * 0.78,
-    backgroundColor: "#fff",
-    borderRadius: 12,
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.lg,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.greyLight,
   },
   modalHeader: {
     paddingHorizontal: 12,
@@ -2237,44 +2242,47 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e5e7eb",
-    backgroundColor: "#fff",
+    borderBottomColor: BRAND.greyLight,
+    backgroundColor: BRAND.white,
   },
   modalTitle: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 14,
+    fontWeight: "700",
+    color: BRAND.purple,
     flex: 1,
     marginRight: 10,
   },
   modalCloseBtn: {
     width: 34,
     height: 34,
-    borderRadius: 10,
-    backgroundColor: "#f8fafc",
+    borderRadius: RADIUS.md,
+    backgroundColor: "#F3E4FF",
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
   },
   modalImage: {
     width: "100%",
     height: SCREEN_H * 0.55,
-    backgroundColor: "#0f172a",
+    backgroundColor: BRAND.black,
   },
 
   sourceCard: {
     width: Math.min(SCREEN_W - 32, 360),
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 14,
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.lg,
+    padding: 16,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.greyLight,
+    ...SHADOW.md,
   },
   sourceTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 16,
+    fontWeight: "700",
+    color: BRAND.purple,
     marginBottom: 10,
   },
   sourceBtn: {
@@ -2283,28 +2291,43 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 12,
     paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: "#f8fafc",
+    borderRadius: RADIUS.md,
+    backgroundColor: "#F3E4FF",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
     marginBottom: 10,
   },
-  sourceBtnText: { fontSize: 14, fontWeight: "700", color: "#0f172a" },
+  sourceBtnText: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    fontWeight: "600",
+    color: BRAND.black,
+  },
   sourceCancel: { paddingVertical: 10, alignItems: "center" },
-  sourceCancelText: { fontSize: 14, fontWeight: "700", color: "#0f172a" },
+  sourceCancelText: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    fontWeight: "700",
+    color: BRAND.magenta,
+  },
 
   selectRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: "#fff",
+    borderRadius: RADIUS.md,
+    backgroundColor: "#FCF7FF",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
   },
-  selectValue: { fontSize: 14, fontWeight: "700", color: "#0f172a" },
+  selectValue: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
 
   deliveryBtn: {
     flexDirection: "row",
@@ -2312,10 +2335,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 12,
     paddingHorizontal: 12,
-    borderRadius: 10,
-    backgroundColor: "#f8fafc",
+    borderRadius: RADIUS.md,
+    backgroundColor: "#FCF7FF",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
     marginBottom: 10,
   },
 
@@ -2327,40 +2350,45 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: "#fff",
+    borderRadius: RADIUS.pill,
+    backgroundColor: "#F3E4FF",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
   },
-  locBtnText: { fontSize: 13, fontWeight: "800", color: "#0f172a" },
+  locBtnText: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    fontWeight: "700",
+    color: BRAND.purple,
+  },
 
-  // FULLSCREEN MAP
-  mapFullSafe: { flex: 1, backgroundColor: "#fff" },
+  mapFullSafe: { flex: 1, backgroundColor: BRAND.white },
   mapFullHeader: {
     height: 54,
     paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#e5e7eb",
-    backgroundColor: "#fff",
+    borderBottomColor: BRAND.greyLight,
+    backgroundColor: BRAND.white,
   },
   mapFullIconBtn: {
     width: 40,
     height: 40,
-    borderRadius: 12,
+    borderRadius: RADIUS.md,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#F3E4FF",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
   },
   mapFullTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 16,
-    fontWeight: "900",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 17,
+    fontWeight: "700",
+    color: BRAND.purple,
   },
 
   mapFullHelpRow: {
@@ -2369,29 +2397,40 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
   },
   mapFullHelpText: {
     flex: 1,
+    fontFamily: FONT.body,
     fontSize: 12,
-    fontWeight: "700",
-    color: "#475569",
+    fontWeight: "600",
+    color: BRAND.grey,
   },
 
-  mapFullMapWrap: { flex: 1, backgroundColor: "#fff", position: "relative" },
+  mapFullMapWrap: {
+    flex: 1,
+    backgroundColor: BRAND.white,
+    position: "relative",
+  },
 
   mapFullBottomCard: {
     position: "absolute",
     left: 12,
     right: 12,
     bottom: 12,
-    padding: 12,
-    borderRadius: 12,
+    padding: 14,
+    borderRadius: RADIUS.lg,
     backgroundColor: "rgba(255,255,255,0.97)",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
+    ...SHADOW.md,
   },
-  mapFullBottomText: { fontSize: 12, fontWeight: "900", color: "#0f172a" },
+  mapFullBottomText: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
 
   mapFullBtnRow: { flexDirection: "row", gap: 10 },
   mapFullBtn: {
@@ -2401,60 +2440,68 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: "#fff",
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND.white,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
   },
   mapFullBtnPrimary: {
-    backgroundColor: "#00b14f",
-    borderColor: "#00b14f",
+    backgroundColor: BRAND.purple,
+    borderColor: BRAND.purple,
   },
-  mapFullBtnText: { fontSize: 13, fontWeight: "900", color: "#0f172a" },
+  mapFullBtnText: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
 
   mapFullBottomHint: {
     marginTop: 10,
+    fontFamily: FONT.body,
     fontSize: 11,
-    color: "#64748b",
-    fontWeight: "700",
+    color: BRAND.grey,
+    fontWeight: "600",
   },
 
   hintText: {
+    fontFamily: FONT.body,
     fontSize: 11,
-    color: "#64748b",
+    color: BRAND.grey,
     marginTop: 4,
     marginLeft: 4,
-    fontWeight: "500",
   },
 
-  // Map error styles
   mapErrorContainer: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#f9fafb",
+    backgroundColor: "#FCF7FF",
   },
   mapErrorText: {
     marginTop: 12,
+    fontFamily: FONT.header,
     fontSize: 16,
-    fontWeight: "600",
-    color: "#374151",
+    fontWeight: "700",
+    color: BRAND.red,
   },
   mapErrorSubtext: {
     marginTop: 4,
+    fontFamily: FONT.body,
     fontSize: 12,
-    color: "#6b7280",
+    color: BRAND.grey,
   },
   mapRetryBtn: {
     marginTop: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    backgroundColor: "#16a34a",
-    borderRadius: 8,
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+    backgroundColor: BRAND.purple,
+    borderRadius: RADIUS.pill,
   },
   mapRetryText: {
-    color: "#fff",
-    fontWeight: "600",
+    fontFamily: FONT.body,
+    color: BRAND.white,
+    fontWeight: "700",
   },
   mapLoadingOverlay: {
     position: "absolute",
@@ -2469,14 +2516,16 @@ const styles = StyleSheet.create({
   },
   mapLoadingText: {
     marginTop: 12,
+    fontFamily: FONT.body,
     fontSize: 14,
-    color: "#16a34a",
-    fontWeight: "600",
+    color: BRAND.purple,
+    fontWeight: "700",
   },
   mapLoadingSubtext: {
     marginTop: 4,
+    fontFamily: FONT.body,
     fontSize: 11,
-    color: "#6b7280",
+    color: BRAND.grey,
   },
   centerPin: {
     position: "absolute",

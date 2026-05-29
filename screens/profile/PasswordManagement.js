@@ -18,10 +18,11 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import { PASSWORD_CHANGE_ENDPOINT } from '@env';
 
 const { width } = Dimensions.get('window');
-const THEME_GREEN = '#16a34a';
+const THEME_GREEN = BRAND.purple;
 const KEY_MERCHANT_LOGIN = 'merchant_login';
 const KEY_AUTH_TOKEN = 'auth_token';
 
@@ -239,11 +240,13 @@ export default function PasswordManagement() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={['left', 'right']}>
+    <SafeAreaView style={styles.safe} edges={["top","left", "right", "bottom"]}>
+  <View style={styles.topGlow} />
+  
       {/* Header */}
-      <View style={[styles.header, { paddingTop: Math.max(insets.top, 8) + 10 }]}>
+      <View style={styles.header}>
         <TouchableOpacity onPress={goBack} style={styles.backBtn} activeOpacity={0.7}>
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+          <Ionicons name="arrow-back" size={22} color={BRAND.black} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Password Management</Text>
         <View style={{ width: 40 }} />
@@ -430,68 +433,172 @@ function Rule({ ok, label }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#f6f8fa' },
-  header: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#fff',
+  safe: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
   },
-  backBtn: { height: 40, width: 40, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '700', color: '#0f172a' },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
+
+  header: {
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "transparent",
+  },
+
+  backBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    alignItems: "center",
+    justifyContent: "center",
+    ...SHADOW.sm,
+  },
+
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
+    
+  },
 
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    padding: 14,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    borderColor: "#F3E8FF",
+    padding: 16,
+    marginBottom: 14,
   },
 
-  sectionTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 10 },
-  label: { fontSize: 12, color: '#64748b', marginBottom: 6 },
-
-  inputRow: {
-    borderWidth: 1,
-    borderRadius: 12,
-    backgroundColor: '#fff',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
+  sectionTitle: {
+    fontFamily: FONT.header,
+    fontSize: 17,
+    fontWeight: "900",
+    color: BRAND.black,
     marginBottom: 10,
   },
-  input: { flex: 1, paddingVertical: 12, fontSize: width > 400 ? 16 : 15, color: '#0f172a' },
-  eyeBtn: { height: 36, width: 36, alignItems: 'center', justifyContent: 'center' },
 
-  meterWrap: { marginTop: 10, flexDirection: 'row', alignItems: 'center' },
-  meterTrack: { flex: 1, height: 8, backgroundColor: '#f1f5f9', borderRadius: 999, marginRight: 10, overflow: 'hidden' },
-  meterFill: { height: 8, borderRadius: 999 },
-  meterLabel: { fontSize: 12, fontWeight: '700' },
+  label: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: BRAND.grey,
+    fontWeight: "800",
+    marginBottom: 7,
+  },
 
-  rulesWrap: { marginTop: 10 },
-  ruleItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4 },
-  ruleText: { fontSize: 13, color: '#64748b' },
+  inputRow: {
+    borderWidth: 1.2,
+    borderRadius: 16,
+    backgroundColor: "#FCFCFC",
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    marginBottom: 12,
+  },
 
-  mismatch: { marginTop: 6, fontSize: 12, color: '#ef4444' },
+  input: {
+    flex: 1,
+    fontFamily: FONT.body,
+    paddingVertical: 13,
+    fontSize: width > 400 ? 16 : 15,
+    color: BRAND.black,
+  },
+
+  eyeBtn: {
+    height: 38,
+    width: 38,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  meterWrap: {
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  meterTrack: {
+    flex: 1,
+    height: 8,
+    backgroundColor: "#F1E8F8",
+    borderRadius: 999,
+    marginRight: 10,
+    overflow: "hidden",
+  },
+
+  meterFill: {
+    height: 8,
+    borderRadius: 999,
+  },
+
+  meterLabel: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+
+  rulesWrap: {
+    marginTop: 10,
+    backgroundColor: "#FCFCFC",
+    borderRadius: 16,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+  },
+
+  ruleItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 4,
+  },
+
+  ruleText: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: BRAND.grey,
+    fontWeight: "700",
+  },
+
+  mismatch: {
+    fontFamily: FONT.body,
+    marginTop: 6,
+    fontSize: 12,
+    color: BRAND.red,
+    fontWeight: "800",
+  },
 
   saveButton: {
-    marginTop: 12,
-    backgroundColor: THEME_GREEN,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
+    marginTop: 14,
+    backgroundColor: BRAND.purple,
+    paddingVertical: 15,
+    borderRadius: RADIUS.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    ...SHADOW.md,
   },
-  saveButtonText: { color: '#fff', fontSize: width > 400 ? 16 : 15, fontWeight: '700' },
+
+  saveButtonText: {
+    fontFamily: FONT.body,
+    color: BRAND.white,
+    fontSize: width > 400 ? 16 : 15,
+    fontWeight: "900",
+  },
 });
