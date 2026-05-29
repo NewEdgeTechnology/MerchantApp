@@ -25,6 +25,7 @@ import { Ionicons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import * as SecureStore from "expo-secure-store";
 import { useRoute, useFocusEffect } from "@react-navigation/native";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import {
   Svg,
   Polyline,
@@ -49,17 +50,14 @@ const getTotalSalesUrl = (businessId) => {
 
 const CACHE_TTL = 60 * 1000;
 
-/* ===========================
-   THEME
-   =========================== */
 const COLORS = {
-  GRAB_GREEN: "#00B14F",
-  DARK: "#0F172A",
-  MID: "#64748B",
+  GRAB_GREEN: BRAND.purple,
+  DARK: BRAND.black,
+  MID: BRAND.grey,
   MUTED: "#94A3B8",
 };
-const BORDER = "#E5E7EB";
-const FILL = "#F9FAFB";
+const BORDER = "#F3E8FF";
+const FILL = "#FBF7FF";
 
 /* ===========================
    DATE HELPERS
@@ -797,7 +795,7 @@ export default function SalesAnalyticsScreen(props) {
   );
 
   return (
-    <View style={[styles.safe, { paddingTop: 12 }]}>
+    <View style={[styles.safe]}>
       <View style={styles.headerRow}>
         <Text style={styles.headerTitle}>Sales Analytics</Text>
         <View style={{ flexDirection: "row", gap: 12 }}>
@@ -905,40 +903,6 @@ export default function SalesAnalyticsScreen(props) {
         </View>
       </View>
 
-      <View style={{ marginTop: 12, marginHorizontal: 16 }}>
-        {loading && chart.length === 0 ? (
-          <View
-            style={{
-              alignItems: "center",
-              justifyContent: "center",
-              height: 120,
-              backgroundColor: "#fff",
-              borderWidth: 1,
-              borderColor: BORDER,
-              borderRadius: 10,
-            }}
-          >
-            <ActivityIndicator color={COLORS.GRAB_GREEN} />
-          </View>
-        ) : (
-          <LineChart data={chart} height={160} legendLabel="Sales" />
-        )}
-      </View>
-
-      {!!error && (
-        <Text
-          style={{
-            color: "#EF4444",
-            fontSize: 11,
-            marginTop: 6,
-            marginLeft: 16,
-          }}
-        >
-          {error}
-        </Text>
-      )}
-
-      <Text style={styles.sectionTitle}>Orders</Text>
       <FlatList
         data={orders}
         keyExtractor={(i) => String(i.id)}
@@ -952,6 +916,43 @@ export default function SalesAnalyticsScreen(props) {
             tintColor={COLORS.GRAB_GREEN}
             colors={[COLORS.GRAB_GREEN]}
           />
+        }
+        ListHeaderComponent={
+          <>
+            <View style={{ marginTop: 12 }}>
+              {loading && chart.length === 0 ? (
+                <View
+                  style={{
+                    alignItems: "center",
+                    justifyContent: "center",
+                    height: 120,
+                    backgroundColor: "#fff",
+                    borderWidth: 1,
+                    borderColor: BORDER,
+                    borderRadius: 10,
+                  }}
+                >
+                  <ActivityIndicator color={COLORS.GRAB_GREEN} />
+                </View>
+              ) : (
+                <LineChart data={chart} height={160} legendLabel="Sales" />
+              )}
+            </View>
+
+            {!!error && (
+              <Text
+                style={{
+                  color: "#EF4444",
+                  fontSize: 11,
+                  marginTop: 6,
+                }}
+              >
+                {error}
+              </Text>
+            )}
+
+            <Text style={[styles.sectionTitle, { marginLeft: 2 }]}>Orders</Text>
+          </>
         }
         ListEmptyComponent={
           !loading && (
@@ -1110,206 +1111,364 @@ export default function SalesAnalyticsScreen(props) {
   );
 }
 
-/* ===========================
-   STYLES
-   =========================== */
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
+
   headerRow: {
     paddingTop: Platform.OS === "ios" ? 56 : 12,
-    paddingBottom: 10,
-    paddingHorizontal: 22,
+    paddingBottom: 12,
+    paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  headerTitle: { color: COLORS.DARK, fontWeight: "600", fontSize: 18 },
-  tabsRow: { flexDirection: "row", paddingHorizontal: 16, marginBottom: 8 },
+
+  headerTitle: {
+    color: BRAND.black,
+    fontFamily: FONT.header,
+    fontWeight: "900",
+    fontSize: 21,
+  },
+
+  tabsRow: {
+    flexDirection: "row",
+    paddingHorizontal: 16,
+    marginBottom: 10,
+    gap: 8,
+  },
+
   tab: {
     flex: 1,
-    height: 34,
+    height: 40,
     borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 9,
+    borderColor: "#F3E8FF",
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
-    marginHorizontal: 4,
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
   },
+
   tabActive: {
-    backgroundColor: COLORS.GRAB_GREEN,
-    borderColor: COLORS.GRAB_GREEN,
+    backgroundColor: BRAND.purple,
+    borderColor: BRAND.purple,
   },
-  tabText: { color: COLORS.MID, fontWeight: "800", fontSize: 11 },
-  tabTextActive: { color: "#fff" },
+
+  tabText: {
+    color: BRAND.grey,
+    fontWeight: "900",
+    fontSize: 12,
+    fontFamily: FONT.body,
+  },
+
+  tabTextActive: {
+    color: BRAND.white,
+  },
+
   rangeRow: {
     marginHorizontal: 16,
-    marginBottom: 10,
+    marginBottom: 12,
     flexDirection: "row",
     alignItems: "center",
   },
+
   iconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 9,
+    width: 38,
+    height: 38,
+    borderRadius: RADIUS.full,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: "#F3E8FF",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
+    ...SHADOW.sm,
   },
+
   rangeCenter: {
     flex: 1,
     marginHorizontal: 8,
-    height: 34,
-    borderRadius: 9,
+    height: 38,
+    borderRadius: RADIUS.pill,
     borderWidth: 1,
-    borderColor: BORDER,
-    backgroundColor: "#fff",
+    borderColor: "#F3E8FF",
+    backgroundColor: BRAND.white,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
+    ...SHADOW.sm,
   },
-  rangeText: { fontSize: 12, color: COLORS.DARK, fontWeight: "800" },
+
+  rangeText: {
+    fontSize: 12,
+    color: BRAND.black,
+    fontWeight: "900",
+    fontFamily: FONT.body,
+  },
+
   pickerWrap: {
     marginHorizontal: 16,
-    marginBottom: 10,
-    backgroundColor: "#fff",
-    borderRadius: 10,
+    marginBottom: 12,
+    backgroundColor: BRAND.white,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: "#F3E8FF",
     overflow: "hidden",
   },
+
   pickerHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 6,
-    borderBottomWidth: 2,
-    borderBottomColor: "#F3F4F6",
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3E8FF",
   },
-  pickerTitle: { fontSize: 12, fontWeight: "700", color: COLORS.MID },
+
+  pickerTitle: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: BRAND.grey,
+  },
+
   summaryStrip: {
     marginHorizontal: 16,
-    backgroundColor: FILL,
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    backgroundColor: BRAND.white,
+    borderRadius: 22,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    ...SHADOW.sm,
   },
-  summaryBlock: { flex: 1 },
-  summaryLabel: { color: COLORS.MUTED, fontSize: 11, fontWeight: "600" },
+
+  summaryBlock: {
+    flex: 1,
+  },
+
+  summaryLabel: {
+    color: BRAND.grey,
+    fontSize: 11,
+    fontWeight: "800",
+    fontFamily: FONT.body,
+  },
+
   summaryValue: {
-    color: COLORS.DARK,
-    fontSize: 14,
+    color: BRAND.purple,
+    fontSize: 15,
     fontWeight: "900",
-    marginTop: 2,
+    marginTop: 3,
+    fontFamily: FONT.header,
   },
+
   vDivider: {
     width: 1,
-    height: 26,
-    backgroundColor: BORDER,
+    height: 30,
+    backgroundColor: "#F3E8FF",
     marginHorizontal: 10,
   },
+
   chartCard: {
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
     borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 10,
-    paddingVertical: 6,
+    borderColor: "#F3E8FF",
+    borderRadius: 22,
+    paddingVertical: 8,
     overflow: "hidden",
+    ...SHADOW.sm,
   },
-  xLabelsRow: { position: "relative", height: 20, marginTop: -2 },
+
+  xLabelsRow: {
+    position: "relative",
+    height: 20,
+    marginTop: -2,
+  },
+
   xLabel: {
     position: "absolute",
     width: 40,
     textAlign: "center",
     fontSize: 10,
     color: COLORS.MUTED,
-    fontWeight: "700",
+    fontWeight: "800",
   },
+
   legendRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingBottom: 8,
     paddingTop: 2,
   },
-  legendDot: { width: 10, height: 10, borderRadius: 6 },
-  legendText: { fontSize: 11, color: COLORS.MID, fontWeight: "800" },
-  sectionTitle: {
-    marginTop: 14,
-    marginBottom: 6,
-    marginLeft: 16,
-    color: COLORS.MID,
-    fontWeight: "800",
-    fontSize: 14,
+
+  legendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 6,
   },
-  tripRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10 },
+
+  legendText: {
+    fontSize: 11,
+    color: BRAND.grey,
+    fontWeight: "900",
+  },
+
+  sectionTitle: {
+    marginTop: 16,
+    marginBottom: 8,
+    marginLeft: 0,
+    color: BRAND.black,
+    fontWeight: "900",
+    fontSize: 15,
+    fontFamily: FONT.header,
+  },
+
+  tripRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: BRAND.white,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+  },
+
   tripRoute: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: COLORS.DARK,
+    fontSize: 13,
+    fontWeight: "900",
+    color: BRAND.black,
     marginRight: 5,
   },
-  tripMeta: { fontSize: 11, color: COLORS.MUTED, marginTop: 2 },
-  tripAmt: { fontSize: 13, fontWeight: "800", color: COLORS.DARK },
-  separator: { height: 1, backgroundColor: "#F3F4F6" },
+
+  tripMeta: {
+    fontSize: 11,
+    color: BRAND.grey,
+    marginTop: 3,
+    fontWeight: "700",
+  },
+
+  tripAmt: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: BRAND.purple,
+  },
+
+  separator: {
+    height: 10,
+  },
+
   modalBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.28)",
+    backgroundColor: "rgba(15,23,42,0.45)",
     justifyContent: "center",
     padding: 18,
   },
+
   modalCard: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 14,
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    padding: 16,
     borderWidth: 1,
-    borderColor: BORDER,
+    borderColor: "#F3E8FF",
+    ...SHADOW.md,
   },
+
   modalHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 8,
+    marginBottom: 10,
   },
-  modalTitle: { fontSize: 16, fontWeight: "900", color: COLORS.DARK },
-  modalPara: { fontSize: 12, color: COLORS.DARK, marginTop: 6 },
-  bullet: { flexDirection: "row", alignItems: "flex-start", marginTop: 6 },
+
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "900",
+    color: BRAND.black,
+    fontFamily: FONT.header,
+  },
+
+  modalPara: {
+    fontSize: 13,
+    color: BRAND.black,
+    marginTop: 6,
+    lineHeight: 19,
+  },
+
+  bullet: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    marginTop: 7,
+  },
+
   bulletDot: {
     width: 16,
     textAlign: "center",
-    color: COLORS.MID,
+    color: BRAND.purple,
     marginTop: -2,
+    fontWeight: "900",
   },
-  bulletText: { flex: 1, fontSize: 12, color: COLORS.DARK },
-  bold: { fontWeight: "900" },
-  hr: { height: 1, backgroundColor: BORDER, marginVertical: 10 },
+
+  bulletText: {
+    flex: 1,
+    fontSize: 13,
+    color: BRAND.black,
+    lineHeight: 19,
+  },
+
+  bold: {
+    fontWeight: "900",
+  },
+
+  hr: {
+    height: 1,
+    backgroundColor: "#F3E8FF",
+    marginVertical: 12,
+  },
+
   primaryBtn: {
-    marginTop: 10,
-    backgroundColor: COLORS.GRAB_GREEN,
-    borderRadius: 10,
-    paddingVertical: 10,
+    marginTop: 12,
+    backgroundColor: BRAND.purple,
+    borderRadius: RADIUS.pill,
+    paddingVertical: 13,
     alignItems: "center",
+    ...SHADOW.sm,
   },
-  primaryBtnText: { color: "#fff", fontWeight: "900" },
+
+  primaryBtnText: {
+    color: BRAND.white,
+    fontWeight: "900",
+  },
+
   exportOption: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 12,
-    marginVertical: 4,
+    padding: 14,
+    marginVertical: 5,
     gap: 12,
     borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 10,
-    backgroundColor: "#fff",
+    borderColor: "#F3E8FF",
+    borderRadius: 18,
+    backgroundColor: "#FBF7FF",
   },
-  exportOptionTitle: { fontSize: 14, fontWeight: "700", color: COLORS.DARK },
-  exportOptionDesc: { fontSize: 11, color: COLORS.MUTED, marginTop: 2 },
+
+  exportOptionTitle: {
+    fontSize: 14,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+
+  exportOptionDesc: {
+    fontSize: 12,
+    color: BRAND.grey,
+    marginTop: 3,
+    fontWeight: "600",
+  },
 });

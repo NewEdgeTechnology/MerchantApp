@@ -1,5 +1,11 @@
 // screens/NotificationsTab.js
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   View,
   Text,
@@ -17,6 +23,7 @@ import * as SecureStore from "expo-secure-store";
 import { Ionicons } from "@expo/vector-icons";
 import { Swipeable } from "react-native-gesture-handler";
 import { useNavigation } from "@react-navigation/native";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import {
   NOTIFICATIONS_ENDPOINT as ENV_NOTIFS_ENDPOINT,
   NOTIFICATION_READ_ENDPOINT as ENV_NOTIF_READ_ENDPOINT,
@@ -48,7 +55,7 @@ async function resolveBusinessId(routeParams) {
         parsed?.merchant?.business_id ??
           parsed?.merchant?.businessId ??
           parsed?.business_id ??
-          parsed?.businessId
+          parsed?.businessId,
       );
       if (id != null) return id;
     }
@@ -62,7 +69,7 @@ async function resolveBusinessId(routeParams) {
         parsed?.merchant?.business_id ??
           parsed?.merchant?.businessId ??
           parsed?.business_id ??
-          parsed?.businessId
+          parsed?.businessId,
       );
       if (id != null) return id;
     }
@@ -82,7 +89,7 @@ async function resolveUserId() {
           parsed?.merchant?.id ??
           parsed?.user?.id ??
           parsed?.user_id ??
-          parsed?.id
+          parsed?.id,
       );
       if (id != null) return id;
     }
@@ -97,7 +104,7 @@ async function resolveUserId() {
           parsed?.merchant?.id ??
           parsed?.user?.id ??
           parsed?.user_id ??
-          parsed?.id
+          parsed?.id,
       );
       if (id != null) return id;
     }
@@ -113,34 +120,42 @@ const READ_ONE_BASE = trimSlashes(String(ENV_NOTIF_READ_ENDPOINT || ""));
 const READ_ALL_BASE = trimSlashes(String(ENV_NOTIF_READ_ALL_ENDPOINT || ""));
 const DELETE_BASE = trimSlashes(String(ENV_NOTIF_DELETE_ENDPOINT || ""));
 const ORDER_BASE = trimSlashes(String(ENV_ORDER_ENDPOINT || ""));
-const SYSTEM_NOTIFS_BASE = trimSlashes(String(ENV_SYSTEM_NOTIFS_ENDPOINT || ""));
+const SYSTEM_NOTIFS_BASE = trimSlashes(
+  String(ENV_SYSTEM_NOTIFS_ENDPOINT || ""),
+);
 
 const buildNotificationsUrl = (businessId) =>
   NOTIFS_BASE ? NOTIFS_BASE.replace("{business_id}", String(businessId)) : null;
 
 const buildReadOneUrl = (notificationId) =>
-  READ_ONE_BASE ? READ_ONE_BASE.replace("{notificationId}", String(notificationId)) : null;
+  READ_ONE_BASE
+    ? READ_ONE_BASE.replace("{notificationId}", String(notificationId))
+    : null;
 
 const buildReadAllUrl = (businessId) =>
   READ_ALL_BASE
     ? READ_ALL_BASE.replace("{businessId}", String(businessId)).replace(
         "{business_id}",
-        String(businessId)
+        String(businessId),
       )
     : null;
 
 const buildDeleteUrl = (notificationId) =>
-  DELETE_BASE ? DELETE_BASE.replace("{notificationId}", String(notificationId)) : null;
+  DELETE_BASE
+    ? DELETE_BASE.replace("{notificationId}", String(notificationId))
+    : null;
 
 const buildSystemNotificationsUrl = (userId) =>
-  SYSTEM_NOTIFS_BASE ? SYSTEM_NOTIFS_BASE.replace("{user_id}", String(userId)) : null;
+  SYSTEM_NOTIFS_BASE
+    ? SYSTEM_NOTIFS_BASE.replace("{user_id}", String(userId))
+    : null;
 
 // Grouped orders URL (same one OrdersTab uses)
 const buildOrdersGroupedUrl = (businessId, ownerType) => {
   if (!ORDER_BASE || !businessId) return null;
   let url = ORDER_BASE.replace("{businessId}", String(businessId)).replace(
     "{business_id}",
-    String(businessId)
+    String(businessId),
   );
   try {
     const u = new URL(url);
@@ -164,7 +179,8 @@ async function getToken() {
       const raw = await SecureStore.getItemAsync("merchant_login");
       if (raw) {
         const parsed = JSON.parse(raw);
-        token = parsed?.token ?? parsed?.auth_token ?? parsed?.access_token ?? null;
+        token =
+          parsed?.token ?? parsed?.auth_token ?? parsed?.access_token ?? null;
       }
     } catch {}
   }
@@ -188,7 +204,20 @@ const showAsGiven = (s) => {
     dd = isoish.slice(8, 10);
   const hh = isoish.slice(11, 13),
     mm = isoish.slice(14, 16);
-  const monNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const monNames = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
   const mon = monNames[(+m || 1) - 1] || m;
   if (!y || !m || !dd || !hh || !mm) return d;
   return `${mon} ${dd}, ${hh}:${mm}`;
@@ -200,7 +229,14 @@ const parseLocalFromGiven = (s) => {
   const m = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
   if (!m) return null;
   const [, y, mo, d, hh, mm, ss] = m;
-  return new Date(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mm), Number(ss || "0"));
+  return new Date(
+    Number(y),
+    Number(mo) - 1,
+    Number(d),
+    Number(hh),
+    Number(mm),
+    Number(ss || "0"),
+  );
 };
 
 const timeAgoLocal = (s) => {
@@ -220,7 +256,11 @@ const isTodayLocal = (s) => {
   const dt = parseLocalFromGiven(s) || new Date(s);
   if (!dt || Number.isNaN(+dt)) return false;
   const now = new Date();
-  return dt.getFullYear() === now.getFullYear() && dt.getMonth() === now.getMonth() && dt.getDate() === now.getDate();
+  return (
+    dt.getFullYear() === now.getFullYear() &&
+    dt.getMonth() === now.getMonth() &&
+    dt.getDate() === now.getDate()
+  );
 };
 
 /* ---------- type helpers ---------- */
@@ -293,7 +333,9 @@ const resolveOrderFromRecord = (n) => {
     null;
 
   if (first) return toOrderParts(first);
-  return parseOrderFromText(n.body_preview ?? n.body ?? n.message ?? n.description ?? "");
+  return parseOrderFromText(
+    n.body_preview ?? n.body ?? n.message ?? n.description ?? "",
+  );
 };
 
 const inferStatusFromText = (title = "", body = "") => {
@@ -308,7 +350,12 @@ const inferStatusFromText = (title = "", body = "") => {
 
 const isDeliveredLike = (status) => {
   const s = String(status || "").toUpperCase();
-  return s === "COMPLETED" || s === "DELIVERED" || s === "DELIVERED_SUCCESS" || s === "SUCCESS";
+  return (
+    s === "COMPLETED" ||
+    s === "DELIVERED" ||
+    s === "DELIVERED_SUCCESS" ||
+    s === "SUCCESS"
+  );
 };
 
 /* ---------- filters/tabs ---------- */
@@ -349,7 +396,9 @@ const mapApiNotif = (n, readMap) => {
 
   const readServer = n.is_read ?? n.read ?? n.isRead ?? null;
   const read =
-    readServer == null ? Boolean(readMap[id]) : String(readServer) === "1" || readServer === true;
+    readServer == null
+      ? Boolean(readMap[id])
+      : String(readServer) === "1" || readServer === true;
 
   const { orderCode, orderIdNumeric } = resolveOrderFromRecord(n);
   const orderId = orderIdNumeric ?? orderCode ?? null;
@@ -370,7 +419,13 @@ const mapApiNotif = (n, readMap) => {
     "";
 
   const minimalOrder = orderId
-    ? { id: String(orderId), created_at: createdISO, time: absolute, status, customer_name: customerName || "" }
+    ? {
+        id: String(orderId),
+        created_at: createdISO,
+        time: absolute,
+        status,
+        customer_name: customerName || "",
+      }
     : null;
 
   const walletId = n.wallet_id ?? n.walletId ?? n.wallet ?? null;
@@ -394,7 +449,8 @@ const mapApiNotif = (n, readMap) => {
 
 /* ---------- fetch a single order from grouped endpoint ---------- */
 const sameId = (a, b) =>
-  String(a ?? "").replace(/^ORD[-_]?/i, "") === String(b ?? "").replace(/^ORD[-_]?/i, "");
+  String(a ?? "").replace(/^ORD[-_]?/i, "") ===
+  String(b ?? "").replace(/^ORD[-_]?/i, "");
 
 function coalesce(...vals) {
   for (const v of vals) if (v != null && v !== "") return v;
@@ -417,14 +473,20 @@ function normalizeOrderRecord(row = {}, user = {}) {
     order_code: coalesce(row.order_code, row.orderCode, row.id, row.order_id),
     customer_name: coalesce(row.customer_name, user.user_name, user.name, ""),
     payment_method: coalesce(row.payment_method, row.payment, ""),
-    type: coalesce(row.type, row.fulfillment_type, row.delivery_option, row.delivery_type, ""),
+    type: coalesce(
+      row.type,
+      row.fulfillment_type,
+      row.delivery_option,
+      row.delivery_type,
+      "",
+    ),
     delivery_address: coalesce(row.delivery_address, row.address, ""),
     note_for_restaurant: coalesce(
       row.note_for_restaurant,
       row.restaurant_note,
       row.note_for_store,
       row.note,
-      ""
+      "",
     ),
     total: Number(coalesce(row.total, row.total_amount, 0)),
     raw_items: normalizedItems,
@@ -453,14 +515,15 @@ async function fetchOrderHydrated({ businessId, ownerType, orderId }) {
     const flattened = [];
     for (const g of groups) {
       if (Array.isArray(g?.orders)) {
-        for (const o of g.orders) flattened.push({ row: o, user: g.user || {} });
+        for (const o of g.orders)
+          flattened.push({ row: o, user: g.user || {} });
       } else {
         flattened.push({ row: g, user: g.user || {} });
       }
     }
 
     const hit = flattened.find(({ row }) =>
-      sameId(row?.order_code ?? row?.id ?? row?.order_id, orderId)
+      sameId(row?.order_code ?? row?.id ?? row?.order_id, orderId),
     );
     if (!hit) return null;
 
@@ -518,7 +581,11 @@ async function deleteNotificationServer(id) {
 }
 
 /* ============================= Component ============================= */
-export default function NotificationsTab({ isTablet = false, route, detailsRoute = "OrderDetails" }) {
+export default function NotificationsTab({
+  isTablet = false,
+  route,
+  detailsRoute = "OrderDetails",
+}) {
   const navigation = useNavigation();
   const [list, setList] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -546,7 +613,9 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
   const emitTimerRef = useRef(null);
 
   const ownerType =
-    String(route?.params?.ownerType || "food").toLowerCase() === "mart" ? "mart" : "food";
+    String(route?.params?.ownerType || "food").toLowerCase() === "mart"
+      ? "mart"
+      : "food";
 
   // ✅ resolve bizId once and mark ready (even if null)
   useEffect(() => {
@@ -620,7 +689,10 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
       try {
         await AsyncStorage.setItem(STORAGE_KEY_LAST_UNREAD, String(safe));
       } catch {}
-      DeviceEventEmitter.emit("notifications-unread-count", { count: safe, at: Date.now() });
+      DeviceEventEmitter.emit("notifications-unread-count", {
+        count: safe,
+        at: Date.now(),
+      });
     }, 140);
   }, []);
 
@@ -649,10 +721,10 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
             const arr = Array.isArray(data?.data)
               ? data.data
               : Array.isArray(data?.notifications)
-              ? data.notifications
-              : Array.isArray(data)
-              ? data
-              : [];
+                ? data.notifications
+                : Array.isArray(data)
+                  ? data
+                  : [];
 
             const mappedBiz = arr
               .map((n) => mapApiNotif(n, readMapRef.current))
@@ -678,10 +750,10 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
             const arrSys = Array.isArray(dataSys?.notifications)
               ? dataSys.notifications
               : Array.isArray(dataSys?.data)
-              ? dataSys.data
-              : Array.isArray(dataSys)
-              ? dataSys
-              : [];
+                ? dataSys.data
+                : Array.isArray(dataSys)
+                  ? dataSys
+                  : [];
 
             const mappedSys = arrSys
               .map((n) => mapApiNotif(n, readMapRef.current))
@@ -693,7 +765,9 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
         }
       }
 
-      mappedAll.sort((a, b) => new Date(b._created_at) - new Date(a._created_at));
+      mappedAll.sort(
+        (a, b) => new Date(b._created_at) - new Date(a._created_at),
+      );
 
       setList(mappedAll);
       setSelectionMode(false);
@@ -739,7 +813,7 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
 
   const anySelectedUnread = useMemo(
     () => list.some((n) => selectedIds.has(n.id) && !n.read),
-    [list, selectedIds]
+    [list, selectedIds],
   );
 
   const toggleSelect = useCallback((id) => {
@@ -784,7 +858,7 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
           },
         },
       ],
-      { cancelable: true }
+      { cancelable: true },
     );
   };
 
@@ -794,7 +868,9 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
 
     const snapshot = list;
 
-    setList((cur) => cur.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n)));
+    setList((cur) =>
+      cur.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n)),
+    );
 
     const nextReadMap = { ...readMapRef.current };
     ids.forEach((id) => (nextReadMap[id] = true));
@@ -842,7 +918,9 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
     async (item) => {
       if (!item || item.read) return;
 
-      setList((cur) => cur.map((n) => (n.id === item.id ? { ...n, read: true } : n)));
+      setList((cur) =>
+        cur.map((n) => (n.id === item.id ? { ...n, read: true } : n)),
+      );
       const nextReadMap = { ...readMapRef.current, [item.id]: true };
       await saveReadMap(nextReadMap);
 
@@ -850,7 +928,7 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
         await markOneReadServer(item.id);
       }
     },
-    [saveReadMap]
+    [saveReadMap],
   );
 
   const onPressItem = async (item) => {
@@ -862,7 +940,10 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
     await markReadOnClick(item);
 
     if (item.type === "wallet" || item.type === "payout") {
-      navigation.navigate("GrabMerchantHomeScreen", { activeTab: "Payouts", from: "Notifications" });
+      navigation.navigate("GrabMerchantHomeScreen", {
+        activeTab: "Payouts",
+        from: "Notifications",
+      });
       return;
     }
 
@@ -870,7 +951,8 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
     setSelectedOrderDetails(null);
 
     if (item.type === "order") {
-      const orderId = item.orderIdNumeric ?? item.orderCode ?? item._order_like?.id ?? null;
+      const orderId =
+        item.orderIdNumeric ?? item.orderCode ?? item._order_like?.id ?? null;
       if (!orderId || !bizId) return;
 
       setOrderLoading(true);
@@ -892,22 +974,29 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
   const confirmDelete = (item) => {
     if (item.source === "system") return;
 
-    Alert.alert("Delete Activity", "Are you sure you want to delete this activity?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          setList((cur) => cur.filter((n) => n.id !== item.id));
-          const okRes = await deleteNotificationServer(item.id);
-          if (!okRes) onRefresh();
+    Alert.alert(
+      "Delete Activity",
+      "Are you sure you want to delete this activity?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            setList((cur) => cur.filter((n) => n.id !== item.id));
+            const okRes = await deleteNotificationServer(item.id);
+            if (!okRes) onRefresh();
+          },
         },
-      },
-    ]);
+      ],
+    );
   };
 
   const renderRightActions = (item) => (
-    <TouchableOpacity onPress={() => confirmDelete(item)} style={styles.deleteAction}>
+    <TouchableOpacity
+      onPress={() => confirmDelete(item)}
+      style={styles.deleteAction}
+    >
       <Ionicons name="trash-outline" size={22} color="#fff" />
     </TouchableOpacity>
   );
@@ -924,17 +1013,30 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
             setSelectedIds(() => new Set([item.id]));
           }}
           activeOpacity={0.7}
-          style={[styles.itemWrap, isSelected && styles.itemWrapSelected]}
+          style={[
+            styles.itemWrap,
+            !item.read && styles.itemWrapUnread,
+            isSelected && styles.itemWrapSelected,
+          ]}
         >
-          <View style={[styles.iconWrap, { backgroundColor: typeTint(item.type) + "22" }]}>
-            <Ionicons name={typeIcon(item.type)} size={22} color={typeTint(item.type)} />
+          <View
+            style={[
+              styles.iconWrap,
+              { backgroundColor: typeTint(item.type) + "22" },
+            ]}
+          >
+            <Ionicons
+              name={typeIcon(item.type)}
+              size={22}
+              color={typeTint(item.type)}
+            />
             {!item.read && <View style={styles.unreadDot} />}
             {selectionMode && (
               <View style={styles.checkboxOverlay}>
                 <Ionicons
                   name={isSelected ? "checkbox-outline" : "square-outline"}
                   size={18}
-                  color={isSelected ? "#00b14f" : "#9ca3af"}
+                  color={isSelected ? BRAND.purple : BRAND.grey}
                 />
               </View>
             )}
@@ -942,7 +1044,10 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
 
           <View style={styles.itemTextWrap}>
             <View style={styles.itemTopRow}>
-              <Text style={[styles.itemTitle, !item.read && styles.itemTitleUnread]} numberOfLines={1}>
+              <Text
+                style={[styles.itemTitle, !item.read && styles.itemTitleUnread]}
+                numberOfLines={1}
+              >
                 {item.title}
               </Text>
               <Text style={styles.time}>{item.displayChip}</Text>
@@ -955,9 +1060,13 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
       );
 
       if (selectionMode || item.source === "system") return content;
-      return <Swipeable renderRightActions={() => renderRightActions(item)}>{content}</Swipeable>;
+      return (
+        <Swipeable renderRightActions={() => renderRightActions(item)}>
+          {content}
+        </Swipeable>
+      );
     },
-    [selectionMode, selectedIds, onPressItem]
+    [selectionMode, selectedIds, onPressItem],
   );
 
   const keyExtractor = useCallback((it) => it.id, []);
@@ -971,22 +1080,38 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
       return (
         <View style={styles.headerTools}>
           <View style={styles.headerTitleRow}>
-            <TouchableOpacity onPress={cancelSelection} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <TouchableOpacity
+              onPress={cancelSelection}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
               <Ionicons name="close-outline" size={22} color="#111827" />
             </TouchableOpacity>
-            <Text style={[styles.title, { fontSize: isTablet ? 20 : 16 }]}>{selectedCount} selected</Text>
+            <Text style={[styles.title, { fontSize: isTablet ? 20 : 16 }]}>
+              {selectedCount} selected
+            </Text>
             <View style={{ flex: 1 }} />
             {selectedCount > 0 && (
               <>
                 <TouchableOpacity
                   onPress={anySelectedUnread ? markSelectedRead : undefined}
-                  style={[styles.bulkReadBtn, { opacity: anySelectedUnread ? 1 : 0.4, marginRight: 8 }]}
+                  style={[
+                    styles.bulkReadBtn,
+                    { opacity: anySelectedUnread ? 1 : 0.4, marginRight: 8 },
+                  ]}
                   activeOpacity={anySelectedUnread ? 0.8 : 1}
                 >
-                  <Ionicons name="checkmark-done-outline" size={16} color="#fff" />
+                  <Ionicons
+                    name="checkmark-done-outline"
+                    size={16}
+                    color="#fff"
+                  />
                   <Text style={styles.bulkReadText}>Mark read</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={deleteSelected} style={styles.bulkDeleteBtn} activeOpacity={0.8}>
+                <TouchableOpacity
+                  onPress={deleteSelected}
+                  style={styles.bulkDeleteBtn}
+                  activeOpacity={0.8}
+                >
                   <Ionicons name="trash-outline" size={16} color="#fff" />
                   <Text style={styles.bulkDeleteText}>Delete</Text>
                 </TouchableOpacity>
@@ -1000,7 +1125,9 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
     return (
       <View style={styles.headerTools}>
         <View style={styles.headerTitleRow}>
-          <Text style={[styles.title, { fontSize: isTablet ? 22 : 18 }]}>Activities</Text>
+          <Text style={[styles.title, { fontSize: isTablet ? 22 : 18 }]}>
+            Activities
+          </Text>
           {unreadCount > 0 && (
             <View style={styles.badge}>
               <Text style={styles.badgeText}>{unreadCount}</Text>
@@ -1010,11 +1137,20 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
 
         <TouchableOpacity
           onPress={canMarkAll ? markAllRead : undefined}
-          style={[styles.actionBtn, { alignSelf: "flex-start", opacity: canMarkAll ? 1 : 0.5 }]}
+          style={[
+            styles.actionBtn,
+            { alignSelf: "flex-start", opacity: canMarkAll ? 1 : 0.5 },
+          ]}
           activeOpacity={canMarkAll ? 0.8 : 1}
         >
-          <Ionicons name="checkmark-done-outline" size={16} color="#00b14f" />
-          <Text style={styles.actionText}>{canMarkAll ? "Mark all read" : "All read"}</Text>
+          <Ionicons
+            name="checkmark-done-outline"
+            size={16}
+            color={BRAND.purple}
+          />
+          <Text style={styles.actionText}>
+            {canMarkAll ? "Mark all read" : "All read"}
+          </Text>
         </TouchableOpacity>
 
         <View style={styles.tabsRow}>
@@ -1027,7 +1163,10 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
                 style={[styles.tabPill, active && styles.tabPillActive]}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.tabLabel, active && styles.tabLabelActive]} numberOfLines={1}>
+                <Text
+                  style={[styles.tabLabel, active && styles.tabLabelActive]}
+                  numberOfLines={1}
+                >
                   {tab.label}
                 </Text>
               </TouchableOpacity>
@@ -1054,11 +1193,15 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
 
   const goToOrderDetailsFromModal = () => {
     if (!selectedActivity || selectedActivity.type !== "order") return;
-    const orderId = selectedActivity.orderIdNumeric ?? selectedActivity.orderCode ?? null;
+    const orderId =
+      selectedActivity.orderIdNumeric ?? selectedActivity.orderCode ?? null;
     if (!orderId || !bizId) return;
 
     const groupedUrl = buildOrdersGroupedUrl(bizId, ownerType);
-    const fallbackOrder = { id: String(orderId), customer_name: selectedActivity?._order_like?.customer_name || "" };
+    const fallbackOrder = {
+      id: String(orderId),
+      customer_name: selectedActivity?._order_like?.customer_name || "",
+    };
 
     navigation.navigate(detailsRoute, {
       orderId: String(orderId),
@@ -1077,7 +1220,9 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
     selectedActivity?.type === "order" &&
     (isDeliveredLike(selectedOrderDetails?.status) ||
       isDeliveredLike(selectedActivity?._order_like?.status) ||
-      isDeliveredLike(inferStatusFromText(selectedActivity?.title, selectedActivity?.body)));
+      isDeliveredLike(
+        inferStatusFromText(selectedActivity?.title, selectedActivity?.body),
+      ));
 
   return (
     <View style={styles.wrap}>
@@ -1090,7 +1235,9 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
         ItemSeparatorComponent={renderSeparator}
         ListHeaderComponent={!selectionMode ? ListHeader : null}
         ListEmptyComponent={Empty}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
         contentContainerStyle={{ paddingBottom: 24 }}
         initialNumToRender={15}
         maxToRenderPerBatch={20}
@@ -1098,17 +1245,31 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
         removeClippedSubviews
       />
 
-      <Modal visible={!!selectedActivity} transparent animationType="fade" onRequestClose={closeActivityModal}>
+      <Modal
+        visible={!!selectedActivity}
+        transparent
+        animationType="fade"
+        onRequestClose={closeActivityModal}
+      >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
-              <Ionicons name={typeIcon(selectedActivity?.type)} size={22} color="#00b14f" style={{ marginRight: 6 }} />
+              <Ionicons
+                name={typeIcon(selectedActivity?.type)}
+                size={22}
+                color={BRAND.purple}
+                style={{ marginRight: 6 }}
+              />
               <Text style={styles.modalTitle} numberOfLines={2}>
                 {selectedActivity?.title}
               </Text>
             </View>
 
-            {!!selectedActivity?._created_at && <Text style={styles.modalTime}>{showAsGiven(selectedActivity._created_at)}</Text>}
+            {!!selectedActivity?._created_at && (
+              <Text style={styles.modalTime}>
+                {showAsGiven(selectedActivity._created_at)}
+              </Text>
+            )}
 
             <Text style={styles.modalBody}>{selectedActivity?.body}</Text>
 
@@ -1118,58 +1279,89 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
                   <Text style={styles.orderLabel}>Order</Text>
                   <Text style={styles.orderValue}>
                     {selectedActivity?.orderCode ||
-                      (selectedActivity?.orderIdNumeric ? `ORD-${selectedActivity.orderIdNumeric}` : "—")}
+                      (selectedActivity?.orderIdNumeric
+                        ? `ORD-${selectedActivity.orderIdNumeric}`
+                        : "—")}
                   </Text>
                 </View>
 
                 {orderLoading ? (
                   <View style={{ paddingVertical: 10 }}>
-                    <Text style={styles.orderMuted}>Loading order details…</Text>
+                    <Text style={styles.orderMuted}>
+                      Loading order details…
+                    </Text>
                   </View>
                 ) : selectedOrderDetails ? (
                   <>
                     <View style={styles.orderRow}>
                       <Text style={styles.orderLabel}>Status</Text>
-                      <Text style={styles.orderValue}>{prettyStatus(selectedOrderDetails.status)}</Text>
+                      <Text style={styles.orderValue}>
+                        {prettyStatus(selectedOrderDetails.status)}
+                      </Text>
                     </View>
 
                     {!!selectedOrderDetails.customer_name && (
                       <View style={styles.orderRow}>
                         <Text style={styles.orderLabel}>Customer</Text>
-                        <Text style={styles.orderValue}>{selectedOrderDetails.customer_name}</Text>
+                        <Text style={styles.orderValue}>
+                          {selectedOrderDetails.customer_name}
+                        </Text>
                       </View>
                     )}
 
-                    {Array.isArray(selectedOrderDetails.raw_items) && selectedOrderDetails.raw_items.length > 0 && (
-                      <View style={{ marginTop: 8 }}>
-                        <Text style={styles.orderLabel}>Items</Text>
-                        <ScrollView style={{ maxHeight: 140, marginTop: 6 }}>
-                          {selectedOrderDetails.raw_items.slice(0, 30).map((it, idx) => (
-                            <View key={String(it.item_id ?? idx)} style={styles.itemLine}>
-                              <Text style={styles.itemLineText} numberOfLines={1}>
-                                {it.quantity} × {it.item_name}
-                              </Text>
-                            </View>
-                          ))}
-                        </ScrollView>
-                      </View>
-                    )}
+                    {Array.isArray(selectedOrderDetails.raw_items) &&
+                      selectedOrderDetails.raw_items.length > 0 && (
+                        <View style={{ marginTop: 8 }}>
+                          <Text style={styles.orderLabel}>Items</Text>
+                          <ScrollView style={{ maxHeight: 140, marginTop: 6 }}>
+                            {selectedOrderDetails.raw_items
+                              .slice(0, 30)
+                              .map((it, idx) => (
+                                <View
+                                  key={String(it.item_id ?? idx)}
+                                  style={styles.itemLine}
+                                >
+                                  <Text
+                                    style={styles.itemLineText}
+                                    numberOfLines={1}
+                                  >
+                                    {it.quantity} × {it.item_name}
+                                  </Text>
+                                </View>
+                              ))}
+                          </ScrollView>
+                        </View>
+                      )}
                   </>
                 ) : (
                   <View style={{ paddingVertical: 10 }}>
-                    <Text style={styles.orderMuted}>No extra order details found.</Text>
+                    <Text style={styles.orderMuted}>
+                      No extra order details found.
+                    </Text>
                   </View>
                 )}
 
                 <View style={styles.modalButtonsRow}>
                   {!deliveredNow && (
-                    <TouchableOpacity style={styles.modalGhostBtn} onPress={goToOrderDetailsFromModal} activeOpacity={0.85}>
-                      <Ionicons name="open-outline" size={16} color="#00b14f" />
+                    <TouchableOpacity
+                      style={styles.modalGhostBtn}
+                      onPress={goToOrderDetailsFromModal}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons
+                        name="open-outline"
+                        size={16}
+                        color={BRAND.purple}
+                      />
                       <Text style={styles.modalGhostText}>Open details</Text>
                     </TouchableOpacity>
                   )}
 
-                  <TouchableOpacity style={styles.modalCloseBtn} onPress={closeActivityModal} activeOpacity={0.8}>
+                  <TouchableOpacity
+                    style={styles.modalCloseBtn}
+                    onPress={closeActivityModal}
+                    activeOpacity={0.8}
+                  >
                     <Text style={styles.modalCloseText}>Close</Text>
                   </TouchableOpacity>
                 </View>
@@ -1177,7 +1369,11 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
             )}
 
             {selectedActivity?.type !== "order" && (
-              <TouchableOpacity style={styles.modalCloseBtn} onPress={closeActivityModal} activeOpacity={0.8}>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={closeActivityModal}
+                activeOpacity={0.8}
+              >
                 <Text style={styles.modalCloseText}>Close</Text>
               </TouchableOpacity>
             )}
@@ -1188,49 +1384,117 @@ export default function NotificationsTab({ isTablet = false, route, detailsRoute
   );
 }
 
-/* ---------- styles ---------- */
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: "#f6f7f8" },
+  wrap: {
+    flex: 1,
+    backgroundColor: BRAND.white,
+  },
 
-  headerTools: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
-  headerTitleRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
-  title: { fontWeight: "700", color: "#111827" },
-  badge: { backgroundColor: "#00b14f", borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
-  badgeText: { color: "#fff", fontWeight: "700", fontSize: 12 },
+  headerTools: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 10,
+  },
+  headerTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 10,
+  },
+  title: {
+    fontFamily: FONT.header,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+
+  badge: {
+    backgroundColor: BRAND.purple,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  badgeText: {
+    color: BRAND.white,
+    fontWeight: "900",
+    fontSize: 12,
+  },
 
   actionBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#fff",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 9,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  actionText: { color: "#00b14f", fontWeight: "600" },
-
-  tabsRow: { flexDirection: "row", marginTop: 12, gap: 8, flexWrap: "wrap" },
-  tabPill: {
+    backgroundColor: BRAND.white,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
+    paddingVertical: 9,
+    borderRadius: RADIUS.pill,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    backgroundColor: "#ffffff",
+    borderColor: "#F3E8FF",
+    // ...SHADOW.sm,
   },
-  tabPillActive: { backgroundColor: "#00b14f11", borderColor: "#00b14f" },
-  tabLabel: { fontSize: 13, color: "#4b5563", fontWeight: "500" },
-  tabLabelActive: { color: "#00b14f", fontWeight: "700" },
+  actionText: {
+    color: BRAND.purple,
+    fontWeight: "900",
+    fontFamily: FONT.body,
+  },
 
-  sep: { height: 1, backgroundColor: "#e5e7eb", marginLeft: 16 },
+  tabsRow: {
+    flexDirection: "row",
+    marginTop: 14,
+    gap: 8,
+    flexWrap: "wrap",
+  },
+  tabPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    backgroundColor: BRAND.white,
+    // ...SHADOW.sm,
+  },
+  tabPillActive: {
+    backgroundColor: BRAND.purple,
+    borderColor: BRAND.purple,
+  },
+  tabLabel: {
+    fontSize: 13,
+    color: BRAND.grey,
+    fontWeight: "800",
+    fontFamily: FONT.body,
+  },
+  tabLabelActive: {
+    color: BRAND.white,
+    fontWeight: "900",
+  },
 
-  itemWrap: { flexDirection: "row", backgroundColor: "#fff", paddingHorizontal: 16, paddingVertical: 12 },
-  itemWrapSelected: { backgroundColor: "#dcfce7" },
+  sep: {
+    height: 10,
+  },
+
+  itemWrap: {
+    flexDirection: "row",
+    backgroundColor: "#FAFAFA",
+    marginHorizontal: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#EFE7FF",
+  },
+
+  itemWrapUnread: {
+    backgroundColor: BRAND.white,
+    borderLeftWidth: 2,
+    borderLeftColor: BRAND.purple,
+  },
+  itemWrapSelected: {
+    backgroundColor: "#F4E9FF",
+    borderColor: BRAND.purpleLight,
+  },
+
   iconWrap: {
-    width: 40,
-    height: 40,
+    width: 38,
+    height: 38,
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
@@ -1241,54 +1505,105 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: -2,
     right: -2,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
     backgroundColor: "#00b14f",
     borderWidth: 2,
-    borderColor: "#fff",
+    borderColor: BRAND.white,
   },
-  checkboxOverlay: { position: "absolute", bottom: -6, right: -6 },
-  itemTextWrap: { flex: 1 },
-  itemTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  itemTitle: { color: "#111827", fontWeight: "600" },
-  itemTitleUnread: { fontWeight: "800" },
-  itemBody: { color: "#4b5563", marginTop: 2 },
-  time: { color: "#6b7280", fontSize: 12 },
+  checkboxOverlay: {
+    position: "absolute",
+    bottom: -6,
+    right: -6,
+    backgroundColor: BRAND.white,
+    borderRadius: 999,
+  },
+
+  itemTextWrap: {
+    flex: 1,
+  },
+  itemTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  itemTitle: {
+    color: BRAND.black,
+    fontWeight: "800",
+    fontFamily: FONT.body,
+    flex: 1,
+  },
+  itemTitleUnread: {
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+  itemBody: {
+    color: BRAND.grey,
+    marginTop: 4,
+    lineHeight: 19,
+    fontWeight: "600",
+  },
+  time: {
+    color: BRAND.grey,
+    fontSize: 12,
+    fontWeight: "800",
+  },
 
   deleteAction: {
-    backgroundColor: "#ef4444",
+    backgroundColor: BRAND.red,
     justifyContent: "center",
     alignItems: "center",
     width: 70,
-    borderRadius: 8,
+    borderRadius: 18,
     marginVertical: 4,
+    marginRight: 16,
   },
 
   bulkDeleteBtn: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#ef4444",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
+    backgroundColor: BRAND.red,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: RADIUS.pill,
     gap: 4,
   },
-  bulkDeleteText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  bulkDeleteText: {
+    color: BRAND.white,
+    fontWeight: "900",
+    fontSize: 13,
+  },
   bulkReadBtn: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#00b14f",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
+    backgroundColor: BRAND.purple,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: RADIUS.pill,
     gap: 4,
   },
-  bulkReadText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  bulkReadText: {
+    color: BRAND.white,
+    fontWeight: "900",
+    fontSize: 13,
+  },
 
-  emptyWrap: { alignItems: "center", paddingVertical: 40, gap: 8 },
-  emptyTitle: { color: "#111827", fontWeight: "700" },
-  emptyBody: { color: "#6b7280" },
+  emptyWrap: {
+    alignItems: "center",
+    paddingVertical: 46,
+    gap: 8,
+  },
+  emptyTitle: {
+    color: BRAND.black,
+    fontWeight: "900",
+    fontFamily: FONT.header,
+  },
+  emptyBody: {
+    color: BRAND.grey,
+    fontWeight: "700",
+  },
 
   modalBackdrop: {
     flex: 1,
@@ -1300,46 +1615,117 @@ const styles = StyleSheet.create({
   modalCard: {
     width: "100%",
     maxWidth: 460,
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
     paddingHorizontal: 18,
     paddingVertical: 16,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    // ...SHADOW.md,
   },
-  modalHeader: { flexDirection: "row", alignItems: "center", marginBottom: 4 },
-  modalTitle: { fontSize: 16, fontWeight: "700", color: "#111827", flex: 1 },
-  modalTime: { fontSize: 12, color: "#6b7280", marginBottom: 8 },
-  modalBody: { fontSize: 14, color: "#374151", marginBottom: 12 },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: "900",
+    color: BRAND.black,
+    flex: 1,
+    fontFamily: FONT.header,
+  },
+  modalTime: {
+    fontSize: 12,
+    color: BRAND.grey,
+    marginBottom: 8,
+    fontWeight: "700",
+  },
+  modalBody: {
+    fontSize: 14,
+    color: "#374151",
+    marginBottom: 12,
+    lineHeight: 20,
+    fontWeight: "600",
+  },
 
   orderBox: {
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    backgroundColor: "#f9fafb",
-    borderRadius: 14,
+    borderColor: "#F3E8FF",
+    backgroundColor: "#FBF7FF",
+    borderRadius: 18,
     padding: 12,
     marginTop: 6,
   },
-  orderRow: { flexDirection: "row", justifyContent: "space-between", gap: 10, marginTop: 6 },
-  orderLabel: { color: "#6b7280", fontSize: 12, fontWeight: "700" },
-  orderValue: { color: "#111827", fontSize: 13, fontWeight: "700", flexShrink: 1, textAlign: "right" },
-  orderMuted: { color: "#6b7280", fontSize: 13 },
+  orderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 10,
+    marginTop: 7,
+  },
+  orderLabel: {
+    color: BRAND.grey,
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  orderValue: {
+    color: BRAND.black,
+    fontSize: 13,
+    fontWeight: "900",
+    flexShrink: 1,
+    textAlign: "right",
+  },
+  orderMuted: {
+    color: BRAND.grey,
+    fontSize: 13,
+    fontWeight: "700",
+  },
 
-  itemLine: { paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#e5e7eb" },
-  itemLineText: { color: "#111827", fontSize: 13, fontWeight: "600" },
+  itemLine: {
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3E8FF",
+  },
+  itemLineText: {
+    color: BRAND.black,
+    fontSize: 13,
+    fontWeight: "800",
+  },
 
-  modalButtonsRow: { flexDirection: "row", justifyContent: "flex-end", gap: 10, marginTop: 12, alignItems: "center" },
+  modalButtonsRow: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginTop: 12,
+    alignItems: "center",
+  },
   modalGhostBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    borderRadius: RADIUS.pill,
     borderWidth: 1,
-    borderColor: "#00b14f",
-    backgroundColor: "#00b14f11",
+    borderColor: BRAND.purple,
+    backgroundColor: "#F4E9FF",
   },
-  modalGhostText: { color: "#00b14f", fontWeight: "800", fontSize: 13 },
+  modalGhostText: {
+    color: BRAND.purple,
+    fontWeight: "900",
+    fontSize: 13,
+  },
 
-  modalCloseBtn: { alignSelf: "flex-end", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: "#00b14f" },
-  modalCloseText: { color: "#ffffff", fontWeight: "700", fontSize: 13 },
+  modalCloseBtn: {
+    alignSelf: "flex-end",
+    paddingHorizontal: 15,
+    paddingVertical: 9,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND.purple,
+  },
+  modalCloseText: {
+    color: BRAND.white,
+    fontWeight: "900",
+    fontSize: 13,
+  },
 });
