@@ -414,7 +414,7 @@ const HeaderBar = React.memo(function HeaderBar({
 
   return (
     <LinearGradient
-      colors={[BRAND.purple, BRAND.magenta]}
+      colors={[BRAND.purple,"#F4E9FF"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={{

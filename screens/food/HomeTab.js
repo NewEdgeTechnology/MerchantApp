@@ -2096,9 +2096,9 @@ const styles = StyleSheet.create({
     padding: 14,
     minHeight: 128,
     borderWidth: 1,
-    borderColor: BRAND.purpleLight,
+    borderColor: BRAND.white,
     justifyContent: "space-between",
-    // ...SHADOW.sm,
+    ...SHADOW.sm,
   },
 
   kpiTop: {
@@ -2158,8 +2158,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    borderColor: BRAND.purpleLight,
-    // ...SHADOW.sm,
+    borderColor: BRAND.white,
+    ...SHADOW.sm,
   },
 
   shortcutIcon: {
