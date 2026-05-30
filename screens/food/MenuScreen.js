@@ -30,12 +30,14 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+
 import {
   useNavigation,
   useRoute,
   useFocusEffect,
 } from "@react-navigation/native";
 import * as SecureStore from "expo-secure-store";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import {
   DISPLAY_MENU_ENDPOINT as ENV_DISPLAY_MENU_ENDPOINT,
   DISPLAY_ITEM_ENDPOINT as ENV_DISPLAY_ITEM_ENDPOINT,
@@ -164,7 +166,7 @@ function CategoryDropdown({ categories, activeCategory, onChangeCategory }) {
                     {item}
                   </Text>
                   {selectedCategory === item && (
-                    <Ionicons name="checkmark" size={20} color="#00b14f" />
+                    <Ionicons name="checkmark" size={20} color={BRAND.purple} />
                   )}
                 </TouchableOpacity>
               )}
@@ -400,8 +402,8 @@ export default function MenuScreen() {
       }
     }
     // Return "All" first, then all unique categories sorted alphabetically (case insensitive)
-    const sortedCategories = Array.from(uniq.values()).sort((a, b) => 
-      a.toLowerCase().localeCompare(b.toLowerCase())
+    const sortedCategories = Array.from(uniq.values()).sort((a, b) =>
+      a.toLowerCase().localeCompare(b.toLowerCase()),
     );
     return ["All", ...sortedCategories];
   }, []);
@@ -449,12 +451,12 @@ export default function MenuScreen() {
         const list = extractItemsFromResponse(parsed).map((x, i) =>
           normalizeItem(x, i),
         );
-        
+
         // Sort items alphabetically by name
-        const sortedList = list.sort((a, b) => 
-          a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+        const sortedList = list.sort((a, b) =>
+          a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
         );
-        
+
         setMenus(sortedList);
         const cats = hydrateCategories(sortedList);
         setCategories(cats);
@@ -503,13 +505,13 @@ export default function MenuScreen() {
         cat.includes(q);
       return matchesCat && matchesText;
     });
-    
+
     // Ensure filtered items remain alphabetically sorted
-    return filteredItems.sort((a, b) => 
-      a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+    return filteredItems.sort((a, b) =>
+      a.name.toLowerCase().localeCompare(b.name.toLowerCase()),
     );
   }, [menus, query, activeCategory]);
-  
+
   const openAddTab = async () => {
     const payload = {
       openTab: "Add Menu",
@@ -583,7 +585,7 @@ export default function MenuScreen() {
       product_info: normalizedItem.productInfo || null,
     };
   };
-  
+
   const renderMenu = ({ item }) => (
     <Pressable
       onPress={() =>
@@ -678,7 +680,11 @@ export default function MenuScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "bottom", "right"]}
+    >
+      <View style={styles.topGlow} />
       <StatusBar
         translucent
         backgroundColor="transparent"
@@ -686,9 +692,7 @@ export default function MenuScreen() {
       />
 
       {/* Updated Header - Same style as PasswordManagement */}
-      <View
-        style={[styles.header, { paddingTop: Math.max(insets.top, 8) + 10 }]}
-      >
+      <View style={[styles.header]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backBtn}
@@ -786,34 +790,46 @@ export default function MenuScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#ffffff" },
-
-  // Updated header style to match PasswordManagement
+  safe: {
+    flex: 1,
+    backgroundColor: BRAND.white,
+  },
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
   header: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
   },
 
   backBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
+    ...SHADOW.sm,
   },
 
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
   },
 
   iconBtn: {
@@ -825,27 +841,29 @@ const styles = StyleSheet.create({
   },
 
   searchWrap: {
-    marginHorizontal: 16,
+    marginHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    marginTop: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 15,
-    borderRadius: 12,
-    backgroundColor: "#f1f5f9",
+    marginTop: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderRadius: 18,
+    backgroundColor: BRAND.white,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    // ...SHADOW.sm,
   },
   searchInput: { flex: 1, color: "#0f172a", paddingVertical: 0 },
   clearBtn: { padding: 4, borderRadius: 999 },
-  
-  // Category dropdown styles
+
   categoryDropdownContainer: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     marginTop: 12,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   categoryLabel: {
     fontSize: 14,
@@ -856,13 +874,13 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#f1f5f9",
+    backgroundColor: BRAND.white,
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    minWidth: 140,
+    paddingVertical: 12,
+    borderRadius: 16,
+    minWidth: 160,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: "#F3E8FF",
   },
   dropdownButtonText: {
     fontSize: 14,
@@ -905,47 +923,45 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   modalItemActive: {
-    backgroundColor: "#f0fdf4",
+    backgroundColor: "#F4E9FF",
   },
   modalItemText: {
     fontSize: 16,
     color: "#0f172a",
   },
   modalItemTextActive: {
-    color: "#00b14f",
-    fontWeight: "600",
+    color: BRAND.purple,
+    fontWeight: "900",
   },
   modalSeparator: {
     height: 1,
     backgroundColor: "#f1f5f9",
   },
-  
+
   card: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
     padding: 14,
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
   },
   imageContainer: { position: "relative" },
   thumb: {
-    width: 54,
-    height: 54,
-    borderRadius: 10,
-    backgroundColor: "#e2e8f0",
+    width: 64,
+    height: 64,
+    borderRadius: 18,
+    backgroundColor: "#F4E9FF",
   },
+
   thumbFallback: { alignItems: "center", justifyContent: "center" },
   multipleImagesBadge: {
     position: "absolute",
     bottom: -4,
     right: -4,
-    backgroundColor: "#00b14f",
+    backgroundColor: BRAND.purple,
     borderRadius: 10,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -965,19 +981,15 @@ const styles = StyleSheet.create({
   emptySub: { color: "#64748b" },
   fab: {
     position: "absolute",
-    right: 16,
+    right: 18,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: "#00b14f",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 999,
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 5,
+    backgroundColor: BRAND.purple,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderRadius: RADIUS.pill,
+    ...SHADOW.md,
   },
   fabText: { color: "#fff", fontWeight: "800" },
   btn: {
@@ -988,6 +1000,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 999,
   },
-  btnPrimary: { backgroundColor: "#00b14f" },
+  btnPrimary: {
+    backgroundColor: BRAND.purple,
+  },
   btnPrimaryText: { color: "#fff", fontWeight: "800" },
 });

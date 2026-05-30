@@ -24,6 +24,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import * as SecureStore from "expo-secure-store";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import {
   DISPLAY_ITEM_ENDPOINT as ENV_DISPLAY_ITEM_ENDPOINT,
   DISPLAY_MENU_ENDPOINT as ENV_DISPLAY_MENU_ENDPOINT,
@@ -355,7 +356,7 @@ export default function ItemDetailScreen() {
         icon: "pricetag-outline",
         label: `${item.discount}% OFF`,
         color: "#10b981",
-        bg: "#dcfce7",
+        bg: "#F4E9FF",
       });
     }
 
@@ -389,7 +390,7 @@ export default function ItemDetailScreen() {
         icon: "leaf-outline",
         label: "Pure Veg",
         color: "#10b981",
-        bg: "#dcfce7",
+        bg: "#F4E9FF",
       });
     }
 
@@ -599,7 +600,7 @@ export default function ItemDetailScreen() {
           {specs.map((spec, index) => (
             <View key={index} style={styles.specItem}>
               <View style={styles.specIconContainer}>
-                <Ionicons name={spec.icon} size={18} color="#00b14f" />
+                <Ionicons name={spec.icon} size={18} color={BRAND.purple}/>
               </View>
               <View style={styles.specContent}>
                 <Text style={styles.specLabel}>{spec.label}</Text>
@@ -814,7 +815,7 @@ export default function ItemDetailScreen() {
           <View style={styles.headerActions} />
         </View>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#00b14f" />
+          <ActivityIndicator size="large" color={BRAND.purple} />
           <Text style={styles.loadingText}>
             Loading {isMart ? "item" : "menu"} details...
           </Text>
@@ -858,11 +859,12 @@ export default function ItemDetailScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right"]}>
+    <SafeAreaView style={styles.safe} edges={["top", "bottom", "left", "right"]}>
+      <View style={styles.topGlow} />
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
 
       <View
-        style={[styles.header, { paddingTop: Math.max(insets.top, 8) + 10 }]}
+        style={[styles.header]}
       >
         <TouchableOpacity
           onPress={() => navigation.goBack()}
@@ -964,39 +966,48 @@ export default function ItemDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#ffffff" },
-
+  safe: { flex: 1, backgroundColor: BRAND.white},
+topGlow: {
+  position: "absolute",
+  top: -120,
+  right: -90,
+  width: 260,
+  height: 260,
+  borderRadius: 130,
+  backgroundColor: BRAND.purpleLight,
+  opacity: 0.38,
+},
   scrollContent: {
     flexGrow: 1,
   },
 
-  header: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
-    flexDirection: "row",
-    alignItems: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
-    backgroundColor: "#fff",
-    zIndex: 1,
-  },
+ header: {
+  minHeight: 54,
+  paddingHorizontal: 18,
+  paddingBottom: 12,
+  flexDirection: "row",
+  alignItems: "center",
+  backgroundColor: "transparent",
+  zIndex: 1,
+},
 
-  backBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
+ backBtn: {
+  width: 42,
+  height: 42,
+  borderRadius: RADIUS.full,
+  backgroundColor: BRAND.white,
+  alignItems: "center",
+  justifyContent: "center",
+  ...SHADOW.sm,
+},
   headerTitle: {
-    flex: 1,
-    textAlign: "center",
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
+  flex: 1,
+  textAlign: "center",
+  fontFamily: FONT.header,
+  fontSize: 20,
+  fontWeight: "900",
+  color: BRAND.black,
+},
 
   headerActions: {
     flexDirection: "row",
@@ -1004,12 +1015,14 @@ const styles = StyleSheet.create({
   },
 
   actionBtn: {
-    height: 40,
-    width: 40,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 12,
-  },
+  width: 42,
+  height: 42,
+  borderRadius: RADIUS.full,
+  backgroundColor: BRAND.white,
+  alignItems: "center",
+  justifyContent: "center",
+  ...SHADOW.sm,
+},
 
   loadingContainer: {
     flex: 1,
@@ -1034,7 +1047,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   goBackBtn: {
-    backgroundColor: "#00b14f",
+    backgroundColor: BRAND.purple,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 12,
@@ -1044,9 +1057,16 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  carouselWrapper: {
-    position: "relative",
-  },
+ carouselWrapper: {
+  position: "relative",
+  marginHorizontal: 18,
+  marginTop: 8,
+  borderRadius: 26,
+  overflow: "hidden",
+  backgroundColor: BRAND.white,
+  borderWidth: 1,
+  borderColor: "#F3E8FF",
+},
   imageCarousel: {
     height: width * 0.8,
   },
@@ -1109,7 +1129,7 @@ const styles = StyleSheet.create({
     position: "relative",
   },
   thumbnailActive: {
-    borderColor: "#00b14f",
+    borderColor: BRAND.purple,
   },
   thumbnailOverlay: {
     position: "absolute",
@@ -1147,25 +1167,32 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   categoryContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginBottom: 8,
-  },
+  alignSelf: "flex-start",
+  flexDirection: "row",
+  alignItems: "center",
+  gap: 6,
+  marginBottom: 10,
+  backgroundColor: "#F4E9FF",
+  borderRadius: RADIUS.pill,
+  paddingHorizontal: 12,
+  paddingVertical: 7,
+},
   category: {
-    fontSize: 13,
-    color: "#64748b",
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
+  fontFamily: FONT.body,
+  fontSize: 12,
+  color: BRAND.purple,
+  fontWeight: "900",
+  textTransform: "uppercase",
+  letterSpacing: 0.5,
+},
   name: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#0f172a",
-    lineHeight: 32,
-    marginBottom: 12,
-  },
+  fontFamily: FONT.header,
+  fontSize: 24,
+  fontWeight: "900",
+  color: BRAND.black,
+  lineHeight: 32,
+  marginBottom: 12,
+},
 
   highlightsContainer: {
     flexDirection: "row",
@@ -1186,20 +1213,20 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  priceCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    marginBottom: 20,
-    overflow: "hidden",
-  },
-  priceCardHeader: {
-    padding: 14,
-    backgroundColor: "#f8fafc",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
-  },
+priceCard: {
+  backgroundColor: BRAND.white,
+  borderRadius: 24,
+  borderWidth: 1,
+  borderColor: "#F3E8FF",
+  marginBottom: 20,
+  overflow: "hidden",
+},
+ priceCardHeader: {
+  padding: 15,
+  backgroundColor: "#F4E9FF",
+  borderBottomWidth: 1,
+  borderBottomColor: "#F3E8FF",
+},
   priceCardTitle: {
     fontSize: 15,
     fontWeight: "700",
@@ -1234,7 +1261,7 @@ const styles = StyleSheet.create({
   totalPrice: {
     fontSize: 18,
     fontWeight: "800",
-    color: "#00b14f",
+    color: BRAND.purple,
   },
   savingsInfo: {
     flexDirection: "row",
@@ -1251,8 +1278,13 @@ const styles = StyleSheet.create({
   },
 
   section: {
-    marginBottom: 24,
-  },
+  backgroundColor: BRAND.white,
+  borderRadius: 24,
+  padding: 16,
+  borderWidth: 1,
+  borderColor: "#F3E8FF",
+  marginBottom: 18,
+},
   sectionTitle: {
     fontSize: 16,
     fontWeight: "700",
@@ -1270,19 +1302,19 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
   },
   readMore: {
-    color: "#00b14f",
+    color: BRAND.purple,
     fontSize: 13,
     fontWeight: "600",
     marginTop: 8,
   },
 
   specsGrid: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    overflow: "hidden",
-  },
+  backgroundColor: BRAND.white,
+  borderRadius: 18,
+  borderWidth: 1,
+  borderColor: "#F3E8FF",
+  overflow: "hidden",
+},
   specItem: {
     flexDirection: "row",
     alignItems: "center",
@@ -1293,15 +1325,15 @@ const styles = StyleSheet.create({
   specItemLast: {
     borderBottomWidth: 0,
   },
-  specIconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#dcfce7",
-    alignItems: "center",
-    justifyContent: "center",
-    marginRight: 12,
-  },
+ specIconContainer: {
+  width: 36,
+  height: 36,
+  borderRadius: 18,
+  backgroundColor: "#F4E9FF",
+  alignItems: "center",
+  justifyContent: "center",
+  marginRight: 12,
+},
   specContent: {
     flex: 1,
   },
@@ -1334,42 +1366,42 @@ const styles = StyleSheet.create({
   },
 
   actionBar: {
-    flexDirection: "row",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    backgroundColor: "#fff",
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-    marginBottom: 12,
-  },
+  flexDirection: "row",
+  gap: 12,
+  paddingHorizontal: 18,
+  paddingTop: 12,
+  backgroundColor: BRAND.white,
+  borderTopWidth: 1,
+  borderTopColor: "#F3E8FF",
+},
   editButton: {
-    flex: 2,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: "#00b14f",
-    paddingVertical: 14,
-    borderRadius: 12,
-  },
+  flex: 2,
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  backgroundColor: BRAND.purple,
+  paddingVertical: 15,
+  borderRadius: RADIUS.pill,
+  ...SHADOW.md,
+},
   editButtonText: {
     color: "#fff",
     fontWeight: "700",
     fontSize: 16,
   },
-  deleteButton: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: "#fff",
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#fee2e2",
-  },
+ deleteButton: {
+  flex: 1,
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  backgroundColor: BRAND.white,
+  paddingVertical: 15,
+  borderRadius: RADIUS.pill,
+  borderWidth: 1,
+  borderColor: "#FFD4DD",
+},
   deleteButtonText: {
     color: "#ef4444",
     fontWeight: "700",

@@ -2367,4 +2367,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     backgroundColor: BRAND.purple,
   },
+  countNote: {
+    paddingBottom: 8,
+  }
 });

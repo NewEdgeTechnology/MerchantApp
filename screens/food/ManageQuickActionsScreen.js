@@ -11,6 +11,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
+import { BRAND, FONT, RADIUS, SHADOW } from '../styles/tabdey_brand';
 import { useNavigation, useRoute } from '@react-navigation/native';
 
 const KEY_QUICK_ACTIONS = 'quick_actions_v1';
@@ -78,23 +79,31 @@ export default function ManageQuickActionsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={['left', 'right']}>
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
       <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+      <View style={styles.topGlow} />
 
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: (insets.top || 0) + 6 }]}>
-        <Pressable
-          onPress={() => navigation.goBack()}
-          style={styles.iconBtn}
-          android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}
-        >
-          <Ionicons name="arrow-back" size={24} color="#0f172a" />
-        </Pressable>
-        <Text style={styles.headerTitle}>Manage quick actions</Text>
-        <View style={{ width: 40 }} />
-      </View>
+      <View style={styles.headerBar}>
+  <Pressable
+    onPress={() => navigation.goBack()}
+    style={styles.backBtn}
+    android_ripple={{ color: 'rgba(0,0,0,0.08)', borderless: true }}
+  >
+    <Ionicons name="arrow-back" size={22} color={BRAND.black} />
+  </Pressable>
 
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: (insets.bottom || 0) + 24 }}>
+  <Text style={styles.headerTitle}>Manage Quick Actions</Text>
+
+  <View style={{ width: 42 }} />
+</View>
+
+      <ScrollView
+  showsVerticalScrollIndicator={false}
+  contentContainerStyle={{
+    paddingHorizontal: 18,
+    paddingBottom: (insets.bottom || 0) + 30,
+  }}
+>
         <Text style={styles.sectionTitle}>Pinned (shown on Home)</Text>
         <Text style={styles.sectionHelp}>Choose up to 4, reorder with arrows.</Text>
 
@@ -136,14 +145,14 @@ export default function ManageQuickActionsScreen() {
           <Pressable
             key={`avail-${a.key}`}
             onPress={() => add(a.key)}
-            style={[styles.rowCard, { borderWidth: 1, borderColor: '#e2e8f0' }]}
+            style={styles.rowCard}
             android_ripple={{ color: 'rgba(0,0,0,0.06)' }}
           >
             <View style={styles.rowLeft}>
               <Ionicons name={a.icon} size={18} color="#0f172a" />
               <Text style={styles.rowTitle}>{a.label}</Text>
             </View>
-            <Ionicons name="add-circle-outline" size={18} color="#00b14f" />
+            <Ionicons name="add-circle-outline" size={20} color={BRAND.purple} />
           </Pressable>
         ))}
 
@@ -161,50 +170,163 @@ export default function ManageQuickActionsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: '#ffffff' },
-  header: {
-    paddingHorizontal: 16,
-    paddingBottom: 10,
+  safe: {
+    flex: 1,
+    backgroundColor: '#FBF7FF',
+  },
+
+  topGlow: {
+    position: 'absolute',
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
+
+  headerBar: {
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    backgroundColor: 'transparent',
   },
-  headerTitle: { flex: 1, textAlign: 'center', fontSize: 18, fontWeight: '800', color: '#0f172a' },
-  iconBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 999 },
 
-  sectionTitle: { fontWeight: '800', color: '#0f172a', fontSize: 16 },
-  sectionHelp: { color: '#64748b', marginTop: 4, marginBottom: 10 },
+  backBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...SHADOW.sm,
+  },
+
+  headerTitle: {
+    flex: 1,
+    textAlign: 'center',
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: '900',
+    color: BRAND.black,
+  },
+
+  sectionTitle: {
+    fontFamily: FONT.header,
+    fontWeight: '900',
+    color: BRAND.black,
+    fontSize: 17,
+    marginTop: 6,
+  },
+
+  sectionHelp: {
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+    marginTop: 4,
+    marginBottom: 12,
+    fontWeight: '700',
+    fontSize: 13,
+  },
 
   rowCard: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#F3E8FF',
   },
-  rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  rowTitle: { fontWeight: '700', color: '#0f172a' },
-  rowRight: { flexDirection: 'row', gap: 8 },
 
-  pillBtn: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 999 },
-  pillGray: { backgroundColor: '#e2e8f0' },
-  pillRed: { backgroundColor: '#fee2e2' },
+  rowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
 
-  emptyRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
-  emptyText: { color: '#64748b', fontWeight: '600' },
+  rowTitle: {
+    fontFamily: FONT.body,
+    fontWeight: '900',
+    color: BRAND.black,
+    fontSize: 14,
+  },
 
-  btn: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 999,
+  rowRight: {
+    flexDirection: 'row',
+    gap: 7,
+  },
+
+  pillBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: RADIUS.full,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  btnGhost: { borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff' },
-  btnGhostText: { color: '#0f172a', fontWeight: '800' },
-  btnPrimary: { backgroundColor: '#00b14f' },
-  btnPrimaryText: { color: '#fff', fontWeight: '800' },
+
+  pillGray: {
+    backgroundColor: '#F4E9FF',
+    borderWidth: 1,
+    borderColor: '#F3E8FF',
+  },
+
+  pillRed: {
+    backgroundColor: '#FFE7EE',
+    borderWidth: 1,
+    borderColor: '#FFD4DD',
+  },
+
+  emptyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 18,
+    backgroundColor: BRAND.white,
+    borderWidth: 1,
+    borderColor: '#F3E8FF',
+    marginBottom: 10,
+  },
+
+  emptyText: {
+    color: BRAND.grey,
+    fontWeight: '800',
+  },
+
+  btn: {
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: RADIUS.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  btnGhost: {
+    borderWidth: 1,
+    borderColor: '#F3E8FF',
+    backgroundColor: BRAND.white,
+  },
+
+  btnGhostText: {
+    color: BRAND.black,
+    fontWeight: '900',
+  },
+
+  btnPrimary: {
+    backgroundColor: BRAND.purple,
+    ...SHADOW.md,
+  },
+
+  btnPrimaryText: {
+    color: BRAND.white,
+    fontWeight: '900',
+  },
 });

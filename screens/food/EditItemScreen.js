@@ -34,6 +34,7 @@ import { useNavigation, useRoute } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
 import * as SecureStore from "expo-secure-store";
 import * as ImageManipulator from "expo-image-manipulator";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import {
   DISPLAY_ITEM_ENDPOINT as ENV_DISPLAY_ITEM_ENDPOINT,
   DISPLAY_MENU_ENDPOINT as ENV_DISPLAY_MENU_ENDPOINT,
@@ -147,7 +148,7 @@ function SizeStandardPicker({ value, onChange, fontSize = 14 }) {
                   style={[
                     styles.dropdownText,
                     value === option.value && {
-                      color: "#00b14f",
+                      color: BRAND.purple,
                       fontWeight: "700",
                     },
                   ]}
@@ -155,7 +156,7 @@ function SizeStandardPicker({ value, onChange, fontSize = 14 }) {
                   {option.label}
                 </Text>
                 {value === option.value && (
-                  <Ionicons name="checkmark" size={18} color="#00b14f" />
+                  <Ionicons name="checkmark" size={18} color={BRAND.purple} />
                 )}
               </TouchableOpacity>
             ))}
@@ -252,7 +253,7 @@ function Select({
                     style={[
                       styles.dropdownText,
                       value === option.value && {
-                        color: "#00b14f",
+                        color: BRAND.purple,
                         fontWeight: "700",
                       },
                     ]}
@@ -260,7 +261,7 @@ function Select({
                     {option.label}
                   </Text>
                   {value === option.value && (
-                    <Ionicons name="checkmark" size={18} color="#00b14f" />
+                    <Ionicons name="checkmark" size={18} color={BRAND.purple} />
                   )}
                 </TouchableOpacity>
               ))}
@@ -831,7 +832,7 @@ export default function EditItemScreen() {
                     <Ionicons
                       name="checkmark-circle"
                       size={22}
-                      color="#00b14f"
+                      color={BRAND.purple}
                     />
                   )}
                 </TouchableOpacity>
@@ -954,7 +955,7 @@ export default function EditItemScreen() {
           <View style={styles.headerActions} />
         </View>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#00b14f" />
+          <ActivityIndicator size="large" color={BRAND.purple} />
           <Text style={styles.loadingText}>Loading categories...</Text>
         </View>
       </SafeAreaView>
@@ -962,15 +963,17 @@ export default function EditItemScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "bottom", "left", "right"]}
+    >
+      <View style={styles.topGlow} />
       <StatusBar
         translucent
         backgroundColor="transparent"
         barStyle="dark-content"
       />
-      <View
-        style={[styles.header, { paddingTop: Math.max(insets.top, 8) + 10 }]}
-      >
+      <View style={[styles.header]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backBtn}
@@ -1185,30 +1188,41 @@ export default function EditItemScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#ffffff" },
+  safe: { flex: 1, backgroundColor: BRAND.white },
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
   header: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
   },
   backBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
+    ...SHADOW.sm,
   },
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
   },
   headerActions: { flexDirection: "row", gap: 4 },
   loadingContainer: {
@@ -1219,7 +1233,10 @@ const styles = StyleSheet.create({
   },
   loadingText: { fontSize: 14, color: "#64748b" },
   scrollContent: { paddingBottom: 32 },
-  form: { padding: 20, paddingTop: 4 },
+  form: {
+    paddingHorizontal: 18,
+    paddingBottom: 30,
+  },
   label: {
     color: "#0f172a",
     fontWeight: "700",
@@ -1227,24 +1244,27 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   input: {
-    backgroundColor: "#f1f5f9",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    color: "#0f172a",
+    backgroundColor: BRAND.white,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    color: BRAND.black,
     fontSize: 15,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
   },
   row2: { flexDirection: "row", gap: 10, marginTop: 4 },
   hintText: { fontSize: 12, color: "#64748b", marginTop: 4 },
   categorySelector: {
-    backgroundColor: "#f1f5f9",
-    borderRadius: 12,
+    backgroundColor: BRAND.white,
+    borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 14,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
   },
   categorySelectorText: { color: "#0f172a", fontSize: 15 },
   modalOverlay: {
@@ -1278,19 +1298,19 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#f1f5f9",
   },
-  modalListItemActive: { backgroundColor: "#f0fdf4" },
+  modalListItemActive: { backgroundColor: "#F3E8FF" },
   modalListItemText: { fontSize: 16, color: "#0f172a" },
-  modalListItemTextActive: { color: "#00b14f", fontWeight: "600" },
+  modalListItemTextActive: { color: BRAND.purple, fontWeight: "600" },
   modalEmpty: { padding: 48, alignItems: "center", gap: 12 },
   modalEmptyText: { fontSize: 14, color: "#64748b" },
   pickerWrap: {
-    backgroundColor: "#f1f5f9",
-    borderRadius: 12,
+    backgroundColor: BRAND.white,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    height: 46,
+    borderColor: "#F3E8FF",
+    height: 52,
     justifyContent: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
   },
   pickerText: { fontSize: 14, includeFontPadding: false },
   dropdownCard: {
@@ -1330,7 +1350,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 999,
   },
-  btnPrimary: { backgroundColor: "#00b14f" },
+  btnPrimary: {
+    backgroundColor: BRAND.purple,
+    ...SHADOW.md,
+  },
   btnPrimaryText: { color: "#fff", fontWeight: "800" },
   btnGhost: { backgroundColor: "#fff", borderWidth: 1, borderColor: "#e2e8f0" },
   btnGhostText: { color: "#0f172a", fontWeight: "800" },
