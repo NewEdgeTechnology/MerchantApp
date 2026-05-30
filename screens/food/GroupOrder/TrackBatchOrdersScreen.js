@@ -21,17 +21,12 @@ import {
   Pressable,
   ActivityIndicator,
   Dimensions,
-  Image,
 } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import {
-  useNavigation,
-  useRoute,
-  useFocusEffect,
-} from "@react-navigation/native";
+import { useNavigation, useRoute } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { OSMView } from "expo-osm-sdk";
 import * as SecureStore from "expo-secure-store";
@@ -55,6 +50,7 @@ const COLORS = {
   DRIVER: "#2563eb", // blue
   CUSTOMER: "#00b14f", // green
 };
+const PIN_SIZE = Math.max(34, Math.min(46, SCREEN_W * 0.1));
 const makePinSvg = (color) =>
   `data:image/svg+xml;utf8,${encodeURIComponent(`
     <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
@@ -242,7 +238,33 @@ const computeZoomForPoints = (points = []) => {
   if (maxDiff < 0.5) return 10;
   return 9;
 };
+const fetchOSRMRoute = async (points = []) => {
+  const valid = points.filter(
+    (p) => Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng)),
+  );
 
+  if (valid.length < 2) return [];
+
+  const coords = valid.map((p) => `${p.lng},${p.lat}`).join(";");
+
+  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
+
+  try {
+    const res = await fetch(url);
+    const json = await res.json();
+
+    const routeCoords = json?.routes?.[0]?.geometry?.coordinates;
+    if (!Array.isArray(routeCoords)) return [];
+
+    return routeCoords.map(([lng, lat]) => ({
+      latitude: lat,
+      longitude: lng,
+    }));
+  } catch (e) {
+    console.log("[ROUTE] OSRM failed:", e?.message);
+    return [];
+  }
+};
 // ============ MAIN COMPONENT ============
 export default function TrackBatchOrdersScreen() {
   const navigation = useNavigation();
@@ -340,79 +362,6 @@ export default function TrackBatchOrdersScreen() {
   const lastRouteKeyRef = useRef("");
   const lastRouteAtMsRef = useRef(0);
   const lastMarkerPressTsRef = useRef(0);
-
-  // ============ MARK ORDER AS READY ============
-  const markOrderAsReady = useCallback(
-    async (orderId, orderCode) => {
-      if (updatingOrderId) return;
-
-      setUpdatingOrderId(orderId);
-
-      try {
-        const token = await SecureStore.getItemAsync("auth_token");
-        if (!token) {
-          Alert.alert("Error", "Authentication token not found");
-          return;
-        }
-
-        const endpoint = String(UPDATE_ORDER_STATUS_ENDPOINT || "").trim();
-        if (!endpoint) {
-          Alert.alert("Error", "Update order endpoint not configured");
-          return;
-        }
-
-        // Replace {order_id} with actual order code
-        const url = endpoint.replace(
-          "{order_id}",
-          encodeURIComponent(orderCode),
-        );
-
-        const payload = {
-          status: "READY",
-          status_reason: "Order is ready for pickup/delivery",
-          reason: "Order is ready for pickup/delivery",
-        };
-
-        console.log("[MARK READY] Updating order:", orderCode, "to READY");
-
-        const response = await fetch(url, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(payload),
-        });
-
-        const text = await response.text();
-        let json = null;
-        try {
-          json = text ? JSON.parse(text) : null;
-        } catch {}
-
-        if (!response.ok) {
-          throw new Error(
-            json?.message || json?.error || `HTTP ${response.status}`,
-          );
-        }
-
-        Alert.alert("Success", `Order #${orderCode} marked as READY`);
-
-        // Update local status
-        setStatusMap((prev) => ({ ...prev, [orderId]: "READY" }));
-
-        // Refresh orders to get updated status
-        await fetchGroupedStatusesItems();
-      } catch (error) {
-        console.error("[MARK READY] Error:", error);
-        Alert.alert("Error", error.message || "Failed to update order status");
-      } finally {
-        setUpdatingOrderId(null);
-      }
-    },
-    [updatingOrderId, fetchGroupedStatusesItems],
-  );
 
   // ============ LOAD BATCH ORDERS ============
   const fetchAllGroupedOrdersFlat = useCallback(async () => {
@@ -520,7 +469,78 @@ export default function TrackBatchOrdersScreen() {
       setLoaded(true);
     }
   }, [businessId]);
+  // ============ MARK ORDER AS READY ============
+  const markOrderAsReady = useCallback(
+    async (orderId, orderCode) => {
+      if (updatingOrderId) return;
 
+      setUpdatingOrderId(orderId);
+
+      try {
+        const token = await SecureStore.getItemAsync("auth_token");
+        if (!token) {
+          Alert.alert("Error", "Authentication token not found");
+          return;
+        }
+
+        const endpoint = String(UPDATE_ORDER_STATUS_ENDPOINT || "").trim();
+        if (!endpoint) {
+          Alert.alert("Error", "Update order endpoint not configured");
+          return;
+        }
+
+        // Replace {order_id} with actual order code
+        const url = endpoint.replace(
+          "{order_id}",
+          encodeURIComponent(orderCode),
+        );
+
+        const payload = {
+          status: "READY",
+          status_reason: "Order is ready for pickup/delivery",
+          reason: "Order is ready for pickup/delivery",
+        };
+
+        console.log("[MARK READY] Updating order:", orderCode, "to READY");
+
+        const response = await fetch(url, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const text = await response.text();
+        let json = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {}
+
+        if (!response.ok) {
+          throw new Error(
+            json?.message || json?.error || `HTTP ${response.status}`,
+          );
+        }
+
+        Alert.alert("Success", `Order #${orderCode} marked as READY`);
+
+        // Update local status
+        setStatusMap((prev) => ({ ...prev, [orderId]: "READY" }));
+
+        // Refresh orders to get updated status
+        await fetchGroupedStatusesItems();
+      } catch (error) {
+        console.error("[MARK READY] Error:", error);
+        Alert.alert("Error", error.message || "Failed to update order status");
+      } finally {
+        setUpdatingOrderId(null);
+      }
+    },
+    [updatingOrderId, fetchGroupedStatusesItems],
+  );
   const fetchBusinessLocation = useCallback(async () => {
     if (businessCoords) return;
     const url = buildBusinessDetailsUrl(businessId);
@@ -707,6 +727,7 @@ export default function TrackBatchOrdersScreen() {
 
   const markers = useMemo(() => {
     const list = [];
+
     if (businessCoords) {
       list.push({
         id: "business",
@@ -715,97 +736,149 @@ export default function TrackBatchOrdersScreen() {
           longitude: businessCoords.lng,
         },
         title: "Business",
-        icon: { uri: makePinSvg(COLORS.BUSINESS), size: 42 },
-        popupData: {
-          type: "business",
-          title: "Business Location",
-          details: "Your pickup point",
-        },
+        description: "Your pickup point",
+        icon: { uri: makePinSvg(COLORS.BUSINESS), size: PIN_SIZE },
       });
     }
+
     Object.keys(driversByRideId).forEach((rid) => {
       const c = driversByRideId[rid]?.coords;
       if (c) {
         list.push({
           id: `driver-${rid}`,
-          coordinate: { latitude: c.lat, longitude: c.lng },
-          title: "Driver",
-          icon: { uri: makePinSvg(COLORS.DRIVER), size: 42 },
-          popupData: {
-            type: "driver",
-            title: "Driver",
-            details: `ID: ${driverId || "N/A"}`,
+          coordinate: {
+            latitude: c.lat,
+            longitude: c.lng,
           },
+          title: "Driver",
+          description: `ID: ${driverId || "N/A"}`,
+          icon: { uri: makePinSvg(COLORS.DRIVER), size: PIN_SIZE },
         });
       }
     });
+
     groupedDropPoints.slice(0, 15).forEach((g) => {
       list.push({
         id: `cust-${g.key}`,
-        coordinate: { latitude: g.lat, longitude: g.lng },
-        title: `${g.count} Orders`,
-        icon: { uri: makePinSvg(COLORS.CUSTOMER), size: 42 },
-        popupData: {
-          type: "customer",
-          title: "Orders",
-          details: `${g.count} customers`,
-          groupKey: g.key,
-          orderIds: g.orderIds,
+        coordinate: {
+          latitude: g.lat,
+          longitude: g.lng,
         },
+        title: `${g.count} Orders`,
+        description: `${g.count} customer(s)`,
+        icon: { uri: makePinSvg(COLORS.CUSTOMER), size: PIN_SIZE },
       });
     });
+
     return list;
   }, [businessCoords, driversByRideId, groupedDropPoints, driverId]);
 
-  // ============ ROUTES ============
   const computeMultiRoutes = useCallback(async () => {
     const firstDriverKey = Object.keys(driversByRideId || {})[0];
     const driver = firstDriverKey
       ? driversByRideId[firstDriverKey]?.coords
       : null;
-    const biz = businessCoords;
-    if (!driver || !biz) return;
 
-    const key = JSON.stringify({ driver, biz });
+    const biz = businessCoords;
+    if (!biz) return;
+
+    const drops = groupedDropPoints.slice(0, 15).map((g) => ({
+      lat: g.lat,
+      lng: g.lng,
+    }));
+
+    const key = JSON.stringify({ driver, biz, drops });
     const now = Date.now();
+
     if (
       key === lastRouteKeyRef.current &&
       now - lastRouteAtMsRef.current < 10000
-    )
+    ) {
       return;
+    }
+
     lastRouteKeyRef.current = key;
     lastRouteAtMsRef.current = now;
 
     setRouteLoading(true);
+
     try {
-      setRouteDriverToBiz([
-        { latitude: driver.lat, longitude: driver.lng },
-        { latitude: biz.lat, longitude: biz.lng },
-      ]);
+      if (driver) {
+        const driverRoute = await fetchOSRMRoute([driver, biz]);
+
+        setRouteDriverToBiz(
+          driverRoute.length
+            ? driverRoute
+            : [
+                { latitude: driver.lat, longitude: driver.lng },
+                { latitude: biz.lat, longitude: biz.lng },
+              ],
+        );
+      }
+
+      if (drops.length > 0) {
+        const customerRoute = await fetchOSRMRoute([biz, ...drops]);
+
+        setRouteBizToCustomers(
+          customerRoute.length
+            ? customerRoute
+            : [
+                { latitude: biz.lat, longitude: biz.lng },
+                ...drops.map((p) => ({
+                  latitude: p.lat,
+                  longitude: p.lng,
+                })),
+              ],
+        );
+      }
     } finally {
       setRouteLoading(false);
     }
-  }, [driversByRideId, businessCoords]);
+  }, [driversByRideId, businessCoords, groupedDropPoints]);
 
   useEffect(() => {
-    if (!businessCoords || routeLoading || routeComputedRef.current) return;
-    routeComputedRef.current = true;
-    const timer = setTimeout(() => computeMultiRoutes(), 500); // CHANGED: Reduced from 2000ms to 500ms
+    if (!businessCoords || routeLoading) return;
+
+    const timer = setTimeout(() => {
+      computeMultiRoutes();
+    }, 500);
+
     return () => clearTimeout(timer);
-  }, [businessCoords, computeMultiRoutes, routeLoading]);
+  }, [
+    businessCoords,
+    driversByRideId,
+    groupedDropPoints,
+    computeMultiRoutes,
+    routeLoading,
+  ]);
 
   const polylines = useMemo(() => {
     const lines = [];
+
     if (routeDriverToBiz?.length > 1) {
       lines.push({
         id: "driver-biz",
         coordinates: routeDriverToBiz,
-        strokeColor: "#2563eb",
-        strokeWidth: 4,
+        strokeColor: COLORS.DRIVER,
+        color: COLORS.DRIVER,
+        strokeWidth: 5,
+        width: 5,
       });
     }
+
+    if (routeBizToCustomers?.length > 1) {
+      lines.push({
+        id: "biz-customers",
+        coordinates: routeBizToCustomers,
+        strokeColor: COLORS.CUSTOMER,
+        color: COLORS.CUSTOMER,
+        strokeWidth: 5,
+        width: 5,
+      });
+    }
+
     return lines;
-  }, [routeDriverToBiz]);
+  }, [routeDriverToBiz, routeBizToCustomers]);
 
   // ============ FIT MAP ============
   const fitAll = useCallback(() => {
@@ -1107,16 +1180,17 @@ export default function TrackBatchOrdersScreen() {
               <Ionicons name="close" size={24} color="#0f172a" />
             </TouchableOpacity>
           </View>
-
-          <OSMView
-            ref={overlayMapRef}
-            style={{ flex: 1 }}
-            initialCenter={initialMapCenter}
-            initialZoom={initialZoom}
-            markers={markers}
-            polylines={polylines}
-            styleUrl="https://tiles.openfreemap.org/styles/liberty"
-          />
+          <OSMViewErrorBoundary>
+            <OSMView
+              ref={overlayMapRef}
+              style={{ flex: 1 }}
+              initialCenter={initialMapCenter}
+              initialZoom={initialZoom}
+              markers={markers}
+              polylines={polylines}
+              styleUrl="https://tiles.openfreemap.org/styles/liberty"
+            />
+          </OSMViewErrorBoundary>
         </SafeAreaView>
       </Modal>
       {/* HEADER */}
@@ -1144,6 +1218,7 @@ export default function TrackBatchOrdersScreen() {
       {/* MAP CARD */}
       <View style={styles.mapCard}>
         <View style={styles.mapWrap}>
+          <OSMViewErrorBoundary>
           <OSMView
             key={mapKey}
             ref={mapRef}
@@ -1164,6 +1239,7 @@ export default function TrackBatchOrdersScreen() {
             onError={() => setMapError(true)}
             onPress={openOverlay}
           />
+          </OSMViewErrorBoundary>
           {showLoader && (
             <View style={styles.mapLoadingOverlay}>
               <ActivityIndicator size="large" color="#16a34a" />

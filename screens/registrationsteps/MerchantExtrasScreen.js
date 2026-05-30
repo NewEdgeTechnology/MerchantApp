@@ -276,15 +276,20 @@ export default function MerchantExtrasScreen() {
     return true;
   };
 
-  // ✅ FIX 2: openMapPicker sets mapLoading to TRUE (the original had false — bug)
   const openMapPicker = () => {
-    setMapError(false);
-    setMapInitAttempts(0);
-    setCenterPinCoord(pickedCoord || mapCenter);
-    setMapKey(Date.now());
-    setMapLoading(true);
-    setLocationModalVisible(true);
-  };
+  setMapError(false);
+  setMapInitAttempts(0);
+
+  const startCoord = pickedCoord || mapCenter;
+
+  setCenterPinCoord(startCoord);
+  setMapCenter(startCoord);
+  setMapZoom(pickedCoord ? 16 : 14);
+
+  setMapKey(Date.now());
+  setMapLoading(true);
+  setLocationModalVisible(true);
+};
   const closeMapPicker = () => setLocationModalVisible(false);
 
   const updateMerchantLocation = (coord) => {
@@ -354,23 +359,13 @@ export default function MerchantExtrasScreen() {
   };
 
   const handleMapPick = useCallback((eventOrRegion) => {
-    const coord = extractMapCoord(eventOrRegion);
-    if (!coord) return;
+  const coord = extractMapCoord(eventOrRegion);
+  if (!coord) return;
 
-    setCenterPinCoord(coord);
-    setMapCenter(coord);
-    setMapZoom(16);
-
-    setMapMarkers([
-      {
-        id: "merchant",
-        coordinate: coord,
-        title: "🏪 MERCHANT LOCATION",
-        description: `Lat: ${coord.latitude.toFixed(6)}, Lng: ${coord.longitude.toFixed(6)}`,
-        pinColor: "#EF4444",
-      },
-    ]);
-  }, []);
+  setCenterPinCoord(coord);
+  setMapCenter(coord);
+  setMapZoom(16);
+}, []);
 
   const confirmPickedLocation = async () => {
     const coordToSave = centerPinCoord || pickedCoord || mapCenter;
@@ -845,10 +840,8 @@ export default function MerchantExtrasScreen() {
                     style={styles.fullMap}
                     initialCenter={mapCenter}
                     initialZoom={mapZoom}
-                    markers={mapMarkers}
                     styleUrl="https://tiles.openfreemap.org/styles/liberty"
-                    onRegionChangeComplete={handleMapPick}
-                    onPress={handleMapPick}
+onRegionChange={handleMapPick}
                     onMapReady={() => {
                       console.log("Map ready in MerchantExtrasScreen");
                       setMapLoading(false);
@@ -934,8 +927,7 @@ export default function MerchantExtrasScreen() {
 
           <View style={styles.modalFooter}>
             <Text style={styles.modalHint}>
-              Tap on the map to move the merchant pin, then confirm the
-              location.
+              Move the map until the pin is on your merchant location, then confirm.
             </Text>
 
             <TouchableOpacity

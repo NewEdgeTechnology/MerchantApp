@@ -660,9 +660,8 @@ export default function EditBusinessDetails() {
       setTempSelectedCoords(coord);
       setMapCenter(coord);
       setMapZoom(16);
-      updateMapMarker(coord.latitude, coord.longitude);
     },
-    [extractMapCoord, updateMapMarker],
+    [extractMapCoord],
   );
   const closeMapPicker = useCallback(() => {
     setMapOpen(false);
@@ -690,30 +689,31 @@ export default function EditBusinessDetails() {
       }
 
       const coord = { latitude: lat, longitude: lng };
+
       setTempSelectedCoords(coord);
       setMapCenter(coord);
       setCenterPinCoord(coord);
-      updateMapMarker(lat, lng);
 
-      // Auto-apply the current location
       await applyCoords(lat, lng, { alsoAddress: true });
+
       Alert.alert(
         "Success",
         "Current location has been set as your business location.",
       );
-      closeMapPicker(); // Close the map picker after setting location
+
+      closeMapPicker();
     } catch (e) {
       Alert.alert("Location error", String(e?.message || e));
     } finally {
       setLocating(false);
     }
-  }, [updateMapMarker, applyCoords, closeMapPicker]);
+  }, [applyCoords, closeMapPicker]);
 
   const openMapPicker = useCallback(async () => {
     setMapError(false);
-    setMapLoading(false);
+    setMapLoading(true);
     setMapInitAttempts(0);
-    setTempSelectedCoords(null); // Reset temp selection
+    setTempSelectedCoords(null);
 
     const latNum = Number(latitude);
     const lngNum = Number(longitude);
@@ -722,56 +722,21 @@ export default function EditBusinessDetails() {
       const coord = { latitude: latNum, longitude: lngNum };
       setMapCenter(coord);
       setCenterPinCoord(coord);
+      setTempSelectedCoords(coord);
       setMapZoom(16);
-      updateMapMarker(latNum, lngNum);
       setMapOpen(true);
+      setMapKey(Date.now());
       return;
     }
 
-    try {
-      setLocating(true);
-      const perm = await Location.requestForegroundPermissionsAsync();
-      if (!perm.granted) {
-        const coord = { latitude: 27.4728, longitude: 89.639 };
-        setMapCenter(coord);
-        setCenterPinCoord(coord);
-        setMapZoom(13);
-        setMapMarkers([]);
-        setMapOpen(true);
-        return;
-      }
-
-      const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
-      });
-      const lat = pos?.coords?.latitude;
-      const lng = pos?.coords?.longitude;
-
-      if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        const coord = { latitude: lat, longitude: lng };
-        setMapCenter(coord);
-        setCenterPinCoord(coord);
-        setMapZoom(15);
-        setMapMarkers([]);
-      } else {
-        const coord = { latitude: 27.4728, longitude: 89.639 };
-        setMapCenter(coord);
-        setCenterPinCoord(coord);
-        setMapZoom(13);
-        setMapMarkers([]);
-      }
-      setMapOpen(true);
-    } catch {
-      const coord = { latitude: 27.4728, longitude: 89.639 };
-      setMapCenter(coord);
-      setCenterPinCoord(coord);
-      setMapZoom(13);
-      setMapMarkers([]);
-      setMapOpen(true);
-    } finally {
-      setLocating(false);
-    }
-  }, [latitude, longitude, updateMapMarker]);
+    const coord = { latitude: 27.4728, longitude: 89.639 };
+    setMapCenter(coord);
+    setCenterPinCoord(coord);
+    setTempSelectedCoords(coord);
+    setMapZoom(13);
+    setMapOpen(true);
+    setMapKey(Date.now());
+  }, [latitude, longitude]);
 
   const confirmMapSelection = useCallback(async () => {
     const coordToSave = centerPinCoord || tempSelectedCoords || mapCenter;
@@ -790,8 +755,6 @@ export default function EditBusinessDetails() {
     setTempSelectedCoords(coordToSave);
     setConfirmedCoord(coordToSave);
 
-    updateMapMarker(coordToSave.latitude, coordToSave.longitude);
-
     Alert.alert("Location Updated", "Business location has been updated.");
     closeMapPicker();
   }, [
@@ -799,7 +762,6 @@ export default function EditBusinessDetails() {
     tempSelectedCoords,
     mapCenter,
     applyCoords,
-    updateMapMarker,
     closeMapPicker,
   ]);
   const loadDetails = useCallback(
@@ -1187,7 +1149,10 @@ export default function EditBusinessDetails() {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top","left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
       <View style={styles.topGlow} />
       {/* FULLSCREEN MAP PICKER MODAL with OSMView - FIXED location picking */}
       <Modal
@@ -1230,10 +1195,8 @@ export default function EditBusinessDetails() {
                       mapCenter || { latitude: 27.4728, longitude: 89.639 }
                     }
                     initialZoom={mapZoom || 12}
-                    markers={mapMarkers}
                     styleUrl="https://tiles.openfreemap.org/styles/liberty"
-                    onRegionChangeComplete={handleMapPick}
-                    onPress={handleMapPick}
+                    onRegionChange={handleMapPick}
                     onMapReady={() => {
                       setMapLoading(false);
                       setMapInitAttempts(0);
