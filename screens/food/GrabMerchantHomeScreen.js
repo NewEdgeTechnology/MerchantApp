@@ -414,15 +414,18 @@ const HeaderBar = React.memo(function HeaderBar({
 
   return (
     <LinearGradient
-      colors={[BRAND.purple,"#F4E9FF"]}
+      colors={[BRAND.purple, "#F4E9FF"]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={{
         paddingTop: (isTablet ? 12 : 6) + (insets.top || 0),
         paddingBottom: isTablet ? 12 : 10,
         paddingHorizontal: isTablet ? 24 : 18,
+        overflow: "hidden",
+        position: "relative",
       }}
     >
+      <View pointerEvents="none" style={styles.headerGlow} />
       {showWelcome && activeTab === "Home" && (
         <Text style={styles.hi}>Welcome</Text>
       )}
@@ -2072,7 +2075,16 @@ export default function GrabMerchantHomeScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: BRAND.purple },
-
+  headerGlow: {
+    position: "absolute",
+    top: -90,
+    right: -70,
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.45,
+  },
   container: {
     backgroundColor: BRAND.white,
   },
