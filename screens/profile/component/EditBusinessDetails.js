@@ -496,15 +496,15 @@ export default function EditBusinessDetails() {
   const [ampmModalOpen, setAmpmModalOpen] = useState(false);
   const [ampmTarget, setAmpmTarget] = useState(null);
 
-  // Map loader timeout
   useEffect(() => {
+    if (!mapOpen || !mapLoading) return;
+
     const timer = setTimeout(() => {
-      if (mapLoading) {
-        setMapLoading(false);
-      }
+      setMapLoading(false);
     }, 5000);
+
     return () => clearTimeout(timer);
-  }, []);
+  }, [mapOpen, mapLoading]);
 
   // Retry map initialization
   useEffect(() => {
@@ -568,30 +568,43 @@ export default function EditBusinessDetails() {
     return isHttpUrl(p) ? p : joinUrl(MERCHANT_LOGO, p);
   }, [pickedLicense, details]);
 
-  // reverse geocode (best effort) -> fill address
   const reverseGeocodeToAddress = useCallback(async (lat, lng) => {
     try {
       const res = await Location.reverseGeocodeAsync({
         latitude: Number(lat),
         longitude: Number(lng),
       });
-      const first = res?.[0];
-      if (!first) return;
 
-      const parts = [
-        first.name,
-        first.street,
-        first.district,
-        first.city,
-        first.subregion,
-        first.region,
-        first.postalCode,
-        first.country,
-      ].filter(Boolean);
+      const first = res?.[0];
+
+      const parts = first
+        ? [
+            first.name,
+            first.street,
+            first.district,
+            first.city,
+            first.subregion,
+            first.region,
+            first.postalCode,
+            first.country,
+          ].filter(Boolean)
+        : [];
 
       const out = parts.join(", ").replace(/\s+/g, " ").trim();
-      if (out) setAddress(out);
-    } catch {}
+
+      if (out) {
+        setAddress(out);
+        return out;
+      }
+
+      const fallback = `Located at: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`;
+      setAddress(fallback);
+      return fallback;
+    } catch {
+      const fallback = `Located at: ${Number(lat).toFixed(6)}, ${Number(lng).toFixed(6)}`;
+      setAddress(fallback);
+      return fallback;
+    }
   }, []);
 
   // ✅ FIXED: Create marker with proper pinColor (no PNGs)
@@ -755,7 +768,6 @@ export default function EditBusinessDetails() {
     setTempSelectedCoords(coordToSave);
     setConfirmedCoord(coordToSave);
 
-    Alert.alert("Location Updated", "Business location has been updated.");
     closeMapPicker();
   }, [
     centerPinCoord,

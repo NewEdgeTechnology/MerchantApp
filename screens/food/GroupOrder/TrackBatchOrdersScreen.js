@@ -30,6 +30,7 @@ import { useNavigation, useRoute } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import { OSMView } from "expo-osm-sdk";
 import * as SecureStore from "expo-secure-store";
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 import {
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
   BUSINESS_DETAILS as ENV_BUSINESS_DETAILS,
@@ -286,8 +287,6 @@ export default function TrackBatchOrdersScreen() {
     driverId: driverIdParam,
     driverName: driverNameFromParams,
   } = params;
-
-  const headerTopPad = Math.max(insets.top, 8) + 18;
 
   // IDs
   const [batchId, setBatchId] = useState(() => params?.batch_id || null);
@@ -1140,7 +1139,11 @@ export default function TrackBatchOrdersScreen() {
   const title = `${batchOrders.length} order${batchOrders.length !== 1 ? "s" : ""}${selectedMethod ? ` · ${selectedMethod}` : ""}${batchId ? ` · Batch #${batchId}` : ""}`;
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
+      <View style={styles.topGlow} />
       {/* LOCATION GROUP MODAL */}
       <Modal
         visible={locationModalOpen}
@@ -1194,12 +1197,12 @@ export default function TrackBatchOrdersScreen() {
         </SafeAreaView>
       </Modal>
       {/* HEADER */}
-      <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
+      <View style={[styles.headerBar]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backBtn}
         >
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+          <Ionicons name="arrow-back" size={22} color={BRAND.black} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Track orders</Text>
         <View style={{ width: 40 }} />
@@ -1219,26 +1222,26 @@ export default function TrackBatchOrdersScreen() {
       <View style={styles.mapCard}>
         <View style={styles.mapWrap}>
           <OSMViewErrorBoundary>
-          <OSMView
-            key={mapKey}
-            ref={mapRef}
-            style={styles.map}
-            initialCenter={initialMapCenter}
-            initialZoom={initialZoom}
-            markers={markers}
-            polylines={polylines}
-            styleUrl="https://tiles.openfreemap.org/styles/liberty"
-            onMapReady={() => {
-              console.log("Map ready");
-              setShowLoader(false);
-              if (!didFitOnceRef.current) {
-                didFitOnceRef.current = true;
-                setTimeout(() => fitAll(), 100); // CHANGED: Reduced from 500ms to 100ms
-              }
-            }}
-            onError={() => setMapError(true)}
-            onPress={openOverlay}
-          />
+            <OSMView
+              key={mapKey}
+              ref={mapRef}
+              style={styles.map}
+              initialCenter={initialMapCenter}
+              initialZoom={initialZoom}
+              markers={markers}
+              polylines={polylines}
+              styleUrl="https://tiles.openfreemap.org/styles/liberty"
+              onMapReady={() => {
+                console.log("Map ready");
+                setShowLoader(false);
+                if (!didFitOnceRef.current) {
+                  didFitOnceRef.current = true;
+                  setTimeout(() => fitAll(), 100); // CHANGED: Reduced from 500ms to 100ms
+                }
+              }}
+              onError={() => setMapError(true)}
+              onPress={openOverlay}
+            />
           </OSMViewErrorBoundary>
           {showLoader && (
             <View style={styles.mapLoadingOverlay}>
@@ -1307,7 +1310,10 @@ export default function TrackBatchOrdersScreen() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+        contentContainerStyle={{
+          paddingHorizontal: 18,
+          paddingBottom: 120,
+        }}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
           <View style={{ paddingTop: 20 }}>
@@ -1324,45 +1330,70 @@ export default function TrackBatchOrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1, backgroundColor: "#FBF7FF" },
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -80,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
   headerBar: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomColor: "#e5e7eb",
-    borderBottomWidth: 1,
   },
   backBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
     alignItems: "center",
     justifyContent: "center",
+    ...SHADOW.sm,
   },
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
   },
   summaryBox: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
-    backgroundColor: "#f9fafb",
+    marginHorizontal: 18,
+    marginBottom: 12,
+    padding: 18,
+    backgroundColor: BRAND.white,
+    // borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    ...SHADOW.sm,
   },
-  summaryMain: { fontSize: 14, fontWeight: "800", color: "#0f172a" },
-  summarySub: { marginTop: 3, fontSize: 12, color: "#6b7280" },
+  summaryMain: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+  summarySub: {
+    marginTop: 5,
+    fontSize: 13,
+    color: BRAND.gray600,
+  },
   mapCard: { paddingHorizontal: 16, paddingTop: 12 },
   mapWrap: {
-    borderRadius: 14,
-    overflow: "hidden",
+    borderRadius: 24,
+    backgroundColor: BRAND.white,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
+    borderColor: "#F3E8FF",
+    ...SHADOW.sm,
     height: 260,
     position: "relative",
   },
@@ -1407,18 +1438,20 @@ const styles = StyleSheet.create({
   fitBtn: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#16a34a",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
+    backgroundColor: BRAND.purple,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: RADIUS.pill,
+    ...SHADOW.sm,
   },
   fitBtnText: { marginLeft: 6, color: "#fff", fontSize: 11, fontWeight: "900" },
   driverCard: {
-    borderRadius: 14,
+    borderRadius: 24,
+    backgroundColor: BRAND.white,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 12,
-    backgroundColor: "#f9fafb",
+    borderColor: "#F3E8FF",
+    padding: 18,
+    ...SHADOW.sm,
   },
   driverHeaderRow: {
     flexDirection: "row",
@@ -1429,13 +1462,14 @@ const styles = StyleSheet.create({
   driverTitle: { fontSize: 13, fontWeight: "800", color: "#111827", flex: 1 },
   driverText: { marginTop: 6, fontSize: 12, color: "#374151" },
   callBtn: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#16a34a",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    marginRight: 10,
+    justifyContent: "center",
+    backgroundColor: BRAND.purple,
+    paddingVertical: 13,
+    borderRadius: RADIUS.pill,
+    ...SHADOW.sm,
   },
   callBtnDisabled: { backgroundColor: "#9ca3af" },
   callBtnText: {
@@ -1445,12 +1479,15 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   chatBtn: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#2563eb",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
+    justifyContent: "center",
+    backgroundColor: BRAND.magenta,
+    paddingVertical: 13,
+    borderRadius: RADIUS.pill,
+    marginLeft: 10,
+    ...SHADOW.sm,
   },
   chatBtnDisabled: { backgroundColor: "#9ca3af" },
   chatBtnText: {
@@ -1460,7 +1497,11 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   listHeader: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
-  listHeaderText: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
+  listHeaderText: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
   // Add these to the styles object
   statusPill: {
     paddingHorizontal: 10,
@@ -1472,14 +1513,14 @@ const styles = StyleSheet.create({
   },
   statusPillText: { fontSize: 10, fontWeight: "700", color: "#374151" },
   statusReadyText: { color: "#16a34a" },
-  // Order card styles
   orderCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
+    backgroundColor: BRAND.white,
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 14,
-    marginBottom: 12,
+    borderColor: "#F3E8FF",
+    padding: 18,
+    marginBottom: 14,
+    ...SHADOW.sm,
   },
   orderHeader: {
     flexDirection: "row",
@@ -1491,17 +1532,19 @@ const styles = StyleSheet.create({
   orderName: { fontSize: 12, color: "#6b7280", marginTop: 2 },
   statusPill: {
     paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    backgroundColor: "#fef3c7",
-    borderWidth: 1,
-    borderColor: "#fcd34d",
+    paddingVertical: 5,
+    borderRadius: RADIUS.pill,
+    backgroundColor: "#F4E9FF",
   },
   statusReadyPill: {
     backgroundColor: "#dcfce7",
     borderColor: "#86efac",
   },
-  statusPillText: { fontSize: 10, fontWeight: "700", color: "#d97706" },
+  statusPillText: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: BRAND.purple,
+  },
   statusReadyText: { color: "#16a34a" },
 
   itemsContainer: { marginTop: 8, marginBottom: 12 },
@@ -1523,11 +1566,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#16a34a",
-    paddingVertical: 10,
-    borderRadius: 10,
-    marginTop: 8,
-    gap: 8,
+    backgroundColor: BRAND.purple,
+    paddingVertical: 14,
+    borderRadius: RADIUS.pill,
+    marginTop: 12,
+    ...SHADOW.sm,
   },
   readyButtonText: { color: "#fff", fontSize: 13, fontWeight: "600" },
 
@@ -1535,11 +1578,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#dcfce7",
-    paddingVertical: 8,
-    borderRadius: 10,
-    marginTop: 8,
-    gap: 6,
+    backgroundColor: "#F4E9FF",
+    paddingVertical: 10,
+    borderRadius: 16,
+    marginTop: 10,
   },
   readyBadgeText: { color: "#16a34a", fontSize: 12, fontWeight: "600" },
 
@@ -1567,10 +1609,11 @@ const styles = StyleSheet.create({
     marginTop: 8,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#2563eb",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
+    backgroundColor: BRAND.magenta,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: RADIUS.pill,
+    ...SHADOW.sm,
   },
 
   fullMapHeader: {

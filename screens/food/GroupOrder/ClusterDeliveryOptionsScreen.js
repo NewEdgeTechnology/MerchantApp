@@ -33,6 +33,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import io from "socket.io-client/dist/socket.io.js";
 import * as SecureStore from "expo-secure-store";
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 import {
   BUSINESS_DETAILS,
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
@@ -1566,7 +1567,10 @@ export default function ClusterDeliveryOptionsScreen() {
         return;
       }
       if (!ordersOnScreen?.length) {
-        Alert.alert("No orders", "There are no CONFIRMED orders in this batch.");
+        Alert.alert(
+          "No orders",
+          "There are no CONFIRMED orders in this batch.",
+        );
         return;
       }
       setSendingGrab(true);
@@ -1894,7 +1898,11 @@ export default function ClusterDeliveryOptionsScreen() {
       );
       return;
     }
-    if (selectedMethod === "GRAB" && bulkPhase === "CONFIRMED" && !rideAccepted) {
+    if (
+      selectedMethod === "GRAB" &&
+      bulkPhase === "CONFIRMED" &&
+      !rideAccepted
+    ) {
       Alert.alert(
         "Not accepted yet",
         "Please wait until the ride is accepted before marking orders Out for delivery.",
@@ -1994,7 +2002,8 @@ export default function ClusterDeliveryOptionsScreen() {
       orders: ordersOnScreen,
       selectedMethod: "GRAB",
       batch_id:
-        finalBatchId != null          ? Number.isFinite(Number(finalBatchId))
+        finalBatchId != null
+          ? Number.isFinite(Number(finalBatchId))
             ? Number(finalBatchId)
             : String(finalBatchId)
           : null,
@@ -2137,21 +2146,23 @@ export default function ClusterDeliveryOptionsScreen() {
       </View>
     );
   };
-
-  const headerTopPad = Math.max(insets.top, 8) + 18;
   const showSelf = !opt || opt === "BOTH" || opt === "SELF";
   const showGrab = !opt || opt === "BOTH" || opt === "GRAB";
   const showTrackBtn = selectedMethod === "GRAB" && rideAccepted;
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
-      <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
+      <View style={styles.topGlow} />
+      <View style={[styles.headerBar]}>
         <TouchableOpacity
           onPress={() => navigation.goBack()}
           style={styles.backBtn}
           activeOpacity={0.7}
         >
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+          <Ionicons name="arrow-back" size={22} color={BRAND.black} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Delivery options</Text>
         <View style={{ width: 40 }} />
@@ -2194,7 +2205,7 @@ export default function ClusterDeliveryOptionsScreen() {
             style={[
               styles.optionCard,
               selectedMethod === "SELF" && {
-                borderColor: "#16a34a",
+                borderColor: BRAND.purple,
                 borderWidth: 2,
               },
             ]}
@@ -2213,7 +2224,7 @@ export default function ClusterDeliveryOptionsScreen() {
             style={[
               styles.optionCard,
               selectedMethod === "GRAB" && {
-                borderColor: "#16a34a",
+                borderColor: BRAND.purple,
                 borderWidth: 2,
               },
             ]}
@@ -2221,9 +2232,9 @@ export default function ClusterDeliveryOptionsScreen() {
             onPress={onSelectGrab}
           >
             <Ionicons name="bicycle-outline" size={28} color="#2563eb" />
-            <Text style={styles.optionTitle}>Tàbdey  delivery</Text>
+            <Text style={styles.optionTitle}>Tàbdey delivery</Text>
             <Text style={styles.optionHint}>
-              Broadcast batch request to Tàbdey  riders for all confirmed orders.
+              Broadcast batch request to Tàbdey riders for all confirmed orders.
             </Text>
             {sendingGrab && (
               <View
@@ -2267,19 +2278,24 @@ export default function ClusterDeliveryOptionsScreen() {
           </TouchableOpacity>
         </View>
       )}
-      {confirmedCount > 0 && bulkPhase === "CONFIRMED" && selectedMethod === "SELF" && (
-        <View style={styles.actionsRow}>
-          <TouchableOpacity
-            style={[styles.actionBtnPrimary, bulkUpdating && { opacity: 0.5 }]}
-            activeOpacity={!bulkUpdating ? 0.8 : 1}
-            onPress={!bulkUpdating ? onBulkOutForDeliveryPress : undefined}
-          >
-            <Text style={styles.actionBtnPrimaryText}>
-              Mark all as Out for delivery
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      {confirmedCount > 0 &&
+        bulkPhase === "CONFIRMED" &&
+        selectedMethod === "SELF" && (
+          <View style={styles.actionsRow}>
+            <TouchableOpacity
+              style={[
+                styles.actionBtnPrimary,
+                bulkUpdating && { opacity: 0.5 },
+              ]}
+              activeOpacity={!bulkUpdating ? 0.8 : 1}
+              onPress={!bulkUpdating ? onBulkOutForDeliveryPress : undefined}
+            >
+              <Text style={styles.actionBtnPrimaryText}>
+                Mark all as Out for delivery
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       {confirmedCount > 0 &&
         bulkPhase === "OUT_FOR_DELIVERY" &&
         selectedMethod === "SELF" && (
@@ -2365,7 +2381,10 @@ export default function ClusterDeliveryOptionsScreen() {
           )
         }
         renderItem={renderOrder}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 24 }}
+        contentContainerStyle={{
+          paddingHorizontal: 18,
+          paddingBottom: 120,
+        }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
@@ -2383,40 +2402,64 @@ export default function ClusterDeliveryOptionsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1, backgroundColor: BRAND.white },
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
   headerBar: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomColor: "#e5e7eb",
-    borderBottomWidth: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
   },
   backBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
     alignItems: "center",
     justifyContent: "center",
+    ...SHADOW.sm,
   },
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
   },
   summaryBox: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
-    backgroundColor: "#f9fafb",
+    marginHorizontal: 18,
+    marginBottom: 12,
+    padding: 18,
+    backgroundColor: BRAND.white,
+    // borderRadius: 24,
+    // borderWidth: 1,
+    borderColor: "#F3E8FF",
+    ...SHADOW.sm,
   },
-  summaryMain: { fontSize: 15, fontWeight: "700", color: "#0f172a" },
-  summarySub: { marginTop: 2, fontSize: 12, color: "#6b7280" },
+  summaryMain: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+  summarySub: {
+    marginTop: 6,
+    fontSize: 13,
+    color: BRAND.gray600,
+  },
   optionsRow: {
     flexDirection: "row",
     paddingHorizontal: 16,
@@ -2426,18 +2469,19 @@ const styles = StyleSheet.create({
   },
   optionCard: {
     flex: 1,
-    borderRadius: 16,
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    backgroundColor: "#ffffff",
+    borderColor: "#F3E8FF",
+    backgroundColor: BRAND.white,
+    paddingVertical: 18,
+    paddingHorizontal: 14,
+    ...SHADOW.sm,
   },
   optionTitle: {
-    marginTop: 6,
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#0f172a",
+    marginTop: 10,
+    fontSize: 15,
+    fontWeight: "900",
+    color: BRAND.black,
   },
   optionHint: { marginTop: 4, fontSize: 11, color: "#6b7280" },
   resendBtn: {
@@ -2453,13 +2497,14 @@ const styles = StyleSheet.create({
   resendBtnText: { fontSize: 11, fontWeight: "700", color: "#1d4ed8" },
   actionsRow: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 8 },
   trackBtn: {
-    borderRadius: 999,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    backgroundColor: "#2563eb",
+    borderRadius: RADIUS.pill,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    backgroundColor: BRAND.purple,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
+    ...SHADOW.sm,
   },
   trackBtnText: {
     marginLeft: 8,
@@ -2468,21 +2513,21 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   actionBtnPrimary: {
-    borderRadius: 999,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    backgroundColor: "#16a34a",
+    borderRadius: RADIUS.pill,
+    paddingVertical: 14,
+    backgroundColor: BRAND.purple,
     alignItems: "center",
     justifyContent: "center",
+    ...SHADOW.sm,
   },
   actionBtnPrimaryText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
   messageCard: {
-    borderRadius: 12,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: "#f9fafb",
+    borderColor: "#F3E8FF",
+    backgroundColor: BRAND.white,
+    padding: 16,
+    ...SHADOW.sm,
   },
   messageText: { fontSize: 12, color: "#4b5563" },
   driverText: {
@@ -2507,7 +2552,11 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   listHeader: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4 },
-  listHeaderText: { fontSize: 13, fontWeight: "600", color: "#0f172a" },
+  listHeaderText: {
+    fontSize: 15,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
   orderRow: {
     paddingVertical: 8,
     borderBottomWidth: 1,
@@ -2520,14 +2569,16 @@ const styles = StyleSheet.create({
   },
   orderId: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
   statusPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-    backgroundColor: "#ecfdf3",
-    borderWidth: 1,
-    borderColor: "#bbf7d0",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: RADIUS.pill,
+    backgroundColor: "#F4E9FF",
   },
-  statusPillText: { fontSize: 10, fontWeight: "600", color: "#166534" },
+  statusPillText: {
+    fontSize: 10,
+    fontWeight: "900",
+    color: BRAND.purple,
+  },
   orderName: { marginTop: 2, fontSize: 12, color: "#6b7280" },
   orderMeta: { marginTop: 2, fontSize: 11, color: "#4b5563" },
   itemsSection: { marginTop: 4 },

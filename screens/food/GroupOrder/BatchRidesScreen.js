@@ -27,6 +27,7 @@ import {
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 import { GET_BATCH_RIDE_ID_ENDPOINT, DRIVER_DETAILS_ENDPOINT } from "@env";
 
 const safeStr = (v) => (v == null ? "" : String(v)).trim();
@@ -423,8 +424,6 @@ export default function BatchRidesScreen() {
     }
   }, [load]);
 
-  const headerTopPad = Math.max(insets.top, 8) + 18;
-
   const openBatchTrack = useCallback(
     (row) => {
       const rowBatchId =
@@ -538,7 +537,7 @@ export default function BatchRidesScreen() {
               )}
             </View>
 
-            <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+            <Ionicons name="chevron-forward" size={18} color={BRAND.purple} />
           </TouchableOpacity>
 
           {/* Focused batch indicator */}
@@ -586,14 +585,18 @@ export default function BatchRidesScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
-      <View style={[styles.header, { paddingTop: headerTopPad }]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
+      <View style={styles.topGlow} />
+      <View style={[styles.header]}>
         <TouchableOpacity
           onPress={() => navigation.navigate("NearbyOrdersScreen")}
           style={styles.backBtn}
           activeOpacity={0.7}
         >
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+          <Ionicons name="arrow-back" size={22} color={BRAND.black} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Batches</Text>
         <View style={{ width: 40 }} />
@@ -646,7 +649,11 @@ export default function BatchRidesScreen() {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
-          contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: 24 }}
+          contentContainerStyle={{
+            paddingHorizontal: 18,
+            gap: 12,
+            paddingBottom: 30,
+          }}
           ListEmptyComponent={
             <Text style={{ color: "#64748b" }}>No batches found.</Text>
           }
@@ -658,38 +665,54 @@ export default function BatchRidesScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
-
+  safe: { flex: 1, backgroundColor: BRAND.white },
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
   header: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomColor: "#e5e7eb",
-    borderBottomWidth: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
+    zIndex: 1,
   },
   backBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    ...SHADOW.sm,
   },
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 17,
-    fontWeight: "800",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
   },
 
   subHeader: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomColor: "#e5e7eb",
-    borderBottomWidth: 1,
+    marginHorizontal: 18,
+    marginBottom: 12,
+    padding: 14,
+    backgroundColor: BRAND.white,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
   },
   subTitle: { fontSize: 13, fontWeight: "700", color: "#0f172a" },
   subMuted: { marginTop: 2, fontSize: 12, color: "#64748b" },
@@ -698,31 +721,32 @@ const styles = StyleSheet.create({
   muted: { color: "#64748b", marginTop: 6 },
 
   rowWrapper: {
-    borderRadius: 16,
+    borderRadius: 24,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    backgroundColor: "#fff",
+    borderColor: "#F3E8FF",
+    backgroundColor: BRAND.white,
     position: "relative",
+    // ...paddingHorizontal: 18,.sm,
   },
   rowTouchable: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
   },
   rowContent: {
     flex: 1,
   },
   rowHighlight: {
-    borderColor: "#86efac",
-    backgroundColor: "#f0fdf4",
+    borderColor: BRAND.purple,
+    backgroundColor: "#F4E9FF",
   },
   rowTitle: { fontSize: 14, fontWeight: "900", color: "#0f172a" },
   rowSub: { marginTop: 2, fontSize: 12, color: "#64748b", fontWeight: "700" },
 
   retryBtn: {
     marginTop: 12,
-    backgroundColor: "#16a34a",
+    backgroundColor: BRAND.purple,
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 12,
@@ -736,7 +760,7 @@ const styles = StyleSheet.create({
     right: 8,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#00B14F",
+    backgroundColor: BRAND.purple,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
@@ -753,14 +777,14 @@ const styles = StyleSheet.create({
     right: 8,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#E8F5E9",
+    backgroundColor: "#F4E9FF",
     paddingHorizontal: 6,
     paddingVertical: 3,
     borderRadius: 10,
     gap: 3,
   },
   orderMatchText: {
-    color: "#00B14F",
+    color: BRAND.purple,
     fontSize: 9,
     fontWeight: "500",
   },

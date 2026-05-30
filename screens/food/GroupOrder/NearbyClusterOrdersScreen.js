@@ -30,6 +30,7 @@ import {
 } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 import {
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
   GROUP_NEARBY_ORDER_ENDPOINT as ENV_GROUP_NEARBY_ORDER_ENDPOINT,
@@ -1190,8 +1191,6 @@ export default function NearbyClusterOrdersScreen() {
     );
   };
 
-  const headerTopPad = Math.max(insets.top, 8) + 18;
-
   const confirmedCount = confirmedOrders.length;
   const fabDisabled = selectedConfirmedCount === 0 || creatingBatch;
   const fabLabel = creatingBatch
@@ -1209,14 +1208,18 @@ export default function NearbyClusterOrdersScreen() {
       : null;
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
-      <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
+      <View style={styles.topGlow} />
+      <View style={[styles.headerBar]}>
         <TouchableOpacity
           onPress={() => navigation.navigate("NearbyOrdersScreen")}
           style={styles.backBtn}
           activeOpacity={0.7}
         >
-          <Ionicons name="arrow-back" size={22} color="#0f172a" />
+          <Ionicons name="arrow-back" size={22} color={BRAND.black} />
         </TouchableOpacity>
 
         <Text style={styles.headerTitle} numberOfLines={1}>
@@ -1282,9 +1285,8 @@ export default function NearbyClusterOrdersScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
         contentContainerStyle={{
-          paddingHorizontal: 16,
-          paddingTop: 10,
-          paddingBottom: 90,
+          paddingHorizontal: 18,
+          paddingBottom: 110,
         }}
         ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
         ListEmptyComponent={
@@ -1320,59 +1322,77 @@ export default function NearbyClusterOrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
-
+  safe: { flex: 1, backgroundColor: BRAND.white },
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
   headerBar: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomColor: "#e5e7eb",
-    borderBottomWidth: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
   },
   backBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    ...SHADOW.sm,
   },
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
     paddingHorizontal: 8,
   },
   clearBtn: {
-    height: 32,
-    paddingHorizontal: 10,
-    borderRadius: 999,
+    height: 36,
+    paddingHorizontal: 12,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND.white,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: "#F3E8FF",
     alignItems: "center",
     justifyContent: "center",
+    ...SHADOW.sm,
   },
-  clearBtnText: { fontSize: 12, fontWeight: "800", color: "#0f172a" },
+  clearBtnText: {
+    fontSize: 12,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
 
   subHeader: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: "#fff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
+    marginHorizontal: 18,
+    marginBottom: 12,
+    padding: 14,
+    backgroundColor: BRAND.white,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
   },
   headerSubtitleMain: { fontSize: 13, fontWeight: "600", color: "#0f172a" },
   headerSubtitle: { marginTop: 2, fontSize: 12, color: "#64748b" },
 
   tabsWrap: {
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
-    backgroundColor: "#fff",
+    marginHorizontal: 18,
+    marginBottom: 12,
   },
   tabsContent: { paddingHorizontal: 16, gap: 10 },
   statusTab: {
@@ -1394,21 +1414,17 @@ const styles = StyleSheet.create({
   orderRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: "#ffffff",
-    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    backgroundColor: BRAND.white,
+    borderRadius: 22,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 1,
+    borderColor: "#F3E8FF",
+    ...SHADOW.sm,
   },
   orderRowSelected: {
-    borderColor: "#7c3aed",
-    backgroundColor: "#f5f3ff",
+    borderColor: BRAND.purple,
+    backgroundColor: "#F4E9FF",
   },
 
   // checkbox only for CONFIRMED; spacer keeps alignment for other rows
@@ -1425,8 +1441,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   checkBoxChecked: {
-    borderColor: "#7c3aed",
-    backgroundColor: "#7c3aed",
+    borderColor: BRAND.purple,
+    backgroundColor: BRAND.purple,
   },
 
   orderIdRow: {
@@ -1453,16 +1469,17 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
-  // ✅ Updated CONFIRMED pill styling (purple theme)
   confirmedPill: {
-    backgroundColor: "#ede9fe",
-    borderRadius: 999,
+    backgroundColor: "#F4E9FF",
+    borderRadius: RADIUS.pill,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: "#ddd6fe",
   },
-  confirmedText: { color: "#7c3aed", fontSize: 10, fontWeight: "900" },
+  confirmedText: {
+    color: BRAND.purple,
+    fontSize: 10,
+    fontWeight: "900",
+  },
 
   orderCustomerText: { marginTop: 2, fontSize: 13, color: "#475569" },
   orderAddressText: { marginTop: 2, fontSize: 12, color: "#64748b" },
@@ -1487,22 +1504,18 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     backgroundColor: "transparent",
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
   },
 
   fab: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 12,
+    paddingHorizontal: 18,
     paddingVertical: 15,
-    borderRadius: 999,
-    backgroundColor: "#7c3aed",
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 4,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND.purple,
+    ...SHADOW.md,
   },
   fabText: {
     marginLeft: 8,

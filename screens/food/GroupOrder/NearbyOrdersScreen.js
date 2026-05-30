@@ -29,6 +29,7 @@ import {
 } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
 import * as SecureStore from "expo-secure-store";
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -582,9 +583,9 @@ function NearbyOrdersScreen() {
   const abortRef = useRef(null);
 
   const handleBack = useCallback(() => {
-  navigation.navigate('GrabMerchantHomeScreen');
-  return true;
-}, [navigation]);
+    navigation.navigate("GrabMerchantHomeScreen");
+    return true;
+  }, [navigation]);
 
   useFocusEffect(
     useCallback(() => {
@@ -842,36 +843,28 @@ function NearbyOrdersScreen() {
     deliveryOption,
   ]);
 
-  const headerTopPad = Math.max(insets.top, S(8)) + S(18);
   const bottomFabPad = Math.max(insets.bottom, 0) + S(18);
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
-      <View
-        style={[
-          styles.headerBar,
-          {
-            paddingTop: headerTopPad,
-            paddingHorizontal: S(12),
-            paddingBottom: S(8),
-          },
-        ]}
-      >
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
+      <View style={styles.topGlow} />
+      <View style={[styles.headerBar]}>
         <TouchableOpacity
           onPress={handleBack}
           style={[
-            styles.backBtn,
-            { height: S(40), width: S(40), borderRadius: S(12) },
+            styles.backBtn
           ]}
           activeOpacity={0.7}
-          hitSlop={S(8)}
         >
-          <Ionicons name="arrow-back" size={S(22)} color="#0f172a" />
+          <Ionicons name="arrow-back" size={22} color={BRAND.black} />
         </TouchableOpacity>
 
-        <Text style={[styles.headerTitle, { fontSize: S(17) }]}>
-          Nearby Orders
-        </Text>
+        <Text style={styles.headerTitle}>
+  Nearby Orders
+</Text>
 
         <View style={{ width: S(40) }} />
       </View>
@@ -1043,39 +1036,66 @@ function NearbyOrdersScreen() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
 
   headerBar: {
-    minHeight: 52,
-    flexDirection: "row",
-    alignItems: "center",
-    borderBottomColor: "#e5e7eb",
-    borderBottomWidth: 1,
-    backgroundColor: "#fff",
-  },
+  minHeight: 54,
+  paddingHorizontal: 18,
+  paddingBottom: 12,
+  flexDirection: "row",
+  alignItems: "center",
+  backgroundColor: "transparent",
+},
+
   backBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
-  },
-  headerTitle: {
-    flex: 1,
-    textAlign: "center",
-    fontWeight: "700",
-    color: "#0f172a",
+    ...SHADOW.sm,
   },
 
-  centerBox: { flex: 1, justifyContent: "center", alignItems: "center" },
+  headerTitle: {
+  flex: 1,
+  textAlign: "center",
+  fontFamily: FONT.header,
+  fontSize: 20,
+  fontWeight: "900",
+  color: BRAND.black,
+},
+
+  centerBox: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
 
   clusterCard: {
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: "#F3E8FF",
+    // ...SHADOW.sm,
   },
 
-  // ✅ Green highlight style (same as BatchRidesScreen)
   clusterCardHighlight: {
-    borderColor: "#86efac",
-    backgroundColor: "#f0fdf4",
+    borderColor: BRAND.purple,
+    backgroundColor: "#F4E9FF",
     borderWidth: 2,
   },
 
@@ -1083,40 +1103,43 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
   },
+
   clusterTitle: {
-    fontWeight: "700",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontWeight: "900",
+    color: BRAND.black,
     flexShrink: 1,
   },
 
   clusterSub: {
-    color: "#64748b",
+    color: BRAND.grey,
+    fontWeight: "700",
   },
 
   clusterBadge: {
     alignSelf: "flex-start",
-    backgroundColor: "#dcfce7",
-  },
-  clusterBadgeText: {
-    fontWeight: "700",
-    color: "#16a34a",
+    backgroundColor: "#F4E9FF",
   },
 
-  // ✅ Badge for current order highlight
+  clusterBadgeText: {
+    fontWeight: "900",
+    color: BRAND.purple,
+  },
+
   highlightBadge: {
     position: "absolute",
     top: 8,
     right: 8,
-    backgroundColor: "#16a34a",
+    backgroundColor: BRAND.purple,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: RADIUS.pill,
   },
 
   highlightBadgeText: {
-    color: "#fff",
+    color: BRAND.white,
     fontSize: 10,
-    fontWeight: "700",
+    fontWeight: "900",
   },
 
   fabWrapper: {
@@ -1126,21 +1149,19 @@ const styles = StyleSheet.create({
     bottom: 0,
     backgroundColor: "transparent",
   },
+
   fab: {
     width: "100%",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#16a34a",
-    shadowColor: "#000",
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 4,
+    backgroundColor: BRAND.purple,
+    ...SHADOW.md,
   },
+
   fabText: {
-    color: "#fff",
-    fontWeight: "700",
+    color: BRAND.white,
+    fontWeight: "900",
     flexShrink: 1,
   },
 });
