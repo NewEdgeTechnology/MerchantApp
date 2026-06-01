@@ -1,9 +1,10 @@
 // screens/food/OrderDetails/MetaSection.js
-import React from 'react';
-import { View, TextInput, Text } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { styles } from './orderDetailsStyles';
-import { Row } from './OrderAtoms';
+import React from "react";
+import { View, TextInput, Text } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
+import { styles } from "./orderDetailsStyles";
+import { Row } from "./OrderAtoms";
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 
 export default function MetaSection({
   order,
@@ -25,46 +26,56 @@ export default function MetaSection({
     order?.deliver_to?.location ||
     order?.deliver_to?.place ||
     order?.delivery_address?.address || // fallback if backend returns object
-    order?.delivery_address ||          // fallback if backend returns string
-    order?.address ||                   // extra fallback
-    '—';
+    order?.delivery_address || // fallback if backend returns string
+    order?.address || // extra fallback
+    "—";
 
   return (
     <View style={{ marginTop: 12, gap: 8 }}>
-      <Row icon="person-outline" text={order.customer_name || '—'} />
-      <Row icon="bicycle-outline" text={`Fulfillment: ${fulfillment || '—'}`} />
+      <Row icon="person-outline" text={order.customer_name || "—"} />
+      <Row icon="bicycle-outline" text={`Fulfillment: ${fulfillment || "—"}`} />
       <Row
         icon="swap-horizontal-outline"
-        text={`Delivery by: ${deliveryOptionDisplay || '—'}`}
+        text={`Delivery by: ${deliveryOptionDisplay || "—"}`}
       />
       {!!ifUnavailableDisplay && (
-        <Row icon="help-buoy-outline" text={`If unavailable: ${ifUnavailableDisplay}`} />
+        <Row
+          icon="help-buoy-outline"
+          text={`If unavailable: ${ifUnavailableDisplay}`}
+        />
       )}
-      {fulfillmentLower === 'delivery' && !!estimatedArrivalDisplay && (
-        <Row icon="time-outline" text={`Customer ETA: ${estimatedArrivalDisplay}`} />
+      {fulfillmentLower === "delivery" && !!estimatedArrivalDisplay && (
+        <Row
+          icon="time-outline"
+          text={`Customer ETA: ${estimatedArrivalDisplay}`}
+        />
       )}
-      <Row icon="card-outline" text={`Payment: ${order.payment_method || '—'}`} />
+      <Row
+        icon="card-outline"
+        text={`Payment: ${order.payment_method || "—"}`}
+      />
 
       {/* ✅ ADD THIS - Show picked up by information */}
-      {(status === "PICKEDUP" || status === "COMPLETED") && order?.pickedup_by && (
-        <View style={styles.pickedUpContainer}>
-          <Ionicons name="checkmark-circle" size={16} color="#10B981" />
-          <Text style={styles.pickedUpText}>
-            Picked up by: {order.pickedup_by}
-          </Text>
-        </View>
-      )}
+      {(status === "PICKEDUP" || status === "COMPLETED") &&
+        order?.pickedup_by && (
+          <View style={styles.pickedUpContainer}>
+            <Ionicons name="checkmark-circle" size={16} color={BRAND.purple} />
+            <Text style={styles.pickedUpText}>
+              Picked up by: {order.pickedup_by}
+            </Text>
+          </View>
+        )}
 
-      {fulfillmentLower !== 'pickup' && (
+      {fulfillmentLower !== "pickup" && (
         <Row icon="navigate-outline" text={deliveryAddressText} />
       )}
 
-      {fulfillmentLower === 'delivery' && (
+      {fulfillmentLower === "delivery" && (
         <>
           <Row icon="map-outline" text={etaText} />
-          {status === 'PENDING' ? (
+          {status === "PENDING" ? (
             <View style={styles.timeRow}>
-              <Ionicons name="time-outline" size={16} color="#64748b" />
+              <Ionicons name="time-outline" size={16} color={BRAND.grey} />
               <TextInput
                 placeholder="Time to prepare (minutes)"
                 keyboardType="numeric"
@@ -75,8 +86,16 @@ export default function MetaSection({
             </View>
           ) : (
             <View style={styles.timeRow}>
-              <Ionicons name="time-outline" size={16} color="#64748b" />
-              <Text style={[styles.rowText, { fontSize: 13 }]}>
+              <Ionicons name="time-outline" size={16} color={BRAND.grey} />
+              <Text
+                style={[
+                  styles.rowText,
+                  {
+                    fontSize: 13,
+                    color: BRAND.black,
+                  },
+                ]}
+              >
                 {etaShortText}
               </Text>
             </View>
@@ -84,11 +103,11 @@ export default function MetaSection({
         </>
       )}
 
-      {fulfillmentLower === 'pickup' && (
+      {fulfillmentLower === "pickup" && (
         <View style={styles.timeBlock}>
-          {status === 'PENDING' ? (
+          {status === "PENDING" ? (
             <View style={styles.timeRow}>
-              <Ionicons name="time-outline" size={16} color="#64748b" />
+              <Ionicons name="time-outline" size={16} color={BRAND.grey} />
               <TextInput
                 placeholder="Time to prepare (minutes)"
                 keyboardType="numeric"
@@ -99,19 +118,20 @@ export default function MetaSection({
             </View>
           ) : (
             <View style={styles.timeRow}>
-              <Ionicons name="time-outline" size={16} color="#64748b" />
+              <Ionicons name="time-outline" size={16} color={BRAND.grey} />
               <Text style={styles.timeHint}>
                 Time to prepare
                 {Number(manualPrepMin) > 0
                   ? ` ~${Math.round(Number(manualPrepMin))} min`
-                  : ' not set'}
+                  : " not set"}
               </Text>
             </View>
           )}
 
           {Number(manualPrepMin) > 0 && (
             <Text style={styles.timeHint}>
-              Estimated time to get ready ~{Math.round(Number(manualPrepMin))} min
+              Estimated time to get ready ~{Math.round(Number(manualPrepMin))}{" "}
+              min
             </Text>
           )}
         </View>
@@ -119,7 +139,11 @@ export default function MetaSection({
 
       {!!restaurantNote && (
         <View style={styles.noteBox}>
-          <Ionicons name="chatbubble-ellipses-outline" size={14} color="#0f766e" />
+          <Ionicons
+            name="chatbubble-ellipses-outline"
+            size={14}
+            color={BRAND.purple}
+          />
           <Text style={styles.noteText} numberOfLines={6}>
             {restaurantNote}
           </Text>

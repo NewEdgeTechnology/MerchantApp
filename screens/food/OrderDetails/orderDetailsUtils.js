@@ -1,5 +1,6 @@
 // screens/food/OrderDetails/orderDetailsUtils.js
 import { BUSINESS_DETAILS as ENV_BUSINESS_DETAILS } from "@env";
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 
 /* ---------------- Money + utils ---------------- */
 export const money = (n, c = "BTN") => `${c} ${Number(n ?? 0).toFixed(2)}`;
@@ -40,19 +41,19 @@ export const STATUS_META = {
   PENDING: { label: "Pending", color: "#F59E0B", icon: "time-outline" },
   CONFIRMED: {
     label: "Confirmed",
-    color: "#10B981",
+     color: BRAND.purple,
     icon: "checkmark-circle-outline",
   },
   ASSIGNED: { label: "Assigned", color: "#3B82F6", icon: "person-outline" },
   READY: { label: "Ready", color: "#8B5CF6", icon: "restaurant-outline" },
   PICKEDUP: {
     label: "Picked Up",
-    color: "#10B981",
+     color: BRAND.purple,
     icon: "checkmark-done-circle-outline",
   }, // ✅ ADD THIS LINE
   PICKED_UP: {
     label: "Picked Up",
-    color: "#10B981",
+     color: BRAND.purple,
     icon: "checkmark-done-circle-outline",
   },
   OUT_FOR_DELIVERY: {
@@ -62,7 +63,7 @@ export const STATUS_META = {
   },
   COMPLETED: {
     label: "Completed",
-    color: "#10B981",
+     color: BRAND.purple,
     icon: "checkmark-done-circle-outline",
   },
   DECLINED: {

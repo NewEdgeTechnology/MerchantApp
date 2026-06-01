@@ -57,6 +57,7 @@ import {
 } from "react-native-safe-area-context";
 import * as SecureStore from "expo-secure-store";
 import io from "socket.io-client";
+import { BRAND, FONT, RADIUS, SHADOW, TEXT } from "../styles/tabdey_brand";
 
 import {
   UPDATE_ORDER_STATUS_ENDPOINT as ENV_UPDATE_ORDER,
@@ -748,25 +749,25 @@ const SelfDeliveryStatusButtons = ({
       case "READY":
         return {
           label: "Mark as Ready",
-          color: "#00B14F",
+          color: BRAND.purple,
           icon: "checkmark-circle-outline",
         };
       case "OUT_FOR_DELIVERY":
         return {
           label: "Mark as Out for Delivery",
-          color: "#FF9800",
+          color: BRAND.amber,
           icon: "bicycle-outline",
         };
       case "COMPLETED":
         return {
           label: "Mark as Completed",
-          color: "#4CAF50",
+          color: BRAND.magenta,
           icon: "checkmark-done-circle-outline",
         };
       default:
         return {
           label: "Update Status",
-          color: "#00B14F",
+          color: BRAND.purple,
           icon: "arrow-forward-outline",
         };
     }
@@ -803,11 +804,12 @@ const SelfDeliveryStatusButtons = ({
       disabled={updating}
     >
       {updating ? (
-        <ActivityIndicator color="#FFFFFF" size="small" />
+        <ActivityIndicator color={BRAND.white} size="small" />
       ) : (
         <>
-          <Ionicons name={config.icon} size={20} color="#FFFFFF" />
-          <Text style={{ color: "#FFFFFF", fontSize: 16, fontWeight: "600" }}>
+          <Ionicons name={config.icon} size={20} color={BRAND.white} />
+          <Text style={{ color: BRAND.white, fontSize: 16, fontFamily: FONT.body,
+fontWeight: "600" }}>
             {config.label}
           </Text>
         </>
@@ -1645,19 +1647,26 @@ export default function OrderDetails() {
   }, [deliveryChoice, isGrabDeliveryByStatus]);
 
   const isGrabSelected = useMemo(() => {
-    // If status is ASSIGNED, definitely GRAB
     if (isGrabDeliveryByStatus) return true;
-    // If order has delivery_option = GRAB, keep it as GRAB
-    if (order?.delivery_option === "GRAB") return true;
-    // If driver has already accepted, it's definitely GRAB
+
+    // Once driver accepted, it is Tàbdey delivery
     if (driverAccepted) return true;
-    // Otherwise use the user's choice
+
+    // While order is only CONFIRMED, respect merchant's selected choice
+    if (status === "CONFIRMED") {
+      return deliveryChoice === "grab";
+    }
+
+    // For later statuses, fallback to saved order option
+    if (order?.delivery_option === "GRAB") return true;
+
     return deliveryChoice === "grab";
   }, [
     deliveryChoice,
     isGrabDeliveryByStatus,
     order?.delivery_option,
     driverAccepted,
+    status,
   ]);
 
   const STATUS_SEQUENCE = useMemo(
@@ -2167,15 +2176,17 @@ export default function OrderDetails() {
         return false;
       }
 
-      // Prevent duplicate marking
-      if (itemUnavailableMap[key]) {
+      const actualMode = forceRemove ? "REMOVE" : effectiveUnavailableMode;
+      const isReplacing = actualMode === "REPLACE" && replacementItem;
+
+      // Prevent duplicate only for REMOVE, not REPLACE
+      if (itemUnavailableMap[key] && !isReplacing) {
         console.log("[DEBUG] Item already marked unavailable, skipping");
         return false;
       }
 
       // Reset auto-message sent flag
       // autoMessageSentRef.current = false;
-      const actualMode = forceRemove ? "REMOVE" : effectiveUnavailableMode;
       const itemName = getItemName(item);
       const itemPrice = getItemUnitPrice(item);
       const itemQty = getItemQty(item);
@@ -2881,8 +2892,12 @@ export default function OrderDetails() {
   const originalItemsTotal = useMemo(() => sumItemsTotal(items), [items]);
 
   const computedItemsTotal = useMemo(() => {
-    if (ifUnavailableMode !== "REMOVE" && ifUnavailableMode !== "REPLACE")
+    if (
+      effectiveUnavailableMode !== "REMOVE" &&
+      effectiveUnavailableMode !== "REPLACE"
+    ) {
       return originalItemsTotal;
+    }
 
     let total = 0;
 
@@ -2891,30 +2906,24 @@ export default function OrderDetails() {
       const qty = getItemQty(it);
       const oldLineTotal = getItemLineTotal(it);
       const isUnavailable = !!itemUnavailableMap[key];
-      const hasReplacement = !!itemReplacementMap[key];
+      const repl = itemReplacementMap[key];
 
-      // For REMOVE mode - skip removed items
-      if (ifUnavailableMode === "REMOVE") {
+      if (effectiveUnavailableMode === "REMOVE") {
         if (isUnavailable) return;
         total += oldLineTotal;
         return;
       }
 
-      // For REPLACE mode - skip unavailable items without replacement
-      if (isUnavailable && !hasReplacement) {
-        console.log(
-          `[ORDER] Skipping item ${key} - unavailable without replacement`,
-        );
-        return;
-      }
+      if (effectiveUnavailableMode === "REPLACE") {
+        if (repl) {
+          const newUnitPrice =
+            toMoneyNumber(repl?.price) ?? getItemUnitPrice(repl);
+          total += qty * (Number(newUnitPrice) || 0);
+          return;
+        }
 
-      // If there's a replacement, use replacement price
-      const repl = itemReplacementMap[key];
-      if (repl) {
-        const newUnitPrice =
-          toMoneyNumber(repl?.price) ?? getItemUnitPrice(repl);
-        total += qty * (Number(newUnitPrice) || 0);
-      } else {
+        if (isUnavailable) return;
+
         total += oldLineTotal;
       }
     });
@@ -2923,7 +2932,7 @@ export default function OrderDetails() {
     return total;
   }, [
     items,
-    ifUnavailableMode,
+    effectiveUnavailableMode,
     itemUnavailableMap,
     itemReplacementMap,
     originalItemsTotal,
@@ -4017,8 +4026,6 @@ export default function OrderDetails() {
     order?.canceled_by,
   ]);
 
-  /* ---------------- UI helpers ---------------- */
-  const headerTopPad = Math.max(insets.top, S(8)) + S(18);
   const fulfillmentLower = (fulfillment || "").toLowerCase();
 
   const shouldShowDeliveryOptions = useMemo(() => {
@@ -4054,15 +4061,19 @@ export default function OrderDetails() {
   });
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["left", "top", "right", "bottom"]}
+    >
+      <View style={styles.topGlow} />
       {/* Header */}
-      <View style={[styles.headerBar, { paddingTop: headerTopPad }]}>
+      <View style={[styles.headerBar]}>
         <Pressable
           onPress={goBackToOrders}
           style={styles.backBtn}
           hitSlop={hit(S(8))}
         >
-          <Ionicons name="arrow-back" size={S(22)} color="#0f172a" />
+          <Ionicons name="arrow-back" size={S(22)} color={BRAND.dark} />
         </Pressable>
 
         <Text style={styles.headerTitle}>Order details</Text>
@@ -4085,15 +4096,15 @@ export default function OrderDetails() {
               alignItems: "center",
               justifyContent: "center",
               borderWidth: 1,
-              borderColor: "#D1FAE5",
-              backgroundColor: "#F0FDF4",
+              borderColor: BRAND.purple,
+              backgroundColor: "#F3E4FF",
             }}
             hitSlop={hit(S(8))}
           >
             <Ionicons
               name="chatbubble-ellipses-outline"
               size={S(18)}
-              color="#00B14F"
+              color={BRAND.purple}
             />
           </Pressable>
 
@@ -4200,18 +4211,19 @@ export default function OrderDetails() {
             })} */}
             {/* Driver tracking block - HIDE for pickup orders */}
             {!isPickupFulfillment &&
-              ((status === "CONFIRMED" && isGrabSelected && !driverAccepted) ||
+              isGrabSelected &&
+              !isSelfSelected &&
+              ((status === "CONFIRMED" && !driverAccepted) ||
                 status === "ASSIGNED" ||
                 status === "READY" ||
                 status === "PICKED_UP" ||
-                status === "OUT_FOR_DELIVERY") &&
-              isGrabSelected && (
+                status === "OUT_FOR_DELIVERY") && (
                 <View
                   style={{
                     marginTop: S(12),
                     marginBottom: S(8),
                     padding: S(12),
-                    backgroundColor: "#F3F4F6",
+                    backgroundColor: BRAND.light,
                     borderRadius: S(12),
                   }}
                 >
@@ -4223,12 +4235,12 @@ export default function OrderDetails() {
                       marginBottom: S(8),
                     }}
                   >
-                    <Ionicons name="car-outline" size={S(18)} color="#6B7280" />
+                    <Ionicons name="car-outline" size={S(18)} color={BRAND.grey} />
                     <Text
                       style={{
                         fontSize: S(13),
                         fontWeight: "500",
-                        color: "#374151",
+                        color: BRAND.dark,
                       }}
                     >
                       Delivery Status
@@ -4238,12 +4250,12 @@ export default function OrderDetails() {
                   <Text
                     style={{
                       fontSize: S(14),
-                      color: "#1F2937",
+                      color: BRAND.dark,
                       marginBottom: S(4),
                     }}
                   >
                     Status:{" "}
-                    <Text style={{ fontWeight: "600", color: "#00B14F" }}>
+                    <Text style={{ fontWeight: "600", color: BRAND.purple }}>
                       {status === "ASSIGNED"
                         ? "Driver Assigned"
                         : status === "READY"
@@ -4260,7 +4272,7 @@ export default function OrderDetails() {
                     <Text
                       style={{
                         fontSize: S(12),
-                        color: "#6B7280",
+                        color: BRAND.grey,
                         marginTop: S(4),
                       }}
                     >
@@ -4272,7 +4284,7 @@ export default function OrderDetails() {
                     <Text
                       style={{
                         fontSize: S(12),
-                        color: "#6B7280",
+                        color: BRAND.grey,
                         fontStyle: "italic",
                         marginTop: S(4),
                       }}
@@ -4293,12 +4305,12 @@ export default function OrderDetails() {
                       <Ionicons
                         name="location-outline"
                         size={S(14)}
-                        color="#10B981"
+                        color={BRAND.purple}
                       />
                       <Text
                         style={{
                           fontSize: S(12),
-                          color: "#10B981",
+                          color: BRAND.purple,
                           fontWeight: "500",
                         }}
                       >
@@ -4348,7 +4360,7 @@ export default function OrderDetails() {
                           });
                         }}
                         style={({ pressed }) => ({
-                          backgroundColor: pressed ? "#059669" : "#00B14F",
+                          backgroundColor: pressed ? BRAND.purpleLight : BRAND.purple,
                           paddingVertical: S(10),
                           paddingHorizontal: S(16),
                           borderRadius: S(10),
@@ -4362,13 +4374,14 @@ export default function OrderDetails() {
                         <Ionicons
                           name="map-outline"
                           size={S(16)}
-                          color="#FFFFFF"
+                          color={BRAND.white}
                         />
                         <Text
                           style={{
-                            color: "#FFFFFF",
-                            fontSize: S(14),
-                            fontWeight: "600",
+                            color: BRAND.white,
+    fontSize: S(14),
+    fontFamily: FONT.body,
+    fontWeight: "600",
                           }}
                         >
                           Track Driver
@@ -4402,7 +4415,7 @@ export default function OrderDetails() {
                         <Ionicons
                           name="checkmark-circle-outline"
                           size={18}
-                          color="#fff"
+                          color={BRAND.white}
                         />
                         <Text style={styles.primaryBtnText}>Accept</Text>
                       </Pressable>
@@ -4413,7 +4426,7 @@ export default function OrderDetails() {
                         style={({ pressed }) => [
                           styles.secondaryBtn,
                           {
-                            borderColor: "#ef4444",
+                            borderColor: BRAND.red,
                             opacity: updating || pressed ? 0.85 : 1,
                           },
                         ]}
@@ -4421,12 +4434,12 @@ export default function OrderDetails() {
                         <Ionicons
                           name="close-circle-outline"
                           size={18}
-                          color="#b91c1c"
+                          color={BRAND.red}
                         />
                         <Text
                           style={[
                             styles.secondaryBtnText,
-                            { color: "#991b1b" },
+                            { color: BRAND.red },
                           ]}
                         >
                           Decline
@@ -4447,7 +4460,7 @@ export default function OrderDetails() {
                       <Ionicons
                         name="checkmark-circle-outline"
                         size={18}
-                        color="#fff"
+                        color={BRAND.white}
                       />
                       <Text style={styles.primaryBtnText}>Ready</Text>
                     </Pressable>
@@ -4488,15 +4501,15 @@ export default function OrderDetails() {
                                 : 1,
                           backgroundColor:
                             isGrabSelected && !driverAccepted && !isSelfSelected
-                              ? "#9CA3AF"
-                              : "#00B14F",
+                              ? BRAND.gray
+                              : BRAND.purple,
                         },
                       ]}
                     >
                       <Ionicons
                         name="checkmark-circle-outline"
                         size={18}
-                        color="#fff"
+                        color={BRAND.white}
                       />
                       <Text style={styles.primaryBtnText}>
                         {isGrabSelected && !driverAccepted && !isSelfSelected
@@ -4525,7 +4538,7 @@ export default function OrderDetails() {
                           <Ionicons
                             name="checkmark-done-circle-outline"
                             size={18}
-                            color="#fff"
+                            color={BRAND.white}
                           />
                           <Text style={styles.primaryBtnText}>
                             Mark as picked up
@@ -4546,7 +4559,7 @@ export default function OrderDetails() {
                           <Ionicons
                             name="bicycle-outline"
                             size={18}
-                            color="#fff"
+                            color={BRAND.white}
                           />
                           <Text style={styles.primaryBtnText}>
                             Out for Delivery
@@ -4569,7 +4582,7 @@ export default function OrderDetails() {
                       <Ionicons
                         name="checkmark-done-circle-outline"
                         size={18}
-                        color="#fff"
+                        color={BRAND.white}
                       />
                       <Text style={styles.primaryBtnText}>
                         Mark as Complete
@@ -4647,7 +4660,7 @@ export default function OrderDetails() {
             <Text
               style={{
                 fontSize: 14,
-                color: "#666",
+                color: BRAND.grey,
                 marginBottom: 10,
               }}
             >
@@ -4658,7 +4671,7 @@ export default function OrderDetails() {
               style={{
                 width: "100%",
                 borderWidth: 1,
-                borderColor: "#ccc",
+                borderColor: BRAND.grey,
                 borderRadius: 10,
                 padding: 12,
                 fontSize: 16,
@@ -4682,7 +4695,7 @@ export default function OrderDetails() {
                   flex: 1,
                   paddingVertical: 12,
                   borderRadius: 10,
-                  backgroundColor: "#ccc",
+                  backgroundColor: BRAND.grey,
                   alignItems: "center",
                 }}
                 onPress={() => {
@@ -4690,7 +4703,7 @@ export default function OrderDetails() {
                   setPickedUpByName("");
                 }}
               >
-                <Text style={{ color: "#fff", fontWeight: "600" }}>Cancel</Text>
+                <Text style={{ color: BRAND.white, fontWeight: "600" }}>Cancel</Text>
               </Pressable>
 
               <Pressable
@@ -4698,7 +4711,7 @@ export default function OrderDetails() {
                   flex: 1,
                   paddingVertical: 12,
                   borderRadius: 10,
-                  backgroundColor: "#00B14F",
+                  backgroundColor: BRAND.purple,
                   alignItems: "center",
                 }}
                 onPress={() => {
@@ -4721,7 +4734,7 @@ export default function OrderDetails() {
                     });
                 }}
               >
-                <Text style={{ color: "#fff", fontWeight: "600" }}>
+                <Text style={{ color: BRAND.white, fontWeight: "600" }}>
                   Confirm Pickup
                 </Text>
               </Pressable>

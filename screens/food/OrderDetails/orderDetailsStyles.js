@@ -1,47 +1,140 @@
 // screens/food/OrderDetails/orderDetailsStyles.js
 import { StyleSheet } from "react-native";
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 
 export const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
 
   headerBar: {
-    minHeight: 52,
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    borderBottomColor: "#e5e7eb",
-    borderBottomWidth: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "transparent",
   },
+
   backBtn: {
-    height: 40,
-    width: 40,
-    borderRadius: 12,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
     alignItems: "center",
     justifyContent: "center",
+    ...SHADOW.sm,
   },
+
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
   },
 
   card: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 14,
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.lg,
+    padding: 16,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.greyBorder,
+    // ...SHADOW.sm,
+  },
+
+  block: {
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.lg,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    marginTop: 12,
+    // ...SHADOW.sm,
+  },
+
+  primaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: BRAND.purple,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderRadius: RADIUS.pill,
+    alignSelf: "flex-start",
+    ...SHADOW.sm,
+  },
+
+  secondaryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: BRAND.white,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
+    borderColor: "#FFD4DD",
+  },
+
+  progressFill: {
+    height: 4,
+    backgroundColor: BRAND.purple,
+  },
+
+  segmentBtnActive: {
+    backgroundColor: BRAND.purple,
+    borderColor: BRAND.purple,
+  },
+
+  timeInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 13,
+    color: BRAND.black,
+    backgroundColor: BRAND.white,
+  },
+
+  modalCard: {
+    backgroundColor: BRAND.white,
+    padding: 18,
+    borderRadius: RADIUS.lg,
+    width: "100%",
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    ...SHADOW.md,
   },
   idRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  orderId: { fontWeight: "800", color: "#0f172a", fontSize: 16 },
+  orderId: {
+    fontFamily: FONT.header,
+    fontSize: 16,
+    color: BRAND.black,
+  },
 
   pill: {
     flexDirection: "row",
@@ -62,7 +155,6 @@ export const styles = StyleSheet.create({
     overflow: "hidden",
     marginTop: 10,
   },
-  progressFill: { height: 4, backgroundColor: "#16a34a" },
 
   stepsRow: {
     flexDirection: "row",
@@ -78,7 +170,7 @@ export const styles = StyleSheet.create({
     borderWidth: 2,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
   },
   stepLabel: {
     marginTop: 4,
@@ -87,7 +179,7 @@ export const styles = StyleSheet.create({
     textAlign: "center",
     color: "#334155",
   },
-  stepTime: { marginTop: 1, fontSize: 10, color: "#64748b" },
+  stepTime: { marginTop: 1, fontSize: 10, color: BRAND.grey },
 
   noteBox: {
     flexDirection: "row",
@@ -97,19 +189,22 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 8,
     borderRadius: 12,
-    backgroundColor: "#ecfeff",
+    backgroundColor: "#F3E4FF",
+    borderColor: BRAND.greyBorder,
     borderWidth: 1,
-    borderColor: "#99f6e4",
   },
-  noteText: { flex: 1, color: "#115e59", fontWeight: "600" },
+  noteText: {
+    fontFamily: FONT.body,
+    color: BRAND.black,
+  },
 
   sectionTitle: {
     marginTop: 14,
     marginBottom: 8,
     fontWeight: "700",
-    color: "#0f172a",
+    color: BRAND.black,
   },
-  terminalNote: { color: "#64748b", marginBottom: 10 },
+  terminalNote: { color: BRAND.grey, marginBottom: 10 },
 
   segmentWrap: { flexDirection: "row", gap: 10, marginTop: 10 },
   segmentBtn: {
@@ -118,10 +213,10 @@ export const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: "#ffffff",
+    borderRadius: RADIUS.md,
+    borderColor: BRAND.greyBorder,
+    backgroundColor: BRAND.white,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
   },
   // Add to orderDetailsStyles.js
 
@@ -155,7 +250,7 @@ export const styles = StyleSheet.create({
   statusBadgeText: {
     fontSize: 10,
     fontWeight: "600",
-    color: "#fff",
+    color: BRAND.white,
   },
 
   replacedBadge: {
@@ -191,13 +286,15 @@ export const styles = StyleSheet.create({
     marginTop: 4,
     fontStyle: "italic",
   },
-  segmentBtnActive: {
-    backgroundColor: "#16a34a",
-    borderColor: "#16a34a",
-  },
 
-  segmentText: { fontWeight: "800" },
-  segmentHint: { marginTop: 8, color: "#64748b", fontWeight: "600" },
+  segmentText: {
+    fontFamily: FONT.body,
+  },
+  segmentHint: {
+    marginTop: 8,
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+  },
 
   actionsRow: {
     flexDirection: "row",
@@ -205,39 +302,20 @@ export const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 8,
   },
-  primaryBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#16a34a",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignSelf: "flex-start",
-  },
-  primaryBtnText: { color: "#fff", fontWeight: "800" },
-  secondaryBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#fff",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
+  primaryBtnText: { color: BRAND.white, fontWeight: "800" },
+
   secondaryBtnText: { fontWeight: "800" },
   acceptButton: {
-    backgroundColor: "#16a34a",
+    backgroundColor: BRAND.purple,
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",
     marginBottom: 10,
   },
   acceptButtonText: {
-    color: "#fff",
+    color: BRAND.white,
+    fontFamily: FONT.header,
     fontSize: 16,
-    fontWeight: "700",
   },
   // Add these styles to your orderDetailsStyles.js file
 
@@ -262,27 +340,22 @@ export const styles = StyleSheet.create({
     backgroundColor: "#f1f5f9",
   },
   declineButton: {
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
+    borderColor: BRAND.red,
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#ef4444",
   },
   declineButtonText: {
-    color: "#ef4444",
+    color: BRAND.red,
+    fontFamily: FONT.header,
     fontSize: 16,
-    fontWeight: "600",
   },
-  block: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    marginTop: 12,
+  blockTitle: {
+    fontFamily: FONT.header,
+    color: BRAND.black,
   },
-  blockTitle: { fontWeight: "800", color: "#0f172a" },
   row: { flexDirection: "row", alignItems: "center", gap: 8 },
   rowText: { color: "#475569", fontWeight: "600", flex: 1 },
 
@@ -293,22 +366,22 @@ export const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   itemName: {
-    color: "#0f172a",
+    color: BRAND.black,
     fontWeight: "600",
     flexShrink: 1,
     paddingRight: 8,
   },
-  itemQty: { color: "#64748b", fontWeight: "700" },
+  itemQty: { color: BRAND.grey, fontWeight: "700" },
   totRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: 6,
   },
-  totLabel: { color: "#64748b", fontWeight: "700" },
-  totValue: { color: "#0f172a", fontWeight: "700" },
-  totLabelStrong: { color: "#0f172a", fontWeight: "800" },
-  totValueStrong: { color: "#0f172a", fontWeight: "900" },
+  totLabel: { color: BRAND.grey, fontWeight: "700" },
+  totValue: { color: BRAND.black, fontWeight: "700" },
+  totLabelStrong: { color: BRAND.black, fontWeight: "800" },
+  totValueStrong: { color: BRAND.black, fontWeight: "900" },
 
   timeRow: {
     flexDirection: "row",
@@ -316,22 +389,13 @@ export const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4,
   },
-  timeInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 13,
-    color: "#0f172a",
-  },
+
   timeBlock: {
     marginTop: 4,
   },
   timeHint: {
     marginTop: 4,
-    color: "#0f172a",
+    color: BRAND.black,
     fontWeight: "700",
     fontSize: 12,
   },
@@ -343,23 +407,18 @@ export const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 24,
   },
-  modalCard: {
-    backgroundColor: "#fff",
-    padding: 16,
-    borderRadius: 16,
-    width: "100%",
-  },
-  modalTitle: { fontSize: 16, fontWeight: "800", color: "#0f172a" },
-  modalSub: { fontSize: 12, color: "#64748b", marginTop: 4 },
+  modalTitle: { fontSize: 16, fontWeight: "800", color: BRAND.black },
+  modalSub: { fontSize: 12, color: BRAND.grey, marginTop: 4 },
   input: {
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 10,
+    borderColor: BRAND.greyBorder,
+    borderRadius: RADIUS.md,
+    color: BRAND.black,
+    fontFamily: FONT.body,
     paddingHorizontal: 10,
     paddingVertical: 8,
     minHeight: 44,
     marginTop: 10,
-    color: "#0f172a",
   },
   dialogBtn: {
     flex: 1,
@@ -369,20 +428,20 @@ export const styles = StyleSheet.create({
   },
   dialogBtnText: { fontWeight: "800" },
   pickedUpContainer: {
-  flexDirection: "row",
-  alignItems: "center",
-  gap: 8,
-  marginTop: 4,
-  paddingVertical: 6,
-  paddingHorizontal: 10,
-  backgroundColor: "#F0FDF4",
-  borderRadius: 8,
-  borderWidth: 1,
-  borderColor: "#D1FAE5",
-},
-pickedUpText: {
-  fontSize: 13,
-  color: "#065F46",
-  fontWeight: "600",
-},
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: BRAND.purpleLight,
+    borderColor: BRAND.greyBorder,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  pickedUpText: {
+    fontFamily: FONT.body,
+    color: BRAND.black,
+    fontSize: 13,
+  },
 });

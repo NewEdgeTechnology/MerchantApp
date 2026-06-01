@@ -26,34 +26,34 @@ const { width, height } = Dimensions.get("window");
 
 const slides = [
   {
-    image: require("../../assets/shop.png"),
+    image: require("../../assets/Reach your Customers.png"),
     tag: "GROW",
     title: "Reach Thousands of Customers",
     description:
       "Expand your business with delivery, pickup, cashless payments, and more.",
     accent: BRAND.purple,
-    gradStart: "#F3E6FF",
-    gradEnd: "#FAF5FF",
+    // gradStart: "#F3E6FF",
+    // gradEnd: "#FAF5FF",
   },
   {
-    image: require("../../assets/business.png"),
+    image: require("../../assets/Accelerate your Business.png"),
     tag: "SCALE",
     title: "Accelerate Your Business Growth",
     description:
       "Get all the tools to run and grow your business in one place.",
     accent: BRAND.magenta,
-    gradStart: "#FFE6F5",
-    gradEnd: "#FFF5FB",
+    // gradStart: "#FFE6F5",
+    // gradEnd: "#FFF5FB",
   },
   {
-    image: require("../../assets/partner.png"),
+    image: require("../../assets/Be Our Partner.png"),
     tag: "JOIN",
     title: "Be Our Merchant-Partner Today",
     description:
       "Signing up is simple — get onboard in as little as 3 working days.",
     accent: BRAND.amber,
-    gradStart: "#FFF3D6",
-    gradEnd: "#FFFAF0",
+    // gradStart: "#FFF3D6",
+    // gradEnd: "#FFFAF0",
   },
 ];
 
@@ -133,8 +133,8 @@ export default function WelcomeScreen() {
 
                       <View
                         style={[
-                          styles.ring,
-                          { borderColor: item.accent + "22" },
+                          styles.circle,
+                          { backgroundColor: item.accent + "33" },
                         ]}
                       />
 
@@ -212,7 +212,7 @@ const styles = StyleSheet.create({
 
   safe: {
     flex: 1,
-    paddingTop: 12, 
+    paddingTop: 12,
   },
   scrollContent: {
     paddingBottom: 28,
@@ -319,21 +319,21 @@ const styles = StyleSheet.create({
     width: "100%",
     height: Math.min(height * 0.23, 250),
     borderRadius: 22,
-    backgroundColor: "#FCFCFC",
+    // backgroundColor: "#FCFCFC",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
     marginBottom: 18,
   },
 
-  ring: {
-    position: "absolute",
-    width: 190,
-    height: 190,
-    borderRadius: 95,
-    borderWidth: 42,
-    opacity: 0.55,
-  },
+  circle: {
+  position: "absolute",
+  width: 190,
+  height: 190,
+  borderRadius: 105,
+  opacity: 1,
+  zIndex: 0,
+},
 
   tag: {
     position: "absolute",
@@ -354,11 +354,10 @@ const styles = StyleSheet.create({
   },
 
   slideImage: {
-    width: width * 0.48,
-    height: height * 0.16,
-    zIndex: 1,
-  },
-
+  width: width * 0.48,
+  height: height * 0.16,
+  zIndex: 1,
+},
   slideTitle: {
     fontFamily: FONT.header,
     fontWeight: "800",

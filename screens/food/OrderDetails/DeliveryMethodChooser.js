@@ -8,6 +8,7 @@ import { View, Text, Pressable, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { styles } from "./orderDetailsStyles";
 import { RowTitle } from "./OrderAtoms";
+import { BRAND, FONT, RADIUS, SHADOW, TEXT } from "../../styles/tabdey_brand";
 
 export default function DeliveryMethodChooser({
   status,
@@ -35,7 +36,15 @@ export default function DeliveryMethodChooser({
     return (
       <View style={[styles.block, { marginTop: 12 }]}>
         <RowTitle title="Assigned driver" />
-        <Text style={[styles.segmentHint, { marginTop: 4, fontWeight: "600" }]}>
+        <Text
+          style={[
+            styles.segmentHint,
+            {
+              marginTop: 4,
+              fontFamily: TEXT.body.fontFamily,
+            },
+          ]}
+        >
           {driverSummaryText || "Driver assigned"}
         </Text>
       </View>
@@ -72,17 +81,22 @@ export default function DeliveryMethodChooser({
               setDeliveryChoice("self");
               stopGrabLoop();
             }}
-            style={[styles.segmentBtn, isSelfSelected && styles.segmentBtnActive]}
+            style={[
+              styles.segmentBtn,
+              isSelfSelected && styles.segmentBtnActive,
+            ]}
           >
             <Ionicons
               name="person-outline"
               size={16}
-              color={isSelfSelected ? "#fff" : "#0f172a"}
+              color={isSelfSelected ? BRAND.white : BRAND.black}
             />
             <Text
               style={[
                 styles.segmentText,
-                { color: isSelfSelected ? "#fff" : "#0f172a" },
+                {
+                  color: isSelfSelected ? BRAND.white : BRAND.black,
+                },
               ]}
             >
               Self
@@ -105,22 +119,22 @@ export default function DeliveryMethodChooser({
             {sendingGrab ? (
               <ActivityIndicator
                 size="small"
-                color={isGrabSelected ? "#fff" : "#0f172a"}
+                color={isGrabSelected ? BRAND.white : BRAND.black}
               />
             ) : (
               <Ionicons
                 name="bicycle-outline"
                 size={16}
-                color={isGrabSelected ? "#fff" : "#0f172a"}
+                color={isGrabSelected ? BRAND.white : BRAND.black}
               />
             )}
             <Text
               style={[
                 styles.segmentText,
-                { color: isGrabSelected ? "#fff" : "#0f172a" },
+                { color: isGrabSelected ? BRAND.white : BRAND.black },
               ]}
             >
-              Tàbdey 
+              Tàbdey
             </Text>
           </Pressable>
         </View>
@@ -128,8 +142,8 @@ export default function DeliveryMethodChooser({
         {/* RIGHT: Deliver in group button (optional) */}
         {showDeliverInGroup && (
           <Pressable onPress={onDeliverInGroup} style={styles.groupButton}>
-            <Ionicons name="people-outline" size={16} color="#7c3aed" />
-            <Text style={styles.groupButtonText}>Deliver{'\n'}in group</Text>
+            <Ionicons name="people-outline" size={16} color={BRAND.purple} />
+            <Text style={styles.groupButtonText}>Deliver{"\n"}in group</Text>
           </Pressable>
         )}
       </View>

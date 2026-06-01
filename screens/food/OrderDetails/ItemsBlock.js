@@ -15,6 +15,7 @@ import { styles } from "./orderDetailsStyles";
 import { RowTitle } from "./OrderAtoms";
 import { toText } from "./orderDetailsUtils";
 import { Ionicons } from "@expo/vector-icons";
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 
 // Import from @env
 import {
@@ -42,13 +43,13 @@ const getButtonIcon = (button) => {
 };
 
 const getButtonColor = (button) => {
-  if (button.style === "cancel") return null; // uses cancel style
-  if (button.style === "destructive") return "#dc2626";
+  if (button.style === "cancel") return null;
+  if (button.style === "destructive") return BRAND.red;
   const text = (button.text || "").toLowerCase();
-  if (text.includes("chat") || text.includes("discuss")) return "#3b82f6";
-  if (text.includes("replace") || text.includes("change")) return "#10b981";
-  if (text.includes("available") || text.includes("mark")) return "#10b981";
-  return "#3b82f6";
+  if (text.includes("chat") || text.includes("discuss")) return BRAND.purple;
+  if (text.includes("replace") || text.includes("change")) return BRAND.purple;
+  if (text.includes("available") || text.includes("mark")) return BRAND.purple;
+  return BRAND.purple;
 };
 
 export default function ItemsBlock({
@@ -119,7 +120,7 @@ export default function ItemsBlock({
       const key = it._key;
       const isUnavailable = !!unavailableMap[key];
       const hasReplacement = !!replacementMap?.[key];
-      
+
       // Skip if item is unavailable without replacement in REPLACE mode
       if (ifUnavailableMode === "REPLACE" && isUnavailable && !hasReplacement) {
         return;
@@ -128,7 +129,7 @@ export default function ItemsBlock({
       if (ifUnavailableMode === "REMOVE" && isUnavailable) {
         return;
       }
-      
+
       const price = Number(it.unit_price || it.price || 0);
       const qty = Number(it.qty || it.quantity || 1);
       total += price * qty;
@@ -215,7 +216,10 @@ export default function ItemsBlock({
     setLoading(true);
     try {
       if (onMarkItemUnavailable) {
-        console.log("[ItemsBlock] Calling onMarkItemUnavailable with forceRemove=true for item:", selectedItem.item_name);
+        console.log(
+          "[ItemsBlock] Calling onMarkItemUnavailable with forceRemove=true for item:",
+          selectedItem.item_name,
+        );
         await onMarkItemUnavailable(
           selectedItemKey,
           selectedItem,
@@ -481,19 +485,25 @@ export default function ItemsBlock({
         <View style={localStyles.totalsContainer}>
           <View style={localStyles.totalRow}>
             <Text style={localStyles.totalLabel}>Subtotal:</Text>
-            <Text style={localStyles.totalAmount}>{formatMoney(itemsTotal)}</Text>
+            <Text style={localStyles.totalAmount}>
+              {formatMoney(itemsTotal)}
+            </Text>
           </View>
-          
+
           {deliveryFee > 0 && (
             <View style={localStyles.totalRow}>
               <Text style={localStyles.totalLabel}>Delivery Fee:</Text>
-              <Text style={localStyles.totalAmount}>{formatMoney(deliveryFee)}</Text>
+              <Text style={localStyles.totalAmount}>
+                {formatMoney(deliveryFee)}
+              </Text>
             </View>
           )}
-          
+
           <View style={[localStyles.totalRow, localStyles.grandTotalRow]}>
             <Text style={localStyles.grandTotalLabel}>Total:</Text>
-            <Text style={localStyles.grandTotalAmount}>{formatMoney(grandTotal)}</Text>
+            <Text style={localStyles.grandTotalAmount}>
+              {formatMoney(grandTotal)}
+            </Text>
           </View>
         </View>
       </View>
@@ -516,7 +526,7 @@ export default function ItemsBlock({
                 <Ionicons
                   name="help-circle-outline"
                   size={24}
-                  color="#3b82f6"
+                  color={BRAND.purple}
                 />
                 <Text style={modalStyles.title}>Item Options</Text>
               </View>
@@ -570,7 +580,6 @@ export default function ItemsBlock({
                     ]}
                     onPress={() => {
                       handleCloseActionModal();
-                      onToggleUnavailable(actionItemKey);
                       if (typeof onOpenSimilarCatalog === "function") {
                         onOpenSimilarCatalog(actionItem);
                       }
@@ -624,7 +633,7 @@ export default function ItemsBlock({
                 <Ionicons
                   name="alert-circle-outline"
                   size={24}
-                  color="#dc2626"
+                  color={BRAND.red}
                 />
                 <Text style={modalStyles.title}>Remove Item</Text>
               </View>
@@ -633,7 +642,7 @@ export default function ItemsBlock({
                 style={modalStyles.closeButton}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Ionicons name="close" size={24} color="#64748b" />
+                <Ionicons name="close" size={24} color={BRAND.grey} />
               </Pressable>
             </View>
 
@@ -735,7 +744,7 @@ export default function ItemsBlock({
                 <Ionicons
                   name="information-circle-outline"
                   size={24}
-                  color="#3b82f6"
+                  color={BRAND.purple}
                 />
                 <Text style={modalStyles.title} numberOfLines={2}>
                   {nativeAlertData.title}
@@ -812,13 +821,12 @@ export default function ItemsBlock({
   );
 }
 
-// Local styles for totals section
 const localStyles = {
   totalsContainer: {
     marginTop: 16,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "#e2e8f0",
+    borderTopColor: BRAND.greyBorder,
   },
   totalRow: {
     flexDirection: "row",
@@ -828,28 +836,28 @@ const localStyles = {
   },
   totalLabel: {
     fontSize: 14,
-    color: "#64748b",
+    color: BRAND.grey,
   },
   totalAmount: {
+    fontFamily: FONT.body,
     fontSize: 14,
-    color: "#0f172a",
-    fontWeight: "500",
+    color: BRAND.black,
   },
   grandTotalRow: {
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: "#e2e8f0",
+    borderTopColor: BRAND.greyBorder,
   },
   grandTotalLabel: {
+    fontFamily: FONT.header,
     fontSize: 16,
-    fontWeight: "700",
-    color: "#0f172a",
+    color: BRAND.black,
   },
   grandTotalAmount: {
+    fontFamily: FONT.header,
     fontSize: 16,
-    fontWeight: "800",
-    color: "#dc2626",
+    color: BRAND.purple,
   },
 };
 
@@ -871,14 +879,12 @@ const modalStyles = {
   content: {
     width: "85%",
     maxWidth: 400,
-    backgroundColor: "#fff",
-    borderRadius: 20,
+    backgroundColor: BRAND.white,
+    borderRadius: RADIUS.lg,
+    borderColor: BRAND.greyBorder,
     padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 5,
+    borderWidth: 1,
+    ...SHADOW.md,
   },
   header: {
     flexDirection: "row",
@@ -897,29 +903,30 @@ const modalStyles = {
     padding: 4,
   },
   title: {
+    fontFamily: FONT.header,
     fontSize: 18,
-    fontWeight: "800",
-    color: "#0f172a",
+    color: BRAND.black,
     flexShrink: 1,
   },
   itemName: {
+    fontFamily: FONT.header,
     fontSize: 16,
-    fontWeight: "700",
-    color: "#0f172a",
+    color: BRAND.black,
     marginBottom: 4,
   },
   itemPriceDetail: {
     fontSize: 14,
-    color: "#64748b",
+    color: BRAND.grey,
+    fontFamily: FONT.body,
     marginBottom: 20,
   },
   priceBreakdown: {
-    backgroundColor: "#f8fafc",
+    backgroundColor: BRAND.white,
+    borderColor: BRAND.greyBorder,
     borderRadius: 12,
     padding: 12,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
   },
   priceRow: {
     flexDirection: "row",
@@ -927,12 +934,13 @@ const modalStyles = {
     paddingVertical: 4,
   },
   priceLabel: {
-    color: "#64748b",
+    color: BRAND.grey,
+    fontFamily: FONT.body,
     fontWeight: "500",
   },
   priceValue: {
-    color: "#0f172a",
-    fontWeight: "600",
+    fontFamily: FONT.body,
+    color: BRAND.black,
   },
   totalRow: {
     marginTop: 8,
@@ -941,42 +949,47 @@ const modalStyles = {
     borderTopColor: "#e2e8f0",
   },
   totalLabel: {
+    fontFamily: FONT.body,
     fontSize: 14,
-    fontWeight: "800",
-    color: "#0f172a",
+    color: BRAND.grey,
   },
   totalValue: {
     fontSize: 16,
     fontWeight: "900",
-    color: "#dc2626",
+    color: BRAND.red,
+    fontFamily: FONT.header,
   },
   label: {
     fontSize: 14,
-    fontWeight: "600",
-    color: "#0f172a",
+    fontFamily: FONT.body,
+    color: BRAND.black,
     marginBottom: 8,
   },
   input: {
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 12,
+    borderColor: BRAND.greyBorder,
+    borderRadius: RADIUS.md,
+    color: BRAND.black,
+    fontFamily: FONT.body,
     padding: 12,
     fontSize: 14,
-    color: "#0f172a",
     minHeight: 80,
     textAlignVertical: "top",
     marginBottom: 12,
   },
   note: {
     fontSize: 12,
-    color: "#f59e0b",
-    backgroundColor: "#fef3c7",
+    color: BRAND.amber,
+    backgroundColor: BRAND.white,
+    borderWidth: 1,
+    borderColor: BRAND.amber,
     padding: 8,
     borderRadius: 8,
     marginBottom: 20,
   },
   actionButtons: {
     gap: 12,
+    borderRadius: RADIUS.md,
   },
   actionButton: {
     flexDirection: "row",
@@ -984,20 +997,20 @@ const modalStyles = {
     justifyContent: "center",
     gap: 8,
     paddingVertical: 12,
-    borderRadius: 10,
+    borderRadius: RADIUS.md,
   },
   chatActionButton: {
-    backgroundColor: "#3b82f6",
+    backgroundColor: BRAND.purple,
   },
   replaceActionButton: {
-    backgroundColor: "#10b981",
+    backgroundColor: BRAND.magenta,
   },
   removeActionButton: {
-    backgroundColor: "#dc2626",
+    backgroundColor: BRAND.red,
   },
   actionButtonText: {
     color: "#fff",
-    fontWeight: "600",
+    fontFamily: FONT.body,
     fontSize: 14,
   },
   buttons: {
@@ -1007,24 +1020,27 @@ const modalStyles = {
   button: {
     flex: 1,
     paddingVertical: 12,
-    borderRadius: 10,
+    borderRadius: RADIUS.md,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
   },
   cancelButton: {
-    backgroundColor: "#f1f5f9",
+    backgroundColor: BRAND.white,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
   },
   cancelButtonText: {
-    color: "#64748b",
-    fontWeight: "600",
+    color: BRAND.black,
+    fontFamily: FONT.body,
+    fontWeight: "900",
   },
   confirmButton: {
-    backgroundColor: "#dc2626",
+    backgroundColor: BRAND.red,
   },
   confirmButtonText: {
-    color: "#fff",
-    fontWeight: "700",
+    fontFamily: FONT.body,
+    color: BRAND.white,
   },
 };

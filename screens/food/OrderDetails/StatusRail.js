@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { styles } from './orderDetailsStyles';
 import { STATUS_META } from './orderDetailsUtils';
 import { Step } from './OrderAtoms';
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 
 export default function StatusRail({
   status,
@@ -28,10 +29,15 @@ export default function StatusRail({
           const isActiveStep = k === status;
           const done = isTerminalSuccess ? true : !isTerminalNegative && i <= progressIndex;
           const fill = done;
-          let ring = '#cbd5e1';
-          if (isTerminalNegative) ring = isActiveStep ? STATUS_META.DECLINED.color : '#cbd5e1';
-          else if (isTerminalSuccess) ring = '#16a34a';
-          else ring = (done || isActiveStep) ? '#16a34a' : '#cbd5e1';
+          let ring = BRAND.greyBorder;
+
+if (isTerminalNegative) {
+  ring = isActiveStep ? BRAND.red : BRAND.greyBorder;
+} else if (isTerminalSuccess) {
+  ring = BRAND.purple;
+} else {
+  ring = done || isActiveStep ? BRAND.purple : BRAND.greyBorder;
+}
           const dimmed = !isActiveStep && !(done || isTerminalSuccess);
           const icon = STATUS_META[k]?.icon || 'ellipse-outline';
           return (

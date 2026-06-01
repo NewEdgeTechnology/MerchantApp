@@ -71,7 +71,7 @@ const STATUS_THEME = {
     icon: "time-outline",
   },
   CONFIRMED: {
-    fg: "#16a34a",
+    fg: "#BRAND.purple",
     bg: "#ecfdf5",
     bd: "#bbf7d0",
     icon: "checkmark-circle-outline",
@@ -102,7 +102,7 @@ const STATUS_THEME = {
     icon: "calendar-outline",
   },
   SCHEDULED_ACCEPTED: {
-    fg: "#16a34a",
+    fg: "#BRAND.purple",
     bg: "#ecfdf5",
     bd: "#bbf7d0",
     icon: "checkmark-circle-outline",
@@ -627,7 +627,7 @@ const OrderItem = ({
       {/* Accepted badge for scheduled orders */}
       {isUpcoming && isAccepted && (
         <View style={styles.acceptedBadge}>
-          <Ionicons name="checkmark-circle" size={16} color="#16a34a" />
+          <Ionicons name="checkmark-circle" size={16} color="#BRAND.purple" />
           <Text style={styles.acceptedText}>
             Accepted – will move when scheduled time arrives
           </Text>
@@ -2033,7 +2033,7 @@ export default function MartOrdersTab({
                           onPress={applyCalendarDate}
                           style={[
                             styles.iosCalendarBtn,
-                            { backgroundColor: "#16a34a" },
+                            { backgroundColor: "#BRAND.purple" },
                           ]}
                         >
                           <Text
@@ -2090,7 +2090,7 @@ export default function MartOrdersTab({
                   onPress={() => setDeclineModalVisible(false)}
                   style={{ paddingHorizontal: 16, paddingVertical: 8 }}
                 >
-                  <Text style={{ color: "#64748b", fontWeight: "600" }}>
+                  <Text style={{ color: BRAND.grey, fontWeight: "600" }}>
                     Cancel
                   </Text>
                 </TouchableOpacity>
@@ -2099,11 +2099,11 @@ export default function MartOrdersTab({
                   style={{
                     paddingHorizontal: 16,
                     paddingVertical: 8,
-                    backgroundColor: "#dc2626",
+                    backgroundColor: BRAND.red,
                     borderRadius: 8,
                   }}
                 >
-                  <Text style={{ color: "#fff", fontWeight: "700" }}>
+                  <Text style={{ color: BRAND.white, fontWeight: "700" }}>
                     Decline
                   </Text>
                 </TouchableOpacity>
@@ -2514,7 +2514,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   acceptButton: {
-    backgroundColor: "#16a34a",
+    backgroundColor: "#BRAND.purple",
   },
   declineButton: {
     backgroundColor: BRAND.red,
@@ -2536,7 +2536,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   acceptedText: {
-    color: "#16a34a",
+    color: "#BRAND.purple",
     fontWeight: "800",
     fontSize: 12,
   },

@@ -3,6 +3,7 @@ import React from "react";
 import { View, Text, Pressable } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { styles } from "./orderDetailsStyles";
+import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 
 export default function UpdateStatusActions({
   status,
@@ -23,7 +24,7 @@ export default function UpdateStatusActions({
 }) {
   // Determine if this is a Grab/Platform delivery
   const isGrabDelivery = isPlatformDelivery || (isBothOption && isGrabSelected);
-  
+
   return (
     <>
       <Text style={styles.sectionTitle}>Update status</Text>
@@ -48,7 +49,7 @@ export default function UpdateStatusActions({
                 <Ionicons
                   name="checkmark-circle-outline"
                   size={18}
-                  color="#fff"
+                  color={BRAND.white}
                 />
                 <Text style={styles.primaryBtnText}>Accept</Text>
               </Pressable>
@@ -59,7 +60,7 @@ export default function UpdateStatusActions({
                 style={({ pressed }) => [
                   styles.secondaryBtn,
                   {
-                    borderColor: "#ef4444",
+                    borderColor: BRAND.red,
                     opacity: updating || pressed ? 0.85 : 1,
                   },
                 ]}
@@ -67,9 +68,17 @@ export default function UpdateStatusActions({
                 <Ionicons
                   name="close-circle-outline"
                   size={18}
-                  color="#b91c1c"
+                  color={BRAND.red}
                 />
-                <Text style={[styles.secondaryBtnText, { color: "#991b1b" }]}>
+                <Text
+                  style={[
+                    styles.secondaryBtnText,
+                    {
+                      color: BRAND.red,
+                      fontFamily: FONT.body,
+                    },
+                  ]}
+                >
                   Decline
                 </Text>
               </Pressable>
@@ -106,20 +115,23 @@ export default function UpdateStatusActions({
                   <Ionicons
                     name="arrow-forward-circle"
                     size={18}
-                    color="#fff"
+                    color={BRAND.white}
                   />
                   <Text style={styles.primaryBtnText}>{primaryLabel}</Text>
                 </Pressable>
               ) : null}
 
               {/* ✅ Show "Waiting for driver" message ONLY for GRAB deliveries (not SELF) */}
-              {status === "READY" &&
-                isGrabDelivery &&
-                !driverAccepted && (
-                  <Text style={{ color: "#64748b", fontWeight: "600" }}>
-                    Waiting for driver to accept…
-                  </Text>
-                )}
+              {status === "READY" && isGrabDelivery && !driverAccepted && (
+                <Text
+                  style={{
+                    color: BRAND.grey,
+                    fontFamily: FONT.body,
+                  }}
+                >
+                  Waiting for driver to accept…
+                </Text>
+              )}
             </>
           )}
         </View>
