@@ -91,7 +91,10 @@ export default function PhoneNumberScreen() {
   const display = formatBhutan(digits);
 
   return (
-    <SafeAreaView style={styles.container} edges={["left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.container}
+      edges={["left", "top", "right", "bottom"]}
+    >
       <StatusBar barStyle="dark-content" backgroundColor="#FBF7FF" />
       <View style={styles.topGlow} />
 
@@ -221,8 +224,8 @@ const styles = StyleSheet.create({
 
   page: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
   },
 
   heroCard: {

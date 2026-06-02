@@ -16,7 +16,7 @@ export default function TermsOfServiceScreen() {
   const navigation = useNavigation();
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
+    <SafeAreaView style={styles.safe} edges={["left", "top", "right", "bottom"]}>
       <View style={styles.topGlow} />
 
       <View style={styles.page}>
@@ -120,8 +120,8 @@ const styles = StyleSheet.create({
 
   page: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
   },
 
   header: {

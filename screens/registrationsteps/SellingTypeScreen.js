@@ -37,7 +37,7 @@ const SellingTypeScreen = () => {
   return (
     <SafeAreaView
       style={styles.container}
-      edges={[ "left", "right", "bottom"]}
+      edges={[ "left", "top", "right", "bottom"]}
     >
       <View style={styles.topGlow} />
 
@@ -145,10 +145,10 @@ const styles = StyleSheet.create({
   },
 
   inner: {
-    flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
-  },
+  flex: 1,
+  paddingHorizontal: 18,
+  paddingTop: 0,
+},
 
   scrollView: {
     flex: 1,

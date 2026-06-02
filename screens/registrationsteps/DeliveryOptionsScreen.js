@@ -122,7 +122,10 @@ export default function DeliveryOptionsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["left", "top", "right", "bottom"]}
+    >
       <View style={styles.topGlow} />
 
       <View style={styles.page}>
@@ -161,8 +164,6 @@ export default function DeliveryOptionsScreen() {
                   style={[styles.option, isActive && styles.optionActive]}
                   onPress={() => setSelected(opt)}
                 >
-                
-
                   <View style={styles.optionTextWrap}>
                     <Text
                       style={[
@@ -232,8 +233,8 @@ const styles = StyleSheet.create({
 
   page: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
   },
 
   scrollContent: {

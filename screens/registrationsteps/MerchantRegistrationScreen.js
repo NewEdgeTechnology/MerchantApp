@@ -212,7 +212,7 @@ export default function MerchantRegistrationScreen() {
   };
 
   return (
-  <SafeAreaView style={styles.safeArea} edges={["left", "right", "bottom"]}>
+  <SafeAreaView style={styles.safeArea} edges={["left", "top", "right", "bottom"]}>
     <View style={styles.topGlow} />
 
     <View style={styles.page}>
@@ -420,11 +420,11 @@ const styles = StyleSheet.create({
     opacity: 0.45,
   },
 
-  page: {
-    flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
-  },
+ page: {
+  flex: 1,
+  paddingHorizontal: 18,
+  paddingTop: 0,
+},
 
   container: {
     paddingBottom: 120,
@@ -437,7 +437,7 @@ const styles = StyleSheet.create({
     paddingTop: 20,
     paddingBottom: 18,
     marginBottom: 18,
-    ...SHADOW.sm,
+    // ...SHADOW.sm,
   },
 
   brandLabel: {
@@ -469,7 +469,7 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND.white,
     borderRadius: 26,
     padding: 18,
-    ...SHADOW.sm,
+    // ...SHADOW.sm,
   },
 
   section: {

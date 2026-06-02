@@ -132,7 +132,10 @@ export default function SignupScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.safeArea}
+      edges={["left", "top", "right", "bottom"]}
+    >
       <View style={styles.topGlow} />
 
       <View style={styles.page}>
@@ -336,8 +339,8 @@ const styles = StyleSheet.create({
 
   page: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
   },
 
   container: {
@@ -353,7 +356,7 @@ const styles = StyleSheet.create({
     borderRadius: 28,
     padding: 22,
     marginBottom: 18,
-    ...SHADOW.sm,
+    // ...SHADOW.sm,
   },
 
   brandLabel: {
@@ -386,7 +389,7 @@ const styles = StyleSheet.create({
     borderRadius: 26,
     marginBottom: 18,
     padding: 18,
-    ...SHADOW.sm,
+    // ...SHADOW.sm,
   },
 
   label: {

@@ -254,15 +254,15 @@ const modalStyles = StyleSheet.create({
     letterSpacing: 1,
   },
   badge: {
-    backgroundColor: "#EAF8EE",
+    backgroundColor: "#F3F4F6",
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderWidth: 1,
-    borderColor: "#BFE9CC",
+    borderColor: BRAND.purpleLight,
   },
   badgeText: {
-    color: "#0A7B35",
+    color: BRAND.purple,
     fontWeight: "900",
     fontSize: 10,
     letterSpacing: 0.6,
@@ -580,7 +580,7 @@ export default function ReviewSubmitScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["left", "right", "bottom"]}>
+    <SafeAreaView style={styles.safeArea} edges={["left", "top", "right", "bottom"]}>
       <View style={styles.topGlow} />
 
       <View style={styles.page}>
@@ -842,8 +842,8 @@ const styles = StyleSheet.create({
 
   page: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
   },
 
   scrollContent: {

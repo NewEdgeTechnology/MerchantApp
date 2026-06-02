@@ -277,19 +277,19 @@ export default function MerchantExtrasScreen() {
   };
 
   const openMapPicker = () => {
-  setMapError(false);
-  setMapInitAttempts(0);
+    setMapError(false);
+    setMapInitAttempts(0);
 
-  const startCoord = pickedCoord || mapCenter;
+    const startCoord = pickedCoord || mapCenter;
 
-  setCenterPinCoord(startCoord);
-  setMapCenter(startCoord);
-  setMapZoom(pickedCoord ? 16 : 14);
+    setCenterPinCoord(startCoord);
+    setMapCenter(startCoord);
+    setMapZoom(pickedCoord ? 16 : 14);
 
-  setMapKey(Date.now());
-  setMapLoading(true);
-  setLocationModalVisible(true);
-};
+    setMapKey(Date.now());
+    setMapLoading(true);
+    setLocationModalVisible(true);
+  };
   const closeMapPicker = () => setLocationModalVisible(false);
 
   const updateMerchantLocation = (coord) => {
@@ -359,13 +359,13 @@ export default function MerchantExtrasScreen() {
   };
 
   const handleMapPick = useCallback((eventOrRegion) => {
-  const coord = extractMapCoord(eventOrRegion);
-  if (!coord) return;
+    const coord = extractMapCoord(eventOrRegion);
+    if (!coord) return;
 
-  setCenterPinCoord(coord);
-  setMapCenter(coord);
-  setMapZoom(16);
-}, []);
+    setCenterPinCoord(coord);
+    setMapCenter(coord);
+    setMapZoom(16);
+  }, []);
 
   const confirmPickedLocation = async () => {
     const coordToSave = centerPinCoord || pickedCoord || mapCenter;
@@ -578,7 +578,10 @@ export default function MerchantExtrasScreen() {
   const isFormValid = validate();
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.safeArea}
+      edges={["left", "top", "right", "bottom"]}
+    >
       <View style={styles.topGlow} />
 
       <View style={styles.page}>
@@ -841,7 +844,7 @@ export default function MerchantExtrasScreen() {
                     initialCenter={mapCenter}
                     initialZoom={mapZoom}
                     styleUrl="https://tiles.openfreemap.org/styles/liberty"
-onRegionChange={handleMapPick}
+                    onRegionChange={handleMapPick}
                     onMapReady={() => {
                       console.log("Map ready in MerchantExtrasScreen");
                       setMapLoading(false);
@@ -927,7 +930,8 @@ onRegionChange={handleMapPick}
 
           <View style={styles.modalFooter}>
             <Text style={styles.modalHint}>
-              Move the map until the pin is on your merchant location, then confirm.
+              Move the map until the pin is on your merchant location, then
+              confirm.
             </Text>
 
             <TouchableOpacity
@@ -1122,21 +1126,20 @@ function Field({
   scrollRef,
 }) {
   const inputWrapRef = useRef(null);
-const [isFocused, setIsFocused] = useState(false);
 
   const scrollToField = () => {
-    setTimeout(() => {
+    requestAnimationFrame(() => {
       inputWrapRef.current?.measureLayout(
         scrollRef.current,
         (x, y) => {
           scrollRef.current?.scrollTo({
-            y: Math.max(y - 120, 0),
+            y: Math.max(y - 80, 0),
             animated: true,
           });
         },
         () => {},
       );
-    }, 250);
+    });
   };
 
   return (
@@ -1233,8 +1236,8 @@ const styles = StyleSheet.create({
 
   page: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
   },
 
   heroCard: {
@@ -1308,13 +1311,6 @@ const styles = StyleSheet.create({
     backgroundColor: "#FCFCFC",
     borderColor: BRAND.greyBorder,
     paddingHorizontal: 16,
-  },
-  inputFocused: {
-    shadowColor: BRAND.purple,
-    shadowOpacity: 0.14,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
   },
   inputField: {
     flex: 1,

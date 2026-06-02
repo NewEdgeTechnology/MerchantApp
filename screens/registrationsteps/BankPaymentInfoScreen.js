@@ -286,7 +286,7 @@ export default function BankPaymentInfoScreen() {
   const isFormValid = validate();
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["left", "right", "bottom"]}>
+    <SafeAreaView style={styles.safeArea} edges={["left", "top", "right", "bottom"]}>
       <View style={styles.topGlow} />
 
       <View style={styles.page}>
@@ -670,10 +670,10 @@ const styles = StyleSheet.create({
   },
 
   page: {
-    flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
-  },
+  flex: 1,
+  paddingHorizontal: 18,
+  paddingTop: 0,
+},
 
   container: {
     flexGrow: 1,
