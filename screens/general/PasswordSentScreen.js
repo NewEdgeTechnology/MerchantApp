@@ -18,6 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { SEND_OTP_FPW_SMS_ENDPOINT, VERIFY_OTP_FPW_SMS_ENDPOINT } from "@env";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
 const NEXT_AFTER_VERIFY_SCREEN = "SetNewPasswordScreen";
 
@@ -161,9 +162,9 @@ const PasswordSentScreen = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["top", "right", "left", "bottom"]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#f8f9fa" />
-
+    <SafeAreaView style={styles.container} edges={["top", "left", "right", "bottom"]}>
+      <StatusBar barStyle="dark-content" backgroundColor={BRAND.white} />
+<View style={styles.topGlow} />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -172,24 +173,26 @@ const PasswordSentScreen = () => {
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} keyboardShouldPersistTaps="handled">
           {/* Header ✅ same as ResetPasswordScreen.js */}
           <View style={styles.header}>
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              style={styles.iconButton}
-              accessibilityLabel="Go back"
-              disabled={busy}
-            >
-              <Ionicons name="arrow-back" size={24} color="#1A1D1F" />
-            </TouchableOpacity>
+  <TouchableOpacity
+    onPress={() => navigation.goBack()}
+    style={styles.iconButton}
+    accessibilityLabel="Go back"
+    disabled={busy}
+  >
+    <Ionicons name="arrow-back" size={24} color={BRAND.black} />
+  </TouchableOpacity>
 
-            <TouchableOpacity
-              onPress={() => navigation.navigate("HelpScreen")}
-              style={styles.iconButton}
-              accessibilityLabel="Help"
-              disabled={busy}
-            >
-              <Ionicons name="help-circle-outline" size={24} color="#1A1D1F" />
-            </TouchableOpacity>
-          </View>
+  <Text style={styles.headerTitle}>Verify</Text>
+
+  <TouchableOpacity
+    onPress={() => navigation.navigate("HelpScreen")}
+    style={styles.iconButton}
+    accessibilityLabel="Help"
+    disabled={busy}
+  >
+    <Ionicons name="help-circle-outline" size={24} color={BRAND.black} />
+  </TouchableOpacity>
+</View>
 
           {/* Content */}
           <View style={styles.content}>
@@ -267,64 +270,160 @@ const PasswordSentScreen = () => {
 export default PasswordSentScreen;
 
 const styles = StyleSheet.create({
-  // ✅ matches ResetPasswordScreen.js container/header spacing
-  container: { flex: 1, backgroundColor: "#f8f9fa", paddingHorizontal: 12 },
+  container: {
+    flex: 1,
+    backgroundColor: "#FBF7FF",
+  },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.45,
+  },
 
   header: {
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 20,
+    backgroundColor: "transparent",
+    marginBottom: 12,
   },
-  iconButton: { padding: 8, justifyContent: "center", alignItems: "center" },
 
-  content: { flex: 1, paddingHorizontal: 8, marginTop: -5 },
+  iconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    justifyContent: "center",
+    alignItems: "center",
+    ...SHADOW.sm,
+  },
 
-  title: { fontSize: 26, fontWeight: "700", color: "#1A1D1F", marginBottom: 12, lineHeight: 38 },
-  subtitle: { fontSize: 15, color: "#666", marginBottom: 16, lineHeight: 22 },
-  bold: { fontWeight: "700", color: "#1A1D1F" },
-  serverMsg: { fontSize: 13, color: "#00b14f", marginTop: -6, marginBottom: 10 },
+  headerTitle: {
+    fontFamily: FONT.header,
+    fontSize: 22,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
 
-  // ✅ same input wrapper style as ResetPasswordScreen.js
+  content: {
+    flex: 1,
+    paddingHorizontal: 18,
+    marginTop: 0,
+  },
+
+  title: {
+    fontFamily: FONT.header,
+    fontSize: 26,
+    fontWeight: "700",
+    color: BRAND.black,
+    marginBottom: 12,
+    lineHeight: 38,
+  },
+
+  subtitle: {
+    fontFamily: FONT.body,
+    fontSize: 15,
+    color: BRAND.grey,
+    marginBottom: 16,
+    lineHeight: 22,
+  },
+
+  bold: {
+    fontFamily: FONT.body,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
+
+  serverMsg: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: BRAND.purple,
+    marginTop: -6,
+    marginBottom: 10,
+  },
+
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "white",
-    paddingHorizontal: 15,
-    paddingVertical: 5,
-    borderRadius: 12,
+    height: 56,
+    borderWidth: 1.2,
+    borderRadius: 18,
+    backgroundColor: "#FCFCFC",
+    paddingHorizontal: 16,
     marginBottom: 12,
   },
-  otpInput: { flex: 1, fontSize: 16, color: "#1A1D1F", fontWeight: "400", letterSpacing: 2 },
-  clearButton: { paddingLeft: 10 },
 
-  linkBtn: { alignSelf: "flex-start" },
-  link: { color: "#007bff", fontSize: 14, fontWeight: "bold", opacity: 0.9 },
+  otpInput: {
+    flex: 1,
+    fontFamily: FONT.body,
+    fontSize: 16,
+    color: BRAND.black,
+    letterSpacing: 2,
+  },
+
+  clearButton: {
+    paddingLeft: 10,
+  },
+
+  linkBtn: {
+    alignSelf: "flex-start",
+  },
+
+  link: {
+    fontFamily: FONT.body,
+    color: BRAND.purple,
+    fontSize: 14,
+    fontWeight: "800",
+    opacity: 0.9,
+  },
 
   bottomSticky: {
-    paddingHorizontal: 24,
+    paddingHorizontal: 18,
     paddingBottom: Platform.OS === "android" ? 20 : 20,
-    borderRadius: 15,
     marginBottom: 8,
   },
+
   submitButton: {
-    backgroundColor: "#00b14f",
+    backgroundColor: BRAND.purple,
     paddingVertical: 16,
-    borderRadius: 30,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
     marginTop: 10,
+    ...SHADOW.md,
   },
+
   submitButtonDisabled: {
-    backgroundColor: "#eee",
+    backgroundColor: BRAND.greyLight,
     paddingVertical: 16,
-    borderRadius: 30,
+    borderRadius: RADIUS.pill,
     alignItems: "center",
     justifyContent: "center",
     width: "100%",
     marginTop: 10,
   },
-  submitButtonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  submitTextDisabled: { color: "#aaa", fontSize: 16, fontWeight: "600" },
+
+  submitButtonText: {
+    fontFamily: FONT.body,
+    color: BRAND.white,
+    fontSize: 16,
+    fontWeight: "700",
+  },
+
+  submitTextDisabled: {
+    fontFamily: FONT.body,
+    color: BRAND.grey,
+    fontSize: 16,
+    fontWeight: "600",
+  },
 });

@@ -44,7 +44,10 @@ const OnboardingScreen = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.container}
+      edges={["left", "top", "right", "bottom"]}
+    >
       <View style={styles.topGlow} />
 
       <View style={styles.inner}>
@@ -79,9 +82,7 @@ const OnboardingScreen = () => {
           <View style={styles.heroCard}>
             <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
 
-            <Text style={styles.heroTitle}>
-              Start selling with Tàbdey
-            </Text>
+            <Text style={styles.heroTitle}>Start selling with Tàbdey</Text>
 
             <Text style={styles.heroSubtitle}>
               Complete a few simple steps to prepare your business profile,
@@ -112,9 +113,7 @@ const OnboardingScreen = () => {
                   </View>
 
                   <Text style={styles.stepTitle}>{step.title}</Text>
-                  <Text style={styles.stepDescription}>
-                    {step.description}
-                  </Text>
+                  <Text style={styles.stepDescription}>{step.description}</Text>
                 </View>
               </View>
             ))}
@@ -157,21 +156,24 @@ const styles = StyleSheet.create({
 
   inner: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
   },
 
   header: {
+    minHeight: 54,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 24,
+    backgroundColor: "transparent",
+    marginBottom: 12,
   },
 
   iconButton: {
     width: 42,
     height: 42,
-    borderRadius: 21,
+    borderRadius: RADIUS.full,
     backgroundColor: BRAND.white,
     justifyContent: "center",
     alignItems: "center",

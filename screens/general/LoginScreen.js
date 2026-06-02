@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
+
 import {
   View,
   Text,
@@ -26,6 +27,7 @@ import {
 } from "react-native";
 import CheckBox from "expo-checkbox";
 import Icon from "react-native-vector-icons/Ionicons";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   useNavigation,
   CommonActions,
@@ -701,244 +703,255 @@ const LoginScreen = () => {
   }
 
   return (
-    <KeyboardAvoidingView
+    <SafeAreaView
       style={styles.container}
-      behavior={undefined}
-      keyboardVerticalOffset={0}
+      edges={["top", "left", "right", "bottom"]}
     >
-      <View style={styles.topGlow} />
-      <View style={styles.inner}>
-        {loading && (
-          <Modal transparent>
-            <View style={styles.loadingOverlay}>
-              <ActivityIndicator size="large" color={BRAND.purple} />
-            </View>
-          </Modal>
-        )}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={undefined}
+        keyboardVerticalOffset={0}
+      >
+        <View style={styles.topGlow} />
+        <View style={styles.inner}>
+          {loading && (
+            <Modal transparent>
+              <View style={styles.loadingOverlay}>
+                <ActivityIndicator size="large" color={BRAND.purple} />
+              </View>
+            </Modal>
+          )}
 
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => goToWelcome(navigation)}
-            style={styles.iconButton}
-            activeOpacity={0.7}
-            disabled={loading}
-          >
-            <Icon name="arrow-back" size={24} color={BRAND.black} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Log In</Text>
-          <TouchableOpacity
-            onPress={() => navigation.navigate("HelpScreen")}
-            style={styles.iconButton}
-            activeOpacity={0.7}
-            disabled={loading}
-          >
-            <Icon name="help-circle-outline" size={24} color={BRAND.purple} />
-          </TouchableOpacity>
-        </View>
-        <View style={styles.brandIntro}>
-          <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
-          <Text style={styles.brandTitle}>Welcome</Text>
-          <Text style={styles.brandSubtitle}>
-            Log in to manage your orders, products and business dashboard.
-          </Text>
-        </View>
-        {/* Form */}
-        <ScrollView
-          style={styles.scrollArea}
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingBottom: keyboardOpen ? 340 : 80 },
-          ]}
-          keyboardShouldPersistTaps="always"
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.form}>
-            <Text style={styles.label}>Email</Text>
-            <Text style={styles.tip}>
-              Use the email address you used during signup.
-            </Text>
-            <View
-              style={[
-                styles.inputWrapper,
-                {
-                  borderColor: isEmailFocused ? BRAND.purple : BRAND.greyBorder,
-                },
-              ]}
-            >
-              <TextInput
-                ref={emailRef}
-                style={styles.inputField}
-                placeholder={isEmailFocused ? "" : "e.g. sonam@example.com"}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="email-address"
-                value={email}
-                editable={!loading}
-                onChangeText={(t) => {
-                  setEmail(
-                    String(t || "")
-                      .trim()
-                      .toLowerCase(),
-                  );
-                  setErrorText("");
-                }}
-                onFocus={() => setIsEmailFocused(true)}
-                onBlur={() => setIsEmailFocused(false)}
-                returnKeyType="next"
-                blurOnSubmit={false}
-                onSubmitEditing={() => pwdRef.current?.focus()}
-                textContentType="emailAddress"
-              />
-              {email.length > 0 && !loading && (
-                <TouchableOpacity
-                  onPress={() => setEmail("")}
-                  style={styles.clearButton}
-                >
-                  <View style={styles.clearCircle}>
-                    <Icon name="close" size={14} color="#fff" />
-                  </View>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            <Text style={styles.label}>Password</Text>
-            <Pressable
-              onPress={() => {
-                setIsPwFocused(true);
-                requestAnimationFrame(() => pwdRef.current?.focus?.());
-              }}
-              style={({ pressed }) => [
-                styles.passwordContainer,
-                { borderColor: isPwFocused ? BRAND.purple : BRAND.greyBorder },
-                isPwFocused && styles.shadowGreen,
-                pressed ? { opacity: 0.98 } : null,
-              ]}
-            >
-              <TextInput
-                ref={pwdRef}
-                key={showPassword ? "pwd-visible" : "pwd-hidden"}
-                style={styles.passwordInput}
-                placeholder={isPwFocused ? "" : "Enter password"}
-                value={password}
-                editable={!loading}
-                onChangeText={(t) => {
-                  setPassword(t);
-                  setErrorText("");
-                  const pos = pwdSelection?.end ?? t.length;
-                  const next = Math.max(0, Math.min(pos, t.length));
-                  setPwdSelection({ start: next, end: next });
-                }}
-                secureTextEntry={!showPassword}
-                onFocus={() => setIsPwFocused(true)}
-                onBlur={() => setIsPwFocused(false)}
-                returnKeyType="done"
-                onSubmitEditing={handleLogin}
-                disableFullscreenUI
-                autoCapitalize="none"
-                autoCorrect={false}
-                textContentType="password"
-                selection={pwdSelection}
-                onSelectionChange={(e) =>
-                  setPwdSelection(e.nativeEvent.selection)
-                }
-              />
-              <TouchableOpacity
-                onPress={() => {
-                  const end = pwdSelection?.end ?? password.length;
-                  const nextPos = Number.isFinite(end)
-                    ? end
-                    : (password || "").length;
-                  setShowPassword((prev) => !prev);
-                  requestAnimationFrame(() => {
-                    pwdRef.current?.focus?.();
-                    setTimeout(() => {
-                      const len = (password || "").length;
-                      const pos = Math.min(nextPos, len);
-                      setPwdSelection({ start: pos, end: pos });
-                    }, 0);
-                  });
-                }}
-                style={styles.eyeIcon}
-                disabled={loading}
-              >
-                <Icon
-                  name={showPassword ? "eye-off-outline" : "eye-outline"}
-                  size={20}
-                  color="#666"
-                />
-              </TouchableOpacity>
-            </Pressable>
-
-            {!!errorText && <Text style={styles.inlineError}>{errorText}</Text>}
-
-            <View style={styles.checkboxContainer}>
-              <CheckBox
-                value={savePassword}
-                onValueChange={async (v) => {
-                  setSavePassword(v);
-                  if (!v) {
-                    await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
-                    await SecureStore.deleteItemAsync(KEY_SAVED_EMAIL);
-                    const refreshTok =
-                      await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
-                    setHasSavedSecret(!!refreshTok);
-                  }
-                }}
-                disabled={loading}
-                color={savePassword ? BRAND.purple : undefined}
-              />
-              <Text style={styles.checkboxLabel}>Save password</Text>
-            </View>
-          </View>
-          {/* Footer */}
-          <View style={[styles.footer, { paddingBottom: bottomGap }]}>
-            <Text style={styles.forgotText}>
-              Forgot your{" "}
-              <Text
-                style={styles.link}
-                onPress={() =>
-                  !loading && navigation.navigate("ForgotPassword")
-                }
-              >
-                password
-              </Text>
-              ?
-            </Text>
-
+          {/* Header */}
+          <View style={styles.header}>
             <TouchableOpacity
-              style={
-                canSubmit ? styles.loginButton : styles.loginButtonDisabled
-              }
-              disabled={!canSubmit}
-              onPress={handleLogin}
-              activeOpacity={0.85}
-            >
-              <Text
-                style={
-                  canSubmit
-                    ? styles.loginButtonText
-                    : styles.loginButtonTextDisabled
-                }
-              >
-                Log In
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.loginPhoneButton}
-              onPress={() =>
-                !loading && navigation.navigate("MobileLoginScreen")
-              }
-              activeOpacity={0.85}
+              onPress={() => goToWelcome(navigation)}
+              style={styles.iconButton}
+              activeOpacity={0.7}
               disabled={loading}
             >
-              <Text style={styles.loginPhoneText}>Log In with Phone</Text>
+              <Icon name="arrow-back" size={24} color={BRAND.black} />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Log In</Text>
+            <TouchableOpacity
+              onPress={() => navigation.navigate("HelpScreen")}
+              style={styles.iconButton}
+              activeOpacity={0.7}
+              disabled={loading}
+            >
+              <Icon name="help-circle-outline" size={24} color={BRAND.purple} />
             </TouchableOpacity>
           </View>
-        </ScrollView>
-      </View>
-    </KeyboardAvoidingView>
+          <View style={styles.brandIntro}>
+            <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
+            <Text style={styles.brandTitle}>Welcome</Text>
+            <Text style={styles.brandSubtitle}>
+              Log in to manage your orders, products and business dashboard.
+            </Text>
+          </View>
+          {/* Form */}
+          <ScrollView
+            style={styles.scrollArea}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: keyboardOpen ? 340 : 80 },
+            ]}
+            keyboardShouldPersistTaps="always"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.form}>
+              <Text style={styles.label}>Email</Text>
+              <Text style={styles.tip}>
+                Use the email address you used during signup.
+              </Text>
+              <View
+                style={[
+                  styles.inputWrapper,
+                  {
+                    borderColor: isEmailFocused
+                      ? BRAND.purple
+                      : BRAND.greyBorder,
+                  },
+                ]}
+              >
+                <TextInput
+                  ref={emailRef}
+                  style={styles.inputField}
+                  placeholder={isEmailFocused ? "" : "e.g. sonam@example.com"}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  value={email}
+                  editable={!loading}
+                  onChangeText={(t) => {
+                    setEmail(
+                      String(t || "")
+                        .trim()
+                        .toLowerCase(),
+                    );
+                    setErrorText("");
+                  }}
+                  onFocus={() => setIsEmailFocused(true)}
+                  onBlur={() => setIsEmailFocused(false)}
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => pwdRef.current?.focus()}
+                  textContentType="emailAddress"
+                />
+                {email.length > 0 && !loading && (
+                  <TouchableOpacity
+                    onPress={() => setEmail("")}
+                    style={styles.clearButton}
+                  >
+                    <View style={styles.clearCircle}>
+                      <Icon name="close" size={14} color="#fff" />
+                    </View>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <Text style={styles.label}>Password</Text>
+              <Pressable
+                onPress={() => {
+                  setIsPwFocused(true);
+                  requestAnimationFrame(() => pwdRef.current?.focus?.());
+                }}
+                style={({ pressed }) => [
+                  styles.passwordContainer,
+                  {
+                    borderColor: isPwFocused ? BRAND.purple : BRAND.greyBorder,
+                  },
+                  isPwFocused && styles.shadowGreen,
+                  pressed ? { opacity: 0.98 } : null,
+                ]}
+              >
+                <TextInput
+                  ref={pwdRef}
+                  key={showPassword ? "pwd-visible" : "pwd-hidden"}
+                  style={styles.passwordInput}
+                  placeholder={isPwFocused ? "" : "Enter password"}
+                  value={password}
+                  editable={!loading}
+                  onChangeText={(t) => {
+                    setPassword(t);
+                    setErrorText("");
+                    const pos = pwdSelection?.end ?? t.length;
+                    const next = Math.max(0, Math.min(pos, t.length));
+                    setPwdSelection({ start: next, end: next });
+                  }}
+                  secureTextEntry={!showPassword}
+                  onFocus={() => setIsPwFocused(true)}
+                  onBlur={() => setIsPwFocused(false)}
+                  returnKeyType="done"
+                  onSubmitEditing={handleLogin}
+                  disableFullscreenUI
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  textContentType="password"
+                  selection={pwdSelection}
+                  onSelectionChange={(e) =>
+                    setPwdSelection(e.nativeEvent.selection)
+                  }
+                />
+                <TouchableOpacity
+                  onPress={() => {
+                    const end = pwdSelection?.end ?? password.length;
+                    const nextPos = Number.isFinite(end)
+                      ? end
+                      : (password || "").length;
+                    setShowPassword((prev) => !prev);
+                    requestAnimationFrame(() => {
+                      pwdRef.current?.focus?.();
+                      setTimeout(() => {
+                        const len = (password || "").length;
+                        const pos = Math.min(nextPos, len);
+                        setPwdSelection({ start: pos, end: pos });
+                      }, 0);
+                    });
+                  }}
+                  style={styles.eyeIcon}
+                  disabled={loading}
+                >
+                  <Icon
+                    name={showPassword ? "eye-off-outline" : "eye-outline"}
+                    size={20}
+                    color="#666"
+                  />
+                </TouchableOpacity>
+              </Pressable>
+
+              {!!errorText && (
+                <Text style={styles.inlineError}>{errorText}</Text>
+              )}
+
+              <View style={styles.checkboxContainer}>
+                <CheckBox
+                  value={savePassword}
+                  onValueChange={async (v) => {
+                    setSavePassword(v);
+                    if (!v) {
+                      await SecureStore.deleteItemAsync(KEY_SAVED_PASSWORD);
+                      await SecureStore.deleteItemAsync(KEY_SAVED_EMAIL);
+                      const refreshTok =
+                        await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
+                      setHasSavedSecret(!!refreshTok);
+                    }
+                  }}
+                  disabled={loading}
+                  color={savePassword ? BRAND.purple : undefined}
+                />
+                <Text style={styles.checkboxLabel}>Save password</Text>
+              </View>
+            </View>
+            {/* Footer */}
+            <View style={[styles.footer, { paddingBottom: bottomGap }]}>
+              <Text style={styles.forgotText}>
+                Forgot your{" "}
+                <Text
+                  style={styles.link}
+                  onPress={() =>
+                    !loading && navigation.navigate("ForgotPassword")
+                  }
+                >
+                  password
+                </Text>
+                ?
+              </Text>
+
+              <TouchableOpacity
+                style={
+                  canSubmit ? styles.loginButton : styles.loginButtonDisabled
+                }
+                disabled={!canSubmit}
+                onPress={handleLogin}
+                activeOpacity={0.85}
+              >
+                <Text
+                  style={
+                    canSubmit
+                      ? styles.loginButtonText
+                      : styles.loginButtonTextDisabled
+                  }
+                >
+                  Log In
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.loginPhoneButton}
+                onPress={() =>
+                  !loading && navigation.navigate("MobileLoginScreen")
+                }
+                activeOpacity={0.85}
+                disabled={loading}
+              >
+                <Text style={styles.loginPhoneText}>Log In with Phone</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 };
 
@@ -963,22 +976,24 @@ const styles = StyleSheet.create({
 
   inner: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
   },
 
   header: {
+    minHeight: 54,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 26,
+    backgroundColor: "transparent",
+    marginBottom: 12,
   },
 
   iconButton: {
     width: 42,
     height: 42,
-    borderRadius: 21,
-    // marginBottom: 20,
+    borderRadius: RADIUS.full,
     backgroundColor: BRAND.white,
     justifyContent: "center",
     alignItems: "center",

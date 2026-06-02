@@ -92,8 +92,11 @@ const ResetPasswordScreen = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["left", "right", "bottom"]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FBF7FF" />
+    <SafeAreaView
+      style={styles.container}
+      edges={["top", "left", "right", "bottom"]}
+    >
+      <StatusBar barStyle="dark-content" backgroundColor={BRAND.white} />
 
       <View style={styles.topGlow} />
 
@@ -240,22 +243,25 @@ const styles = StyleSheet.create({
 
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
     paddingBottom: 24,
   },
 
   header: {
+    minHeight: 54,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 26,
+    backgroundColor: "transparent",
+    marginBottom: 12,
   },
 
   iconButton: {
     width: 42,
     height: 42,
-    borderRadius: 21,
+    borderRadius: RADIUS.full,
     backgroundColor: BRAND.white,
     justifyContent: "center",
     alignItems: "center",

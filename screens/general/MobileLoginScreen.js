@@ -36,7 +36,10 @@ import {
 } from "@react-navigation/native";
 import CheckBox from "expo-checkbox";
 import * as SecureStore from "expo-secure-store";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { LOGIN_MERCHANT_ENDPOINT } from "@env";
 import { connectMerchantSocket } from "../realtime/merchantSocket";
 import { getExpoPushTokenAsync } from "../../utils/getExpoPushTokenAsync";
@@ -427,7 +430,7 @@ export default function MobileLoginScreen() {
       }
 
       const data = out.data || {};
-      console.log("data",data)
+      console.log("data", data);
       // ✅ token extraction
       const tokenObj = data?.token || data?.data?.token || {};
       const accessToken =
@@ -598,198 +601,208 @@ export default function MobileLoginScreen() {
   }
 
   return (
-    <KeyboardAvoidingView style={styles.container}>
-      <View style={styles.topGlow} />
-      <StatusBar barStyle="dark-content" backgroundColor="#FBF7FF" />
+    <SafeAreaView
+      style={styles.container}
+      edges={["top", "left", "right", "bottom"]}
+    >
+      <KeyboardAvoidingView style={{ flex: 1 }}>
+        <View style={styles.topGlow} />
+        <StatusBar barStyle="dark-content" backgroundColor="#FBF7FF" />
 
-      <View style={styles.inner}>
-        {loading && (
-          <Modal transparent>
-            <View style={styles.loadingOverlay}>
-              <ActivityIndicator size="large" color={BRAND.purple} />
-            </View>
-          </Modal>
-        )}
-
-        {/* HEADER — same as LoginScreen */}
-        <View style={styles.header}>
-          <TouchableOpacity
-            onPress={() => goToWelcome(navigation)}
-            style={styles.iconButton}
-            activeOpacity={0.7}
-            disabled={loading}
-          >
-            <Icon name="arrow-back" size={24} color="#1A1D1F" />
-          </TouchableOpacity>
-
-          <Text style={styles.headerTitle}>Log In</Text>
-
-          <TouchableOpacity
-            onPress={() => navigation.navigate("HelpScreen")}
-            style={styles.iconButton}
-            activeOpacity={0.7}
-            disabled={loading}
-          >
-            <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
-          </TouchableOpacity>
-        </View>
-        <View style={styles.brandIntro}>
-          <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
-          <Text style={styles.brandTitle}>Welcome</Text>
-          <Text style={styles.brandSubtitle}>
-            Log in using your registered mobile number.
-          </Text>
-        </View>
-        <ScrollView
-          style={styles.scrollArea}
-          contentContainerStyle={[styles.scrollContent, { paddingBottom: 80 }]}
-          keyboardShouldPersistTaps="always"
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.form}>
-            <Text style={styles.label}>Mobile number</Text>
-
-            <View style={styles.phoneRow}>
-              <View style={styles.countrySelector}>
-                <Text style={styles.countryCode}>{COUNTRY.dial}</Text>
+        <View style={styles.inner}>
+          {loading && (
+            <Modal transparent>
+              <View style={styles.loadingOverlay}>
+                <ActivityIndicator size="large" color={BRAND.purple} />
               </View>
+            </Modal>
+          )}
 
-              <View
-                style={[
-                  styles.inputWrapper,
-                  hasPhoneError && touched && styles.inputError,
-                ]}
-              >
-                <TextInput
-                  ref={phoneRef}
-                  style={styles.inputField}
-                  value={phoneDigits}
-                  onChangeText={handlePhoneChange}
-                  placeholder="Enter mobile number"
-                  placeholderTextColor="#9CA3AF"
-                  keyboardType="number-pad"
-                  inputMode="numeric"
-                  maxLength={8}
-                  onFocus={() => setTouched(true)}
-                  returnKeyType="next"
-                  blurOnSubmit={false}
-                  onSubmitEditing={() => passwordRef.current?.focus()}
-                  editable={!loading}
-                />
-              </View>
-            </View>
-
-            <Text style={styles.tip}>Format: 77/17/16 XXXXXX (8 digits)</Text>
-
-            <Text style={[styles.label, { marginTop: 14 }]}>Password</Text>
-            <View style={styles.passwordContainer}>
-              <TextInput
-                ref={passwordRef}
-                style={styles.passwordInput}
-                value={password}
-                onChangeText={(t) => {
-                  setPassword(t);
-                  setErrorText("");
-                }}
-                placeholder="Enter password"
-                placeholderTextColor="#9CA3AF"
-                secureTextEntry={!showPassword}
-                returnKeyType="done"
-                onSubmitEditing={handleLogin}
-                editable={!loading}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              <TouchableOpacity
-                onPress={() => setShowPassword((s) => !s)}
-                style={styles.eyeIcon}
-                disabled={loading}
-              >
-                <Icon
-                  name={showPassword ? "eye-off-outline" : "eye-outline"}
-                  size={20}
-                  color="#666"
-                />
-              </TouchableOpacity>
-            </View>
-
-            {/* ✅ inline error now shows backend message too */}
-            {!!errorText && <Text style={styles.inlineError}>{errorText}</Text>}
-
-            {/* ✅ Save password checkbox */}
-            <View style={styles.checkboxContainer}>
-              <CheckBox
-                value={savePassword}
-                onValueChange={async (v) => {
-                  setSavePassword(v);
-                  if (!v) {
-                    try {
-                      await SecureStore.deleteItemAsync(
-                        KEY_SAVED_PHONE_PASSWORD,
-                      );
-                      await SecureStore.deleteItemAsync(KEY_SAVED_PHONE);
-                    } catch {}
-                  }
-                }}
-                disabled={loading}
-                color={savePassword ? "#00b14f" : undefined}
-              />
-              <Text style={styles.checkboxLabel}>Save password</Text>
-            </View>
-
-            <View style={{ height: 24 }} />
-          </View>
-          {/* Footer — like LoginScreen */}
-          <View
-            style={[
-              styles.footer,
-              { paddingBottom: Math.max(bottomGap, insets.bottom + 8) },
-            ]}
-          >
-            <Text style={styles.forgotText}>
-              Forgot your{" "}
-              <Text
-                style={styles.link}
-                onPress={() =>
-                  !loading && navigation.navigate("ForgotPassword")
-                }
-              >
-                password
-              </Text>
-              ?
-            </Text>
-
+          {/* HEADER — same as LoginScreen */}
+          <View style={styles.header}>
             <TouchableOpacity
-              style={
-                canSubmit ? styles.loginButton : styles.loginButtonDisabled
-              }
-              disabled={!canSubmit}
-              onPress={handleLogin}
-              activeOpacity={0.85}
-            >
-              <Text
-                style={
-                  canSubmit
-                    ? styles.loginButtonText
-                    : styles.loginButtonTextDisabled
-                }
-              >
-                Log In
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.loginPhoneButton}
-              onPress={() => !loading && navigation.navigate("LoginScreen")}
-              activeOpacity={0.85}
+              onPress={() => goToWelcome(navigation)}
+              style={styles.iconButton}
+              activeOpacity={0.7}
               disabled={loading}
             >
-              <Text style={styles.loginPhoneText}>Log In with Email</Text>
+              <Icon name="arrow-back" size={24} color="#1A1D1F" />
+            </TouchableOpacity>
+
+            <Text style={styles.headerTitle}>Log In</Text>
+
+            <TouchableOpacity
+              onPress={() => navigation.navigate("HelpScreen")}
+              style={styles.iconButton}
+              activeOpacity={0.7}
+              disabled={loading}
+            >
+              <Icon name="help-circle-outline" size={24} color="#1A1D1F" />
             </TouchableOpacity>
           </View>
-        </ScrollView>
-      </View>
-    </KeyboardAvoidingView>
+          <View style={styles.brandIntro}>
+            <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
+            <Text style={styles.brandTitle}>Welcome</Text>
+            <Text style={styles.brandSubtitle}>
+              Log in using your registered mobile number.
+            </Text>
+          </View>
+          <ScrollView
+            style={styles.scrollArea}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: 80 },
+            ]}
+            keyboardShouldPersistTaps="always"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.form}>
+              <Text style={styles.label}>Mobile number</Text>
+
+              <View style={styles.phoneRow}>
+                <View style={styles.countrySelector}>
+                  <Text style={styles.countryCode}>{COUNTRY.dial}</Text>
+                </View>
+
+                <View
+                  style={[
+                    styles.inputWrapper,
+                    hasPhoneError && touched && styles.inputError,
+                  ]}
+                >
+                  <TextInput
+                    ref={phoneRef}
+                    style={styles.inputField}
+                    value={phoneDigits}
+                    onChangeText={handlePhoneChange}
+                    placeholder="Enter mobile number"
+                    placeholderTextColor="#9CA3AF"
+                    keyboardType="number-pad"
+                    inputMode="numeric"
+                    maxLength={8}
+                    onFocus={() => setTouched(true)}
+                    returnKeyType="next"
+                    blurOnSubmit={false}
+                    onSubmitEditing={() => passwordRef.current?.focus()}
+                    editable={!loading}
+                  />
+                </View>
+              </View>
+
+              <Text style={styles.tip}>Format: 77/17/16 XXXXXX (8 digits)</Text>
+
+              <Text style={[styles.label, { marginTop: 14 }]}>Password</Text>
+              <View style={styles.passwordContainer}>
+                <TextInput
+                  ref={passwordRef}
+                  style={styles.passwordInput}
+                  value={password}
+                  onChangeText={(t) => {
+                    setPassword(t);
+                    setErrorText("");
+                  }}
+                  placeholder="Enter password"
+                  placeholderTextColor="#9CA3AF"
+                  secureTextEntry={!showPassword}
+                  returnKeyType="done"
+                  onSubmitEditing={handleLogin}
+                  editable={!loading}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowPassword((s) => !s)}
+                  style={styles.eyeIcon}
+                  disabled={loading}
+                >
+                  <Icon
+                    name={showPassword ? "eye-off-outline" : "eye-outline"}
+                    size={20}
+                    color="#666"
+                  />
+                </TouchableOpacity>
+              </View>
+
+              {/* ✅ inline error now shows backend message too */}
+              {!!errorText && (
+                <Text style={styles.inlineError}>{errorText}</Text>
+              )}
+
+              {/* ✅ Save password checkbox */}
+              <View style={styles.checkboxContainer}>
+                <CheckBox
+                  value={savePassword}
+                  onValueChange={async (v) => {
+                    setSavePassword(v);
+                    if (!v) {
+                      try {
+                        await SecureStore.deleteItemAsync(
+                          KEY_SAVED_PHONE_PASSWORD,
+                        );
+                        await SecureStore.deleteItemAsync(KEY_SAVED_PHONE);
+                      } catch {}
+                    }
+                  }}
+                  disabled={loading}
+                  color={savePassword ? "#00b14f" : undefined}
+                />
+                <Text style={styles.checkboxLabel}>Save password</Text>
+              </View>
+
+              <View style={{ height: 24 }} />
+            </View>
+            {/* Footer — like LoginScreen */}
+            <View
+              style={[
+                styles.footer,
+                { paddingBottom: Math.max(bottomGap, insets.bottom + 8) },
+              ]}
+            >
+              <Text style={styles.forgotText}>
+                Forgot your{" "}
+                <Text
+                  style={styles.link}
+                  onPress={() =>
+                    !loading && navigation.navigate("ResetPasswordNumber")
+                  }
+                >
+                  password
+                </Text>
+                ?
+              </Text>
+
+              <TouchableOpacity
+                style={
+                  canSubmit ? styles.loginButton : styles.loginButtonDisabled
+                }
+                disabled={!canSubmit}
+                onPress={handleLogin}
+                activeOpacity={0.85}
+              >
+                <Text
+                  style={
+                    canSubmit
+                      ? styles.loginButtonText
+                      : styles.loginButtonTextDisabled
+                  }
+                >
+                  Log In
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.loginPhoneButton}
+                onPress={() => !loading && navigation.navigate("LoginScreen")}
+                activeOpacity={0.85}
+                disabled={loading}
+              >
+                <Text style={styles.loginPhoneText}>Log In with Email</Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
@@ -813,7 +826,6 @@ const styles = StyleSheet.create({
   inner: {
     flex: 1,
     paddingHorizontal: 22,
-    paddingTop: 42,
   },
 
   centerContent: {
@@ -829,16 +841,20 @@ const styles = StyleSheet.create({
   },
 
   header: {
+    minHeight: 54,
+    paddingHorizontal: 0,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 26,
+    backgroundColor: "transparent",
+    marginBottom: 12,
   },
 
   iconButton: {
     width: 42,
     height: 42,
-    borderRadius: 21,
+    borderRadius: RADIUS.full,
     backgroundColor: BRAND.white,
     justifyContent: "center",
     alignItems: "center",

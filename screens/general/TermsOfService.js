@@ -56,7 +56,10 @@ export default function TermsOfService() {
   const goWelcome = () => resetTo("WelcomeScreen");
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
       <View style={styles.topGlow} />
 
       <View style={styles.page}>
@@ -76,7 +79,11 @@ export default function TermsOfService() {
             style={styles.backBtn}
             activeOpacity={0.86}
           >
-            <Ionicons name="help-circle-outline" size={22} color={BRAND.black} />
+            <Ionicons
+              name="help-circle-outline"
+              size={22}
+              color={BRAND.black}
+            />
           </TouchableOpacity>
         </View>
 
@@ -120,9 +127,7 @@ export default function TermsOfService() {
 
           <Checkbox
             value={consentFlags.authorized}
-            onChange={(v) =>
-              setConsentFlags((s) => ({ ...s, authorized: v }))
-            }
+            onChange={(v) => setConsentFlags((s) => ({ ...s, authorized: v }))}
             label={t.consent.authorized}
           />
 
@@ -193,7 +198,9 @@ function Checkbox({ value, onChange, label }) {
   return (
     <Pressable style={styles.checkboxRow} onPress={() => onChange(!value)}>
       <View style={[styles.checkbox, value && styles.checkboxChecked]}>
-        {value ? <Ionicons name="checkmark" size={14} color={BRAND.purple} /> : null}
+        {value ? (
+          <Ionicons name="checkmark" size={14} color={BRAND.purple} />
+        ) : null}
       </View>
 
       <Text style={styles.checkboxText}>{label}</Text>
@@ -269,10 +276,7 @@ function getSections(t) {
               info@newedge.bt
             </Text>{" "}
             {t.s6.or}{" "}
-            <Text
-              style={styles.link}
-              onPress={() => onLink("tel:+9752337191")}
-            >
+            <Text style={styles.link} onPress={() => onLink("tel:+9752337191")}>
               +975 2 337191
             </Text>
             .
@@ -348,8 +352,7 @@ const stringsEN = {
   },
   s1: {
     title: "1) Acceptance & Use",
-    body:
-      "By creating a merchant account and using this service, you agree to these Terms. If you disagree with any part, you may not access or use the service.",
+    body: "By creating a merchant account and using this service, you agree to these Terms. If you disagree with any part, you may not access or use the service.",
   },
   s2: {
     title: "2) Merchant Eligibility",
@@ -367,8 +370,7 @@ const stringsEN = {
   },
   s4: {
     title: "4) Data Privacy & Security",
-    lead:
-      "We collect and process data to deliver and improve the service. We safeguard it with reasonable security measures.",
+    lead: "We collect and process data to deliver and improve the service. We safeguard it with reasonable security measures.",
     p1: "Use of data is limited to service delivery, support and compliance.",
     p2: "We may retain records as allowed/required under Bhutanese law.",
     p3: "We may update our privacy practices and will notify you of material changes.",
@@ -406,8 +408,7 @@ const stringsEN = {
   },
   s9: {
     title: "9) Governing Law & Disputes",
-    lead:
-      "These Terms are governed by the laws of the Kingdom of Bhutan. Venue and jurisdiction will be in Bhutan, unless otherwise agreed in writing.",
+    lead: "These Terms are governed by the laws of the Kingdom of Bhutan. Venue and jurisdiction will be in Bhutan, unless otherwise agreed in writing.",
     p1: "Comply with all applicable Bhutanese laws and regulations.",
     p2: "Good-faith efforts should be made to settle disputes before escalation.",
   },
@@ -434,22 +435,24 @@ const styles = StyleSheet.create({
 
   page: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
   },
 
   header: {
-    height: 52,
+    minHeight: 54,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 14,
+    backgroundColor: "transparent",
+    marginBottom: 12,
   },
 
   backBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
     backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
@@ -458,11 +461,10 @@ const styles = StyleSheet.create({
 
   headerTitle: {
     fontFamily: FONT.header,
-    fontSize: 18,
-    fontWeight: "800",
+    fontSize: 22,
+    fontWeight: "700",
     color: BRAND.black,
   },
-
   content: {
     flexGrow: 1,
     paddingBottom: 24,

@@ -209,8 +209,11 @@ export default function ForgotOTPVerify() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["left", "right", "bottom"]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FBF7FF" />
+    <SafeAreaView
+      style={styles.container}
+      edges={["top", "left", "right", "bottom"]}
+    >
+      <StatusBar barStyle="dark-content" backgroundColor={BRAND.white} />
       <View style={styles.topGlow} />
 
       <KeyboardAvoidingView
@@ -243,11 +246,7 @@ export default function ForgotOTPVerify() {
               activeOpacity={0.86}
               disabled={loading}
             >
-              <Ionicons
-                name="help-circle-outline"
-                size={24}
-                color="#1A1D1F"
-              />
+              <Ionicons name="help-circle-outline" size={24} color="#1A1D1F" />
             </TouchableOpacity>
           </View>
 
@@ -276,7 +275,11 @@ export default function ForgotOTPVerify() {
                 style={styles.input}
                 value={otp}
                 onChangeText={(v) =>
-                  setOtp(String(v || "").replace(/\D/g, "").slice(0, 8))
+                  setOtp(
+                    String(v || "")
+                      .replace(/\D/g, "")
+                      .slice(0, 8),
+                  )
                 }
                 onFocus={() => setOtpFocused(true)}
                 onBlur={() => setOtpFocused(false)}
@@ -357,22 +360,25 @@ const styles = StyleSheet.create({
 
   scrollContent: {
     flexGrow: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
     paddingBottom: 24,
   },
 
   header: {
+    minHeight: 54,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 26,
+    backgroundColor: "transparent",
+    marginBottom: 12,
   },
 
   iconButton: {
     width: 42,
     height: 42,
-    borderRadius: 21,
+    borderRadius: RADIUS.full,
     backgroundColor: BRAND.white,
     justifyContent: "center",
     alignItems: "center",

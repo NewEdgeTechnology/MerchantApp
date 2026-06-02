@@ -20,7 +20,10 @@ export default function HelpScreen() {
 
   const onLink = (url) => {
     Linking.openURL(url).catch(() =>
-      Alert.alert("Couldn’t open link", "Please try again or copy the address."),
+      Alert.alert(
+        "Couldn’t open link",
+        "Please try again or copy the address.",
+      ),
     );
   };
 
@@ -30,7 +33,10 @@ export default function HelpScreen() {
   const callSupport = () => onLink("tel:+9752337191");
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
       <View style={styles.topGlow} />
 
       <View style={styles.page}>
@@ -50,7 +56,11 @@ export default function HelpScreen() {
             style={styles.backBtn}
             activeOpacity={0.86}
           >
-            <Ionicons name="document-text-outline" size={22} color={BRAND.black} />
+            <Ionicons
+              name="document-text-outline"
+              size={22}
+              color={BRAND.black}
+            />
           </TouchableOpacity>
         </View>
 
@@ -62,18 +72,31 @@ export default function HelpScreen() {
             <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
             <Text style={styles.title}>Help &amp; support</Text>
             <Text style={styles.subtitle}>
-              Get support for merchant registration, payments, account access and business profile updates.
+              Get support for merchant registration, payments, account access
+              and business profile updates.
             </Text>
           </View>
 
           <View style={styles.badge}>
-            <Ionicons name="shield-checkmark-outline" size={16} color={BRAND.purple} />
+            <Ionicons
+              name="shield-checkmark-outline"
+              size={16}
+              color={BRAND.purple}
+            />
             <Text style={styles.badgeText}>Bhutan context</Text>
           </View>
 
           <View style={styles.quickRow}>
-            <QuickAction icon="mail-outline" label="Email Support" onPress={emailSupport} />
-            <QuickAction icon="call-outline" label="Call" onPress={callSupport} />
+            <QuickAction
+              icon="mail-outline"
+              label="Email Support"
+              onPress={emailSupport}
+            />
+            <QuickAction
+              icon="call-outline"
+              label="Call"
+              onPress={callSupport}
+            />
             <QuickAction
               icon="book-outline"
               label="Privacy"
@@ -83,19 +106,22 @@ export default function HelpScreen() {
 
           <Card title="How do I reset my password?">
             <Text style={styles.p}>
-              From the Login screen, tap “Forgot password”. Follow the steps sent to your email or phone.
+              From the Login screen, tap “Forgot password”. Follow the steps
+              sent to your email or phone.
             </Text>
           </Card>
 
           <Card title="How do I update my business details?">
             <Text style={styles.p}>
-              Open your profile from the Home tab → Business Info. Edits may require verification and can take effect after review.
+              Open your profile from the Home tab → Business Info. Edits may
+              require verification and can take effect after review.
             </Text>
           </Card>
 
           <Card title="Payments & Payouts">
             <Text style={styles.p}>
-              Settlements are in Bhutanese Ngultrum. Bank holidays and checks can affect timelines. Check your Payouts tab for status.
+              Settlements are in Bhutanese Ngultrum. Bank holidays and checks
+              can affect timelines. Check your Payouts tab for status.
             </Text>
           </Card>
 
@@ -162,22 +188,24 @@ const styles = StyleSheet.create({
 
   page: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
   },
 
   header: {
-    height: 52,
+    minHeight: 54,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 14,
+    backgroundColor: "transparent",
+    marginBottom: 12,
   },
 
   backBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 42,
+    height: 42,
+    borderRadius: 999,
     backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
@@ -186,8 +214,8 @@ const styles = StyleSheet.create({
 
   headerTitle: {
     fontFamily: FONT.header,
-    fontSize: 18,
-    fontWeight: "800",
+    fontSize: 22,
+    fontWeight: "700",
     color: BRAND.black,
   },
 

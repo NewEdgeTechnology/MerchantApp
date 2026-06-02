@@ -60,7 +60,10 @@ export default function PrivacyPolicy() {
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
       <View style={styles.topGlow} />
 
       <View style={styles.page}>
@@ -80,7 +83,11 @@ export default function PrivacyPolicy() {
             style={styles.backBtn}
             activeOpacity={0.86}
           >
-            <Ionicons name="help-circle-outline" size={22} color={BRAND.black} />
+            <Ionicons
+              name="help-circle-outline"
+              size={22}
+              color={BRAND.black}
+            />
           </TouchableOpacity>
         </View>
 
@@ -122,11 +129,7 @@ export default function PrivacyPolicy() {
 
           <View style={styles.divider} />
 
-          <Checkbox
-            value={agree}
-            onChange={setAgree}
-            label={t.consent.agree}
-          />
+          <Checkbox value={agree} onChange={setAgree} label={t.consent.agree} />
 
           <View style={styles.actions}>
             <Pressable
@@ -137,9 +140,7 @@ export default function PrivacyPolicy() {
             >
               <Text
                 style={
-                  agree
-                    ? styles.primaryBtnText
-                    : styles.primaryBtnTextDisabled
+                  agree ? styles.primaryBtnText : styles.primaryBtnTextDisabled
                 }
               >
                 {t.actions.accept}
@@ -190,7 +191,9 @@ function Checkbox({ value, onChange, label }) {
   return (
     <Pressable style={styles.checkboxRow} onPress={() => onChange(!value)}>
       <View style={[styles.checkbox, value && styles.checkboxChecked]}>
-        {value ? <Ionicons name="checkmark" size={14} color={BRAND.purple} /> : null}
+        {value ? (
+          <Ionicons name="checkmark" size={14} color={BRAND.purple} />
+        ) : null}
       </View>
 
       <Text style={styles.checkboxText}>{label}</Text>
@@ -225,8 +228,7 @@ const stringsEN = {
   },
   s1: {
     title: "1) Introduction",
-    body:
-      "We value your privacy. This Policy explains how your information is collected, used, stored, and protected when using our services.",
+    body: "We value your privacy. This Policy explains how your information is collected, used, stored, and protected when using our services.",
   },
   s2: {
     title: "2) Information We Collect",
@@ -256,16 +258,14 @@ const stringsEN = {
   },
   s5: {
     title: "5) Data Security",
-    lead:
-      "We implement appropriate safeguards to protect your data from unauthorized access, loss, or misuse.",
+    lead: "We implement appropriate safeguards to protect your data from unauthorized access, loss, or misuse.",
     b1: "Encryption, access control, and secure storage practices.",
     b2: "Regular audits and updates of security controls.",
     b3: "Limited staff access based on operational necessity.",
   },
   s6: {
     title: "6) Data Retention",
-    lead:
-      "Data is retained only as long as necessary to fulfill legal and operational requirements.",
+    lead: "Data is retained only as long as necessary to fulfill legal and operational requirements.",
     b1: "Financial and audit records retained as per legal requirements.",
     b2: "Inactive accounts may be archived or deleted after due notice.",
     b3: "You may request deletion of certain personal data.",
@@ -273,8 +273,7 @@ const stringsEN = {
   },
   s7: {
     title: "7) Your Rights",
-    lead:
-      "You have the right to access, update, or request deletion of your data within legal limits.",
+    lead: "You have the right to access, update, or request deletion of your data within legal limits.",
     b1: "Access and update your information through the merchant dashboard.",
     b2: "Withdraw consent for optional permissions.",
     b3: "Contact our support for any privacy-related inquiries.",
@@ -289,8 +288,7 @@ const stringsEN = {
   },
   s9: {
     title: "9) Changes & Governing Law",
-    lead:
-      "We may update this Policy periodically. This Policy is governed by the laws of the Kingdom of Bhutan.",
+    lead: "We may update this Policy periodically. This Policy is governed by the laws of the Kingdom of Bhutan.",
     b1: "Material updates will be notified in-app or via email.",
     b2: "Continued use after updates means you acknowledge the revised Policy.",
   },
@@ -298,7 +296,10 @@ const stringsEN = {
 
 function getSections(t) {
   return [
-    { title: t.s1.title, content: () => <Text style={styles.p}>{t.s1.body}</Text> },
+    {
+      title: t.s1.title,
+      content: () => <Text style={styles.p}>{t.s1.body}</Text>,
+    },
     {
       title: t.s2.title,
       content: () => (
@@ -417,22 +418,24 @@ const styles = StyleSheet.create({
 
   page: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 42,
+    paddingHorizontal: 18,
+    paddingTop: 0,
   },
 
   header: {
-    height: 52,
+    minHeight: 54,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 14,
+    backgroundColor: "transparent",
+    marginBottom: 12,
   },
 
   backBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
     backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
@@ -441,8 +444,8 @@ const styles = StyleSheet.create({
 
   headerTitle: {
     fontFamily: FONT.header,
-    fontSize: 18,
-    fontWeight: "800",
+    fontSize: 22,
+    fontWeight: "700",
     color: BRAND.black,
   },
 
