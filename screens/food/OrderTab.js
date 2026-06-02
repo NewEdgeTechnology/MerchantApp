@@ -594,13 +594,13 @@ const OrderItem = ({
             activeOpacity={0.7}
           >
             {isLoading ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color="#FBF7FF" />
             ) : (
               <>
                 <Ionicons
                   name="checkmark-circle-outline"
                   size={18}
-                  color="#fff"
+                  color="#FBF7FF"
                 />
                 <Text style={styles.actionButtonText}>Accept</Text>
               </>
@@ -1075,6 +1075,9 @@ export default function MartOrdersTab({
   const [declineModalVisible, setDeclineModalVisible] = useState(false);
   const [declineReasonInput, setDeclineReasonInput] = useState("");
   const [pendingDeclineOrder, setPendingDeclineOrder] = useState(null);
+  const [acceptModalVisible, setAcceptModalVisible] = useState(false);
+  const [estimatedMinutesInput, setEstimatedMinutesInput] = useState("30");
+  const [pendingAcceptOrder, setPendingAcceptOrder] = useState(null);
 
   const abortRef = useRef(null);
 
@@ -1481,72 +1484,87 @@ export default function MartOrdersTab({
     );
   }, [dateFilteredOrders, scheduledOrders, query, activeChip]);
 
-  const handleAccept = useCallback(
-    async (order) => {
-      Alert.alert(
-        "Accept Scheduled Order",
-        `Do you want to accept order ${order.id}? It will stay in Upcoming until its scheduled time.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Accept",
-            style: "default",
-            onPress: async () => {
-              setActionLoadingId(order.id);
-              try {
-                if (onAcceptScheduled) {
-                  await onAcceptScheduled(order.id, order);
-                } else {
-                  if (!acceptEndpoint)
-                    throw new Error("Accept endpoint not configured");
-                  let url = acceptEndpoint.replace(
-                    "{jobId}",
-                    encodeURIComponent(String(order.id)),
-                  );
-                  if (!url.startsWith("http")) {
-                    throw new Error(`Accept URL is not absolute: ${url}`);
-                  }
-                  console.log("[Accept] URL:", url);
-                  const token = await SecureStore.getItemAsync("auth_token");
-                  const res = await fetch(url, {
-                    method: "PATCH",
-                    headers: {
-                      "Content-Type": "application/json",
-                      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                    },
-                    body: JSON.stringify({ status: "ACCEPTED" }),
-                  });
-                  if (!res.ok) {
-                    const text = await res.text();
-                    throw new Error(`Failed to accept: ${res.status} ${text}`);
-                  }
-                }
-                // Optimistic UI update
-                setScheduledOrders((prev) =>
-                  prev.map((o) =>
-                    o.id === order.id
-                      ? { ...o, status: "SCHEDULED_ACCEPTED" }
-                      : o,
-                  ),
-                );
-                Alert.alert(
-                  "Accepted",
-                  `Order ${order.id} will be processed at its scheduled time.`,
-                );
-              } catch (err) {
-                Alert.alert("Error", err.message || "Could not accept order");
-              } finally {
-                setActionLoadingId(null);
-              }
-            },
-          },
-        ],
-        { cancelable: true },
-      );
-    },
-    [acceptEndpoint, onAcceptScheduled],
-  );
+  const handleAccept = useCallback((order) => {
+    setPendingAcceptOrder(order);
+    setEstimatedMinutesInput("30");
+    setAcceptModalVisible(true);
+  }, []);
+  const confirmAccept = useCallback(async () => {
+    if (!pendingAcceptOrder) return;
 
+    const estimatedMinutes = Number(estimatedMinutesInput);
+
+    if (!Number.isFinite(estimatedMinutes) || estimatedMinutes <= 0) {
+      Alert.alert("Invalid time", "Please enter valid estimated minutes.");
+      return;
+    }
+
+    setActionLoadingId(pendingAcceptOrder.id);
+    setAcceptModalVisible(false);
+
+    try {
+      if (onAcceptScheduled) {
+        await onAcceptScheduled(
+          pendingAcceptOrder.id,
+          pendingAcceptOrder,
+          estimatedMinutes,
+        );
+      } else {
+        if (!acceptEndpoint) throw new Error("Accept endpoint not configured");
+
+        let url = acceptEndpoint.replace(
+          "{jobId}",
+          encodeURIComponent(String(pendingAcceptOrder.id)),
+        );
+
+        if (!url.startsWith("http")) {
+          throw new Error(`Accept URL is not absolute: ${url}`);
+        }
+
+        const token = await SecureStore.getItemAsync("auth_token");
+
+        const res = await fetch(url, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            status: "ACCEPTED",
+            estimated_minutes: estimatedMinutes,
+          }),
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Failed to accept: ${res.status} ${text}`);
+        }
+      }
+
+      setScheduledOrders((prev) =>
+        prev.map((o) =>
+          o.id === pendingAcceptOrder.id
+            ? { ...o, status: "SCHEDULED_ACCEPTED" }
+            : o,
+        ),
+      );
+
+      Alert.alert(
+        "Accepted",
+        `Order ${pendingAcceptOrder.id} accepted with ${estimatedMinutes} minutes estimate.`,
+      );
+    } catch (err) {
+      Alert.alert("Error", err.message || "Could not accept order");
+    } finally {
+      setActionLoadingId(null);
+      setPendingAcceptOrder(null);
+    }
+  }, [
+    pendingAcceptOrder,
+    estimatedMinutesInput,
+    acceptEndpoint,
+    onAcceptScheduled,
+  ]);
   const openDeclineModal = useCallback((order) => {
     setPendingDeclineOrder(order);
     setDeclineReasonInput("");
@@ -1884,15 +1902,19 @@ export default function MartOrdersTab({
         )}
 
         {activeChip === "UPCOMING" && filtered.length > 2 && (
-  <View style={styles.scrollHint}>
-    <Ionicons name="chevron-down-circle-outline" size={16} color="#0f766e" />
-    <Text style={styles.scrollHintText}>
-      {filtered.length} scheduled orders • Scroll down to see more
-    </Text>
-  </View>
-)}
+          <View style={styles.scrollHint}>
+            <Ionicons
+              name="chevron-down-circle-outline"
+              size={16}
+              color="#0f766e"
+            />
+            <Text style={styles.scrollHintText}>
+              {filtered.length} scheduled orders • Scroll down to see more
+            </Text>
+          </View>
+        )}
 
-{content}
+        {content}
 
         <Modal
           visible={showDateDropdown}
@@ -2054,6 +2076,71 @@ export default function MartOrdersTab({
           </View>
         </Modal>
 
+        {/* Accept Estimated Minutes Modal */}
+        <Modal
+          visible={acceptModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setAcceptModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={() => setAcceptModalVisible(false)}
+            />
+
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Accept Scheduled Order</Text>
+
+              <Text
+                style={{ marginBottom: 8, color: "#334155", fontWeight: "700" }}
+              >
+                Estimated preparation time in minutes
+              </Text>
+
+              <TextInput
+                style={[styles.searchWrap, { marginBottom: 16 }]}
+                value={estimatedMinutesInput}
+                onChangeText={setEstimatedMinutesInput}
+                placeholder="e.g. 30"
+                placeholderTextColor="#94a3b8"
+                keyboardType="number-pad"
+                autoFocus
+              />
+
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "flex-end",
+                  gap: 12,
+                }}
+              >
+                <TouchableOpacity
+                  onPress={() => setAcceptModalVisible(false)}
+                  style={{ paddingHorizontal: 16, paddingVertical: 8 }}
+                >
+                  <Text style={{ color: BRAND.grey, fontWeight: "600" }}>
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={confirmAccept}
+                  style={{
+                    paddingHorizontal: 16,
+                    paddingVertical: 8,
+                    backgroundColor: BRAND.purple,
+                    borderRadius: 8,
+                  }}
+                >
+                  <Text style={{ color: BRAND.white, fontWeight: "700" }}>
+                    Accept
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
         {/* Decline Reason Modal */}
         <Modal
           visible={declineModalVisible}
@@ -2514,7 +2601,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   acceptButton: {
-    backgroundColor: "#BRAND.purple",
+    backgroundColor: BRAND.purple,
   },
   declineButton: {
     backgroundColor: BRAND.red,

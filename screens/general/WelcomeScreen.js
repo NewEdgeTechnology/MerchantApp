@@ -215,6 +215,7 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
   scrollContent: {
+    flexGrow: 1,
     paddingBottom: 28,
   },
   topGlow: {
@@ -327,13 +328,13 @@ const styles = StyleSheet.create({
   },
 
   circle: {
-  position: "absolute",
-  width: 190,
-  height: 190,
-  borderRadius: 105,
-  opacity: 1,
-  zIndex: 0,
-},
+    position: "absolute",
+    width: 190,
+    height: 190,
+    borderRadius: 105,
+    opacity: 1,
+    zIndex: 0,
+  },
 
   tag: {
     position: "absolute",
@@ -354,10 +355,10 @@ const styles = StyleSheet.create({
   },
 
   slideImage: {
-  width: width * 0.48,
-  height: height * 0.16,
-  zIndex: 1,
-},
+    width: width * 0.48,
+    height: height * 0.16,
+    zIndex: 1,
+  },
   slideTitle: {
     fontFamily: FONT.header,
     fontWeight: "800",
