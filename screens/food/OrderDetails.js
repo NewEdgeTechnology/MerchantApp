@@ -1880,9 +1880,9 @@ export default function OrderDetails() {
           message += `📋 *Suggested replacement:*\n`;
           message += `✅ *${replacementName}*\n`;
           message += `💰 Price: ${money(replacementPrice, "BTN.")} (×${qty}) = ${money(replacementTotal, "BTN.")}\n\n`;
-          message += `• Suggest an alternative item\n\n`;
+         
           message += `💰 *New order total:* ${money(newTotal, "BTN.")}${reasonText}\n\n`;
-          message += `*Please respond within 10 minutes.*`;
+          message += `*Please respond within 10 minutes if you dont accept the replacement.*`;
         }
 
         // ✅ FIX: If message is empty, create a fallback

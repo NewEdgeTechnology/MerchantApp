@@ -172,24 +172,56 @@ export async function listMerchantConversations({ businessId, token }) {
    ========================================================= */
 export async function getConversationMessages({
   conversationId,
+  orderId,
+  customer_id,
+  business_id,
+  merchant_user_id,
   limit = 80,
   userType,
   userId,
   businessIdHeader,
   token,
 }) {
-  const base = pickChatPrefix("https://backend.tabdhey.bt/chat"); // ✅ ends with /chat
-  const cid = String(conversationId || "").trim();
-  if (!cid) throw new Error("conversationId required");
 
-  // ✅ results in /chat/chat/messages/...
-  const url = `${base}/chat/messages/${encodeURIComponent(cid)}?limit=${encodeURIComponent(
-    String(limit),
-  )}`;
+  let cid = String(conversationId || "").trim();
+
+  // Auto-create conversation if missing
+  if (!cid && orderId) {
+    const conv = await createOrGetOrderConversationFromOrderDetails({
+      orderId,
+      customer_id,
+      business_id,
+      merchant_user_id,
+      token,
+    });
+
+    cid =
+      String(
+        conv?.conversation_id ||
+        conv?.conversation?.id ||
+        conv?.id ||
+        ""
+      ).trim();
+  }
+
+  if (!cid) {
+    throw new Error("Unable to create conversation");
+  }
+
+  const base = pickChatPrefix("https://backend.tabdhey.bt/chat");
+
+  const url =
+    `${base}/chat/messages/${encodeURIComponent(cid)}` +
+    `?limit=${encodeURIComponent(String(limit))}`;
 
   return await debugFetch(url, {
     method: "GET",
-    headers: buildHeaders({ userType, userId, token, businessIdHeader }),
+    headers: buildHeaders({
+      userType,
+      userId,
+      token,
+      businessIdHeader,
+    }),
   });
 }
 

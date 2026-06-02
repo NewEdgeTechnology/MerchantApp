@@ -34,12 +34,14 @@ import {
 } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
 import {
   getConversationMessages,
   sendTextMessage,
   sendImageMessage,
   markConversationRead,
+  createOrGetOrderConversationFromOrderDetails,
 } from "../../utils/chatApi";
 
 import {
@@ -235,43 +237,28 @@ const extractMessageFromSendResponse = (res) => {
   return null;
 };
 
-/* ===================== Header ===================== */
 function ChatHeader({ title, subtitle, logoUrl, onBack }) {
   return (
     <View style={styles.header}>
-      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
-      <TouchableOpacity
-        onPress={onBack}
-        style={styles.backBtn}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-      >
-        <Ionicons name="chevron-back" size={22} color="#111" />
+      {/* <StatusBar barStyle="dark-content" backgroundColor="transparent" /> */}
+
+      <TouchableOpacity onPress={onBack} style={styles.backBtn}>
+        <Ionicons name="arrow-back" size={24} color={BRAND.black} />
       </TouchableOpacity>
 
       <View style={styles.headerMid}>
-        {logoUrl ? (
-          <Image source={{ uri: logoUrl }} style={styles.headerLogo} />
-        ) : (
-          <View style={[styles.headerLogo, styles.headerLogoFallback]}>
-            <Ionicons name="person-outline" size={18} color="#6b7280" />
-          </View>
-        )}
-
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {title || "Customer"}
-          </Text>
-          <Text style={styles.headerSub} numberOfLines={1}>
-            {subtitle || ""}
-          </Text>
-        </View>
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          {title || "Customer"}
+        </Text>
+        <Text style={styles.headerSub} numberOfLines={1}>
+          {subtitle || ""}
+        </Text>
       </View>
 
-      <View style={{ width: 36 }} />
+      <View style={{ width: 42 }} />
     </View>
   );
 }
-
 /* ===================== Fullscreen Image Viewer ===================== */
 function ImageViewerModal({ visible, uri, onClose }) {
   return (
@@ -408,6 +395,9 @@ export default function ChatRoomScreen({ route, navigation }) {
     meta: metaParam,
   } = route.params || {};
 
+  const [activeConversationId, setActiveConversationId] = useState(
+    conversationId ? String(conversationId) : "",
+  );
   const [meta, setMeta] = useState(metaParam || null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -494,14 +484,50 @@ export default function ChatRoomScreen({ route, navigation }) {
   }, [orderId]);
 
   const load = useCallback(async () => {
-    if (!conversationId) return;
-
     setLoading(true);
+
     try {
       const token = await getToken();
 
+      let cid = String(activeConversationId || "").trim();
+
+      const customerId =
+        route.params?.customerId ||
+        metaParam?.customerId ||
+        metaParam?.customer_id ||
+        metaParam?.customer?.id ||
+        metaParam?.customer?.user_id;
+
+      // ✅ Always get the correct conversation for this order/business/merchant
+      if (orderId && customerId && businessIdParam && userIdParam) {
+        const conv = await createOrGetOrderConversationFromOrderDetails({
+          orderId,
+          customer_id: customerId,
+          business_id: businessIdParam,
+          merchant_user_id: userIdParam,
+          token,
+        });
+
+        cid = String(
+          conv?.conversation_id ||
+            conv?.conversation?.id ||
+            conv?.data?.conversation_id ||
+            conv?.data?.conversation?.id ||
+            cid ||
+            "",
+        ).trim();
+
+        if (cid && cid !== activeConversationId) {
+          setActiveConversationId(cid);
+        }
+      }
+
+      if (!cid) {
+        throw new Error("Unable to create or find conversation");
+      }
+
       const res = await getConversationMessages({
-        conversationId,
+        conversationId: cid,
         limit: 80,
         userType: ctx.userType,
         userId: ctx.userId,
@@ -528,7 +554,11 @@ export default function ChatRoomScreen({ route, navigation }) {
       setLoading(false);
     }
   }, [
-    conversationId,
+    activeConversationId,
+    orderId,
+    businessIdParam,
+    userIdParam,
+    route.params?.customerId,
     ctx.userType,
     ctx.userId,
     ctx.businessIdHeader,
@@ -541,78 +571,86 @@ export default function ChatRoomScreen({ route, navigation }) {
   const initialMessageSentRef = useRef(false);
   // In ChatRoomScreen.js, update the sendAutoMessage function:
 
-const sendAutoMessage = useCallback(
-  async (autoMessageText) => {
-    if (!autoMessageText || sending) return;
+  const sendAutoMessage = useCallback(
+    async (autoMessageText) => {
+      if (!autoMessageText || sending) return;
 
-    setSending(true);
+      setSending(true);
 
-    // Create a unique temp ID
-    const tempId = `tmp_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
+      // Create a unique temp ID
+      const tempId = `tmp_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
 
-    // Add optimistic message with temp ID
-    const now = Date.now();
-    const tempMessage = normalizeMessage({
-      id: tempId,
-      message_type: "TEXT",
-      body: autoMessageText,
-      media_url: "",
-      ts: now,
-      sender_type: ctx.userType,
-      sender_id: ctx.userId,
-      isTemp: true,
-    });
-
-    if (tempMessage && !isEmptyMessage(tempMessage)) {
-      setRows((prev) => [...prev, tempMessage].sort(sortAscByTs));
-      scrollToBottom(true);
-    }
-
-    try {
-      const token = await getToken();
-      
-      // ✅ IMPORTANT: When sending as MERCHANT, we need to include customer_id in the request
-      // or use the correct endpoint with proper authentication
-      const res = await sendTextMessage({
-        conversationId,
-        bodyText: autoMessageText,
-        userType: ctx.userType,
-        userId: ctx.userId,
-        businessIdHeader: ctx.businessIdHeader,
-        token,
-        // ✅ Add customer_id if available (from meta)
-        customerId: meta?.customerId || route.params?.customerId,
+      // Add optimistic message with temp ID
+      const now = Date.now();
+      const tempMessage = normalizeMessage({
+        id: tempId,
+        message_type: "TEXT",
+        body: autoMessageText,
+        media_url: "",
+        ts: now,
+        sender_type: ctx.userType,
+        sender_id: ctx.userId,
+        isTemp: true,
       });
 
-      const msgObj = extractMessageFromSendResponse(res);
-
-      if (msgObj && msgObj.id) {
-        // Replace temp message with real one
-        setRows((prev) => {
-          const tempIndex = prev.findIndex((msg) => msg.id === tempId);
-          if (tempIndex !== -1) {
-            const newRows = [...prev];
-            newRows[tempIndex] = { ...msgObj, isTemp: false };
-            return newRows.sort(sortAscByTs);
-          }
-          if (!prev.some((msg) => msg.id === msgObj.id)) {
-            return [...prev, { ...msgObj, isTemp: false }].sort(sortAscByTs);
-          }
-          return prev;
-        });
+      if (tempMessage && !isEmptyMessage(tempMessage)) {
+        setRows((prev) => [...prev, tempMessage].sort(sortAscByTs));
+        scrollToBottom(true);
       }
 
-      console.log("[CHAT] Auto-message sent successfully!");
-    } catch (e) {
-      // Silent failure
-      console.log("[CHAT] Auto-message send failed (silent):", e?.message);
-      setRows((prev) => prev.filter((msg) => msg.id !== tempId));
-    } finally {
-      setSending(false);
-    }
-  },
-  [conversationId, ctx, getToken, scrollToBottom, sending, meta, route.params?.customerId],
-);
+      try {
+        const token = await getToken();
+
+        // ✅ IMPORTANT: When sending as MERCHANT, we need to include customer_id in the request
+        // or use the correct endpoint with proper authentication
+        const res = await sendTextMessage({
+          conversationId: activeConversationId,
+          bodyText: autoMessageText,
+          userType: ctx.userType,
+          userId: ctx.userId,
+          businessIdHeader: ctx.businessIdHeader,
+          token,
+          // ✅ Add customer_id if available (from meta)
+          customerId: meta?.customerId || route.params?.customerId,
+        });
+
+        const msgObj = extractMessageFromSendResponse(res);
+
+        if (msgObj && msgObj.id) {
+          // Replace temp message with real one
+          setRows((prev) => {
+            const tempIndex = prev.findIndex((msg) => msg.id === tempId);
+            if (tempIndex !== -1) {
+              const newRows = [...prev];
+              newRows[tempIndex] = { ...msgObj, isTemp: false };
+              return newRows.sort(sortAscByTs);
+            }
+            if (!prev.some((msg) => msg.id === msgObj.id)) {
+              return [...prev, { ...msgObj, isTemp: false }].sort(sortAscByTs);
+            }
+            return prev;
+          });
+        }
+
+        console.log("[CHAT] Auto-message sent successfully!");
+      } catch (e) {
+        // Silent failure
+        console.log("[CHAT] Auto-message send failed (silent):", e?.message);
+        setRows((prev) => prev.filter((msg) => msg.id !== tempId));
+      } finally {
+        setSending(false);
+      }
+    },
+    [
+      activeConversationId,
+      ctx,
+      getToken,
+      scrollToBottom,
+      sending,
+      meta,
+      route.params?.customerId,
+    ],
+  );
 
   // Auto-message from order details - SILENT MODE (no alerts)
   useEffect(() => {
@@ -620,7 +658,7 @@ const sendAutoMessage = useCallback(
     const autoMessageOnly = route.params?.meta?.autoMessageOnly === true;
 
     // Only proceed if we have a message, haven't sent it yet, and we have a conversation
-    if (autoMessage && !autoMessageSentRef.current && conversationId) {
+    if (autoMessage && !autoMessageSentRef.current && activeConversationId) {
       // Check if this conversation already has this exact message
       const messageAlreadyExists = rows.some(
         (msg) =>
@@ -664,14 +702,14 @@ const sendAutoMessage = useCallback(
   }, [
     route.params?.meta?.autoMessage,
     route.params?.meta?.autoMessageOnly,
-    conversationId,
+    activeConversationId,
     rows,
     sendAutoMessage,
   ]);
 
   // socket
   useEffect(() => {
-    if (!conversationId) return;
+    if (!activeConversationId) return;
 
     connectChatSocket({
       userType: ctx.userType,
@@ -679,12 +717,12 @@ const sendAutoMessage = useCallback(
       businessId: ctx.businessIdHeader,
     });
 
-    joinChatConversation(conversationId);
+    joinChatConversation(activeConversationId);
 
     const sub = onChatNewMessage((evt) => {
       const incomingCid = String(evt?.conversationId || "").trim();
       if (!incomingCid) return;
-      if (incomingCid !== String(conversationId)) return;
+      if (incomingCid !== String(activeConversationId)) return;
 
       const msg = evt?.message;
       if (!msg || isEmptyMessage(msg)) return;
@@ -702,10 +740,10 @@ const sendAutoMessage = useCallback(
       try {
         offChatNewMessage(sub);
       } catch {}
-      leaveChatConversation(conversationId);
+      leaveChatConversation(activeConversationId);
     };
   }, [
-    conversationId,
+    activeConversationId,
     ctx.userType,
     ctx.userId,
     ctx.businessIdHeader,
@@ -718,7 +756,7 @@ const sendAutoMessage = useCallback(
 
   // mark read
   useEffect(() => {
-    if (!rows?.length || !conversationId) return;
+    if (!rows?.length || !activeConversationId) return;
 
     const last = rows[rows.length - 1];
     const lastId = last?.id;
@@ -729,7 +767,7 @@ const sendAutoMessage = useCallback(
       try {
         const token = await getToken();
         await markConversationRead({
-          conversationId,
+          conversationId: activeConversationId,
           lastReadMessageId: String(lastId),
           userType: ctx.userType,
           userId: ctx.userId,
@@ -744,7 +782,7 @@ const sendAutoMessage = useCallback(
     };
   }, [
     rows,
-    conversationId,
+    activeConversationId,
     ctx.userType,
     ctx.userId,
     ctx.businessIdHeader,
@@ -824,7 +862,7 @@ const sendAutoMessage = useCallback(
       setText("");
 
       const res = await sendTextMessage({
-        conversationId,
+        conversationId: activeConversationId,
         bodyText: t,
         userType: ctx.userType,
         userId: ctx.userId,
@@ -896,7 +934,7 @@ const sendAutoMessage = useCallback(
       const token = await getToken();
 
       const res = await sendImageMessage({
-        conversationId,
+        conversationId: activeConversationId,
         image: pendingImage,
         caption: trim(imageCaption),
         userType: ctx.userType,
@@ -1001,7 +1039,11 @@ const sendAutoMessage = useCallback(
   const inputBottomPad = Math.max(insets.bottom, 10);
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
+      <View style={styles.topGlow} />
       <ChatHeader
         title={customerName || "Customer"}
         subtitle={headerSubtitle}
@@ -1054,7 +1096,7 @@ const sendAutoMessage = useCallback(
             disabled={sending}
             activeOpacity={0.85}
           >
-            <Ionicons name="image-outline" size={20} color="#00B14F" />
+            <Ionicons name="image-outline" size={20} color={BRAND.purple} />
           </TouchableOpacity>
 
           <View style={styles.inputWrap}>
@@ -1088,74 +1130,119 @@ const sendAutoMessage = useCallback(
 
 /* ===================== styles ===================== */
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  loadingTxt: { marginTop: 8, color: "#6b7280", fontWeight: "700" },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#EEF2F7",
-    backgroundColor: "#fff",
+  safe: {
+    flex: 1,
+    backgroundColor: BRAND.white,
   },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 12,
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
+
+  center: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#F3F4F6",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
   },
-  headerMid: {
-    flex: 1,
+
+  loadingTxt: {
+    marginTop: 8,
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: BRAND.grey,
+  },
+
+  header: {
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    marginHorizontal: 10,
+    backgroundColor: "transparent",
   },
+
+  backBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    alignItems: "center",
+    justifyContent: "center",
+    ...SHADOW.sm,
+  },
+
+  headerMid: {
+    flex: 1,
+    alignItems: "center",
+    paddingHorizontal: 10,
+  },
+
   headerLogo: {
     width: 42,
     height: 42,
-    borderRadius: 14,
+    borderRadius: RADIUS.full,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#fff",
+    borderColor: "#F3E8FF",
+    backgroundColor: BRAND.white,
   },
+
   headerLogoFallback: {
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#F8FAFC",
-  },
-  headerTitle: { fontSize: 15, fontWeight: "900", color: "#0F172A" },
-  headerSub: {
-    marginTop: 2,
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#64748B",
+    backgroundColor: "#F8F0FF",
   },
 
-  row: { marginBottom: 10 },
-  rowLeft: { alignItems: "flex-start" },
-  rowRight: { alignItems: "flex-end" },
+  headerTitle: {
+    flex: 1,
+    textAlign: "center",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+
+  headerSub: {
+    fontSize: 13,
+    color: BRAND.grey,
+    fontFamily: FONT.body,
+    textAlign: "center",
+  },
+
+  row: {
+    marginBottom: 10,
+  },
+
+  rowLeft: {
+    alignItems: "flex-start",
+  },
+
+  rowRight: {
+    alignItems: "flex-end",
+  },
 
   bubble: {
-    maxWidth: "88%",
-    padding: 10,
-    borderRadius: 16,
+    maxWidth: "86%",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 18,
     borderWidth: 1,
   },
+
   bubbleMine: {
-    backgroundColor: "#00B14F",
-    borderColor: "#00B14F",
+    backgroundColor: BRAND.purple,
+    borderColor: BRAND.purple,
   },
+
   bubbleOther: {
-    backgroundColor: "#F3F4F6",
-    borderColor: "#E5E7EB",
+    backgroundColor: BRAND.white,
+    borderColor: "#F3E8FF",
   },
 
   metaLine: {
@@ -1165,147 +1252,213 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 6,
   },
-  nameTxt: { fontSize: 11, fontWeight: "900" },
-  timeTxt: { fontSize: 10, fontWeight: "800" },
 
-  nameMine: { color: "#E7FBEF" },
-  timeMine: { color: "#D4F6E1" },
-  nameOther: { color: "#111827" },
-  timeOther: { color: "#6b7280" },
+  nameTxt: {
+    fontFamily: FONT.header,
+    fontSize: 12,
+  },
 
-  msgText: { fontSize: 14, fontWeight: "700", lineHeight: 20 },
-  msgTextMine: { color: "#ffffff" },
-  msgTextOther: { color: "#111827" },
+  timeTxt: {
+    fontFamily: FONT.body,
+    fontSize: 11,
+  },
+
+  nameMine: {
+    color: BRAND.white,
+  },
+
+  timeMine: {
+    color: "rgba(255,255,255,0.85)",
+  },
+
+  nameOther: {
+    color: BRAND.black,
+  },
+
+  timeOther: {
+    color: BRAND.grey,
+  },
+
+  msgText: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    lineHeight: 21,
+  },
+
+  msgTextMine: {
+    color: BRAND.white,
+  },
+
+  msgTextOther: {
+    color: BRAND.black,
+  },
 
   imageWrap: {
     borderRadius: 14,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#fff",
+    borderColor: "#F3E8FF",
+    backgroundColor: BRAND.white,
   },
 
   inputBar: {
     flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 8,
-    paddingHorizontal: 10,
-    paddingTop: 10,
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 18,
+    paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: "#EEF2F7",
-    backgroundColor: "#fff",
+    borderTopColor: BRAND.purpleLight,
+    backgroundColor: BRAND.white,
   },
+
   iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: 48,
+    height: 48,
+    borderRadius: RADIUS.full,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#D1FAE5",
-    backgroundColor: "#F0FDF4",
+    borderWidth: 1.5,
+    borderColor: BRAND.purpleLight,
+    backgroundColor: "#F8F0FF",
   },
+
   inputWrap: {
     flex: 1,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    backgroundColor: "#fff",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    minHeight: 40,
-    maxHeight: 120,
+    borderWidth: 1.2,
+    borderColor: BRAND.purpleLight,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND.white,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    minHeight: 48,
+    maxHeight: 110,
   },
+
   input: {
     flex: 1,
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
+    fontFamily: FONT.body,
+    fontSize: 15,
+    color: BRAND.black,
     padding: 0,
     margin: 0,
   },
+
   sendBtn: {
-    width: 44,
-    height: 40,
-    borderRadius: 14,
+    width: 48,
+    height: 48,
+    borderRadius: RADIUS.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#00B14F",
+    backgroundColor: BRAND.purple,
+    ...SHADOW.sm,
   },
 
-  modalRoot: { flex: 1, justifyContent: "flex-end" },
+  modalRoot: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+
   modalBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.35)",
   },
+
   modalSheet: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    padding: 14,
+    backgroundColor: BRAND.white,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    padding: 16,
     borderWidth: 1,
-    borderColor: "#EEF2F7",
+    borderColor: "#F3E8FF",
   },
+
   modalHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: 10,
   },
-  modalTitle: { fontSize: 14, fontWeight: "900", color: "#0F172A" },
+
+  modalTitle: {
+    fontFamily: FONT.header,
+    fontSize: 16,
+    color: BRAND.black,
+  },
+
   modalClose: {
-    width: 34,
-    height: 34,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    borderRadius: RADIUS.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "#F8F0FF",
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: "#F3E8FF",
   },
+
   modalPreviewWrap: {
-    borderRadius: 14,
+    borderRadius: 16,
     overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#fff",
+    borderColor: "#F3E8FF",
+    backgroundColor: BRAND.white,
     height: Math.min(260, H * 0.32),
   },
-  modalPreviewImg: { width: "100%", height: "100%", resizeMode: "cover" },
+
+  modalPreviewImg: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+
   modalCaptionRow: {
     marginTop: 10,
     flexDirection: "row",
     alignItems: "flex-start",
     gap: 8,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 14,
-    paddingHorizontal: 10,
+    borderWidth: 1.2,
+    borderColor: "#F3E8FF",
+    borderRadius: RADIUS.lg,
+    paddingHorizontal: 12,
     paddingVertical: 10,
+    backgroundColor: BRAND.white,
   },
+
   modalCaptionInput: {
     flex: 1,
+    fontFamily: FONT.body,
     fontSize: 14,
-    fontWeight: "700",
-    color: "#111827",
+    color: BRAND.black,
     minHeight: 24,
     maxHeight: 90,
     padding: 0,
     margin: 0,
   },
+
   modalSendBtn: {
     marginTop: 12,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: "#00B14F",
+    height: 48,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND.purple,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 8,
+    ...SHADOW.sm,
   },
-  modalSendTxt: { color: "#fff", fontWeight: "900" },
 
-  viewerWrap: { flex: 1, backgroundColor: "#000" },
+  modalSendTxt: {
+    fontFamily: FONT.body,
+    fontSize: 15,
+    color: BRAND.white,
+  },
+
+  viewerWrap: {
+    flex: 1,
+    backgroundColor: "#000",
+  },
+
   viewerTop: {
     paddingTop: Platform.OS === "ios" ? 48 : 14,
     paddingHorizontal: 12,
@@ -1314,6 +1467,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
+
   viewerBack: {
     width: 44,
     height: 40,
@@ -1322,7 +1476,21 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "rgba(255,255,255,0.12)",
   },
-  viewerTitle: { color: "#fff", fontWeight: "900", fontSize: 14 },
-  viewerImageArea: { flex: 1, alignItems: "center", justifyContent: "center" },
-  viewerImage: { width: "100%", height: "100%" },
+
+  viewerTitle: {
+    fontFamily: FONT.header,
+    color: BRAND.white,
+    fontSize: 15,
+  },
+
+  viewerImageArea: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  viewerImage: {
+    width: "100%",
+    height: "100%",
+  },
 });

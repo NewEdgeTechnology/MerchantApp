@@ -17,25 +17,28 @@ import {
   StatusBar,
   Pressable,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import Icon from "react-native-vector-icons/MaterialCommunityIcons";
 import * as ImagePicker from "expo-image-picker";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 import { io } from "socket.io-client";
 import { resolveCurrentRideId } from "../../utils/passengerSocket";
 import { getUserInfo } from "../../utils/authToken";
 // hardcoded socket endpoint per request
 
-/* ---------------- theme (Grab-like) ---------------- */
 const G = {
-  bg: "#F6F7F9",
-  line: "#E5E7EB",
-  text: "#0F172A",
-  sub: "#6B7280",
-  me: "#00B14F",
-  other: "#FFFFFF",
-  green: "#00B14F",
-  header: "#FFFFFF",
+  bg: "#FBF7FF",
+  line: "#F3E8FF",
+  text: BRAND.black,
+  sub: BRAND.grey,
+  me: BRAND.purple,
+  other: BRAND.white,
+  green: BRAND.purple,
+  header: BRAND.white,
 };
 
 const TYPING_IDLE_MS = 4000;
@@ -84,7 +87,7 @@ function ensureChatSocket({ role, ids }) {
   if (chatSocket) {
     try {
       chatSocket.disconnect();
-    } catch { }
+    } catch {}
   }
 
   chatConfig = nextCfg;
@@ -159,7 +162,9 @@ const toRequestId = (v) => {
 
 const joinChatRoom = (rideId) => {
   const requestId = toRequestId(rideId);
-  console.log(`Joining chat room for rideId=${rideId} (requestId=${requestId})`);
+  console.log(
+    `Joining chat room for rideId=${rideId} (requestId=${requestId})`,
+  );
   if (requestId == null) {
     return Promise.resolve({ ok: false, error: "missing_request_id" });
   }
@@ -203,7 +208,7 @@ const emitReadReceipt = (rideId, lastSeenId) => {
 };
 const registerChatEvents = ({ onNewMessage, onTyping, onRead } = {}) => {
   const sock = getChatSocket();
-  if (!sock) return () => { };
+  if (!sock) return () => {};
 
   const handlers = [];
   if (typeof onNewMessage === "function") {
@@ -211,8 +216,10 @@ const registerChatEvents = ({ onNewMessage, onTyping, onRead } = {}) => {
       const msg = payload?.message ?? payload?.data?.message ?? payload;
       const tempId = payload?.temp_id ?? payload?.data?.temp_id ?? null;
       try {
-        const senderRole = msg?.sender_role ?? msg?.sender_type ?? msg?.from?.role ?? "unknown";
-        const senderId = msg?.sender_id ?? msg?.from?.id ?? msg?.sender?.id ?? "unknown";
+        const senderRole =
+          msg?.sender_role ?? msg?.sender_type ?? msg?.from?.role ?? "unknown";
+        const senderId =
+          msg?.sender_id ?? msg?.from?.id ?? msg?.sender?.id ?? "unknown";
 
         console.log("📥 [CHAT INCOMING] raw payload =", payload);
         console.log("📥 [CHAT INCOMING] parsed msg =", msg);
@@ -223,12 +230,7 @@ const registerChatEvents = ({ onNewMessage, onTyping, onRead } = {}) => {
           request_id: msg?.request_id ?? payload?.request_id ?? null,
           senderRole,
           senderId,
-          text:
-            msg?.message ??
-            msg?.text ??
-            msg?.body ??
-            msg?.content ??
-            "",
+          text: msg?.message ?? msg?.text ?? msg?.body ?? msg?.content ?? "",
           image:
             msg?.image_url ??
             msg?.attachment?.url ??
@@ -259,7 +261,7 @@ const registerChatEvents = ({ onNewMessage, onTyping, onRead } = {}) => {
     handlers.forEach(([evt, handler]) => {
       try {
         sock.off(evt, handler);
-      } catch { }
+      } catch {}
     });
   };
 };
@@ -281,7 +283,7 @@ async function fetchUserNameById(userId) {
 
   try {
     const res = await fetch(
-      `${HTTP_BASE}/api/driver_id?driverId=${encodeURIComponent(key)}`
+      `${HTTP_BASE}/api/driver_id?driverId=${encodeURIComponent(key)}`,
     );
     const j = await res.json().catch(() => null);
     const raw =
@@ -296,7 +298,7 @@ async function fetchUserNameById(userId) {
       _nameCache.set(key, name);
       return name;
     }
-  } catch { }
+  } catch {}
   return null;
 }
 
@@ -323,7 +325,7 @@ const TypingDots = () => {
             easing: Easing.linear,
             useNativeDriver: true,
           }),
-        ])
+        ]),
       ).start();
     loop(a1, 0);
     loop(a2, 120);
@@ -379,7 +381,7 @@ const LoadingBubbles = () => {
           easing: Easing.inOut(Easing.quad),
           useNativeDriver: true,
         }),
-      ])
+      ]),
     ).start();
   }, [pulse]);
 
@@ -419,7 +421,7 @@ const ymd = (ts) => {
     const d = new Date(ts);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
       2,
-      "0"
+      "0",
     )}-${String(d.getDate()).padStart(2, "0")}`;
   } catch {
     return "";
@@ -491,14 +493,14 @@ export default function Chat({ route, navigation }) {
   const unsubSocketRideRef = useRef(null);
 
   const [driverUserId, setDriverUserId] = useState(
-    initialDriverUserId ? String(initialDriverUserId) : ""
+    initialDriverUserId ? String(initialDriverUserId) : "",
   );
   const [driverName, setDriverName] = useState(initialDriverName);
 
   const meId = useMemo(() => String(me?.id ?? ""), [me]);
   const meRole = useMemo(
     () => String(me?.role || meFromRoute?.role || "passenger"),
-    [me, meFromRoute?.role]
+    [me, meFromRoute?.role],
   );
 
   const handshakeIds = useMemo(
@@ -525,14 +527,12 @@ export default function Chat({ route, navigation }) {
       route?.params?.merchantId,
       meRole,
       meId,
-    ]
+    ],
   );
 
   const hasRide = !!requestId;
   const headerTitle =
-    driverName ||
-    peer?.name ||
-    (meRole === "merchant" ? "Merchant" : "Driver");
+    driverName || peer?.name || (meRole === "merchant" ? "Merchant" : "Driver");
   const headerSub = requestId ? `Trip #${requestId}` : "No active ride";
 
   useEffect(() => {
@@ -565,7 +565,7 @@ export default function Chat({ route, navigation }) {
         }));
         return String(u.user_id);
       }
-    } catch { }
+    } catch {}
     return "";
   };
 
@@ -607,14 +607,14 @@ export default function Chat({ route, navigation }) {
       try {
         s.off("rideAccepted", onRideAccepted);
         s.off("rideStageUpdate", onRideStageUpdate);
-      } catch { }
+      } catch {}
     };
   };
 
   const detachRideLevelListeners = () => {
     try {
       unsubSocketRideRef.current?.();
-    } catch { }
+    } catch {}
     unsubSocketRideRef.current = null;
   };
 
@@ -636,7 +636,7 @@ export default function Chat({ route, navigation }) {
         const firstDriverMsg = (history || []).find(
           (m) =>
             String(m?.sender_type || m?.sender_role) === "driver" &&
-            String(m?.sender_id || "")
+            String(m?.sender_id || ""),
         );
         if (firstDriverMsg?.sender_id) {
           setDriverUserId(String(firstDriverMsg.sender_id));
@@ -652,7 +652,7 @@ export default function Chat({ route, navigation }) {
       if (unsubChatRef.current) {
         try {
           unsubChatRef.current();
-        } catch { }
+        } catch {}
       }
       unsubChatRef.current = registerChatEvents({
         onNewMessage: (message, temp_id) => {
@@ -670,7 +670,9 @@ export default function Chat({ route, navigation }) {
 
           if (temp_id) {
             setMsgs((prev) => {
-              const idx = prev.findIndex((x) => String(x.id) === String(temp_id));
+              const idx = prev.findIndex(
+                (x) => String(x.id) === String(temp_id),
+              );
               if (idx >= 0) {
                 const next = prev.slice();
                 next[idx] = m;
@@ -688,7 +690,10 @@ export default function Chat({ route, navigation }) {
 
           setPeerTyping(false);
           clearTimeoutSafe(typingTimerRef);
-          setTimeout(() => listRef.current?.scrollToEnd?.({ animated: true }), 60);
+          setTimeout(
+            () => listRef.current?.scrollToEnd?.({ animated: true }),
+            60,
+          );
         },
 
         onTyping: (p) => {
@@ -707,7 +712,7 @@ export default function Chat({ route, navigation }) {
               setPeerTyping(false);
               clearTimeoutSafe(typingTimerRef);
             }
-          } catch { }
+          } catch {}
         },
 
         onRead: (p) => {
@@ -718,7 +723,7 @@ export default function Chat({ route, navigation }) {
             if (Number.isFinite(seen) && seen > 0) {
               setPeerLastSeenId((prev) => (seen > prev ? seen : prev));
             }
-          } catch { }
+          } catch {}
         },
       });
     } finally {
@@ -758,7 +763,7 @@ export default function Chat({ route, navigation }) {
 
         try {
           activeMeta = await resolveCurrentRideId(pid);
-        } catch { }
+        } catch {}
 
         if (activeMeta != null) {
           if (typeof activeMeta === "object") {
@@ -809,10 +814,10 @@ export default function Chat({ route, navigation }) {
       mounted = false;
       try {
         unsubChatRef.current?.();
-      } catch { }
+      } catch {}
       try {
         detachRideLevelListeners();
-      } catch { }
+      } catch {}
       clearTimeoutSafe(typingTimerRef);
       if (requestId) {
         leaveChatRoom(requestId);
@@ -834,7 +839,7 @@ export default function Chat({ route, navigation }) {
     if (!last) return;
     try {
       emitReadReceipt(requestId, last);
-    } catch { }
+    } catch {}
   }, [msgs.length, requestId]);
 
   const latestMineIdStr = useMemo(() => {
@@ -892,10 +897,10 @@ export default function Chat({ route, navigation }) {
         temp_id,
         ...(replyMeta
           ? {
-            reply_to: replyMeta,
-            reply_to_id: replyMeta.id || undefined,
-            reply_message_id: replyMeta.id || undefined,
-          }
+              reply_to: replyMeta,
+              reply_to_id: replyMeta.id || undefined,
+              reply_message_id: replyMeta.id || undefined,
+            }
           : {}),
       };
 
@@ -942,7 +947,7 @@ export default function Chat({ route, navigation }) {
           return next;
         });
       }
-    } catch { }
+    } catch {}
   };
 
   const guessMime = (uri = "") => {
@@ -960,7 +965,7 @@ export default function Chat({ route, navigation }) {
     if (cam.status !== "granted" && lib.status !== "granted") {
       Alert.alert(
         "Permission needed",
-        "Please allow camera or photo library access to send photos."
+        "Please allow camera or photo library access to send photos.",
       );
       return false;
     }
@@ -1033,10 +1038,10 @@ export default function Chat({ route, navigation }) {
         temp_id,
         ...(replyMeta
           ? {
-            reply_to: replyMeta,
-            reply_to_id: replyMeta.id || undefined,
-            reply_message_id: replyMeta.id || undefined,
-          }
+              reply_to: replyMeta,
+              reply_to_id: replyMeta.id || undefined,
+              reply_message_id: replyMeta.id || undefined,
+            }
           : {}),
       };
 
@@ -1132,7 +1137,7 @@ export default function Chat({ route, navigation }) {
         },
         { text: "Cancel", style: "cancel" },
       ],
-      { cancelable: true }
+      { cancelable: true },
     );
   };
 
@@ -1141,7 +1146,7 @@ export default function Chat({ route, navigation }) {
     if (!requestId || !isCurrentRide) return;
     try {
       emitTyping(Number(requestId), !!text);
-    } catch { }
+    } catch {}
   };
 
   const isMine = (m) =>
@@ -1178,8 +1183,7 @@ export default function Chat({ route, navigation }) {
           : reply?.sender_role === "passenger"
             ? "Passenger"
             : "User");
-    const replyText =
-      reply?.text || (reply?.image_url ? "📷 Photo" : "") || "";
+    const replyText = reply?.text || (reply?.image_url ? "📷 Photo" : "") || "";
 
     return (
       <>
@@ -1250,7 +1254,9 @@ export default function Chat({ route, navigation }) {
             ) : null}
 
             {item.text ? (
-              <Text style={[styles.bubbleText, mine && styles.bubbleTextMerchant]}>
+              <Text
+                style={[styles.bubbleText, mine && styles.bubbleTextMerchant]}
+              >
                 {item.text}
               </Text>
             ) : null}
@@ -1278,13 +1284,21 @@ export default function Chat({ route, navigation }) {
   };
 
   const onBack = () => navigation.goBack?.();
-  const onCall = () => { };
-  const onInfo = () => { };
+  const onCall = () => {};
+  const onInfo = () => {};
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe} edges={["left", "right"]}>
-        <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+      <SafeAreaView
+        style={styles.safe}
+        edges={["top", "left", "right", "bottom"]}
+      >
+        <View style={styles.topGlow} />
+        <StatusBar
+          translucent
+          backgroundColor="transparent"
+          barStyle="dark-content"
+        />
         <ChatHeader
           insetsTop={insets.top}
           onBack={onBack}
@@ -1302,8 +1316,16 @@ export default function Chat({ route, navigation }) {
 
   if (!hasRide) {
     return (
-      <SafeAreaView style={styles.safe} edges={["left", "right"]}>
-        <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+      <SafeAreaView
+        style={styles.safe}
+        edges={["top", "left", "right", "bottom"]}
+      >
+        <View style={styles.topGlow} />
+        <StatusBar
+          translucent
+          backgroundColor="transparent"
+          barStyle="dark-content"
+        />
         <ChatHeader
           insetsTop={insets.top}
           onBack={onBack}
@@ -1323,8 +1345,16 @@ export default function Chat({ route, navigation }) {
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right"]}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
+      <View style={styles.topGlow} />
+      <StatusBar
+        translucent
+        backgroundColor="transparent"
+        barStyle="dark-content"
+      />
 
       <ChatHeader
         insetsTop={insets.top}
@@ -1468,16 +1498,11 @@ export default function Chat({ route, navigation }) {
   );
 }
 
-/* ======================= Header (UI only) ======================= */
-const ChatHeader = ({ insetsTop = 0, onBack, title, subtitle, requestId, onCall, onInfo }) => {
+const ChatHeader = ({ onBack, title, subtitle, requestId, onCall, onInfo }) => {
   return (
-    <View style={[styles.header, { paddingTop: (insetsTop || 0) + 6 }]}>
-      <Pressable
-        onPress={onBack}
-        style={styles.iconBtn}
-        android_ripple={{ color: "rgba(0,0,0,0.08)", borderless: true }}
-      >
-        <Ionicons name="arrow-back" size={24} color="#0f172a" />
+    <View style={styles.header}>
+      <Pressable onPress={onBack} style={styles.iconBtn}>
+        <Ionicons name="arrow-back" size={24} color={BRAND.black} />
       </Pressable>
 
       <View style={styles.headerTextWrap}>
@@ -1485,38 +1510,17 @@ const ChatHeader = ({ insetsTop = 0, onBack, title, subtitle, requestId, onCall,
           {title}
         </Text>
         <Text style={styles.headerSubtitle} numberOfLines={1}>
-          {subtitle || ""}
+          {subtitle}
         </Text>
       </View>
 
       {requestId ? (
         <View style={styles.orderPill}>
-          <Ionicons name="receipt-outline" size={14} color="#065F46" />
-          <Text style={styles.orderPillText} numberOfLines={1}>
-            {String(requestId)}
-          </Text>
+          <Ionicons name="receipt-outline" size={15} color={BRAND.purple} />
+          <Text style={styles.orderPillText}>{String(requestId)}</Text>
         </View>
       ) : (
-        <View style={styles.headerRightBtns}>
-          {typeof onCall === "function" ? (
-            <Pressable
-              onPress={onCall}
-              style={styles.iconBtn}
-              android_ripple={{ color: "rgba(0,0,0,0.08)", borderless: true }}
-            >
-              <Ionicons name="call-outline" size={22} color={G.green} />
-            </Pressable>
-          ) : null}
-          {typeof onInfo === "function" ? (
-            <Pressable
-              onPress={onInfo}
-              style={styles.iconBtn}
-              android_ripple={{ color: "rgba(0,0,0,0.08)", borderless: true }}
-            >
-              <Ionicons name="information-circle-outline" size={24} color="#0f172a" />
-            </Pressable>
-          ) : null}
-        </View>
+        <View style={{ width: 42 }} />
       )}
     </View>
   );
@@ -1526,20 +1530,16 @@ const ChatHeader = ({ insetsTop = 0, onBack, title, subtitle, requestId, onCall,
 function toUiMsg(m) {
   const id = String(
     m?.id ??
-    m?.message_id ??
-    m?.messageId ??
-    m?.msg_id ??
-    `${Date.now()}-${Math.random()}`
+      m?.message_id ??
+      m?.messageId ??
+      m?.msg_id ??
+      `${Date.now()}-${Math.random()}`,
   );
 
   const text = String(pickMessageText(m));
 
   const sender_role = String(
-    m?.sender_type ??
-    m?.sender_role ??
-    m?.from?.role ??
-    m?.sender?.role ??
-    ""
+    m?.sender_type ?? m?.sender_role ?? m?.from?.role ?? m?.sender?.role ?? "",
   ).toLowerCase();
 
   const sender_id = String(m?.sender_id ?? m?.from?.id ?? m?.sender?.id ?? "");
@@ -1607,20 +1607,18 @@ function pickMessageText(m) {
 function pickImageUrl(m) {
   if (!m) return null;
   const direct =
-    m?.image_url ||
-    m?.imageUrl ||
-    m?.image ||
-    m?.photo ||
-    m?.photo_url ||
-    null;
+    m?.image_url || m?.imageUrl || m?.image || m?.photo || m?.photo_url || null;
   if (direct) return direct;
 
   const att = m?.attachments ?? m?.attachment ?? m?.media ?? m?.files ?? null;
   const pickFromObj = (obj) => {
     if (!obj) return null;
-    const url = obj.url ?? obj.uri ?? obj.path ?? obj.location ?? obj.file_url ?? null;
+    const url =
+      obj.url ?? obj.uri ?? obj.path ?? obj.location ?? obj.file_url ?? null;
     if (!url) return null;
-    const type = String(obj.type || obj.mime || obj.mimetype || "").toLowerCase();
+    const type = String(
+      obj.type || obj.mime || obj.mimetype || "",
+    ).toLowerCase();
     if (!type || type.startsWith("image")) return url;
     return null;
   };
@@ -1664,21 +1662,22 @@ function pickReplyMeta(m) {
 function normalizeReply(r) {
   if (!r) return null;
   if (typeof r === "string" || typeof r === "number") {
-    return { id: String(r), text: "", sender_role: "", sender_id: "", name: "" };
+    return {
+      id: String(r),
+      text: "",
+      sender_role: "",
+      sender_id: "",
+      name: "",
+    };
   }
 
   const id =
-    r?.id ??
-    r?.message_id ??
-    r?.messageId ??
-    r?.reply_id ??
-    r?.replyId ??
-    null;
+    r?.id ?? r?.message_id ?? r?.messageId ?? r?.reply_id ?? r?.replyId ?? null;
 
   const text = pickMessageText(r);
 
   const sender_role = String(
-    r?.sender_role ?? r?.sender_type ?? r?.from?.role ?? r?.sender?.role ?? ""
+    r?.sender_role ?? r?.sender_type ?? r?.from?.role ?? r?.sender?.role ?? "",
   ).toLowerCase();
 
   const sender_id = String(r?.sender_id ?? r?.from?.id ?? r?.sender?.id ?? "");
@@ -1714,39 +1713,55 @@ function clearTimeoutSafe(ref) {
       clearTimeout(ref.current);
       ref.current = null;
     }
-  } catch { }
+  } catch {}
 }
-
-/* ---------------- styles (UI updated to match ChatDetailScreen) ---------------- */
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#F9FAFB" },
-
+  safe: { flex: 1, backgroundColor: BRAND.white},
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
   header: {
-    paddingHorizontal: 16,
-    paddingBottom: 10,
+    minHeight: 54,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    backgroundColor: "#ffffff",
+    backgroundColor: "transparent",
   },
   iconBtn: {
-    width: 40,
-    height: 40,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 999,
+    ...SHADOW.sm,
   },
-  headerTextWrap: { flex: 1 },
+  headerTextWrap: {
+    flex: 1,
+    alignItems: "center",
+    paddingHorizontal: 10,
+  },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#0f172a",
-    textAlign: "left",
+    flex: 1,
+    textAlign: "center",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
   },
   headerSubtitle: {
     fontSize: 13,
-    color: "#6B7280",
-    marginTop: 2,
+    color: BRAND.grey,
+    fontFamily: FONT.body,
+    textAlign: "center",
   },
   headerRightBtns: { flexDirection: "row", alignItems: "center", gap: 6 },
   orderPill: {
@@ -1755,14 +1770,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
-    backgroundColor: "#D1FAE5",
+    backgroundColor: BRAND.purpleLight,
     maxWidth: 140,
   },
   orderPillText: {
     marginLeft: 4,
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#065F46",
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.purple,
   },
 
   connectingBar: {
@@ -1771,11 +1786,11 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: "#ffffff",
+    backgroundColor: BRAND.white,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#E5E7EB",
   },
-  connectingTxt: { color: "#6B7280", fontSize: 12 },
+  connectingTxt: { color: BRAND.grey, fontSize: 12 },
 
   typingRow: { paddingVertical: 6, paddingHorizontal: 14 },
   typingBubble: {
@@ -1801,9 +1816,9 @@ const styles = StyleSheet.create({
 
   senderName: {
     flexShrink: 1,
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#111827",
+    fontFamily: FONT.header,
+    fontSize: 16,
+    color: BRAND.black,
     marginRight: 10,
   },
 
@@ -1833,8 +1848,16 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 16,
   },
-  bubbleOther: { backgroundColor: "#E5E7EB", borderBottomLeftRadius: 4 },
-  bubbleMerchant: { backgroundColor: "#00b14f", borderBottomRightRadius: 4 },
+  bubbleOther: {
+    backgroundColor: "#FCF7FF",
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    borderBottomLeftRadius: 4,
+  },
+  bubbleMerchant: {
+    backgroundColor: BRAND.purple,
+    borderBottomRightRadius: 4,
+  },
 
   replyBubble: {
     backgroundColor: "rgba(255,255,255,0.12)",
@@ -1843,11 +1866,22 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     marginBottom: 8,
   },
-  replyName: { fontSize: 11, fontWeight: "700", color: "rgba(255,255,255,0.95)" },
+  replyName: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.95)",
+  },
   replyText: { fontSize: 12, color: "rgba(255,255,255,0.95)", marginTop: 2 },
 
-  bubbleText: { fontSize: 14, color: "#111827" },
-  bubbleTextMerchant: { color: "#ffffff" },
+  bubbleText: {
+    fontFamily: FONT.body,
+    fontSize: 14,
+    color: BRAND.black,
+    lineHeight: 21,
+  },
+  bubbleTextMerchant: {
+    color: BRAND.white,
+  },
 
   photo: {
     width: 220,
@@ -1865,12 +1899,16 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 6,
   },
-  time: { fontSize: 10, color: "#6B7280" },
+  time: {
+    fontFamily: FONT.body,
+    fontSize: 11,
+    color: BRAND.grey,
+  },
   timeOnGreen: { color: "rgba(255,255,255,0.9)" },
   statusWrap: { marginLeft: 2 },
 
   inputBarWrap: {
-    backgroundColor: "#ffffff",
+    backgroundColor: BRAND.white,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "#E5E7EB",
     paddingHorizontal: 18,
@@ -1882,8 +1920,8 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingBottom: 10,
   },
-  replyBarTitle: { fontSize: 12, color: "#6B7280", fontWeight: "700" },
-  replyBarText: { fontSize: 12, color: "#111827", marginTop: 2 },
+  replyBarTitle: { fontSize: 12, color: BRAND.grey, fontWeight: "700" },
+  replyBarText: { fontSize: 12, color: BRAND.black, marginTop: 2 },
   replyClose: {
     width: 28,
     height: 28,
@@ -1898,36 +1936,45 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     paddingTop: 8,
     height: 80,
+    
   },
   cameraBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 48,
+    height: 48,
+    borderRadius: RADIUS.full,
+    backgroundColor: "#F8F0FF",
+    borderWidth: 1.5,
+    borderColor: BRAND.purpleLight,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#F3F4F6",
-    marginRight: 10,
+    marginRight: 12,
   },
   input: {
     flex: 1,
-    maxHeight: 120,
-    borderRadius: 20,
-    paddingHorizontal: 12,
+    minHeight: 48,
+    maxHeight: 110,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    fontSize: 14,
-    backgroundColor: "#F3F4F6",
-    color: "#111827",
+    fontFamily: FONT.body,
+    fontSize: 15,
+    backgroundColor: BRAND.white,
+    color: BRAND.black,
+    borderWidth: 1.2,
+    borderColor: "#F3E8FF",
   },
   sendButton: {
-    marginLeft: 10,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    marginLeft: 12,
+    width: 48,
+    height: 48,
+    borderRadius: RADIUS.full,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#E5E7EB",
+    backgroundColor: "#F3E8FF",
   },
-  sendButtonActive: { backgroundColor: "#00b14f" },
+  sendButtonActive: {
+    backgroundColor: BRAND.purple,
+  },
 
   inactiveWrap: {
     paddingHorizontal: 16,
@@ -1937,10 +1984,15 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: "#E5E7EB",
   },
-  inactiveText: { fontSize: 12, color: "#6B7280", textAlign: "center" },
+  inactiveText: { fontSize: 12, color: BRAND.grey, textAlign: "center" },
 
-  centerWrap: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 24 },
-  centerText: { marginTop: 10, color: "#6B7280", textAlign: "center" },
+  centerWrap: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  centerText: { marginTop: 10, color: BRAND.grey, textAlign: "center" },
 
   skelBubble: { height: 38, borderRadius: 16, marginBottom: 10 },
   skelOther: { backgroundColor: "#E5E7EB" },

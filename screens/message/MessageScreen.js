@@ -1,5 +1,11 @@
 // screens/message/MessageScreen.js
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   View,
   Text,
@@ -13,10 +19,14 @@ import {
   Alert,
   Image,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { getUserInfo } from "../../utils/authToken";
 import * as SecureStore from "expo-secure-store";
+import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
 // ✅ use .env
 import {
@@ -69,7 +79,9 @@ function formatChatTime(ts) {
  * - Prefer PROFILE_IMAGE (https://backend.tabdhey.bt/driver/)
  * - Fallback API_BASE_URL (https://backend.tabdhey.bt)
  */
-const CUSTOMER_PROFILE_BASE = String(PROFILE_IMAGE || API_BASE_URL || "").replace(/\/+$/, "");
+const CUSTOMER_PROFILE_BASE = String(
+  PROFILE_IMAGE || API_BASE_URL || "",
+).replace(/\/+$/, "");
 
 const resolveCustomerProfileUrl = (raw) => {
   const s = String(raw || "").trim();
@@ -84,11 +96,7 @@ const resolveCustomerProfileUrl = (raw) => {
 };
 
 async function getBusinessIdFromSecureStore() {
-  const keys = [
-    "business_id",
-    "businessId",
-    "merchant_business_id", 
-  ];
+  const keys = ["business_id", "businessId", "merchant_business_id"];
 
   for (const k of keys) {
     try {
@@ -178,7 +186,10 @@ async function getMerchantUserIdFromSecureStore() {
  * - RIDE_LOCAL_ENDPOINT = https://backend.tabdhey.bt/grablike
  * fallback API_BASE_URL
  */
-const BASE_ORIGIN = String(RIDE_LOCAL_ENDPOINT || API_BASE_URL || "").replace(/\/+$/, "");
+const BASE_ORIGIN = String(RIDE_LOCAL_ENDPOINT || API_BASE_URL || "").replace(
+  /\/+$/,
+  "",
+);
 
 const _nameCache = new Map();
 async function fetchUserNameById(userId) {
@@ -348,7 +359,7 @@ export default function MessageScreen({ navigation, route }) {
             r?.ride_id,
             r?.rideId,
             r?.id,
-            r?.thread_id
+            r?.thread_id,
           );
           if (!rideId) continue;
 
@@ -360,7 +371,7 @@ export default function MessageScreen({ navigation, route }) {
             r?.peer?.id,
             r?.peer?.user_id,
             r?.peer?.driver_id,
-            r?.peer?.driverId
+            r?.peer?.driverId,
           );
 
           let driverName =
@@ -370,7 +381,7 @@ export default function MessageScreen({ navigation, route }) {
               r?.driver?.user_name,
               r?.driver?.name,
               r?.peer?.name,
-              r?.peer?.user_name
+              r?.peer?.user_name,
             ) || "Driver";
           if (driverId && driverName === "Driver") {
             const nm = await fetchUserNameById(driverId);
@@ -378,7 +389,9 @@ export default function MessageScreen({ navigation, route }) {
           }
 
           const lastMsgObj = r?.last_message ?? r?.lastMessage ?? null;
-          const lastType = String(lastMsgObj?.message_type || lastMsgObj?.type || "").toUpperCase();
+          const lastType = String(
+            lastMsgObj?.message_type || lastMsgObj?.type || "",
+          ).toUpperCase();
           const lastMsgText = pickFirst(
             typeof lastMsgObj === "object"
               ? pickFirst(
@@ -386,13 +399,16 @@ export default function MessageScreen({ navigation, route }) {
                   lastMsgObj?.text,
                   lastMsgObj?.body,
                   lastMsgObj?.message_body,
-                  lastMsgObj?.messageBody
+                  lastMsgObj?.messageBody,
                 )
               : lastMsgObj,
             r?.preview,
-            r?.message
+            r?.message,
           );
-          const lastMsg = lastMsgText || (lastType === "IMAGE" ? "📷 Photo" : "") || "Tap to open chat";
+          const lastMsg =
+            lastMsgText ||
+            (lastType === "IMAGE" ? "📷 Photo" : "") ||
+            "Tap to open chat";
 
           const lastAtRaw = pickFirst(
             r?.last_message_at,
@@ -401,7 +417,7 @@ export default function MessageScreen({ navigation, route }) {
             r?.created_at,
             r?.ts,
             lastMsgObj?.created_at,
-            lastMsgObj?.ts
+            lastMsgObj?.ts,
           );
           const lastAtNum = Number(lastAtRaw || 0);
           let lastAt = 0;
@@ -422,7 +438,9 @@ export default function MessageScreen({ navigation, route }) {
             merchantId: merchantId,
             lastMessage: String(lastMsg),
             lastAt,
-            unread: Number(r?.unread_count ?? r?.unread ?? r?.total_unread ?? 0),
+            unread: Number(
+              r?.unread_count ?? r?.unread ?? r?.total_unread ?? 0,
+            ),
             time: lastAt ? formatClock(lastAt) : "",
           });
         }
@@ -441,7 +459,7 @@ export default function MessageScreen({ navigation, route }) {
         }
       }
     },
-    [routeMerchantId, MERCHANT_DRIVER_CHAT_LIST_ENDPOINT]
+    [routeMerchantId, MERCHANT_DRIVER_CHAT_LIST_ENDPOINT],
   );
 
   useEffect(() => {
@@ -472,22 +490,32 @@ export default function MessageScreen({ navigation, route }) {
             info.token,
             info.jwt,
             info?.user?.token,
-            info?.user?.accessToken
+            info?.user?.accessToken,
           ) || null;
 
         const res = await listMerchantConversations({ businessId: bid, token });
 
         // ✅ robust rows extraction
-        const rawRows = res?.rows ?? res?.data?.rows ?? res?.data?.data ?? res?.data ?? [];
+        const rawRows =
+          res?.rows ?? res?.data?.rows ?? res?.data?.data ?? res?.data ?? [];
         const arr = Array.isArray(rawRows) ? rawRows : [];
 
         const mapped = arr
           .map((r, idx) => {
-            const conversationId = String(r?.conversation_id ?? r?.conversationId ?? r?.id ?? "").trim();
+            const conversationId = String(
+              r?.conversation_id ?? r?.conversationId ?? r?.id ?? "",
+            ).trim();
             if (!conversationId) return null;
 
-            const lastType = String(r?.last_message_type || r?.lastMessageType || "").toUpperCase();
-            const lastBody = String(r?.last_message_body || r?.lastMessageBody || r?.last_message || "").trim();
+            const lastType = String(
+              r?.last_message_type || r?.lastMessageType || "",
+            ).toUpperCase();
+            const lastBody = String(
+              r?.last_message_body ||
+                r?.lastMessageBody ||
+                r?.last_message ||
+                "",
+            ).trim();
             const lastText = lastType === "IMAGE" ? "📷 Photo" : lastBody;
 
             const lastAtRaw =
@@ -531,7 +559,12 @@ export default function MessageScreen({ navigation, route }) {
               id: conversationId || `c_${idx}`,
               conversationId,
               orderId: String(r?.order_id ?? r?.orderId ?? "").trim(),
-              customerId: r?.customer_id ?? r?.customerId ?? r?.user_id ?? r?.userId ?? null,
+              customerId:
+                r?.customer_id ??
+                r?.customerId ??
+                r?.user_id ??
+                r?.userId ??
+                null,
               business_id: r?.business_id ?? r?.businessId ?? bid,
               customerName: String(customerName),
               customer_profile_image: String(profileRaw || ""),
@@ -557,7 +590,7 @@ export default function MessageScreen({ navigation, route }) {
         }
       }
     },
-    [businessId]
+    [businessId],
   );
 
   useEffect(() => {
@@ -592,7 +625,9 @@ export default function MessageScreen({ navigation, route }) {
           }}
         >
           <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>{item.name?.charAt(0)?.toUpperCase() || "?"}</Text>
+            <Text style={styles.avatarText}>
+              {item.name?.charAt(0)?.toUpperCase() || "?"}
+            </Text>
           </View>
 
           <View style={styles.threadTextWrap}>
@@ -600,19 +635,25 @@ export default function MessageScreen({ navigation, route }) {
               <Text style={styles.threadName} numberOfLines={1}>
                 {item.name}
               </Text>
-              {!!item.time ? <Text style={styles.threadTime}>{item.time}</Text> : null}
+              {!!item.time ? (
+                <Text style={styles.threadTime}>{item.time}</Text>
+              ) : null}
             </View>
 
             <Text style={styles.threadOrder} numberOfLines={1}>
-              Ride ID: <Text style={styles.threadOrderBold}>{item.rideId || "-"}</Text>
+              Ride ID:{" "}
+              <Text style={styles.threadOrderBold}>{item.rideId || "-"}</Text>
             </Text>
 
-            <Text style={[styles.threadLastMsg, { marginTop: 2 }]} numberOfLines={1}>
+            <Text
+              style={[styles.threadLastMsg, { marginTop: 2 }]}
+              numberOfLines={1}
+            >
               {item.lastMessage}
             </Text>
           </View>
 
-          <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+          <Ionicons name="chevron-forward" size={18} color={BRAND.grey} />
         </TouchableOpacity>
       );
     }
@@ -627,12 +668,15 @@ export default function MessageScreen({ navigation, route }) {
         activeOpacity={0.85}
         onPress={async () => {
           try {
-            const bid = trim(businessId) || (await getBusinessIdFromSecureStore());
+            const bid =
+              trim(businessId) || (await getBusinessIdFromSecureStore());
             if (!bid) throw new Error("Missing business id");
 
             const merchantUserId = await getMerchantUserIdFromSecureStore();
             if (!merchantUserId) {
-              throw new Error("Missing merchant user id for chat room (SecureStore user_id_v1/user_id not found)");
+              throw new Error(
+                "Missing merchant user id for chat room (SecureStore user_id_v1/user_id not found)",
+              );
             }
 
             navigation.navigate("MerchantChatRoomScreen", {
@@ -658,7 +702,9 @@ export default function MessageScreen({ navigation, route }) {
           <Image source={{ uri: avatarUrl }} style={styles.avatarImg} />
         ) : (
           <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>{item.customerName?.charAt(0)?.toUpperCase() || "C"}</Text>
+            <Text style={styles.avatarText}>
+              {item.customerName?.charAt(0)?.toUpperCase() || "C"}
+            </Text>
           </View>
         )}
 
@@ -671,7 +717,8 @@ export default function MessageScreen({ navigation, route }) {
           </View>
 
           <Text style={styles.threadOrder} numberOfLines={1}>
-            Order ID: <Text style={styles.threadOrderBold}>{item.orderId || "-"}</Text>
+            Order ID:{" "}
+            <Text style={styles.threadOrderBold}>{item.orderId || "-"}</Text>
           </Text>
 
           <Text style={styles.threadLastMsg} numberOfLines={1}>
@@ -679,22 +726,30 @@ export default function MessageScreen({ navigation, route }) {
           </Text>
         </View>
 
-        <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+        <Ionicons name="chevron-forward" size={18} color={BRAND.grey} />
       </TouchableOpacity>
     );
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["left", "right"]}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="dark-content" />
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "bottom", "left", "right"]}
+    >
+      <View style={styles.topGlow} />
+      <StatusBar
+        translucent
+        backgroundColor="transparent"
+        barStyle="dark-content"
+      />
 
-      <View style={[styles.header, { paddingTop: (insets.top || 0) + 6 }]}>
+      <View style={[styles.header]}>
         <Pressable
           onPress={() => navigation.goBack()}
           style={styles.iconBtn}
           android_ripple={{ color: "rgba(0,0,0,0.08)", borderless: true }}
         >
-          <Ionicons name="arrow-back" size={24} color="#0f172a" />
+          <Ionicons name="arrow-back" size={24} color={BRAND.black} />
         </Pressable>
         <Text style={styles.headerTitle}>Messages</Text>
         <View style={{ width: 40 }} />
@@ -718,20 +773,25 @@ export default function MessageScreen({ navigation, route }) {
       <View style={styles.content}>
         {isDriverTab && driverLoading ? (
           <View style={styles.loadingBox}>
-            <ActivityIndicator size="large" color="#00b14f" />
+            <ActivityIndicator size="large" color={BRAND.purple} />
             <Text style={styles.loadingText}>Loading driver chats…</Text>
           </View>
         ) : !isDriverTab && customerLoading ? (
           <View style={styles.loadingBox}>
-            <ActivityIndicator size="large" color="#00b14f" />
+            <ActivityIndicator size="large" color={BRAND.purple} />
             <Text style={styles.loadingText}>Loading customer chats…</Text>
           </View>
         ) : data.length === 0 ? (
           <View style={styles.emptyState}>
-            <Ionicons name={isDriverTab ? "car-outline" : "person-outline"} size={32} color="#9CA3AF" />
+            <Ionicons
+              name={isDriverTab ? "car-outline" : "person-outline"}
+              size={32}
+              color={BRAND.grey}
+            />
             <Text style={styles.emptyTitle}>No conversations yet</Text>
             <Text style={styles.emptySubtitle}>
-              When you have orders, {isDriverTab ? "batches/drivers" : "customers"} will appear here.
+              When you have orders,{" "}
+              {isDriverTab ? "batches/drivers" : "customers"} will appear here.
             </Text>
           </View>
         ) : (
@@ -745,13 +805,15 @@ export default function MessageScreen({ navigation, route }) {
                 <RefreshControl
                   refreshing={driverRefreshing}
                   onRefresh={() => fetchDriverBatches({ refreshing: true })}
-                  tintColor="#00b14f"
+                  tintColor={BRAND.purple}
                 />
               ) : (
                 <RefreshControl
                   refreshing={customerRefreshing}
-                  onRefresh={() => fetchCustomerConversations({ refreshing: true })}
-                  tintColor="#00b14f"
+                  onRefresh={() =>
+                    fetchCustomerConversations({ refreshing: true })
+                  }
+                  tintColor={BRAND.purple}
                 />
               )
             }
@@ -762,66 +824,100 @@ export default function MessageScreen({ navigation, route }) {
   );
 }
 
-/* ───────────── Components ───────────── */
 function TabButton({ label, icon, active, onPress }) {
   return (
-    <TouchableOpacity style={[styles.tabButton, active && styles.tabButtonActive]} onPress={onPress} activeOpacity={0.9}>
-      <Ionicons name={icon} size={18} color={active ? "#00b14f" : "#6B7280"} style={{ marginRight: 6 }} />
-      <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{label}</Text>
+    <TouchableOpacity
+      style={[styles.tabButton, active && styles.tabButtonActive]}
+      onPress={onPress}
+      activeOpacity={0.9}
+    >
+      <Ionicons
+        name={icon}
+        size={18}
+        color={active ? BRAND.purple : BRAND.grey}
+        style={{ marginRight: 6 }}
+      />
+      <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }
-
-/* ───────────── Styles ───────────── */
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#ffffff" },
+  safe: { flex: 1, backgroundColor: "#FBF7FF" },
+
+  topGlow: {
+    position: "absolute",
+    top: -120,
+    right: -90,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: BRAND.purpleLight,
+    opacity: 0.38,
+  },
 
   header: {
-    paddingHorizontal: 16,
-    paddingBottom: 10,
+    paddingHorizontal: 18,
+    paddingBottom: 12,
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    backgroundColor: "transparent",
   },
   headerTitle: {
     flex: 1,
     textAlign: "center",
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#0f172a",
+    fontFamily: FONT.header,
+    fontSize: 20,
+    fontWeight: "900",
+    color: BRAND.black,
   },
   iconBtn: {
-    width: 40,
-    height: 40,
+    width: 42,
+    height: 42,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 999,
+    ...SHADOW.sm,
   },
 
   tabRow: {
     flexDirection: "row",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: "#F3F4F6",
+    marginHorizontal: 16,
+    marginVertical: 10,
+    padding: 5,
+    borderRadius: RADIUS.pill,
+    backgroundColor: BRAND.white,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
   },
   tabButton: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "#E5E7EB",
-    marginHorizontal: 4,
+    paddingVertical: 10,
+    borderRadius: RADIUS.pill,
   },
-  tabButtonActive: { backgroundColor: "#D1FAE5" },
-  tabLabel: { fontSize: 13, fontWeight: "600", color: "#6B7280" },
-  tabLabelActive: { color: "#065F46" },
+  tabButtonActive: {
+    backgroundColor: "#F8F0FF",
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
+  },
+  tabLabel: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: BRAND.grey,
+  },
+  tabLabelActive: {
+    color: BRAND.purple,
+  },
 
   content: {
     flex: 1,
-    backgroundColor: "#F9FAFB",
-    paddingHorizontal: 10,
+    backgroundColor: "#FBF7FF",
+    paddingHorizontal: 12,
   },
 
   loadingBox: {
@@ -832,47 +928,83 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     marginTop: 10,
+    fontFamily: FONT.body,
     fontSize: 13,
-    color: "#6B7280",
+    color: BRAND.grey,
     textAlign: "center",
   },
 
   threadRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 10,
-    paddingHorizontal: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#E5E7EB",
+    backgroundColor: BRAND.white,
+    marginBottom: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1,
+    borderColor: "#F3E8FF",
+    ...SHADOW.sm,
   },
 
   avatarCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 999,
-    backgroundColor: "#DCFCE7",
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.full,
+    backgroundColor: "#F8F0FF",
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 10,
+    marginRight: 12,
   },
   avatarImg: {
-    width: 40,
-    height: 40,
-    borderRadius: 999,
-    marginRight: 10,
+    width: 44,
+    height: 44,
+    borderRadius: RADIUS.full,
+    marginRight: 12,
     borderWidth: 1,
-    borderColor: "#E5E7EB",
-    backgroundColor: "#fff",
+    borderColor: BRAND.purpleLight,
+    backgroundColor: BRAND.white,
   },
-  avatarText: { fontSize: 16, fontWeight: "700", color: "#065F46" },
+  avatarText: {
+    fontFamily: FONT.header,
+    fontSize: 16,
+    color: BRAND.purple,
+  },
 
   threadTextWrap: { flex: 1 },
-  threadTopRow: { flexDirection: "row", alignItems: "center" },
-  threadName: { flex: 1, fontSize: 15, fontWeight: "700", color: "#111827" },
-  threadTime: { fontSize: 12, color: "#9CA3AF", marginLeft: 6 },
-  threadOrder: { fontSize: 13, color: "#6B7280", marginTop: 2 },
-  threadOrderBold: { fontWeight: "700", color: "#111827" },
-  threadLastMsg: { fontSize: 13, color: "#4B5563", marginTop: 2 },
+  threadTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  threadName: {
+    flex: 1,
+    fontFamily: FONT.header,
+    fontSize: 15,
+    color: BRAND.black,
+  },
+  threadTime: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    marginLeft: 6,
+  },
+  threadOrder: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    marginTop: 3,
+  },
+  threadOrderBold: {
+    color: BRAND.black,
+  },
+  threadLastMsg: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: "#4B5563",
+    marginTop: 3,
+  },
 
   emptyState: {
     flex: 1,
@@ -882,14 +1014,15 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     marginTop: 8,
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#111827",
+    fontFamily: FONT.header,
+    fontSize: 17,
+    color: BRAND.black,
   },
   emptySubtitle: {
     marginTop: 4,
+    fontFamily: FONT.body,
     fontSize: 13,
-    color: "#6B7280",
+    color: BRAND.grey,
     textAlign: "center",
   },
 });
