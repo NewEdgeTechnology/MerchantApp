@@ -19,6 +19,7 @@ import {
 import { Ionicons, Feather } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { BRAND, FONT, TEXT, RADIUS, SHADOW, BUTTON, INPUT } from "../styles/tabdey_brand";
 import {
   BANNERS_ENDPOINT,
   CREATE_BANNER_ENDPOINT,
@@ -767,8 +768,8 @@ export default function PromosTab({
             <Text style={styles.meta} numberOfLines={2}>{item.description || '—'}</Text>
           </View>
           <View>
-            <View style={[styles.badge, { backgroundColor: showInactive ? '#f3f4f6' : '#e8f5e9' }]}>
-              <Text style={[styles.badgeText, { color: showInactive ? '#334155' : '#166534' }]}>
+            <View style={[styles.badge, { backgroundColor: showInactive ? BRAND.greyLight : BRAND.purpleLight }]}>
+              <Text style={[styles.badgeText, { color: showInactive ? BRAND.grey : BRAND.purple }]}>
                 {showInactive ? 'Inactive' : 'Active'}
               </Text>
             </View>
@@ -782,8 +783,8 @@ export default function PromosTab({
 
         {/* Days & Amount (or "Paid: BTN. X" when inactive/expired) */}
         <View style={[styles.rowBetween, { marginTop: 6 }]}>
-          <View style={[styles.badge, { backgroundColor: '#eef2ff' }]}>
-            <Text style={[styles.badgeText, { color: '#3730a3' }]}>
+          <View style={[styles.badge, { backgroundColor: BRAND.purpleLight }]}>
+            <Text style={[styles.badgeText, { color: BRAND.purple }]}>
               Days Active: {days || '—'}
             </Text>
           </View>
@@ -809,8 +810,8 @@ export default function PromosTab({
             <Switch
               value={active}
               onValueChange={() => toggleActive(item)}
-              trackColor={{ false: '#cbd5e1', true: '#86efac' }}
-              thumbColor={active ? '#16a34a' : '#f8fafc'}
+              trackColor={{ false: BRAND.greyLight, true: BRAND.purpleLight }}
+              thumbColor={active ? BRAND.purple : BRAND.white}
             />
           </View>
           <View style={styles.row}>
@@ -960,8 +961,8 @@ export default function PromosTab({
                   <View style={{ flex: 1, paddingRight: 12 }}>
                     <Text style={styles.previewTitle} numberOfLines={2}>{form.title || 'Offer headline'}</Text>
                     <Text style={styles.previewDesc} numberOfLines={3}>{form.description || 'Short description of the banner'}</Text>
-                    <View style={[styles.badge, { alignSelf: 'flex-start', backgroundColor: Number(form.is_active) ? '#e8f5e9' : '#f3f4f6', marginTop: 6 }]}>
-                      <Text style={[styles.badgeText, { color: Number(form.is_active) ? '#166534' : '#334155' }]}>
+                    <View style={[styles.badge, { alignSelf: 'flex-start', backgroundColor: Number(form.is_active) ? BRAND.purpleLight : BRAND.greyLight, marginTop: 6 }]}>
+                      <Text style={[styles.badgeText, { color: Number(form.is_active) ? BRAND.purple : BRAND.grey }]}>
                         {Number(form.is_active) ? 'Active' : 'Paused'}
                       </Text>
                     </View>
@@ -975,7 +976,7 @@ export default function PromosTab({
                       />
                     ) : (
                       <View style={styles.previewImagePlaceholder}>
-                        <Ionicons name="image" size={28} color="#86efac" />
+                        <Ionicons name="image" size={28} color={BRAND.purple} />
                       </View>
                     )}
                   </View>
@@ -1023,7 +1024,7 @@ export default function PromosTab({
                         />
                       ) : (
                         <View style={styles.imageThumbEmpty}>
-                          <Ionicons name="image" size={22} color="#86efac" />
+                          <Ionicons name="image" size={22} color={BRAND.purple} />
                         </View>
                       )}
                     </View>
@@ -1031,7 +1032,7 @@ export default function PromosTab({
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <View style={{ flexDirection: 'row', gap: 8 }}>
                         <TouchableOpacity style={styles.pickBtn} onPress={pickImage}>
-                          <Ionicons name="image" size={16} color="#065f46" />
+                          <Ionicons name="image" size={16} color={BRAND.purple} />
                           <Text style={styles.pickBtnText}>{(form._localImage || form.banner_image) ? 'Change Image' : 'Select Image'}</Text>
                         </TouchableOpacity>
                         {(form._localImage || form.banner_image) ? (
@@ -1055,8 +1056,8 @@ export default function PromosTab({
                     <Switch
                       value={Number(form.is_active) === 1}
                       onValueChange={(v) => setForm((s) => ({ ...s, is_active: v ? 1 : 0 }))}
-                      trackColor={{ false: '#cbd5e1', true: '#86efac' }}
-                      thumbColor={Number(form.is_active) === 1 ? '#16a34a' : '#f8fafc'}
+                      trackColor={{ false: BRAND.greyLight, true: BRAND.purpleLight }}
+                      thumbColor={Number(form.is_active) === 1 ? BRAND.purple : BRAND.white}
                     />
                     <Text style={[styles.meta, { marginLeft: 8, color: Number(form.is_active) ? '#166534' : '#64748b' }]}>
                       {Number(form.is_active) ? 'Enabled' : 'Disabled'}
@@ -1072,7 +1073,7 @@ export default function PromosTab({
                       onPress={() => !endNotEndedEdit && setShowStartPicker(true)}
                       disabled={endNotEndedEdit}
                     >
-                      <Ionicons name="calendar" size={14} color="#065f46" />
+                      <Ionicons name="calendar" size={14} color={BRAND.purple} />
                       <Text style={styles.dateBtnTextGreen}>{form.start_date || 'Pick a date'}</Text>
                     </TouchableOpacity>
                   </Field>
@@ -1082,24 +1083,24 @@ export default function PromosTab({
                       onPress={() => !endNotEndedEdit && setShowEndPicker(true)}
                       disabled={endNotEndedEdit}
                     >
-                      <Ionicons name="calendar" size={14} color="#065f46" />
+                      <Ionicons name="calendar" size={14} color={BRAND.purple} />
                       <Text style={styles.dateBtnTextGreen}>{form.end_date || 'Pick a date'}</Text>
                     </TouchableOpacity>
                   </Field>
                 </View>
 
                 {endNotEndedEdit && (
-                  <Text style={[styles.meta, { marginTop: 6, color: '#b45309' }]}>
+                  <Text style={[styles.meta, { marginTop: 6, color: BRAND.red}]}>
                     End date has not passed yet – dates cannot be edited.
                   </Text>
                 )}
 
                 {/* LIVE: Amount under dates */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20, marginTop: 12 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: BRAND.black }}>
                     Days Active: {draftDays || '—'}
                   </Text>
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: '#0f172a' }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: BRAND.black }}>
                     Amount: {Number.isFinite(draftAmount) ? currency(draftAmount) : (basePriceLoading ? 'Calculating…' : '—')}
                   </Text>
                 </View>
@@ -1159,7 +1160,7 @@ export default function PromosTab({
                   onPress={() => !endNotEndedReactivate && setShowEnableStartPicker(true)}
                   disabled={endNotEndedReactivate}
                 >
-                  <Ionicons name="calendar" size={14} color="#065f46" />
+                  <Ionicons name="calendar" size={14} color={BRAND.purple} />
                   <Text style={styles.dateBtnTextGreen}>{enableStart || 'Pick a date'}</Text>
                 </TouchableOpacity>
               </Field>
@@ -1169,7 +1170,7 @@ export default function PromosTab({
                   onPress={() => !endNotEndedReactivate && setShowEnableEndPicker(true)}
                   disabled={endNotEndedReactivate}
                 >
-                  <Ionicons name="calendar" size={14} color="#065f46" />
+                  <Ionicons name="calendar" size={14} color={BRAND.purple} />
                   <Text style={styles.dateBtnTextGreen}>{enableEnd || 'Pick a date'}</Text>
                 </TouchableOpacity>
               </Field>
@@ -1229,147 +1230,410 @@ function Field({ label, children }) {
   );
 }
 
-/* ================ styles ================ */
 const styles = StyleSheet.create({
-  wrap: { paddingHorizontal: 16, paddingTop: 16, flex: 1, backgroundColor: '#f8fafc' },
-  title: { fontWeight: '700', color: '#0f172a' },
-  sub: { color: '#64748b', marginTop: 6 },
-
-  toolbar: { flexDirection: 'row', alignItems: 'center', marginTop: 12, gap: 10 },
-  searchBox: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#ffffff', borderRadius: 12, paddingHorizontal: 10, height: 40,
-    borderWidth: 1, borderColor: '#e2e8f0',
+  wrap: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    flex: 1,
+    backgroundColor: BRAND.white,
   },
-  searchInput: { flex: 1, color: '#0f172a', paddingVertical: 8 },
+
+  title: {
+    fontWeight: "700",
+    color: BRAND.purple,
+    fontFamily: FONT.header,
+  },
+
+  sub: {
+    color: BRAND.grey,
+    marginTop: 6,
+    fontFamily: FONT.body,
+  },
+
+  toolbar: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+    gap: 10,
+  },
+
+  searchBox: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: BRAND.white,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    height: 40,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+  },
+
+  searchInput: {
+    flex: 1,
+    color: BRAND.black,
+    paddingVertical: 8,
+    fontFamily: FONT.body,
+  },
 
   newBtn: {
-    backgroundColor: '#16a34a', height: 40, paddingHorizontal: 12, borderRadius: 12,
-    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: BRAND.purple,
+    height: 40,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    ...SHADOW.sm,
   },
-  newBtnText: { color: '#fff', fontWeight: '700' },
 
-  card: { backgroundColor: '#fff', borderRadius: 14, padding: 12, marginTop: 12, borderWidth: 1, borderColor: '#e2e8f0' },
-  cardHeader: { flexDirection: 'row', alignItems: 'center' },
-  cardTitle: { fontWeight: '800', color: '#0f172a', fontSize: 15 },
+  newBtnText: {
+    color: BRAND.white,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  card: {
+    backgroundColor: BRAND.white,
+    borderRadius: 14,
+    padding: 12,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: BRAND.greyLight,
+    ...SHADOW.sm,
+  },
+
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
+  cardTitle: {
+    fontWeight: "800",
+    color: BRAND.black,
+    fontSize: 15,
+    fontFamily: FONT.header,
+  },
+
   thumb: {
     width: 88,
-    aspectRatio: 16 / 10,     // ✅ landscape in list too
+    aspectRatio: 16 / 10,
     borderRadius: 10,
-    backgroundColor: '#f1f5f9',
-    resizeMode: 'cover',
+    backgroundColor: "#FFF7FF",
+    resizeMode: "cover",
   },
-  badge: { paddingHorizontal: 8, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
-  badgeText: { fontSize: 11, fontWeight: '800' },
 
-  row: { flexDirection: 'row', alignItems: 'center' },
-  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  badge: {
+    paddingHorizontal: 8,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: "center",
+    alignItems: "center",
+  },
 
-  meta: { fontSize: 12, color: '#64748b' },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: "800",
+    fontFamily: FONT.body,
+  },
 
-  iconBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'center' },
-  iconBtnText: { fontSize: 12, color: '#334155', fontWeight: '700' },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
 
-  empty: { alignItems: 'center', marginTop: 32 },
-  emptyTitle: { marginTop: 8, fontSize: 16, fontWeight: '800', color: '#0f172a' },
-  emptySub: { color: '#64748b', marginTop: 4, textAlign: 'center' },
+  rowBetween: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
 
-  backdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.3)' },
-  modalWrap: { position: 'absolute', bottom: 0, left: 0, right: 0 },
+  meta: {
+    fontSize: 12,
+    color: BRAND.grey,
+    fontFamily: FONT.body,
+  },
+
+  iconBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    justifyContent: "center",
+  },
+
+  iconBtnText: {
+    fontSize: 12,
+    color: BRAND.grey,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  empty: {
+    alignItems: "center",
+    marginTop: 32,
+  },
+
+  emptyTitle: {
+    marginTop: 8,
+    fontSize: 16,
+    fontWeight: "800",
+    color: BRAND.black,
+    fontFamily: FONT.header,
+  },
+
+  emptySub: {
+    color: BRAND.grey,
+    marginTop: 4,
+    textAlign: "center",
+    fontFamily: FONT.body,
+  },
+
+  backdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+
+  modalWrap: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+  },
+
   sheet: {
-    backgroundColor: '#fff', borderTopLeftRadius: 16,
-    borderTopRightRadius: 16, padding: 16,
-    borderTopWidth: 1, borderColor: '#e2e8f0'
+    backgroundColor: BRAND.white,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 16,
+    borderTopWidth: 1,
+    borderColor: BRAND.greyLight,
   },
-  sheetHeader: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  sheetTitle: { fontSize: 16, fontWeight: '800', color: '#0f172a' },
-  modalScroll: { maxHeight: '89%' },
-  sheetScroll: { paddingBottom: 24 },
 
-  fieldLabel: { fontSize: 12, color: '#475569', marginBottom: 6, fontWeight: '700' },
+  sheetHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+
+  sheetTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: BRAND.purple,
+    fontFamily: FONT.header,
+  },
+
+  modalScroll: {
+    maxHeight: "89%",
+  },
+
+  sheetScroll: {
+    paddingBottom: 24,
+  },
+
+  fieldLabel: {
+    fontSize: 12,
+    color: BRAND.black,
+    marginBottom: 6,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
   input: {
-    height: 40, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 10, color: '#0f172a', backgroundColor: '#fff',
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    paddingHorizontal: 10,
+    color: BRAND.black,
+    backgroundColor: BRAND.white,
+    fontFamily: FONT.body,
   },
 
   disabledInput: {
-    height: 40, borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', paddingHorizontal: 10, backgroundColor: '#f1f5f9', justifyContent: 'center',
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: BRAND.greyLight,
+    paddingHorizontal: 10,
+    backgroundColor: "#F8F1FF",
+    justifyContent: "center",
   },
-  disabledInputText: { color: '#475569', fontWeight: '700' },
 
-  grid2: { flexDirection: 'row', gap: 8 },
+  disabledInputText: {
+    color: BRAND.grey,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  grid2: {
+    flexDirection: "row",
+    gap: 8,
+  },
 
   previewCard: {
-    marginTop: 8, borderRadius: 12, overflow: 'hidden',
-    borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#fff', flexDirection: 'row', padding: 12,
+    marginTop: 8,
+    borderRadius: 12,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: BRAND.greyLight,
+    backgroundColor: BRAND.white,
+    flexDirection: "row",
+    padding: 12,
   },
-  previewTitle: { fontSize: 16, fontWeight: '900', color: '#0f172a' },
-  previewDesc: { fontSize: 12, color: '#475569', marginTop: 4 },
+
+  previewTitle: {
+    fontSize: 16,
+    fontWeight: "900",
+    color: BRAND.black,
+    fontFamily: FONT.header,
+  },
+
+  previewDesc: {
+    fontSize: 12,
+    color: BRAND.grey,
+    marginTop: 4,
+    fontFamily: FONT.body,
+  },
+
   previewImageWrap: {
     width: 140,
-    aspectRatio: 16 / 9,     // ✅ fixed landscape frame
+    aspectRatio: 16 / 9,
     borderRadius: 10,
-    overflow: 'hidden',
-    backgroundColor: '#dcfce7',
+    overflow: "hidden",
+    backgroundColor: "#FFF7FF",
   },
-  previewImage: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',     // ✅ fills frame, stays landscape
-  },
-  previewImagePlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
-  // Inline "Image + Select" field
-  imageRow: { flexDirection: 'row', alignItems: 'center' },
+  previewImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
+  },
+
+  previewImagePlaceholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  imageRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+
   imageThumbBox: {
     width: 120,
-    aspectRatio: 16 / 9,     // ✅ fixed landscape
+    aspectRatio: 16 / 9,
     borderRadius: 10,
-    overflow: 'hidden',
-    backgroundColor: '#dcfce7',
+    overflow: "hidden",
+    backgroundColor: "#FFF7FF",
   },
+
   imageThumb: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',     // ✅ keep landscape fill
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
   },
-  imageThumbEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+
+  imageThumbEmpty: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
 
   pickBtn: {
-    backgroundColor: '#ecfdf5', borderColor: '#86efac', borderWidth: 1,
-    height: 40, paddingHorizontal: 12, borderRadius: 10, flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: "#F8F1FF",
+    borderColor: BRAND.purpleLight,
+    borderWidth: 1,
+    height: 40,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
-  pickBtnText: { color: '#065f46', fontWeight: '700', fontSize: 12 },
+
+  pickBtnText: {
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontSize: 12,
+    fontFamily: FONT.body,
+  },
 
   removeBtn: {
-    backgroundColor: '#b91c1c',
-    height: 40, paddingHorizontal: 12, borderRadius: 10,
-    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: BRAND.red,
+    height: 40,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
-  removeBtnText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+
+  removeBtnText: {
+    color: BRAND.white,
+    fontWeight: "800",
+    fontSize: 12,
+    fontFamily: FONT.body,
+  },
 
   dateBtnGreen: {
-    height: 40, borderRadius: 10, borderWidth: 1, borderColor: '#86efac', paddingHorizontal: 10,
-    backgroundColor: '#dcfce7', alignItems: 'center', flexDirection: 'row', gap: 6,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
+    paddingHorizontal: 10,
+    backgroundColor: "#FFF7FF",
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 6,
   },
-  dateBtnTextGreen: { color: '#065f46', fontWeight: '700', fontSize: 12 },
+
+  dateBtnTextGreen: {
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontSize: 12,
+    fontFamily: FONT.body,
+  },
+
   dateBtnDisabled: {
     opacity: 0.5,
   },
 
   cancelBtn: {
-    height: 36, paddingHorizontal: 12,
-    borderRadius: 10, backgroundColor: '#f1f5f9',
-    flexDirection: 'row', alignItems: 'center', gap: 6,
-    marginLeft: 8
+    height: 36,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: "#F8F1FF",
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginLeft: 8,
   },
-  cancelText: { color: '#111827', fontWeight: '700', fontSize: 12 },
+
+  cancelText: {
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontSize: 12,
+    fontFamily: FONT.body,
+  },
 
   saveBtn: {
-    height: 36, paddingHorizontal: 12, borderRadius: 10, backgroundColor: '#16a34a',
-    flexDirection: 'row', alignItems: 'center', gap: 4,
+    height: 36,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: BRAND.purple,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
   },
-  saveText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+
+  saveText: {
+    color: BRAND.white,
+    fontWeight: "800",
+    fontSize: 12,
+    fontFamily: FONT.body,
+  },
 });
