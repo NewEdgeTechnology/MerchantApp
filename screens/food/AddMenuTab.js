@@ -14,6 +14,7 @@ import * as SecureStore from 'expo-secure-store';
 import * as FileSystem from 'expo-file-system';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { useHeaderHeight } from '@react-navigation/elements';
+import { BRAND, FONT, TEXT, RADIUS, SHADOW, BUTTON, INPUT } from "../styles/tabdey_brand";
 import {
   CATEGORY_ENDPOINT as ENV_CATEGORY_ENDPOINT,
   MENU_ENDPOINT as ENV_ADD_MENU_ENDPOINT,          // create endpoint
@@ -27,9 +28,9 @@ const dlog = (...a) => DEBUG && console.log('[ADD-MENU]', ...a);
 const derr = (...a) => DEBUG && console.log('%c[ADD-MENU ERR]', 'color:#d00', ...a);
 
 /* ───────── Theme ───────── */
-const FONT_FAMILY = Platform.select({ ios: 'System', android: 'sans-serif' });
-const PLACEHOLDER_COLOR = '#94a3b8';
-const TEXT_COLOR = '#0f172a';
+const FONT_FAMILY = FONT.body;
+const PLACEHOLDER_COLOR = BRAND.grey;
+const TEXT_COLOR = BRAND.black;
 const INPUT_HEIGHT = 46;
 
 /* ───────── Image base (render only) ───────── */
@@ -129,12 +130,12 @@ function Select({ value, options, onChange, placeholder = 'None', fontSize = 14,
                           numberOfLines={1}
                           style={[
                             styles.dropdownText,
-                            { fontSize, color: selected ? '#00b14f' : TEXT_COLOR, fontFamily: FONT_FAMILY, fontWeight: selected ? '700' : '500' },
+                            { fontSize, color: selected ? BRAND.purple : TEXT_COLOR, fontFamily: FONT_FAMILY, fontWeight: selected ? '700' : '500' },
                           ]}
                         >
                           {item.label}
                         </Text>
-                        {selected ? <Ionicons name="checkmark" size={18} color="#00b14f" /> : null}
+                        {selected ? <Ionicons name="checkmark" size={18} color={BRAND.purple} /> : null}
                       </Pressable>
                     );
                   }}
@@ -586,6 +587,61 @@ export default function AddMenuTab({ isTablet }) {
 
   const renderForm = useCallback(() => (
     <View>
+      {/* Category with INFO ICON moved near the label */}
+      <View style={styles.field}>
+        <View style={styles.labelRow}>
+          <Text style={[styles.label, { fontSize: FS.label }]}>Category</Text>
+          <TouchableOpacity
+            style={styles.labelInfoBtn}
+            onPress={async () => {
+              if (!selectedCategoryName) {
+                Alert.alert('Category', 'Please select a category first.');
+                return;
+              }
+              setCatInfoOpen(true);
+              await fetchCategoryDetails();
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Show category details"
+            testID="cat-info-button"
+          >
+            <Ionicons
+              name="information-circle-outline"
+              size={18}
+              color={selectedCategoryName ? TEXT_COLOR : '#626975ff'}
+            />
+          </TouchableOpacity>
+        </View>
+
+        <View style={{ position: 'relative' }}>
+          {loadingCats ? (
+            <View style={[styles.pickerWrap, styles.catLoading]}>
+              <ActivityIndicator />
+              <Text style={[styles.catLoadingText, { fontFamily: FONT_FAMILY, fontSize: FS.small }]}>
+                Loading categories…
+              </Text>
+            </View>
+          ) : categories.length === 0 ? (
+            <View style={[styles.pickerWrap, styles.catLoading]}>
+              <Ionicons name="warning-outline" size={16} color="#ef4444" />
+              <Text style={[styles.catLoadingText, { color: '#ef4444', fontFamily: FONT_FAMILY, fontSize: FS.small }]}>
+                No categories found for this business.
+              </Text>
+            </View>
+          ) : (
+            <>
+              <Select
+                value={category}
+                onChange={setCategory}
+                options={categories.map((c) => ({ label: c.name, value: c.name }))}
+                placeholder="None"
+                testID="category"
+                fontSize={FS.base}
+              />
+            </>
+          )}
+        </View>
+      </View>
       {/* Item Name */}
       <View style={styles.field}>
         <Text style={[styles.label, { fontSize: FS.label }]}>Item name</Text>
@@ -618,11 +674,11 @@ export default function AddMenuTab({ isTablet }) {
             <Text style={[styles.qrHint, { fontSize: FS.small, fontFamily: FONT_FAMILY }]}>JPG or PNG • up to ~5 MB</Text>
             <View style={styles.qrActionsRow}>
               <TouchableOpacity style={styles.qrAction} onPress={takePhoto} disabled={saving}>
-                <Ionicons name="camera-outline" size={18} color="#00b14f" />
+                <Ionicons name="camera-outline" size={18} color={BRAND.purple} />
                 <Text style={[styles.qrActionText, { fontFamily: FONT_FAMILY }]}>Take photo</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.qrAction} onPress={pickFromLibrary} disabled={saving}>
-                <Ionicons name="images-outline" size={18} color="#00b14f" />
+                <Ionicons name="images-outline" size={18} color={BRAND.purple} />
                 <Text style={[styles.qrActionText, { fontFamily: FONT_FAMILY }]}>Choose from gallery</Text>
               </TouchableOpacity>
             </View>
@@ -736,62 +792,6 @@ export default function AddMenuTab({ isTablet }) {
               { label: 'Low', value: 'low' },
             ]} placeholder="None" testID="sort" fontSize={FS.base}
           />
-        </View>
-      </View>
-
-      {/* Category with INFO ICON moved near the label */}
-      <View style={styles.field}>
-        <View style={styles.labelRow}>
-          <Text style={[styles.label, { fontSize: FS.label }]}>Category</Text>
-          <TouchableOpacity
-            style={styles.labelInfoBtn}
-            onPress={async () => {
-              if (!selectedCategoryName) {
-                Alert.alert('Category', 'Please select a category first.');
-                return;
-              }
-              setCatInfoOpen(true);
-              await fetchCategoryDetails();
-            }}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="Show category details"
-            testID="cat-info-button"
-          >
-            <Ionicons
-              name="information-circle-outline"
-              size={18}
-              color={selectedCategoryName ? TEXT_COLOR : '#626975ff'}
-            />
-          </TouchableOpacity>
-        </View>
-
-        <View style={{ position: 'relative' }}>
-          {loadingCats ? (
-            <View style={[styles.pickerWrap, styles.catLoading]}>
-              <ActivityIndicator />
-              <Text style={[styles.catLoadingText, { fontFamily: FONT_FAMILY, fontSize: FS.small }]}>
-                Loading categories…
-              </Text>
-            </View>
-          ) : categories.length === 0 ? (
-            <View style={[styles.pickerWrap, styles.catLoading]}>
-              <Ionicons name="warning-outline" size={16} color="#ef4444" />
-              <Text style={[styles.catLoadingText, { color: '#ef4444', fontFamily: FONT_FAMILY, fontSize: FS.small }]}>
-                No categories found for this business.
-              </Text>
-            </View>
-          ) : (
-            <>
-              <Select
-                value={category}
-                onChange={setCategory}
-                options={categories.map((c) => ({ label: c.name, value: c.name }))}
-                placeholder="None"
-                testID="category"
-                fontSize={FS.base}
-              />
-            </>
-          )}
         </View>
       </View>
 
@@ -919,134 +919,388 @@ export default function AddMenuTab({ isTablet }) {
   );
 }
 
-/* ───────── Styles ───────── */
 const styles = StyleSheet.create({
-  title: { fontWeight: '700', color: TEXT_COLOR, fontFamily: FONT_FAMILY },
-  sub: { color: '#64748b', marginTop: 6, fontFamily: FONT_FAMILY },
+  wrap: { paddingTop: 16 },
+
+  title: {
+    fontWeight: "700",
+    color: BRAND.purple,
+    fontFamily: FONT.header,
+  },
+
+  sub: {
+    color: BRAND.grey,
+    marginTop: 6,
+    fontFamily: FONT.body,
+  },
 
   field: { marginTop: 14 },
-  label: { color: TEXT_COLOR, fontWeight: '600', fontFamily: FONT_FAMILY },
 
-  // NEW: label row and tiny icon button near subtitle
-  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  label: {
+    color: BRAND.black,
+    fontWeight: "600",
+    fontFamily: FONT.body,
+  },
+
+  labelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   labelInfoBtn: { padding: 2 },
 
   input: {
-    marginTop: 8, backgroundColor: '#fff', paddingHorizontal: 14, paddingVertical: 12,
-    borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0',
+    marginTop: 8,
+    backgroundColor: BRAND.white,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
   },
-  inputMultiline: { minHeight: 84, textAlignVertical: 'top' },
+
+  inputMultiline: {
+    minHeight: 84,
+    textAlignVertical: "top",
+  },
 
   qrCard: {
-    marginTop: 8, borderWidth: 1.5, borderStyle: 'dashed', borderColor: '#cbd5e1',
-    borderRadius: 14, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14, backgroundColor: '#ffffff',
+    marginTop: 8,
+    borderWidth: 1.5,
+    borderStyle: "dashed",
+    borderColor: BRAND.purpleLight,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    backgroundColor: "#FFF7FF",
   },
-  qrTitle: { marginTop: 8, color: TEXT_COLOR, fontWeight: '700' },
-  qrHint: { marginTop: 4, color: '#64748b' },
-  qrActionsRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
+
+  qrTitle: {
+    marginTop: 8,
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  qrHint: {
+    marginTop: 4,
+    color: BRAND.grey,
+    fontFamily: FONT.body,
+  },
+
+  qrActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+
   qrAction: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999,
-    backgroundColor: '#ecfdf3', borderWidth: 1, borderColor: '#bbf7d0',
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#F3E4FF",
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
   },
-  qrActionText: { color: '#065f46', fontWeight: '700', fontSize: 13 },
+
+  qrActionText: {
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontSize: 13,
+    fontFamily: FONT.body,
+  },
 
   qrPreviewCard: {
-    marginTop: 8, padding: 10, backgroundColor: '#fff', borderRadius: 14, borderWidth: 1, borderColor: '#e2e8f0',
+    marginTop: 8,
+    padding: 10,
+    backgroundColor: BRAND.white,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: BRAND.greyLight,
   },
+
   previewBanner: {
-    alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc',
-    borderRadius: 10, borderWidth: 1, borderColor: '#e2e8f0', alignSelf: 'center', padding: 8, overflow: 'hidden',
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFF7FF",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: BRAND.greyLight,
+    alignSelf: "center",
+    padding: 8,
+    overflow: "hidden",
   },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
-  metaText: { color: '#475569', flexShrink: 1 },
 
-  previewActionsRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10 },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 },
+  metaText: { color: BRAND.grey, flexShrink: 1, fontFamily: FONT.body },
+
+  previewActionsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 10,
+  },
+
   previewActionBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 12, paddingVertical: 8,
-    borderRadius: 999, backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#e2e8f0',
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "#F8F1FF",
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
   },
-  previewActionText: { color: TEXT_COLOR, fontWeight: '700' },
 
-  row: { flexDirection: 'row', alignItems: 'flex-start' },
+  previewActionText: {
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  multiImageScroll: { marginTop: 8 },
+
+  multiImageContainer: {
+    flexDirection: "row",
+    gap: 12,
+    paddingVertical: 4,
+  },
+
+  multiImageItem: {
+    width: 100,
+    position: "relative",
+  },
+
+  multiImagePreview: {
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: BRAND.greyLight,
+  },
+
+  removeImageBtn: {
+    position: "absolute",
+    top: -8,
+    right: -8,
+    backgroundColor: BRAND.white,
+    borderRadius: 12,
+  },
+
+  multiImageName: {
+    fontSize: 11,
+    color: BRAND.grey,
+    marginTop: 4,
+    textAlign: "center",
+    fontFamily: FONT.body,
+  },
+
+  addMoreImagesBtn: {
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderStyle: "dashed",
+    borderColor: BRAND.purpleLight,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#FFF7FF",
+  },
+
+  addMoreImagesText: {
+    fontSize: 12,
+    color: BRAND.purple,
+    marginTop: 4,
+    textAlign: "center",
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  hintText: {
+    fontSize: 12,
+    color: BRAND.grey,
+    marginTop: 4,
+    fontFamily: FONT.body,
+    marginBottom: 10,
+  },
+
+  row: { flexDirection: "row", alignItems: "flex-start" },
   col: {},
-  switchRow: { flexDirection: 'row', alignItems: 'center' },
+  switchRow: { flexDirection: "row", alignItems: "center" },
 
   pickerWrap: {
-    marginTop: 8, backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0',
-    height: INPUT_HEIGHT, justifyContent: 'center', paddingHorizontal: 12,
+    marginTop: 8,
+    backgroundColor: BRAND.white,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    height: INPUT_HEIGHT,
+    justifyContent: "center",
+    paddingHorizontal: 12,
   },
-  pickerText: { fontFamily: FONT_FAMILY, includeFontPadding: false },
 
-  catLoading: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: INPUT_HEIGHT, gap: 10 },
-  catLoadingText: { color: '#475569' },
+  pickerText: {
+    fontFamily: FONT.body,
+    includeFontPadding: false,
+  },
+
+  catLoading: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    height: INPUT_HEIGHT,
+    gap: 10,
+  },
+
+  catLoadingText: {
+    color: BRAND.grey,
+    fontFamily: FONT.body,
+  },
 
   primaryBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#00b14f',
-    paddingHorizontal: 16, borderRadius: 999, alignSelf: 'flex-start',
-    shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 3,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: BRAND.purple,
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    alignSelf: "flex-start",
+    ...SHADOW.md,
   },
-  primaryBtnText: { color: '#fff', fontWeight: '800' },
+
+  primaryBtnText: {
+    color: BRAND.white,
+    fontWeight: "800",
+    fontFamily: FONT.body,
+  },
+
   secondaryBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#f1f5f9',
-    paddingHorizontal: 16, borderRadius: 999, alignSelf: 'flex-start', borderWidth: 1, borderColor: '#e2e8f0',
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#F8F1FF",
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    alignSelf: "flex-start",
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
   },
-  secondaryBtnText: { color: TEXT_COLOR, fontWeight: '800' },
 
-  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 16 },
-  modalCard: { width: '100%', maxWidth: 560, backgroundColor: '#fff', borderRadius: 16, overflow: 'hidden' },
-  modalHeader: {
-    paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#e2e8f0',
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  secondaryBtnText: {
+    color: BRAND.purple,
+    fontWeight: "800",
+    fontFamily: FONT.body,
   },
-  modalTitle: { fontWeight: '700', color: TEXT_COLOR, fontSize: 16 },
-  modalImageWrap: { width: '100%', height: 360, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' },
 
-  overlayBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.12)' },
-  dropdownCard: {
-    position: 'absolute', backgroundColor: '#fff', borderRadius: 12, borderWidth: 1, borderColor: '#e2e8f0',
-    elevation: 6, shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 10, shadowOffset: { width: 0, height: 6 }, overflow: 'hidden',
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
   },
-  dropdownItem: { height: INPUT_HEIGHT, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  dropdownSeparator: { height: 1, backgroundColor: '#e2e8f0' },
-  dropdownText: { fontFamily: FONT_FAMILY },
 
-  loaderOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.25)', alignItems: 'center', justifyContent: 'center' },
-  loaderCard: { backgroundColor: '#fff', paddingHorizontal: 20, paddingVertical: 16, borderRadius: 12, alignItems: 'center', gap: 10, minWidth: 140 },
-  loaderText: { color: TEXT_COLOR, fontWeight: '700' },
-
-  // Category Info card
-  catInfoCard: {
-    width: '100%',
+  modalCard: {
+    width: "100%",
     maxWidth: 560,
-    backgroundColor: '#fff',
+    backgroundColor: BRAND.white,
     borderRadius: 16,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
+
+  modalHeader: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: BRAND.greyLight,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  modalTitle: {
+    fontWeight: "700",
+    color: BRAND.black,
+    fontSize: 16,
+    fontFamily: FONT.header,
+  },
+
+  modalImageWrap: {
+    width: "100%",
+    height: 360,
+    backgroundColor: BRAND.black,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  overlayBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.12)" },
+
+  dropdownCard: {
+    position: "absolute",
+    backgroundColor: BRAND.white,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: BRAND.greyLight,
+    overflow: "hidden",
+    ...SHADOW.md,
+  },
+
+  dropdownItem: {
+    height: INPUT_HEIGHT,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+
+  dropdownSeparator: { height: 1, backgroundColor: BRAND.greyLight },
+  dropdownText: { fontFamily: FONT.body },
+
+  catInfoCard: {
+    width: "100%",
+    maxWidth: 560,
+    backgroundColor: BRAND.white,
+    borderRadius: 16,
+    overflow: "hidden",
+  },
+
   infoTitle: {
-    fontFamily: FONT_FAMILY,
-    color: TEXT_COLOR,
-    fontWeight: '700',
+    fontFamily: FONT.header,
+    color: BRAND.black,
+    fontWeight: "700",
     fontSize: 16,
     marginTop: 8,
     marginBottom: 8,
   },
+
   infoDesc: {
-    fontFamily: FONT_FAMILY,
-    color: '#475569',
+    fontFamily: FONT.body,
+    color: BRAND.grey,
     fontSize: 14,
     lineHeight: 20,
   },
 
-  // (old inlineInfoBtn style kept but unused)
-  inlineInfoBtn: {
-    position: 'absolute',
-    left: '50%',
-    top: 15,
-    bottom: 0,
-    height: INPUT_HEIGHT,
-    width: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 5,
+  loaderOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.25)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  loaderCard: {
+    backgroundColor: BRAND.white,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    gap: 10,
+    minWidth: 140,
+  },
+
+  loaderText: {
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontFamily: FONT.body,
   },
 });

@@ -40,7 +40,8 @@ import {
 } from "@react-navigation/native";
 import { useHeaderHeight } from "@react-navigation/elements";
 import { Picker } from "@react-native-picker/picker";
-import * as ImageManipulator from 'expo-image-manipulator';
+import * as ImageManipulator from "expo-image-manipulator";
+import { BRAND, FONT, TEXT, RADIUS, SHADOW, BUTTON, INPUT } from "../styles/tabdey_brand";
 
 import {
   CATEGORY_ENDPOINT as ENV_CATEGORY_ENDPOINT,
@@ -56,10 +57,10 @@ const derr = (...args) =>
   DEBUG && console.log("%c[ADD-ITEM ERR]", "color:#d00", ...args);
 
 /* ───────────────────────── Theme ───────────────────────── */
-const FONT_FAMILY = Platform.select({ ios: "System", android: "sans-serif" });
-const PLACEHOLDER_COLOR = "#94a3b8";
-const TEXT_COLOR = "#0f172a";
-const INPUT_HEIGHT = 46;
+const FONT_FAMILY = FONT.body;
+const PLACEHOLDER_COLOR = BRAND.grey;
+const TEXT_COLOR = BRAND.black;
+const INPUT_HEIGHT = 48;
 
 /* ───────────────────────── Image base ───────────────────────── */
 const IMG_MART_BASE = (ENV_ITEM_IMAGE_ENDPOINT || "").replace(/\/$/, "");
@@ -173,7 +174,7 @@ function Select({
                             styles.dropdownText,
                             {
                               fontSize,
-                              color: selected ? "#00b14f" : TEXT_COLOR,
+                              color: selected ? BRAND.purple : TEXT_COLOR,
                               fontFamily: FONT_FAMILY,
                               fontWeight: selected ? "700" : "500",
                             },
@@ -185,7 +186,7 @@ function Select({
                           <Ionicons
                             name="checkmark"
                             size={18}
-                            color="#00b14f"
+                            color={BRAND.purple}
                           />
                         ) : null}
                       </Pressable>
@@ -1188,7 +1189,7 @@ export default function AddItemTab({ isTablet }) {
                   onPress={takePhoto}
                   disabled={saving}
                 >
-                  <Ionicons name="camera-outline" size={18} color="#00b14f" />
+                  <Ionicons name="camera-outline" size={18} color={BRAND.purple} />
                   <Text
                     style={[styles.qrActionText, { fontFamily: FONT_FAMILY }]}
                   >
@@ -1200,7 +1201,7 @@ export default function AddItemTab({ isTablet }) {
                   onPress={pickFromLibrary}
                   disabled={saving}
                 >
-                  <Ionicons name="images-outline" size={18} color="#00b14f" />
+                  <Ionicons name="images-outline" size={18} color={BRAND.purple} />
                   <Text
                     style={[styles.qrActionText, { fontFamily: FONT_FAMILY }]}
                   >
@@ -1334,7 +1335,7 @@ export default function AddItemTab({ isTablet }) {
                 onPress={pickMultipleImages}
                 disabled={saving}
               >
-                <Ionicons name="add-circle-outline" size={40} color="#00b14f" />
+                <Ionicons name="add-circle-outline" size={40} color={BRAND.purple} />
                 <Text style={styles.addMoreImagesText}>Add Images</Text>
               </TouchableOpacity>
             </View>
@@ -1742,73 +1743,78 @@ export default function AddItemTab({ isTablet }) {
   );
 }
 
-/* ───────────────────────── Styles ───────────────────────── */
 const styles = StyleSheet.create({
   wrap: { paddingTop: 16 },
-  title: { fontWeight: "700", color: TEXT_COLOR, fontFamily: FONT_FAMILY },
-  sub: { color: "#64748b", marginTop: 6, fontFamily: FONT_FAMILY },
+
+  title: {
+    fontWeight: "700",
+    color: BRAND.purple,
+    fontFamily: FONT.header,
+  },
+
+  sub: {
+    color: BRAND.grey,
+    marginTop: 6,
+    fontFamily: FONT.body,
+  },
 
   field: { marginTop: 14 },
-  label: { color: TEXT_COLOR, fontWeight: "600", fontFamily: FONT_FAMILY },
+
+  label: {
+    color: BRAND.black,
+    fontWeight: "600",
+    fontFamily: FONT.body,
+  },
 
   labelRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   labelInfoBtn: { padding: 2 },
 
   input: {
     marginTop: 8,
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
-  inputMultiline: { minHeight: 84, textAlignVertical: "top" },
-
-  // Type selector
-  typeSelector: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 8,
-  },
-  typeButton: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    backgroundColor: "#fff",
-    alignItems: "center",
-  },
-  typeButtonActive: {
-    backgroundColor: "#00b14f",
-    borderColor: "#00b14f",
-  },
-  typeButtonText: {
-    color: TEXT_COLOR,
-    fontWeight: "600",
-    fontSize: 13,
-  },
-  typeButtonTextActive: {
-    color: "#fff",
+    borderColor: BRAND.greyBorder,
   },
 
-  // Uploader
+  inputMultiline: {
+    minHeight: 84,
+    textAlignVertical: "top",
+  },
+
   qrCard: {
     marginTop: 8,
     borderWidth: 1.5,
     borderStyle: "dashed",
-    borderColor: "#cbd5e1",
+    borderColor: BRAND.purpleLight,
     borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 14,
-    backgroundColor: "#ffffff",
+    backgroundColor: "#FFF7FF",
   },
-  qrTitle: { marginTop: 8, color: TEXT_COLOR, fontWeight: "700" },
-  qrHint: { marginTop: 4, color: "#64748b" },
-  qrActionsRow: { flexDirection: "row", gap: 10, marginTop: 12 },
+
+  qrTitle: {
+    marginTop: 8,
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
+
+  qrHint: {
+    marginTop: 4,
+    color: BRAND.grey,
+    fontFamily: FONT.body,
+  },
+
+  qrActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 12,
+  },
+
   qrAction: {
     flexDirection: "row",
     alignItems: "center",
@@ -1816,33 +1822,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: "#ecfdf3",
+    backgroundColor: "#F3E4FF",
     borderWidth: 1,
-    borderColor: "#bbf7d0",
+    borderColor: BRAND.purpleLight,
   },
-  qrActionText: { color: "#065f46", fontWeight: "700", fontSize: 13 },
+
+  qrActionText: {
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontSize: 13,
+    fontFamily: FONT.body,
+  },
 
   qrPreviewCard: {
     marginTop: 8,
     padding: 10,
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.greyLight,
   },
+
   previewBanner: {
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#FFF7FF",
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.greyLight,
     alignSelf: "center",
     padding: 8,
     overflow: "hidden",
   },
+
   metaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 },
-  metaText: { color: "#475569", flexShrink: 1 },
+  metaText: { color: BRAND.grey, flexShrink: 1, fontFamily: FONT.body },
 
   previewActionsRow: {
     flexDirection: "row",
@@ -1850,6 +1864,7 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 10,
   },
+
   previewActionBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1857,87 +1872,102 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: "#f1f5f9",
+    backgroundColor: "#F8F1FF",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
   },
-  previewActionText: { color: TEXT_COLOR, fontWeight: "700" },
 
-  // Multi-image styles
-  multiImageScroll: {
-    marginTop: 8,
+  previewActionText: {
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontFamily: FONT.body,
   },
+
+  multiImageScroll: { marginTop: 8 },
+
   multiImageContainer: {
     flexDirection: "row",
     gap: 12,
     paddingVertical: 4,
   },
+
   multiImageItem: {
     width: 100,
     position: "relative",
   },
+
   multiImagePreview: {
     width: 100,
     height: 100,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.greyLight,
   },
+
   removeImageBtn: {
     position: "absolute",
     top: -8,
     right: -8,
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
     borderRadius: 12,
   },
+
   multiImageName: {
     fontSize: 11,
-    color: "#64748b",
+    color: BRAND.grey,
     marginTop: 4,
     textAlign: "center",
+    fontFamily: FONT.body,
   },
+
   addMoreImagesBtn: {
     width: 100,
     height: 100,
     borderRadius: 8,
     borderWidth: 2,
     borderStyle: "dashed",
-    borderColor: "#cbd5e1",
+    borderColor: BRAND.purpleLight,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#FFF7FF",
   },
+
   addMoreImagesText: {
     fontSize: 12,
-    color: "#00b14f",
+    color: BRAND.purple,
     marginTop: 4,
     textAlign: "center",
+    fontWeight: "700",
+    fontFamily: FONT.body,
   },
+
   hintText: {
     fontSize: 12,
-    color: "#64748b",
+    color: BRAND.grey,
     marginTop: 4,
-    fontFamily: FONT_FAMILY,
+    fontFamily: FONT.body,
     marginBottom: 10,
   },
 
-  // Rows
   row: { flexDirection: "row", alignItems: "flex-start" },
   col: {},
   switchRow: { flexDirection: "row", alignItems: "center" },
 
-  // Select
   pickerWrap: {
     marginTop: 8,
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.greyBorder,
     height: INPUT_HEIGHT,
     justifyContent: "center",
     paddingHorizontal: 12,
   },
-  pickerText: { fontFamily: FONT_FAMILY, includeFontPadding: false },
+
+  pickerText: {
+    fontFamily: FONT.body,
+    includeFontPadding: false,
+  },
 
   catLoading: {
     flexDirection: "row",
@@ -1946,38 +1976,47 @@ const styles = StyleSheet.create({
     height: INPUT_HEIGHT,
     gap: 10,
   },
-  catLoadingText: { color: "#475569" },
 
-  // Buttons
+  catLoadingText: {
+    color: BRAND.grey,
+    fontFamily: FONT.body,
+  },
+
   primaryBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: "#00b14f",
+    backgroundColor: BRAND.purple,
     paddingHorizontal: 16,
     borderRadius: 999,
     alignSelf: "flex-start",
-    shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
+    ...SHADOW.md,
   },
-  primaryBtnText: { color: "#fff", fontWeight: "800" },
+
+  primaryBtnText: {
+    color: BRAND.white,
+    fontWeight: "800",
+    fontFamily: FONT.body,
+  },
+
   secondaryBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: "#f1f5f9",
+    backgroundColor: "#F8F1FF",
     paddingHorizontal: 16,
     borderRadius: 999,
     alignSelf: "flex-start",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
+    borderColor: BRAND.purpleLight,
   },
-  secondaryBtnText: { color: TEXT_COLOR, fontWeight: "800" },
 
-  // Modals
+  secondaryBtnText: {
+    color: BRAND.purple,
+    fontWeight: "800",
+    fontFamily: FONT.body,
+  },
+
   modalBackdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.6)",
@@ -1985,46 +2024,52 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 16,
   },
+
   modalCard: {
     width: "100%",
     maxWidth: 560,
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
     borderRadius: 16,
     overflow: "hidden",
   },
+
   modalHeader: {
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#e2e8f0",
+    borderBottomColor: BRAND.greyLight,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  modalTitle: { fontWeight: "700", color: TEXT_COLOR, fontSize: 16 },
+
+  modalTitle: {
+    fontWeight: "700",
+    color: BRAND.black,
+    fontSize: 16,
+    fontFamily: FONT.header,
+  },
+
   modalImageWrap: {
     width: "100%",
     height: 360,
-    backgroundColor: "#000",
+    backgroundColor: BRAND.black,
     alignItems: "center",
     justifyContent: "center",
   },
 
-  // Dropdown
   overlayBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.12)" },
+
   dropdownCard: {
     position: "absolute",
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    elevation: 6,
-    shadowColor: "#000",
-    shadowOpacity: 0.16,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
+    borderColor: BRAND.greyLight,
     overflow: "hidden",
+    ...SHADOW.md,
   },
+
   dropdownItem: {
     height: INPUT_HEIGHT,
     paddingHorizontal: 12,
@@ -2032,41 +2077,43 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  dropdownSeparator: { height: 1, backgroundColor: "#e2e8f0" },
-  dropdownText: { fontFamily: FONT_FAMILY },
 
-  // Category info
+  dropdownSeparator: { height: 1, backgroundColor: BRAND.greyLight },
+  dropdownText: { fontFamily: FONT.body },
+
   catInfoCard: {
     width: "100%",
     maxWidth: 560,
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
     borderRadius: 16,
     overflow: "hidden",
   },
+
   infoTitle: {
-    fontFamily: FONT_FAMILY,
-    color: TEXT_COLOR,
+    fontFamily: FONT.header,
+    color: BRAND.black,
     fontWeight: "700",
     fontSize: 16,
     marginTop: 8,
     marginBottom: 8,
   },
+
   infoDesc: {
-    fontFamily: FONT_FAMILY,
-    color: "#475569",
+    fontFamily: FONT.body,
+    color: BRAND.grey,
     fontSize: 14,
     lineHeight: 20,
   },
 
-  // Loader
   loaderOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.25)",
     alignItems: "center",
     justifyContent: "center",
   },
+
   loaderCard: {
-    backgroundColor: "#fff",
+    backgroundColor: BRAND.white,
     paddingHorizontal: 20,
     paddingVertical: 16,
     borderRadius: 12,
@@ -2074,5 +2121,10 @@ const styles = StyleSheet.create({
     gap: 10,
     minWidth: 140,
   },
-  loaderText: { color: TEXT_COLOR, fontWeight: "700" },
+
+  loaderText: {
+    color: BRAND.purple,
+    fontWeight: "700",
+    fontFamily: FONT.body,
+  },
 });
