@@ -1,4 +1,4 @@
-// services/wallet/ScanQR.js
+// screens/wallet/ScanQR.js
 import React, { useCallback, useState } from "react";
 import {
   View,
@@ -6,29 +6,27 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
   Platform,
-  StatusBar,
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { useAlert } from "../../components/CustomAlert";
-import { C } from "../../theme";
 
 /* ========= tokens ========= */
 const G = {
-  grab:   C.brand,
-  grab2:  C.brandDark,
-  text:   C.text,
-  sub:    C.sub,
-  bg:     C.card2,
-  line:   C.line,
-  danger: C.danger,
-  ok:     C.success,
-  warn:   C.warn,
-  white:  C.white,
-  slate:  C.text,
+  grab: "#00B14F",
+  grab2: "#00C853",
+  text: "#0F172A",
+  sub: "#6B7280",
+  bg: "#F6F7F9",
+  line: "#E5E7EB",
+  danger: "#EF4444",
+  ok: "#10B981",
+  warn: "#F59E0B",
+  white: "#ffffff",
+  slate: "#0F172A",
 };
 
 /* ========= helper: parse QR payload ========= */
@@ -65,11 +63,10 @@ function parseQrPayload(raw) {
   return out;
 }
 
-export default function ScanQRScreen() {
+export default function ScanQR() {
   const nav = useNavigation();
   const route = useRoute();
   const wallet = route?.params?.wallet || null;
-  const { showAlert, alertNode } = useAlert();
 
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
@@ -90,12 +87,11 @@ export default function ScanQRScreen() {
         });
       } catch (e) {
         console.log("[ScanQR] navigate WalletTransfer error:", e?.message || e);
-        showAlert({ type: "info", title: "Scanned", message: parsedPayload.raw || "QR scanned successfully.", primaryLabel: "OK" });
-        // allow another try if navigation failed
+        Alert.alert("Scanned", parsedPayload.raw || "QR scanned successfully.");
         setScanned(false);
       }
     },
-    [scanned, nav, wallet, showAlert]
+    [scanned, nav, wallet]
   );
 
   const goBack = () => {
@@ -106,7 +102,6 @@ export default function ScanQRScreen() {
 
   /* ===== Permission states ===== */
 
-  // Still loading permission object
   if (!permission) {
     return (
       <View style={styles.center}>
@@ -116,12 +111,11 @@ export default function ScanQRScreen() {
     );
   }
 
-  // Not granted yet
   if (!permission.granted) {
     return (
       <View style={styles.wrap}>
         <LinearGradient
-          colors={C.gradBrand}
+          colors={["#46e693", "#40d9c2"]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.gradientHeader}
@@ -162,10 +156,8 @@ export default function ScanQRScreen() {
 
   return (
     <View style={styles.wrap}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
-      {/* Header */}
       <LinearGradient
-        colors={C.gradBrand}
+        colors={["#46e693", "#40d9c2"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.gradientHeader}
@@ -182,7 +174,6 @@ export default function ScanQRScreen() {
         </Text>
       </LinearGradient>
 
-      {/* Scanner area */}
       <View style={styles.body}>
         <View style={styles.scannerWrap}>
           <CameraView
@@ -194,12 +185,10 @@ export default function ScanQRScreen() {
             onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
           />
 
-          {/* Overlay / mask */}
           <View style={styles.overlay}>
-            <View className="overlayRow" style={styles.overlayRow}>
+            <View style={styles.overlayRow}>
               <View style={styles.overlaySide} />
               <View style={styles.scanBox}>
-                {/* Corner decorations */}
                 <View style={[styles.corner, styles.cornerTL]} />
                 <View style={[styles.corner, styles.cornerTR]} />
                 <View style={[styles.corner, styles.cornerBL]} />
@@ -211,7 +200,6 @@ export default function ScanQRScreen() {
           </View>
         </View>
 
-        {/* Bottom sheet with info */}
         <View style={styles.bottomCard}>
           <Text style={styles.bottomTitle}>Ready to scan</Text>
           <Text style={styles.bottomSub}>
@@ -220,10 +208,13 @@ export default function ScanQRScreen() {
           </Text>
 
           <TouchableOpacity
-            style={[styles.helperRow]}
+            style={styles.helperRow}
             activeOpacity={0.75}
             onPress={() => {
-              showAlert({ type: "info", title: "How Scan to Pay works", message: "The QR code contains payment details such as wallet ID, name, and sometimes amount or note. After scanning, we auto-fill the transfer screen so you can just confirm and pay.", primaryLabel: "OK" });
+              Alert.alert(
+                "How Scan to Pay works",
+                "The QR code contains payment details such as wallet ID, name, and sometimes amount or note. After scanning, we auto-fill the transfer screen so you can just confirm and pay."
+              );
             }}
           >
             <Ionicons
@@ -235,7 +226,6 @@ export default function ScanQRScreen() {
           </TouchableOpacity>
         </View>
       </View>
-      {alertNode}
     </View>
   );
 }
@@ -265,6 +255,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    paddingTop: 14,
   },
   backBtn: {
     width: 32,

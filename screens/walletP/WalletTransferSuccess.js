@@ -7,37 +7,42 @@ import {
   TouchableOpacity,
   Platform,
   Share,
-  StatusBar,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
-import { C } from "../../theme";
 
 const G = {
-  grab:  C.brand,
-  grab2: C.brandDark,
-  text:  C.text,
-  sub:   C.sub,
-  bg:    C.card2,
-  line:  C.line,
-  white: C.white,
+  grab: "#00B14F",
+  grab2: "#00C853",
+  text: "#0F172A",
+  sub: "#6B7280",
+  bg: "#F6F7F9",
+  line: "#E5E7EB",
+  white: "#ffffff",
+  ok: "#10B981",
 };
 
 function fmtDateTime(ts) {
   if (!ts) return "-";
+
   const d = new Date(ts);
+
+  if (Number.isNaN(d.getTime())) return "-";
+
   const date = d.toLocaleDateString("en-US", {
     timeZone: "Asia/Thimphu",
     year: "numeric",
     month: "short",
     day: "numeric",
   });
+
   const time = d.toLocaleTimeString("en-US", {
     timeZone: "Asia/Thimphu",
     hour: "2-digit",
     minute: "2-digit",
   });
+
   return `${date} · ${time}`;
 }
 
@@ -60,7 +65,7 @@ export default function WalletTransferSuccess() {
     journalCode = "",
     transactionId = "",
     note = "Transfer",
-    createdAt = null, // ISO or "2025-11-25 12:20:15"
+    createdAt = null,
   } = route?.params || {};
 
   const handleDone = () => {
@@ -74,7 +79,7 @@ export default function WalletTransferSuccess() {
       const msgLines = [
         "Wallet Transfer Receipt",
         "----------------------",
-        `Status       : SUCCESS`,
+        "Status       : SUCCESS",
         `Amount       : ${currency(amount)}`,
         `From Wallet  : ${senderWalletId || "-"}`,
         `To Wallet    : ${recipientWalletId || "-"}`,
@@ -89,16 +94,14 @@ export default function WalletTransferSuccess() {
         message: msgLines.join("\n"),
       });
     } catch (e) {
-      // ignore
+      console.log("[WalletTransferSuccess] share error:", e?.message || e);
     }
   };
 
   return (
     <View style={styles.wrap}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
-      {/* Header */}
       <LinearGradient
-        colors={C.gradBrand}
+        colors={["#46e693", "#40d9c2"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.gradientHeader}
@@ -111,12 +114,12 @@ export default function WalletTransferSuccess() {
           >
             <Ionicons name="chevron-back" size={22} color={G.white} />
           </TouchableOpacity>
+
           <Text style={styles.headerTitle}>Transfer Successful</Text>
           <View style={{ width: 32 }} />
         </View>
       </LinearGradient>
 
-      {/* Body / Receipt */}
       <View style={styles.cardWrap}>
         <View style={styles.statusIconWrap}>
           <View style={styles.statusCircleOuter}>
@@ -124,6 +127,7 @@ export default function WalletTransferSuccess() {
               <Ionicons name="checkmark" size={32} color={G.white} />
             </View>
           </View>
+
           <Text style={styles.statusText}>Money Sent</Text>
           <Text style={styles.statusSub}>
             You&apos;ve successfully transferred money.
@@ -134,7 +138,6 @@ export default function WalletTransferSuccess() {
 
         <View style={styles.divider} />
 
-        {/* Details */}
         <View style={styles.detailRow}>
           <Text style={styles.detailLabel}>From</Text>
           <View style={{ alignItems: "flex-end" }}>
@@ -188,7 +191,6 @@ export default function WalletTransferSuccess() {
         ) : null}
       </View>
 
-      {/* Bottom buttons */}
       <View style={styles.bottomActions}>
         <TouchableOpacity
           style={[styles.bottomBtn, styles.bottomBtnGhost]}
@@ -225,6 +227,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    paddingTop: 14,
   },
   backBtn: {
     width: 32,
@@ -232,7 +235,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.1)",
+    backgroundColor: "rgba(255,255,255,.18)",
   },
   headerTitle: {
     color: G.white,
@@ -311,17 +314,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: G.text,
     fontWeight: "700",
+    textAlign: "right",
   },
   detailHint: {
     fontSize: 11,
     color: "#9CA3AF",
     marginTop: 2,
+    textAlign: "right",
   },
 
   statusPill: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: C.brandBg,
+    backgroundColor: "#ECFDF5",
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 3,

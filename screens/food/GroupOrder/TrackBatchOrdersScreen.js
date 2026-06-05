@@ -51,14 +51,20 @@ const COLORS = {
   DRIVER: "#2563eb", // blue
   CUSTOMER: "#00b14f", // green
 };
-const PIN_SIZE = Math.max(34, Math.min(46, SCREEN_W * 0.1));
-const makePinSvg = (color) =>
+const PIN_SIZE = Math.max(30, Math.min(38, SCREEN_W * 0.09));
+
+const makePinSvg = (color, label = "") =>
   `data:image/svg+xml;utf8,${encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
-      <path d="M24 2C15.2 2 8 9.2 8 18c0 11.5 16 28 16 28s16-16.5 16-28C40 9.2 32.8 2 24 2z" fill="${color}"/>
-      <circle cx="24" cy="18" r="6" fill="white"/>
+    <svg xmlns="http://www.w3.org/2000/svg" width="38" height="38" viewBox="0 0 38 38">
+      <circle cx="19" cy="19" r="12" fill="${color}" stroke="white" stroke-width="4"/>
+      ${
+        label
+          ? `<text x="19" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="white">${label}</text>`
+          : `<circle cx="19" cy="19" r="5" fill="${color}"/>`
+      }
     </svg>
   `)}`;
+
 class OSMViewErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -260,6 +266,10 @@ const fetchOSRMRoute = async (points = []) => {
     return routeCoords.map(([lng, lat]) => ({
       latitude: lat,
       longitude: lng,
+
+      // added for OSM polyline compatibility
+      lat,
+      lng,
     }));
   } catch (e) {
     console.log("[ROUTE] OSRM failed:", e?.message);
@@ -765,7 +775,10 @@ export default function TrackBatchOrdersScreen() {
         },
         title: `${g.count} Orders`,
         description: `${g.count} customer(s)`,
-        icon: { uri: makePinSvg(COLORS.CUSTOMER), size: PIN_SIZE },
+        icon: {
+          uri: makePinSvg(COLORS.CUSTOMER, g.count > 1 ? String(g.count) : ""),
+          size: PIN_SIZE,
+        },
       });
     });
 
@@ -809,8 +822,18 @@ export default function TrackBatchOrdersScreen() {
           driverRoute.length
             ? driverRoute
             : [
-                { latitude: driver.lat, longitude: driver.lng },
-                { latitude: biz.lat, longitude: biz.lng },
+                {
+                  latitude: driver.lat,
+                  longitude: driver.lng,
+                  lat: driver.lat,
+                  lng: driver.lng,
+                },
+                {
+                  latitude: biz.lat,
+                  longitude: biz.lng,
+                  lat: biz.lat,
+                  lng: biz.lng,
+                },
               ],
         );
       }
@@ -822,10 +845,17 @@ export default function TrackBatchOrdersScreen() {
           customerRoute.length
             ? customerRoute
             : [
-                { latitude: biz.lat, longitude: biz.lng },
+                {
+                  latitude: biz.lat,
+                  longitude: biz.lng,
+                  lat: biz.lat,
+                  lng: biz.lng,
+                },
                 ...drops.map((p) => ({
                   latitude: p.lat,
                   longitude: p.lng,
+                  lat: p.lat,
+                  lng: p.lng,
                 })),
               ],
         );
@@ -857,7 +887,11 @@ export default function TrackBatchOrdersScreen() {
     if (routeDriverToBiz?.length > 1) {
       lines.push({
         id: "driver-biz",
+
+        // keep both because different OSMView builds may use different keys
         coordinates: routeDriverToBiz,
+        points: routeDriverToBiz,
+
         strokeColor: COLORS.DRIVER,
         color: COLORS.DRIVER,
         strokeWidth: 5,
@@ -868,13 +902,19 @@ export default function TrackBatchOrdersScreen() {
     if (routeBizToCustomers?.length > 1) {
       lines.push({
         id: "biz-customers",
+
+        // keep both because different OSMView builds may use different keys
         coordinates: routeBizToCustomers,
+        points: routeBizToCustomers,
+
         strokeColor: COLORS.CUSTOMER,
         color: COLORS.CUSTOMER,
         strokeWidth: 5,
         width: 5,
       });
     }
+
+    console.log("[MAP] polylines:", JSON.stringify(lines, null, 2));
 
     return lines;
   }, [routeDriverToBiz, routeBizToCustomers]);

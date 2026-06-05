@@ -1,5 +1,5 @@
 // services/wallet/TopUpOtp.js
-import React, { useCallback, useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -8,119 +8,99 @@ import {
   TextInput,
   Platform,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
+  StatusBar,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { WALLET_TOPUP_BASE } from "@env";
 import { getValidAccessToken } from "../../utils/authToken";
+import { useAlert } from "../../components/CustomAlert";
+import { C } from "../../theme";
 
 const G = {
-  grab: "#00B14F",
-  grab2: "#00C853",
-  text: "#0F172A",
-  sub: "#6B7280",
-  bg: "#F6F7F9",
-  line: "#E5E7EB",
-  danger: "#EF4444",
-  ok: "#10B981",
-  warn: "#F59E0B",
-  white: "#ffffff",
-  slate: "#0F172A",
+  grab:   C.brand,
+  grab2:  C.brandDark,
+  text:   C.text,
+  sub:    C.sub,
+  bg:     C.card2,
+  line:   C.line,
+  danger: C.danger,
+  ok:     C.success,
+  warn:   C.warn,
+  white:  C.white,
+  slate:  C.text,
 };
 
-const TOPUP_BASE = (WALLET_TOPUP_BASE || "").replace(/\/+$/, "");
+const TOPUP_BASE      = (WALLET_TOPUP_BASE || "").replace(/\/+$/, "");
 const TOPUP_DEBIT_URL = `${TOPUP_BASE}/debit`;
 
-/* ===================== timing controls ===================== */
-const WAIT_BEFORE_DEBIT_MS = 600;
+const WAIT_BEFORE_DEBIT_MS  = 600;
 const RETRY_ON_500_DELAY_MS = 1200;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/* ===================== fetch helper ===================== */
 async function authFetch(url, opts = {}) {
   const token = await getValidAccessToken();
-
-  const baseHeaders = {
-    "Content-Type": "application/json",
-  };
-
+  const baseHeaders = { "Content-Type": "application/json" };
   const headers = token
     ? { ...baseHeaders, Authorization: `Bearer ${token}` }
     : baseHeaders;
 
   const res = await fetch(url, {
     ...opts,
-    headers: {
-      ...(opts.headers || {}),
-      ...headers,
-    },
+    headers: { ...(opts.headers || {}), ...headers },
   });
 
   const text = await res.text();
   let json = null;
-
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
-  }
+  try { json = text ? JSON.parse(text) : null; } catch {}
 
   if (!res.ok) {
     const serverMsg =
       (json && (json.message || json.error || json.responseDesc)) ||
       (text && text.slice(0, 300)) ||
       `HTTP ${res.status}`;
-
     const err = new Error(serverMsg);
     err.status = res.status;
-    err.raw = text;
-    err.body = json;
+    err.raw    = text;
+    err.body   = json;
     throw err;
   }
 
   return json ?? (text ? { raw: text } : {});
 }
 
-export default function TopUpOtp() {
+export default function TopUpOtpScreen() {
   const navigation = useNavigation();
-  const route = useRoute();
+  const route      = useRoute();
+  const { showAlert, alertNode } = useAlert();
 
-  const wallet = route?.params?.wallet || null;
-  const amount = Number(route?.params?.amount || 0);
-  const orderNo = route?.params?.orderNo || null;
-  const bfsTxnId = route?.params?.bfsTxnId || null;
-  const remitterBankId = route?.params?.remitterBankId || null;
-  const remitterAccNo = route?.params?.remitterAccNo || null;
-  const selectedBank = route?.params?.selectedBank || null;
+  const wallet  = route.params?.wallet  || null;
+  const amount  = route.params?.amount  || 0;
+  const orderNo = route.params?.orderNo;
 
-  const [otp, setOtp] = useState("");
+  const [otp,        setOtp]        = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [hint, setHint] = useState("");
+  const [hint,       setHint]       = useState("");
 
-  useEffect(() => {
-    getValidAccessToken().catch(() => {});
-  }, []);
+  const inputRef = useRef(null);
+
+  useEffect(() => { getValidAccessToken().catch(() => {}); }, []);
 
   const onChangeOtp = useCallback((val) => {
-    const clean = String(val || "")
-      .replace(/[^0-9]/g, "")
-      .slice(0, 6);
-    setOtp(clean);
+    setOtp((val || "").replace(/[^0-9]/g, "").slice(0, 6));
   }, []);
 
   const onSubmit = useCallback(async () => {
     if (submitting) return;
 
     if (!orderNo) {
-      Alert.alert("Error", "Missing order number.");
+      showAlert({ type: "error", title: "Error", message: "Missing order number.", primaryLabel: "OK" });
       return;
     }
-
     if (!otp || otp.length < 4) {
-      Alert.alert("OTP required", "Please enter the OTP sent by your bank.");
+      showAlert({ type: "warn", title: "OTP required", message: "Please enter the OTP sent by your bank.", primaryLabel: "OK" });
       return;
     }
 
@@ -128,21 +108,12 @@ export default function TopUpOtp() {
     setHint("Submitting payment…");
 
     try {
-      const payload = {
-        orderNo,
-        otp,
-      };
-
-      console.log("[TopUpOtp] debit payload:", payload);
-
+      const payload = { orderNo, otp };
       await sleep(WAIT_BEFORE_DEBIT_MS);
 
       let res;
       try {
-        res = await authFetch(TOPUP_DEBIT_URL, {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
+        res = await authFetch(TOPUP_DEBIT_URL, { method: "POST", body: JSON.stringify(payload) });
       } catch (e) {
         console.log("[TopUpOtp] first debit error:", e?.status, e?.message);
         if (e?.raw) console.log("[TopUpOtp] first debit raw:", e.raw);
@@ -150,240 +121,284 @@ export default function TopUpOtp() {
         if (Number(e?.status) === 500) {
           setHint("Server busy, retrying…");
           await sleep(RETRY_ON_500_DELAY_MS);
-
           setHint("Submitting again…");
-          res = await authFetch(TOPUP_DEBIT_URL, {
-            method: "POST",
-            body: JSON.stringify(payload),
-          });
+          res = await authFetch(TOPUP_DEBIT_URL, { method: "POST", body: JSON.stringify(payload) });
         } else {
           throw e;
         }
       }
 
-      const data = res?.data || res;
-      console.log("[TopUpOtp] debit response data:", data);
-
-      const status = String(data?.status || "").toUpperCase();
-      const responseCode = String(data?.responseCode || "");
-      const message =
-        data?.message ||
-        data?.responseDesc ||
-        (status === "SUCCESS" || responseCode === "00"
-          ? "Payment successful."
-          : "Payment failed.");
+      const data    = res?.data || res;
+      const status  = data?.status || "";
+      const message = data?.message || (status === "SUCCESS" ? "Payment successful." : "Payment failed.");
 
       setHint("");
 
-      if (status === "SUCCESS" || responseCode === "00") {
-        Alert.alert("Top up successful", message, [
-          {
-            text: "OK",
-            onPress: () => {
-              navigation.navigate("Wallet", {
-                wallet,
-              });
-            },
-          },
-        ]);
+      if (status === "SUCCESS") {
+        showAlert({
+          type: "success",
+          title: "Top up successful",
+          message,
+          primaryLabel: "OK",
+          primaryAction: () => { navigation.navigate("Wallet"); },
+        });
       } else {
-        Alert.alert("Payment failed", message);
+        showAlert({ type: "error", title: "Payment failed", message, primaryLabel: "OK" });
       }
     } catch (e) {
       console.log("[TopUpOtp] debit error:", e?.status, e?.message);
       if (e?.raw) console.log("[TopUpOtp] debit raw:", e.raw);
-
       setHint("");
 
       if (Number(e?.status) === 500) {
-        Alert.alert(
-          "Server busy",
-          "Payment server is temporarily busy. Please try again."
-        );
+        showAlert({ type: "error", title: "Server busy", message: "Payment server is temporarily busy. Please try again.", primaryLabel: "OK" });
       } else {
-        Alert.alert("Payment failed", String(e?.message || e));
+        showAlert({ type: "error", title: "Payment failed", message: String(e.message || e), primaryLabel: "OK" });
       }
     } finally {
       setSubmitting(false);
       setHint("");
     }
-  }, [
-    submitting,
-    orderNo,
-    otp,
-    navigation,
-    wallet,
-    bfsTxnId,
-    remitterBankId,
-    remitterAccNo,
-    selectedBank,
-  ]);
+  }, [orderNo, otp, navigation, submitting, showAlert]);
+
+  const amountStr = amount.toFixed ? amount.toFixed(2) : String(amount);
 
   return (
-    <KeyboardAvoidingView
-      style={styles.wrap}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
-      <LinearGradient
-        colors={["#46e693", "#40d9c2"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.gradientHeader}
+    <>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+      <KeyboardAvoidingView
+        style={styles.wrap}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <View style={styles.headerRow}>
-          <TouchableOpacity
-            style={[styles.backBtn, styles.backBtnFilled]}
-            onPress={() => navigation.goBack()}
-            disabled={submitting}
-          >
-            <Ionicons name="chevron-back" size={22} color={G.white} />
-          </TouchableOpacity>
-
-          <Text style={styles.headerTitle}>Enter OTP</Text>
-          <View style={{ width: 32 }} />
-        </View>
-
-        <Text style={styles.subHeader}>
-          Amount: BTN {Number.isFinite(amount) ? amount.toFixed(2) : amount}
-        </Text>
-      </LinearGradient>
-
-      <View style={styles.body}>
-        <Text style={styles.label}>One-time password</Text>
-
-        <TextInput
-          style={styles.otpInput}
-          value={otp}
-          onChangeText={onChangeOtp}
-          keyboardType="number-pad"
-          maxLength={6}
-          placeholder="••••••"
-          placeholderTextColor="#CBD5E1"
-          secureTextEntry
-          editable={!submitting}
-        />
-
-        <Text style={styles.hint}>
-          Enter the OTP you received from your bank to confirm this payment.
-        </Text>
-
-        {submitting && !!hint ? (
-          <View style={styles.hintRow}>
-            <ActivityIndicator size="small" color={G.warn} />
-            <Text style={styles.hintText}>{hint}</Text>
-          </View>
-        ) : null}
-
-        <View style={{ flex: 1 }} />
-
-        <TouchableOpacity
-          style={[
-            styles.primaryBtn,
-            (otp.length < 4 || submitting) && styles.btnDisabled,
-          ]}
-          onPress={onSubmit}
-          disabled={otp.length < 4 || submitting}
-          activeOpacity={0.85}
+        {/* ── Header ── */}
+        <LinearGradient
+          colors={C.gradBrand}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.header}
         >
-          {submitting ? (
-            <ActivityIndicator size="small" color={G.white} />
-          ) : (
-            <Text style={styles.primaryText}>Confirm Payment</Text>
+          <View style={styles.headerRow}>
+            <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} disabled={submitting}>
+              <Ionicons name="chevron-back" size={22} color="#fff" />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle}>Enter OTP</Text>
+            <View style={{ width: 38 }} />
+          </View>
+          <View style={styles.amountBadge}>
+            <Ionicons name="arrow-up-circle-outline" size={14} color="rgba(255,255,255,0.85)" />
+            <Text style={styles.amountBadgeText}>BTN {amountStr}</Text>
+          </View>
+        </LinearGradient>
+
+        {/* ── Body ── */}
+        <View style={styles.body}>
+
+          {/* Icon + instructions */}
+          <View style={styles.iconRing}>
+            <Ionicons name="chatbubble-ellipses-outline" size={28} color={G.grab} />
+          </View>
+          <Text style={styles.instrTitle}>Check your SMS</Text>
+          <Text style={styles.instrSub}>
+            Enter the one-time password sent by your bank to confirm this top-up.
+          </Text>
+
+          {/* OTP boxes */}
+          <View style={styles.otpContainer}>
+            <View style={styles.otpBoxRow} pointerEvents="none">
+              {Array.from({ length: 6 }).map((_, i) => {
+                const filled  = i < otp.length;
+                const active  = i === otp.length && !submitting;
+                return (
+                  <View
+                    key={i}
+                    style={[
+                      styles.otpBox,
+                      filled && styles.otpBoxFilled,
+                      active && styles.otpBoxActive,
+                    ]}
+                  >
+                    {filled && <Text style={styles.otpDot}>●</Text>}
+                  </View>
+                );
+              })}
+            </View>
+            {/* Hidden input intercepts all keyboard events */}
+            <TextInput
+              ref={inputRef}
+              value={otp}
+              onChangeText={onChangeOtp}
+              keyboardType="number-pad"
+              maxLength={6}
+              style={styles.hiddenInput}
+              editable={!submitting}
+              autoFocus
+              caretHidden
+            />
+          </View>
+
+          {/* Status hint */}
+          {submitting && !!hint && (
+            <View style={styles.hintBanner}>
+              <ActivityIndicator size="small" color={G.warn} />
+              <Text style={styles.hintText}>{hint}</Text>
+            </View>
           )}
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+
+          <View style={{ flex: 1 }} />
+
+          {/* Confirm button */}
+          <TouchableOpacity
+            style={[styles.confirmBtn, (otp.length < 4 || submitting) && styles.btnDisabled]}
+            onPress={onSubmit}
+            disabled={otp.length < 4 || submitting}
+            activeOpacity={0.85}
+          >
+            {submitting ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <Text style={styles.confirmBtnText}>Confirm Payment</Text>
+                <Ionicons name="checkmark" size={18} color="#fff" />
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+      {alertNode}
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    flex: 1,
-    backgroundColor: G.bg,
+  wrap: { flex: 1, backgroundColor: "#F8FAFC" },
+
+  /* ── Header ── */
+  header: {
+    paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight || 24) + 12 : 58,
+    paddingHorizontal: 20,
+    paddingBottom: 18,
   },
-  gradientHeader: {
-    paddingTop: Platform.OS === "android" ? 36 : 56,
-    paddingHorizontal: 16,
-    paddingBottom: 14,
+  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  backBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    alignItems: "center", justifyContent: "center",
   },
-  headerRow: {
+  headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  amountBadge: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingTop: 14,
+    alignSelf: "center",
+    gap: 6,
+    marginTop: 10,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 999,
   },
-  backBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  amountBadgeText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+
+  /* ── Body ── */
+  body: {
+    flex: 1,
+    padding: 24,
+    alignItems: "center",
+  },
+
+  /* ── Instructions ── */
+  iconRing: {
+    width: 68, height: 68, borderRadius: 34,
+    backgroundColor: "#F5F3FF",
+    alignItems: "center", justifyContent: "center",
+    marginTop: 12, marginBottom: 16,
+  },
+  instrTitle: {
+    color: "#0F172A",
+    fontSize: 18,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  instrSub: {
+    color: "#64748B",
+    fontSize: 13,
+    textAlign: "center",
+    lineHeight: 20,
+    marginTop: 6,
+    maxWidth: 280,
+  },
+
+  /* ── OTP boxes ── */
+  otpContainer: {
+    width: "100%",
+    marginTop: 28,
+  },
+  otpBoxRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  otpBox: {
+    flex: 1,
+    height: 58,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#fff",
     alignItems: "center",
     justifyContent: "center",
   },
-  backBtnFilled: {
-    backgroundColor: "rgba(255,255,255,.18)",
+  otpBoxActive: {
+    borderColor: G.grab,
+    backgroundColor: "#F5F3FF",
+    shadowColor: G.grab,
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
-  headerTitle: {
-    color: G.white,
+  otpBoxFilled: {
+    borderColor: G.grab,
+    backgroundColor: "#F5F3FF",
+  },
+  otpDot: {
     fontSize: 18,
-    fontWeight: "800",
+    color: G.grab,
+    lineHeight: 22,
   },
-  subHeader: {
-    marginTop: 8,
-    color: G.white,
-    fontWeight: "600",
-    fontSize: 13,
+  hiddenInput: {
+    position: "absolute",
+    width: "100%",
+    height: "100%",
+    opacity: 0,
   },
-  body: {
-    flex: 1,
-    padding: 16,
-  },
-  label: {
-    color: G.slate,
-    fontSize: 14,
-    fontWeight: "700",
-    marginBottom: 6,
-  },
-  otpInput: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: G.line,
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 12,
-    paddingVertical: 14,
-    fontSize: 20,
-    letterSpacing: 6,
-    textAlign: "center",
-    color: G.text,
-  },
-  hint: {
-    marginTop: 8,
-    color: "#64748B",
-    fontSize: 12,
-  },
-  hintRow: {
-    marginTop: 10,
+
+  /* ── Hint banner ── */
+  hintBanner: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 10,
+    backgroundColor: "#FFFBEB",
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+    width: "100%",
   },
-  hintText: {
-    color: G.sub,
-    fontWeight: "700",
-    fontSize: 13,
-    marginLeft: 8,
-  },
-  primaryBtn: {
+  hintText: { color: "#92400E", fontWeight: "600", fontSize: 13 },
+
+  /* ── Confirm button ── */
+  confirmBtn: {
     backgroundColor: G.grab,
-    borderRadius: 999,
-    paddingVertical: 14,
+    borderRadius: 14,
+    paddingVertical: 16,
     alignItems: "center",
-    marginTop: 24,
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
+    width: "100%",
+    marginBottom: 8,
   },
-  primaryText: {
-    color: G.white,
-    fontWeight: "800",
-    fontSize: 16,
-  },
-  btnDisabled: {
-    opacity: 0.5,
-  },
+  confirmBtnText: { color: "#fff", fontWeight: "800", fontSize: 16 },
+  btnDisabled: { opacity: 0.45 },
 });

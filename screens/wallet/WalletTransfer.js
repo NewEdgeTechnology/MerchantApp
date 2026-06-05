@@ -8,30 +8,32 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
-  Alert,
   Platform,
   Modal,
   KeyboardAvoidingView,
+  StatusBar,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import * as LocalAuthentication from "expo-local-authentication";
 import { getValidAccessToken } from "../../utils/authToken";
+import { useAlert } from "../../components/CustomAlert";
+import { C } from "../../theme";
 
 /* ========= tokens ========= */
 const G = {
-  grab: "#00B14F",
-  grab2: "#00C853",
-  text: "#0F172A",
-  sub: "#6B7280",
-  bg: "#F6F7F9",
-  line: "#E5E7EB",
-  danger: "#EF4444",
-  ok: "#10B981",
-  warn: "#F59E0B",
-  white: "#ffffff",
-  slate: "#0F172A",
+  grab:   C.brand,
+  grab2:  C.brandDark,
+  text:   C.text,
+  sub:    C.sub,
+  bg:     C.card2,
+  line:   C.line,
+  danger: C.danger,
+  ok:     C.success,
+  warn:   C.warn,
+  white:  C.white,
+  slate:  C.text,
 };
 
 /* ========= endpoints ========= */
@@ -58,14 +60,12 @@ async function authFetch(url, opts = {}) {
 async function fetchJson(url, opts) {
   const res = await authFetch(url, opts);
   const text = await res.text();
-
   let json;
   try {
     json = text ? JSON.parse(text) : {};
   } catch {
     json = { success: false, message: "Invalid JSON", raw: text };
   }
-
   if (!res.ok) {
     const msg = json?.message || `HTTP ${res.status}`;
     const err = new Error(msg);
@@ -73,13 +73,12 @@ async function fetchJson(url, opts) {
     err.raw = json;
     throw err;
   }
-
   return json;
 }
 
 /**
- * Some servers wake up and first call returns 500.
- * Retry once for HTTP 500 only.
+ * Some servers “wake up” and first call returns 500.
+ * This retries ONLY for HTTP 500 (once), with a short delay.
  */
 async function fetchJsonWithWarmupRetry(url, opts, delayMs = 900) {
   try {
@@ -95,21 +94,23 @@ async function fetchJsonWithWarmupRetry(url, opts, delayMs = 900) {
 }
 
 /* ========= screen ========= */
-export default function WalletTransfer() {
+export default function WalletTransferScreen() {
   const nav = useNavigation();
   const route = useRoute();
+  const { showAlert, alertNode } = useAlert();
 
   const walletFromParams = route?.params?.wallet || null;
   const senderWalletId =
     walletFromParams?.wallet_id || route?.params?.wallet_id || "";
 
+  console.log("[WalletTransfer] senderWalletId:", senderWalletId);
+
+  // 👇 QR payload from ScanQR (optional)
   const qrPayload = route?.params?.qrPayload || null;
 
-  console.log("[WalletTransfer] senderWalletId:", senderWalletId);
-  console.log("[WalletTransfer] qrPayload:", qrPayload);
-  console.log("[WalletTransfer] wallet params:", walletFromParams);
+  console.log("[WalletTransfer] qr: ", qrPayload, "from params:", walletFromParams);
 
-  // store only suffix – UI shows TD + suffix
+  // store only suffix – UI shows NET + suffix
   const [recipientSuffix, setRecipientSuffix] = useState("");
   const [amountStr, setAmountStr] = useState("");
   const [note, setNote] = useState("Transfer");
@@ -123,7 +124,7 @@ export default function WalletTransfer() {
 
   // TPIN attempts & lock
   const [tpinAttempts, setTpinAttempts] = useState(0);
-  const [tpinLockedUntil, setTpinLockedUntil] = useState(null);
+  const [tpinLockedUntil, setTpinLockedUntil] = useState(null); // timestamp (ms)
   const [lockSecondsLeft, setLockSecondsLeft] = useState(0);
 
   // Recipient username
@@ -154,15 +155,24 @@ export default function WalletTransfer() {
   const onChangeTPIN = (val) =>
     setTpin((val || "").replace(/[^0-9]/g, "").slice(0, 4));
 
-  // Recipient wallet – TD + 8 digits = 10 total
+  // Recipient wallet – limit total to 9 chars ("NET" + 6 digits)
   const onChangeRecipient = (val) => {
     const upper = (val || "").toUpperCase();
+
+    // Remove "TD" if present
     let body = upper.startsWith("TD") ? upper.slice(2) : upper;
-    body = body.replace(/[^0-9]/g, "").slice(0, 8);
+
+    // Keep digits only and limit to 10 → "TD" + 8 = 10 total
+    body = body.replace(/[^0-9]/g, "").slice(0,8);
+    console.log("Recipient wallet input changed:", val, "cleaned to:", body);
+
     setRecipientSuffix(body);
   };
 
+  console.log("Recipient suffix:", recipientSuffix);
+
   const fullRecipientId = recipientSuffix ? `TD${recipientSuffix}` : "";
+  console.log("Full recipient wallet ID:", fullRecipientId);  
 
   /* ========= Prefill from QR payload ========= */
   useEffect(() => {
@@ -203,18 +213,15 @@ export default function WalletTransfer() {
     }
 
     let alive = true;
-
     (async () => {
       setRecipientLoading(true);
       try {
         const res = await fetchJsonWithWarmupRetry(
           GET_RECIPIENT_USERNAME(fullRecipientId),
           undefined,
-          700
+          700,
         );
-
         console.log("[WalletTransfer] recipient lookup result:", res);
-
         if (!alive) return;
 
         if (res?.success && res?.data?.user_name) {
@@ -229,7 +236,7 @@ export default function WalletTransfer() {
         setRecipientName("");
         setRecipientError(
           e?.message ||
-            "Could not fetch recipient details. Please check the ID."
+            "Could not fetch recipient details. Please check the ID.",
         );
       } finally {
         if (alive) setRecipientLoading(false);
@@ -262,47 +269,29 @@ export default function WalletTransfer() {
 
   const validateBeforePay = useCallback(() => {
     if (!senderWalletId) {
-      Alert.alert("Error", "Sender wallet ID missing.");
+      showAlert({ type: "error", title: "Error", message: "Sender wallet ID missing.", primaryLabel: "OK" });
       return false;
     }
-
     if (!recipientSuffix.trim()) {
-      Alert.alert("Missing field", "Please enter recipient wallet ID.");
+      showAlert({ type: "warn", title: "Missing field", message: "Please enter recipient wallet ID.", primaryLabel: "OK" });
       return false;
     }
-
-    if (fullRecipientId.length !== 10) {
-      Alert.alert(
-        "Invalid recipient",
-        "Recipient wallet ID must be TD followed by 8 digits."
-      );
+    if (fullRecipientId === senderWalletId.trim()) {
+      showAlert({ type: "warn", title: "Invalid recipient", message: "You cannot transfer to the same wallet.", primaryLabel: "OK" });
       return false;
     }
-
-    if (fullRecipientId === String(senderWalletId).trim()) {
-      Alert.alert(
-        "Invalid recipient",
-        "You cannot transfer to the same wallet."
-      );
-      return false;
-    }
-
     const amt = parseFloat(amountStr);
     if (!Number.isFinite(amt) || amt <= 0) {
-      Alert.alert(
-        "Invalid amount",
-        "Please enter a valid amount greater than 0."
-      );
+      showAlert({ type: "warn", title: "Invalid amount", message: "Please enter a valid amount greater than 0.", primaryLabel: "OK" });
       return false;
     }
-
     return true;
-  }, [senderWalletId, recipientSuffix, fullRecipientId, amountStr]);
+  }, [senderWalletId, recipientSuffix, fullRecipientId, amountStr, showAlert]);
 
   /**
    * Calls backend transfer.
-   * biometric=true -> t_pin:null
-   * biometric=false -> t_pin:"1234"
+   * - biometric=true -> t_pin:null
+   * - biometric=false -> t_pin:"1234"
    */
   const doTransfer = useCallback(
     async ({ biometric, t_pin }) => {
@@ -313,19 +302,22 @@ export default function WalletTransfer() {
         recipient_wallet_id: fullRecipientId,
         amount: amt,
         note: note?.trim() || "Transfer",
+
+        // ✅ as you requested
         biometric: !!biometric,
         t_pin: biometric ? null : String(t_pin || ""),
       };
 
       console.log("[WalletTransfer] payload:", payload);
 
+      // warmup wait + retry for first 500
       const res = await fetchJsonWithWarmupRetry(
         TRANSFER_URL,
         {
           method: "POST",
           body: JSON.stringify(payload),
         },
-        900
+        900,
       );
 
       if (!res?.success) {
@@ -347,12 +339,12 @@ export default function WalletTransfer() {
         createdAt,
       });
     },
-    [amountStr, senderWalletId, fullRecipientId, note, nav, recipientName]
+    [amountStr, senderWalletId, fullRecipientId, note, nav, recipientName],
   );
 
   /**
-   * Try biometric first.
-   * If unavailable or fails, fallback to TPIN modal.
+   * Try biometric payment first.
+   * If device can't do biometrics OR auth fails -> fallback to TPIN modal.
    */
   const handleContinue = useCallback(async () => {
     if (!validateBeforePay()) return;
@@ -360,16 +352,19 @@ export default function WalletTransfer() {
     setSubmitting(true);
 
     try {
+      // Check biometric availability
       const hasHardware = await LocalAuthentication.hasHardwareAsync();
       const isEnrolled = await LocalAuthentication.isEnrolledAsync();
 
       if (!hasHardware || !isEnrolled) {
+        // fallback to TPIN
         setSubmitting(false);
         setTpin("");
         setTpinModalVisible(true);
         return;
       }
 
+      // Run biometric auth
       setBioChecking(true);
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: "Confirm wallet transfer",
@@ -379,15 +374,21 @@ export default function WalletTransfer() {
       setBioChecking(false);
 
       if (!result?.success) {
+        // fallback to TPIN
         setSubmitting(false);
         setTpin("");
         setTpinModalVisible(true);
         return;
       }
 
+      // ✅ biometric success -> call API with biometric:true + t_pin:null
       await doTransfer({ biometric: true, t_pin: null });
     } catch (e) {
-      console.log("[WalletTransfer] biometric/transfer error:", e?.message || e);
+      console.log(
+        "[WalletTransfer] biometric/transfer error:",
+        e?.message || e,
+      );
+      // fallback to TPIN on any unexpected error
       setTpin("");
       setTpinModalVisible(true);
     } finally {
@@ -397,25 +398,25 @@ export default function WalletTransfer() {
   }, [validateBeforePay, doTransfer]);
 
   const handleConfirmWithTPIN = useCallback(async () => {
+    // If locked, block immediately
     if (tpinLockedUntil && lockSecondsLeft > 0) {
-      Alert.alert(
-        "Too many attempts",
-        `Please wait ${lockSecondsLeft} seconds before trying again.`
-      );
+      showAlert({ type: "warn", title: "Too many attempts", message: `Please wait ${lockSecondsLeft} seconds before trying again.`, primaryLabel: "OK" });
       return;
     }
 
     if (!validateBeforePay()) return;
 
     if (tpin.length !== 4) {
-      Alert.alert("Invalid TPIN", "Please enter your 4-digit TPIN.");
+      showAlert({ type: "warn", title: "Invalid TPIN", message: "Please enter your 4-digit TPIN.", primaryLabel: "OK" });
       return;
     }
 
     setTpinSubmitting(true);
     try {
+      // ✅ TPIN flow -> biometric false + t_pin value
       await doTransfer({ biometric: false, t_pin: tpin });
 
+      // reset attempts/lock and close modal
       setTpinAttempts(0);
       setTpinLockedUntil(null);
       setLockSecondsLeft(0);
@@ -430,12 +431,9 @@ export default function WalletTransfer() {
           setTpinLockedUntil(until);
           setLockSecondsLeft(LOCK_SECONDS);
 
-          Alert.alert(
-            "Too many attempts",
-            `You have entered an incorrect TPIN too many times. Please wait ${LOCK_SECONDS} seconds before trying again.`
-          );
+          showAlert({ type: "warn", title: "Too many attempts", message: `You have entered an incorrect TPIN too many times. Please wait ${LOCK_SECONDS} seconds before trying again.`, primaryLabel: "OK" });
         } else {
-          Alert.alert("Transfer failed", String(e.message || "Transfer error."));
+          showAlert({ type: "error", title: "Transfer failed", message: String(e.message || "Transfer error."), primaryLabel: "OK" });
         }
 
         return next;
@@ -443,142 +441,163 @@ export default function WalletTransfer() {
     } finally {
       setTpinSubmitting(false);
     }
-  }, [tpin, validateBeforePay, doTransfer, tpinLockedUntil, lockSecondsLeft]);
+  }, [tpin, validateBeforePay, doTransfer, tpinLockedUntil, lockSecondsLeft, showAlert]);
 
   const locked = !!tpinLockedUntil && lockSecondsLeft > 0;
 
   return (
     <View style={styles.wrap}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+
+      {/* ── Flat header with safe area ── */}
       <LinearGradient
-        colors={["#46e693", "#40d9c2"]}
+        colors={C.gradBrand}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={styles.gradientHeader}
+        style={styles.header}
       >
-        <View style={styles.headerRow}>
-          <TouchableOpacity
-            onPress={handleBack}
-            style={styles.backBtn}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="chevron-back" size={22} color={G.white} />
-          </TouchableOpacity>
-
-          <Text style={styles.headerTitle}>Wallet Transfer</Text>
-          <View style={{ width: 32 }} />
+        <TouchableOpacity onPress={handleBack} style={styles.backBtn} activeOpacity={0.8}>
+          <Ionicons name="chevron-back" size={22} color="#fff" />
+        </TouchableOpacity>
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle}>Transfer</Text>
+          {!!senderWalletId && (
+            <Text style={styles.headerSub}>From {senderWalletId}</Text>
+          )}
         </View>
-
-        {!!senderWalletId && (
-          <Text style={styles.senderInfo}>
-            From Wallet: <Text style={{ fontWeight: "800" }}>{senderWalletId}</Text>
-          </Text>
-        )}
+        <View style={{ width: 38 }} />
       </LinearGradient>
 
-      <ScrollView
-        style={styles.body}
-        contentContainerStyle={{ paddingBottom: 32 }}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Transfer Details</Text>
-          <Text style={styles.cardSubtitle}>
-            Enter the recipient&apos;s wallet ID and the amount you want to
-            transfer.
-          </Text>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
 
-          <Text style={styles.inputLabel}>Recipient Wallet ID</Text>
-          <TextInput
-            value={fullRecipientId}
-            onChangeText={onChangeRecipient}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            style={styles.input}
-            placeholder="TD00000000"
-            placeholderTextColor="#CBD5E1"
-            maxLength={10}
-            keyboardType="decimal-pad"
-          />
+          {/* ── Section: Recipient ── */}
+          <Text style={styles.sectionLabel}>Recipient</Text>
+          <View style={styles.field}>
+            <Ionicons name="wallet-outline" size={18} color={G.sub} style={styles.fieldIcon} />
+            <TextInput
+              value={fullRecipientId}
+              onChangeText={onChangeRecipient}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              style={styles.fieldInput}
+              placeholder="Wallet ID  e.g. TD00000000"
+              placeholderTextColor="#CBD5E1"
+              maxLength={10}
+            />
+          </View>
 
+          {/* Recipient status */}
           {recipientLoading ? (
             <View style={styles.recipientRow}>
               <ActivityIndicator size="small" color={G.grab} />
-              <Text style={styles.recipientInfoText}>Fetching user name…</Text>
+              <Text style={styles.recipientHint}>Looking up account…</Text>
             </View>
           ) : recipientName ? (
             <View style={styles.recipientRow}>
-              <Ionicons name="person-circle-outline" size={18} color={G.ok} />
-              <Text style={styles.recipientNameText}>{recipientName}</Text>
+              <View style={styles.recipientBadge}>
+                <Ionicons name="checkmark-circle" size={16} color={G.ok} />
+                <Text style={styles.recipientName}>{recipientName}</Text>
+              </View>
             </View>
           ) : recipientError ? (
-            <Text style={styles.recipientErrorText}>{recipientError}</Text>
+            <View style={styles.recipientRow}>
+              <Ionicons name="alert-circle-outline" size={15} color={G.danger} />
+              <Text style={styles.recipientErr}>{recipientError}</Text>
+            </View>
           ) : null}
 
-          <Text style={styles.inputLabel}>Amount (BTN)</Text>
-          <TextInput
-            value={amountStr}
-            onChangeText={onChangeAmount}
-            keyboardType="decimal-pad"
-            style={styles.input}
-            placeholder="0.00"
-            placeholderTextColor="#CBD5E1"
-          />
+          <View style={styles.divider} />
 
-          <Text style={styles.inputLabel}>Note (optional)</Text>
-          <TextInput
-            value={note}
-            onChangeText={setNote}
-            style={styles.input}
-            placeholder="Transfer"
-            placeholderTextColor="#CBD5E1"
-          />
+          {/* ── Section: Amount ── */}
+          <Text style={styles.sectionLabel}>Amount</Text>
+          <View style={styles.amountRow}>
+            <Text style={styles.currencyLabel}>BTN</Text>
+            <TextInput
+              value={amountStr}
+              onChangeText={onChangeAmount}
+              keyboardType="decimal-pad"
+              style={styles.amountInput}
+              placeholder="0.00"
+              placeholderTextColor="#CBD5E1"
+            />
+          </View>
 
+          <View style={styles.divider} />
+
+          {/* ── Section: Note ── */}
+          <Text style={styles.sectionLabel}>Note  <Text style={styles.optionalTag}>optional</Text></Text>
+          <View style={styles.field}>
+            <Ionicons name="create-outline" size={18} color={G.sub} style={styles.fieldIcon} />
+            <TextInput
+              value={note}
+              onChangeText={setNote}
+              style={styles.fieldInput}
+              placeholder="What's this for?"
+              placeholderTextColor="#CBD5E1"
+            />
+          </View>
+
+          <View style={styles.divider} />
+
+          {/* ── Info notice ── */}
+          <View style={styles.notice}>
+            <Ionicons name="lock-closed-outline" size={14} color={G.sub} />
+            <Text style={styles.noticeText}>
+              Transfers are instant and irreversible. Double-check the wallet ID before confirming.
+            </Text>
+          </View>
+
+          {/* ── CTA ── */}
           <TouchableOpacity
-            style={[
-              styles.primaryBtn,
-              (submitting || bioChecking) && styles.btnDisabled,
-            ]}
-            activeOpacity={0.9}
+            style={[styles.ctaBtn, (submitting || bioChecking) && styles.ctaBtnDisabled]}
+            activeOpacity={0.88}
             disabled={submitting || bioChecking}
             onPress={handleContinue}
           >
             {submitting || bioChecking ? (
-              <ActivityIndicator size="small" color={G.white} />
+              <ActivityIndicator size="small" color="#fff" />
             ) : (
-              <Text style={styles.primaryBtnText}>Continue</Text>
+              <>
+                <Ionicons name="arrow-forward-circle-outline" size={20} color="#fff" />
+                <Text style={styles.ctaBtnText}>Continue</Text>
+              </>
             )}
           </TouchableOpacity>
 
-          <Text style={styles.smallHint}>
-            We&apos;ll try biometrics first. If unavailable, we&apos;ll ask for
-            TPIN.
+          <Text style={styles.hint}>
+            We'll verify with biometrics first. TPIN used as fallback.
           </Text>
-        </View>
 
-        <View style={styles.infoBox}>
-          <Ionicons name="information-circle-outline" size={18} color={G.sub} />
-          <Text style={styles.infoText}>
-            Transfers are instant and cannot be reversed. Please double-check
-            the recipient wallet ID and user name before confirming.
-          </Text>
-        </View>
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
 
+      {/* ── TPIN Modal ── */}
       <Modal
         visible={tpinModalVisible}
         transparent
-        animationType="fade"
+        animationType="slide"
         onRequestClose={() => setTpinModalVisible(false)}
       >
-        <KeyboardAvoidingView
-          style={styles.modalBackdrop}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Enter Wallet TPIN</Text>
-            <Text style={styles.modalSubtitle}>
-              Biometrics not used. Please enter your 4-digit TPIN to confirm
-              this transfer.
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalSheet}>
+            {/* Handle */}
+            <View style={styles.sheetHandle} />
+
+            <View style={styles.sheetIconWrap}>
+              <Ionicons name="keypad-outline" size={28} color={G.grab} />
+            </View>
+            <Text style={styles.sheetTitle}>Enter TPIN</Text>
+            <Text style={styles.sheetSubtitle}>
+              Confirm this transfer with your 4-digit wallet TPIN.
             </Text>
 
             <TextInput
@@ -587,263 +606,190 @@ export default function WalletTransfer() {
               keyboardType="number-pad"
               maxLength={4}
               secureTextEntry
-              style={styles.modalInput}
-              placeholder="••••"
+              style={styles.pinInput}
+              placeholder="• • • •"
               placeholderTextColor="#CBD5E1"
+              autoFocus
             />
 
             {locked && (
               <Text style={styles.lockText}>
-                Too many attempts. Try again in {lockSecondsLeft}s.
+                Too many attempts — wait {lockSecondsLeft}s
               </Text>
             )}
 
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalCancel]}
-                onPress={() => setTpinModalVisible(false)}
-                disabled={tpinSubmitting}
-              >
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.sheetConfirmBtn,
+                (tpinSubmitting || tpin.length !== 4 || locked) && styles.ctaBtnDisabled,
+              ]}
+              onPress={handleConfirmWithTPIN}
+              disabled={tpinSubmitting || tpin.length !== 4 || locked}
+            >
+              {tpinSubmitting ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={styles.ctaBtnText}>{locked ? "Locked" : "Confirm Transfer"}</Text>
+              )}
+            </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[
-                  styles.modalBtn,
-                  styles.modalConfirm,
-                  (tpinSubmitting || tpin.length !== 4 || locked) &&
-                    styles.btnDisabled,
-                ]}
-                onPress={handleConfirmWithTPIN}
-                disabled={tpinSubmitting || tpin.length !== 4 || locked}
-              >
-                {tpinSubmitting ? (
-                  <ActivityIndicator size="small" color={G.white} />
-                ) : (
-                  <Text style={styles.modalConfirmText}>
-                    {locked ? "Locked" : "Confirm"}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              style={styles.sheetCancelBtn}
+              onPress={() => setTpinModalVisible(false)}
+              disabled={tpinSubmitting}
+            >
+              <Text style={styles.sheetCancelText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </Modal>
+
+      {alertNode}
     </View>
   );
 }
 
 /* ========= styles ========= */
 const styles = StyleSheet.create({
-  wrap: {
-    flex: 1,
-    backgroundColor: G.bg,
-  },
-  gradientHeader: {
-    paddingTop: Platform.OS === "android" ? 36 : 56,
+  wrap: { flex: 1, backgroundColor: "#F8FAFC" },
+
+  /* header */
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingTop: Platform.OS === "android" ? 44 : 58,
+    paddingBottom: 16,
     paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingTop: 14,
-  },
-  backBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,.18)",
-  },
-  headerTitle: {
-    color: G.white,
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  senderInfo: {
-    marginTop: 8,
-    color: "rgba(255,255,255,0.95)",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-
-  body: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-
-  card: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: G.line,
-    padding: 16,
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: G.slate,
-    marginBottom: 4,
-  },
-  cardSubtitle: {
-    fontSize: 12,
-    color: "#64748B",
-    marginBottom: 12,
-  },
-
-  inputLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#475569",
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: G.line,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 15,
-    color: G.text,
-    backgroundColor: "#F8FAFC",
-  },
-
-  recipientRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 6,
-    gap: 6,
-  },
-  recipientNameText: {
-    color: G.ok,
-    fontWeight: "700",
-    fontSize: 13,
-  },
-  recipientInfoText: {
-    color: "#64748B",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  recipientErrorText: {
-    marginTop: 6,
-    color: G.danger,
-    fontSize: 12,
-    fontWeight: "600",
-  },
-
-  primaryBtn: {
-    marginTop: 16,
-    backgroundColor: G.grab,
-    borderRadius: 999,
-    paddingVertical: 11,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  primaryBtnText: {
-    color: G.white,
-    fontWeight: "800",
-    fontSize: 14,
-  },
-  btnDisabled: {
-    opacity: 0.5,
-  },
-
-  smallHint: {
-    marginTop: 10,
-    color: "#64748B",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-
-  infoBox: {
-    marginTop: 16,
-    marginHorizontal: 4,
-    flexDirection: "row",
-    alignItems: "flex-start",
     gap: 8,
   },
-  infoText: {
-    flex: 1,
-    fontSize: 12,
-    color: "#64748B",
+  backBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.18)",
+  },
+  headerCenter: { flex: 1, alignItems: "center" },
+  headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  headerSub:   { color: "rgba(255,255,255,0.75)", fontSize: 11, fontWeight: "500", marginTop: 2 },
+
+  /* scroll body */
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: 20, paddingTop: 28, paddingBottom: 40 },
+
+  sectionLabel: {
+    fontSize: 11, fontWeight: "700", color: "#94A3B8",
+    textTransform: "uppercase", letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  optionalTag: {
+    fontSize: 10, fontWeight: "500", color: "#CBD5E1",
+    textTransform: "none", letterSpacing: 0,
   },
 
-  /* modal */
+  /* flat field row */
+  field: {
+    flexDirection: "row", alignItems: "center",
+    gap: 10,
+  },
+  fieldIcon: { marginTop: 2 },
+  fieldInput: {
+    flex: 1, fontSize: 15, color: G.text,
+    paddingVertical: 4,
+  },
+
+  /* recipient status */
+  recipientRow: {
+    flexDirection: "row", alignItems: "center",
+    gap: 6, marginTop: 8,
+  },
+  recipientBadge: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    backgroundColor: "#ECFDF5", borderRadius: 20,
+    paddingHorizontal: 10, paddingVertical: 4,
+  },
+  recipientName: { color: "#059669", fontWeight: "700", fontSize: 13 },
+  recipientHint: { color: "#64748B", fontSize: 12 },
+  recipientErr:  { color: G.danger, fontSize: 12, fontWeight: "600", flex: 1 },
+
+  divider: {
+    height: 1, backgroundColor: "#F1F5F9",
+    marginVertical: 22,
+  },
+
+  /* big amount input */
+  amountRow: {
+    flexDirection: "row", alignItems: "flex-end", gap: 8,
+  },
+  currencyLabel: {
+    fontSize: 22, fontWeight: "700", color: "#94A3B8",
+    paddingBottom: 4,
+  },
+  amountInput: {
+    flex: 1, fontSize: 36, fontWeight: "800",
+    color: G.text, paddingVertical: 0,
+  },
+
+  /* notice */
+  notice: {
+    flexDirection: "row", alignItems: "flex-start",
+    gap: 8, marginBottom: 28,
+  },
+  noticeText: { flex: 1, fontSize: 12, color: "#94A3B8", lineHeight: 18 },
+
+  /* CTA button */
+  ctaBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 8, backgroundColor: G.grab,
+    borderRadius: 16, paddingVertical: 16,
+  },
+  ctaBtnDisabled: { opacity: 0.45 },
+  ctaBtnText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+
+  hint: {
+    marginTop: 14, textAlign: "center",
+    fontSize: 12, color: "#94A3B8",
+  },
+
+  /* TPIN bottom sheet modal */
   modalBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(15,23,42,0.45)",
+    backgroundColor: "rgba(15,23,42,0.5)",
+    justifyContent: "flex-end",
+  },
+  modalSheet: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    paddingHorizontal: 24, paddingBottom: 40, paddingTop: 12,
     alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 24,
   },
-  modalCard: {
+  sheetHandle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: "#E2E8F0", marginBottom: 20,
+  },
+  sheetIconWrap: {
+    width: 60, height: 60, borderRadius: 30,
+    backgroundColor: C.brandBg,
+    alignItems: "center", justifyContent: "center",
+    marginBottom: 14,
+  },
+  sheetTitle:    { fontSize: 18, fontWeight: "800", color: G.text, marginBottom: 6 },
+  sheetSubtitle: { fontSize: 13, color: "#64748B", textAlign: "center", marginBottom: 24, lineHeight: 20 },
+
+  pinInput: {
     width: "100%",
-    borderRadius: 16,
-    backgroundColor: "#FFFFFF",
-    padding: 18,
-    borderWidth: 1,
-    borderColor: G.line,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: G.slate,
-    marginBottom: 4,
-  },
-  modalSubtitle: {
-    fontSize: 12,
-    color: "#64748B",
-    marginBottom: 12,
-  },
-  modalInput: {
-    borderWidth: 1,
-    borderColor: G.line,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 18,
-    letterSpacing: 4,
-    textAlign: "center",
-    color: G.text,
-    backgroundColor: "#F8FAFC",
+    borderBottomWidth: 2, borderBottomColor: G.line,
+    fontSize: 28, letterSpacing: 16, textAlign: "center",
+    color: G.text, paddingVertical: 10,
+    marginBottom: 8,
   },
   lockText: {
-    marginTop: 8,
-    fontSize: 12,
-    color: G.danger,
-    textAlign: "center",
-    fontWeight: "600",
+    fontSize: 12, color: G.danger, fontWeight: "600",
+    marginBottom: 12, textAlign: "center",
   },
-  modalActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: 10,
-    marginTop: 16,
+  sheetConfirmBtn: {
+    width: "100%", backgroundColor: G.grab,
+    borderRadius: 16, paddingVertical: 15,
+    alignItems: "center", marginTop: 24,
   },
-  modalBtn: {
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  modalCancel: {
-    backgroundColor: "#E5E7EB",
-  },
-  modalCancelText: {
-    color: "#4B5563",
-    fontWeight: "700",
-  },
-  modalConfirm: {
-    backgroundColor: G.grab,
-  },
-  modalConfirmText: {
-    color: G.white,
-    fontWeight: "800",
-  },
+  sheetCancelBtn: { marginTop: 14, paddingVertical: 8 },
+  sheetCancelText: { fontSize: 14, fontWeight: "600", color: "#64748B" },
 });

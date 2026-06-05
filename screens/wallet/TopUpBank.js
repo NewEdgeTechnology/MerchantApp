@@ -8,32 +8,34 @@ import {
   TextInput,
   Platform,
   ActivityIndicator,
-  Alert,
   FlatList,
   Modal,
   Image,
+  ScrollView,
+  StatusBar,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { WALLET_TOPUP_BASE } from "@env";
 import { getValidAccessToken } from "../../utils/authToken";
+import { useAlert } from "../../components/CustomAlert";
+import { C } from "../../theme";
 
 const G = {
-  grab: "#00B14F",
-  grab2: "#00C853",
-  text: "#0F172A",
-  sub: "#6B7280",
-  bg: "#F6F7F9",
-  line: "#E5E7EB",
-  danger: "#EF4444",
-  ok: "#10B981",
-  warn: "#F59E0B",
-  white: "#ffffff",
-  slate: "#0F172A",
+  grab:   C.brand,
+  grab2:  C.brandDark,
+  text:   C.text,
+  sub:    C.sub,
+  bg:     C.card2,
+  line:   C.line,
+  danger: C.danger,
+  ok:     C.success,
+  warn:   C.warn,
+  white:  C.white,
+  slate:  C.text,
 };
 
-// BFS bank ID → logo image
 const BANK_LOGOS = {
   "1010": require("../../assets/banks/bob.png"),
   "1020": require("../../assets/banks/bnb.png"),
@@ -44,7 +46,7 @@ const BANK_LOGOS = {
   "1070": require("../../assets/banks/unionpay.png"),
 };
 
-const TOPUP_BASE = (WALLET_TOPUP_BASE || "").replace(/\/+$/, "");
+const TOPUP_BASE   = (WALLET_TOPUP_BASE || "").replace(/\/+$/, "");
 const TOPUP_AE_URL = `${TOPUP_BASE}/account-enquiry`;
 
 const WAIT_BEFORE_VERIFY_MS = 1200;
@@ -53,102 +55,73 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function authFetch(url, opts = {}) {
   const token = await getValidAccessToken();
-
-  const baseHeaders = {
-    "Content-Type": "application/json",
-  };
-
+  const baseHeaders = { "Content-Type": "application/json" };
   const headers = token
     ? { ...baseHeaders, Authorization: `Bearer ${token}` }
     : baseHeaders;
 
   const res = await fetch(url, {
     ...opts,
-    headers: {
-      ...(opts.headers || {}),
-      ...headers,
-    },
+    headers: { ...(opts.headers || {}), ...headers },
   });
 
   const text = await res.text();
   let json = null;
-
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = null;
-  }
+  try { json = text ? JSON.parse(text) : null; } catch {}
 
   if (!res.ok) {
     const serverMsg =
       (json && (json.message || json.error || json.responseDesc)) ||
       (text && text.slice(0, 300)) ||
       `HTTP ${res.status}`;
-
     const err = new Error(serverMsg);
     err.status = res.status;
-    err.raw = text;
-    err.body = json;
+    err.raw    = text;
+    err.body   = json;
     throw err;
   }
 
   return json ?? (text ? { raw: text } : {});
 }
 
-export default function TopUpBank() {
+export default function TopUpBankScreen() {
   const navigation = useNavigation();
-  const route = useRoute();
+  const route      = useRoute();
+  const { showAlert, alertNode } = useAlert();
 
-  const wallet = route?.params?.wallet || null;
-  const userId = route?.params?.user_id || null;
-  const amount = Number(route?.params?.amount || 0);
-  const orderNo = route?.params?.orderNo || null;
-  const bfsTxnId = route?.params?.bfsTxnId || null;
-  const bankList = Array.isArray(route?.params?.bankList)
-    ? route.params.bankList
-    : [];
+  const wallet   = route.params?.wallet   || null;
+  const userId   = route.params?.user_id  || null;
+  const amount   = route.params?.amount   || 0;
+  const orderNo  = route.params?.orderNo;
+  const bankList = route.params?.bankList || [];
 
-  const [selectedBankId, setSelectedBankId] = useState(
-    bankList?.[0]?.id || bankList?.[0]?.bankId || null
-  );
-  const [account, setAccount] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [hint, setHint] = useState("");
+  const [selectedBankId,    setSelectedBankId]    = useState(bankList?.[0]?.id || null);
+  const [account,           setAccount]           = useState("");
+  const [submitting,        setSubmitting]        = useState(false);
+  const [hint,              setHint]              = useState("");
   const [bankPickerVisible, setBankPickerVisible] = useState(false);
 
-  const selectedBank = useMemo(() => {
-    return (
-      bankList.find(
-        (b) => String(b?.id || b?.bankId) === String(selectedBankId)
-      ) || null
-    );
-  }, [bankList, selectedBankId]);
+  const selectedBank = useMemo(
+    () => bankList.find((b) => b.id === selectedBankId) || null,
+    [bankList, selectedBankId]
+  );
 
-  useEffect(() => {
-    getValidAccessToken().catch(() => {});
-  }, []);
-
-  const onChangeAccount = useCallback((val) => {
-    const clean = String(val || "").replace(/[^\d]/g, "");
-    setAccount(clean);
-  }, []);
+  useEffect(() => { getValidAccessToken().catch(() => {}); }, []);
 
   const onVerify = useCallback(async () => {
     if (submitting) return;
 
     if (!orderNo) {
-      Alert.alert("Error", "Missing order number.");
+      showAlert({ type: "error", title: "Error", message: "Missing order number.", primaryLabel: "OK" });
       return;
     }
-
     if (!selectedBankId) {
-      Alert.alert("Choose bank", "Please select a bank.");
+      showAlert({ type: "warn", title: "Choose bank", message: "Please select a bank.", primaryLabel: "OK" });
       return;
     }
-
     const acc = String(account || "").trim();
     if (!acc || acc.length < 8) {
-      Alert.alert("Account number", "Please enter a valid account number.");
+      showAlert({ type: "warn", title: "Account number", message: "Please enter a valid account number.", primaryLabel: "OK" });
       return;
     }
 
@@ -156,24 +129,14 @@ export default function TopUpBank() {
     setHint("Preparing verification…");
 
     try {
-      const payload = {
-        orderNo,
-        remitterBankId: selectedBankId,
-        remitterAccNo: acc,
-      };
-
-      console.log("[TopUpBank] verify payload:", payload);
+      const payload = { orderNo, remitterBankId: selectedBankId, remitterAccNo: acc };
 
       await sleep(WAIT_BEFORE_VERIFY_MS);
-
       setHint("Verifying account…");
 
       let res;
       try {
-        res = await authFetch(TOPUP_AE_URL, {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
+        res = await authFetch(TOPUP_AE_URL, { method: "POST", body: JSON.stringify(payload) });
       } catch (e) {
         console.log("[TopUpBank] first verify error:", e?.status, e?.message);
         if (e?.raw) console.log("[TopUpBank] first verify raw:", e.raw);
@@ -181,209 +144,163 @@ export default function TopUpBank() {
         if (Number(e?.status) === 500) {
           setHint("Server busy, retrying…");
           await sleep(RETRY_ON_500_DELAY_MS);
-
           setHint("Verifying again…");
-          res = await authFetch(TOPUP_AE_URL, {
-            method: "POST",
-            body: JSON.stringify(payload),
-          });
+          res = await authFetch(TOPUP_AE_URL, { method: "POST", body: JSON.stringify(payload) });
         } else {
           throw e;
         }
       }
 
       const data = res?.data || res;
-      console.log("[TopUpBank] verify response data:", data);
-
       if (data?.responseCode !== "00") {
         throw new Error(data?.responseDesc || "Account verification failed.");
       }
 
       setHint("");
-
-      Alert.alert("Account verified", "Proceed to OTP.", [
-        {
-          text: "Continue",
-          onPress: () => {
-            navigation.navigate("TopUpOtp", {
-              wallet,
-              user_id: userId,
-              amount,
-              orderNo,
-              bfsTxnId,
-              remitterBankId: selectedBankId,
-              remitterAccNo: acc,
-              selectedBank,
-            });
-          },
-        },
-      ]);
+      navigation.navigate("TopUpOtp", {
+        wallet, user_id: userId, amount, orderNo,
+        remitterBankId: selectedBankId, remitterAccNo: acc,
+      });
     } catch (e) {
       console.log("[TopUpBank] verify error:", e?.status, e?.message);
       if (e?.raw) console.log("[TopUpBank] verify raw:", e.raw);
-
       setHint("");
-
       if (Number(e?.status) === 500) {
-        Alert.alert(
-          "Server busy",
-          "Verification server is temporarily busy. Please try again."
-        );
+        showAlert({ type: "error", title: "Server busy", message: "Verification server is temporarily busy. Please try again.", primaryLabel: "OK" });
       } else {
-        Alert.alert("Verification failed", String(e?.message || e));
+        showAlert({ type: "error", title: "Verification failed", message: String(e.message || e), primaryLabel: "OK" });
       }
     } finally {
       setSubmitting(false);
       setHint("");
     }
-  }, [
-    submitting,
-    orderNo,
-    selectedBankId,
-    account,
-    navigation,
-    wallet,
-    userId,
-    amount,
-    bfsTxnId,
-    selectedBank,
-  ]);
+  }, [orderNo, selectedBankId, account, navigation, wallet, userId, amount, submitting, showAlert]);
 
   const renderBankItem = ({ item }) => {
-    const itemId = String(item?.id || item?.bankId || "");
-    const itemName = item?.name || item?.bankName || "Bank";
-    const active = String(itemId) === String(selectedBankId);
-    const logo = BANK_LOGOS[itemId];
-
+    const active = item.id === selectedBankId;
+    const logo   = BANK_LOGOS[item.id];
     return (
       <TouchableOpacity
         style={[styles.bankRow, active && styles.bankRowActive]}
-        onPress={() => {
-          setSelectedBankId(itemId);
-          setBankPickerVisible(false);
-        }}
+        onPress={() => { setSelectedBankId(item.id); setBankPickerVisible(false); }}
         disabled={submitting}
+        activeOpacity={0.75}
       >
         <View style={styles.bankRowLeft}>
-          {logo ? <Image source={logo} style={styles.bankLogo} /> : null}
-          <Text style={styles.bankName}>{itemName}</Text>
+          {logo ? (
+            <Image source={logo} style={styles.bankLogo} />
+          ) : (
+            <View style={styles.bankLogoFallback}>
+              <Ionicons name="business-outline" size={18} color="#94A3B8" />
+            </View>
+          )}
+          <Text style={[styles.bankName, active && styles.bankNameActive]}>{item.name}</Text>
         </View>
-
-        {active ? (
-          <Ionicons name="checkmark-circle" size={20} color={G.grab} />
-        ) : null}
+        {active && <Ionicons name="checkmark-circle" size={20} color={G.grab} />}
       </TouchableOpacity>
     );
   };
 
-  const isBusy = submitting;
+  const amountStr = amount.toFixed ? amount.toFixed(2) : String(amount);
+  const isBusy    = submitting;
 
   return (
     <View style={styles.wrap}>
+      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
+
+      {/* ── Header ── */}
       <LinearGradient
-        colors={["#46e693", "#40d9c2"]}
+        colors={C.gradBrand}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={styles.gradientHeader}
+        style={styles.header}
       >
         <View style={styles.headerRow}>
-          <TouchableOpacity
-            style={[styles.backBtn, styles.backBtnFilled]}
-            onPress={() => navigation.goBack()}
-            disabled={isBusy}
-          >
-            <Ionicons name="chevron-back" size={22} color={G.white} />
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} disabled={isBusy}>
+            <Ionicons name="chevron-back" size={22} color="#fff" />
           </TouchableOpacity>
-
           <Text style={styles.headerTitle}>Select Bank</Text>
-          <View style={{ width: 32 }} />
+          <View style={{ width: 38 }} />
         </View>
-
-        <Text style={styles.subHeader}>
-          Amount: BTN {Number.isFinite(amount) ? amount.toFixed(2) : amount}
-        </Text>
+        <View style={styles.amountBadge}>
+          <Ionicons name="arrow-up-circle-outline" size={14} color="rgba(255,255,255,0.85)" />
+          <Text style={styles.amountBadgeText}>BTN {amountStr}</Text>
+        </View>
       </LinearGradient>
 
-      <View style={styles.body}>
-        <Text style={styles.label}>Choose your bank</Text>
-
+      {/* ── Body ── */}
+      <ScrollView
+        contentContainerStyle={styles.body}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Bank selector */}
+        <Text style={styles.sectionLabel}>Your Bank</Text>
         <TouchableOpacity
-          style={styles.dropdown}
+          style={styles.bankSelector}
           onPress={() => setBankPickerVisible(true)}
           activeOpacity={0.8}
           disabled={isBusy}
         >
-          <View style={styles.dropdownLeft}>
-            {selectedBank && BANK_LOGOS[String(selectedBank?.id || selectedBank?.bankId)] ? (
-              <Image
-                source={
-                  BANK_LOGOS[String(selectedBank?.id || selectedBank?.bankId)]
-                }
-                style={styles.bankLogoSmall}
-              />
-            ) : null}
-
-            <Text
-              style={[
-                styles.dropdownText,
-                !selectedBank && { color: "#9CA3AF" },
-              ]}
-              numberOfLines={1}
-            >
-              {selectedBank
-                ? selectedBank?.name || selectedBank?.bankName || "Selected bank"
-                : "Select bank"}
-            </Text>
+          <View style={styles.bankSelectorLeft}>
+            {selectedBank && BANK_LOGOS[selectedBank.id] ? (
+              <Image source={BANK_LOGOS[selectedBank.id]} style={styles.bankLogoMed} />
+            ) : (
+              <View style={styles.bankLogoFallback}>
+                <Ionicons name="business-outline" size={20} color="#94A3B8" />
+              </View>
+            )}
+            <View>
+              <Text style={styles.bankSelectorName}>
+                {selectedBank ? selectedBank.name : "Select your bank"}
+              </Text>
+              {selectedBank && (
+                <Text style={styles.bankSelectorSub}>Tap to change</Text>
+              )}
+            </View>
           </View>
-
-          <Ionicons
-            name={bankPickerVisible ? "chevron-up" : "chevron-down"}
-            size={18}
-            color={G.slate}
-          />
+          <Ionicons name={bankPickerVisible ? "chevron-up" : "chevron-down"} size={18} color="#64748B" />
         </TouchableOpacity>
 
-        <Text style={[styles.label, { marginTop: 16 }]}>
-          Enter account number
-        </Text>
-
+        {/* Account input */}
+        <Text style={[styles.sectionLabel, { marginTop: 20 }]}>Account Number</Text>
         <TextInput
-          style={styles.input}
+          style={styles.accountInput}
           value={account}
-          onChangeText={onChangeAccount}
-          keyboardType="number-pad"
-          placeholder="Account number"
+          onChangeText={setAccount}
+          keyboardType="default"
+          placeholder="Enter your account number"
           placeholderTextColor="#CBD5E1"
           editable={!isBusy}
-          maxLength={30}
         />
 
-        {isBusy && !!hint ? (
-          <View style={styles.hintRow}>
+        {/* Status hint */}
+        {isBusy && !!hint && (
+          <View style={styles.hintBanner}>
             <ActivityIndicator size="small" color={G.warn} />
             <Text style={styles.hintText}>{hint}</Text>
           </View>
-        ) : null}
+        )}
 
-        <View style={{ flex: 1 }} />
-
+        {/* Verify button */}
         <TouchableOpacity
-          style={[
-            styles.primaryBtn,
-            (!account || !selectedBankId || isBusy) && styles.btnDisabled,
-          ]}
+          style={[styles.verifyBtn, (!account || isBusy) && styles.btnDisabled]}
           onPress={onVerify}
-          disabled={!account || !selectedBankId || isBusy}
+          disabled={!account || isBusy}
           activeOpacity={0.85}
         >
           {isBusy ? (
-            <ActivityIndicator size="small" color={G.white} />
+            <ActivityIndicator size="small" color="#fff" />
           ) : (
-            <Text style={styles.primaryText}>Verify Account</Text>
+            <>
+              <Text style={styles.verifyBtnText}>Verify Account</Text>
+              <Ionicons name="arrow-forward" size={18} color="#fff" />
+            </>
           )}
         </TouchableOpacity>
-      </View>
+      </ScrollView>
 
+      {/* ── Bank picker modal ── */}
       <Modal
         visible={bankPickerVisible}
         transparent
@@ -392,213 +309,179 @@ export default function TopUpBank() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
+            <View style={styles.dragHandle} />
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Select Bank</Text>
               <TouchableOpacity
+                style={styles.modalClose}
                 onPress={() => setBankPickerVisible(false)}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                disabled={isBusy}
               >
-                <Ionicons name="close" size={20} color={G.slate} />
+                <Ionicons name="close" size={20} color="#64748B" />
               </TouchableOpacity>
             </View>
-
             <FlatList
               data={bankList}
-              keyExtractor={(b, i) => String(b?.id || b?.bankId || i)}
+              keyExtractor={(b) => String(b.id)}
               renderItem={renderBankItem}
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 6 }}
-              ListEmptyComponent={
-                <View style={styles.emptyWrap}>
-                  <Text style={styles.emptyText}>No banks available.</Text>
-                </View>
-              }
             />
           </View>
         </View>
       </Modal>
+
+      {alertNode}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
-    flex: 1,
-    backgroundColor: G.bg,
+  wrap: { flex: 1, backgroundColor: "#F8FAFC" },
+
+  /* ── Header ── */
+  header: {
+    paddingTop: Platform.OS === "android" ? (StatusBar.currentHeight || 24) + 12 : 58,
+    paddingHorizontal: 20,
+    paddingBottom: 18,
   },
-  gradientHeader: {
-    paddingTop: Platform.OS === "android" ? 36 : 56,
+  headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  backBtn: {
+    width: 38, height: 38, borderRadius: 19,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    alignItems: "center", justifyContent: "center",
+  },
+  headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
+  amountBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "center",
+    gap: 6,
+    marginTop: 10,
+    backgroundColor: "rgba(255,255,255,0.18)",
     paddingHorizontal: 16,
-    paddingBottom: 14,
+    paddingVertical: 7,
+    borderRadius: 999,
   },
-  headerRow: {
+  amountBadgeText: { color: "#fff", fontWeight: "800", fontSize: 15 },
+
+  /* ── Body ── */
+  body: { padding: 20, paddingBottom: 36 },
+
+  sectionLabel: { color: "#1E293B", fontSize: 13, fontWeight: "700", marginBottom: 10 },
+
+  /* ── Bank selector ── */
+  bankSelector: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingTop: 14,
-  },
-  backBtn: {
-    width: 32,
-    height: 32,
+    backgroundColor: "#fff",
     borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  bankSelectorLeft: { flexDirection: "row", alignItems: "center", gap: 12, flex: 1 },
+  bankLogoMed: { width: 36, height: 36, borderRadius: 10, resizeMode: "contain" },
+  bankLogoFallback: {
+    width: 36, height: 36, borderRadius: 10,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center", justifyContent: "center",
+  },
+  bankSelectorName: { color: "#0F172A", fontWeight: "700", fontSize: 14 },
+  bankSelectorSub:  { color: "#94A3B8", fontSize: 11, marginTop: 2 },
+
+  /* ── Account input ── */
+  accountInput: {
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    backgroundColor: "#fff",
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    color: "#0F172A",
+    fontSize: 15,
+  },
+
+  /* ── Hint banner ── */
+  hintBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#FFFBEB",
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: "#FDE68A",
+  },
+  hintText: { color: "#92400E", fontWeight: "600", fontSize: 13 },
+
+  /* ── Verify button ── */
+  verifyBtn: {
+    backgroundColor: G.grab,
+    borderRadius: 14,
+    paddingVertical: 16,
     alignItems: "center",
     justifyContent: "center",
-  },
-  backBtnFilled: {
-    backgroundColor: "rgba(255,255,255,.18)",
-  },
-  headerTitle: {
-    color: G.white,
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  subHeader: {
-    marginTop: 8,
-    color: G.white,
-    fontWeight: "600",
-    fontSize: 13,
-  },
-  body: {
-    flex: 1,
-    padding: 16,
-  },
-  label: {
-    color: G.slate,
-    fontSize: 14,
-    fontWeight: "700",
-    marginBottom: 6,
-  },
-  dropdown: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: G.line,
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  dropdownLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-  dropdownText: {
-    color: G.slate,
-    fontWeight: "700",
-    fontSize: 14,
-    flexShrink: 1,
-    marginLeft: 10,
-  },
-  bankRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: G.line,
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 8,
-  },
-  bankRowActive: {
-    borderColor: G.grab,
-    backgroundColor: "#ECFDF3",
-  },
-  bankRowLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-  bankName: {
-    color: G.slate,
-    fontWeight: "700",
-    marginLeft: 10,
-    flexShrink: 1,
-  },
-  bankLogo: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
-    resizeMode: "contain",
-  },
-  bankLogoSmall: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    resizeMode: "contain",
-  },
-  input: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: G.line,
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    color: G.text,
-    fontSize: 14,
-  },
-  hintRow: {
-    marginTop: 10,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  hintText: {
-    color: G.sub,
-    fontWeight: "700",
-    fontSize: 13,
-    marginLeft: 8,
-  },
-  primaryBtn: {
-    backgroundColor: G.grab,
-    borderRadius: 999,
-    paddingVertical: 14,
-    alignItems: "center",
+    gap: 8,
     marginTop: 24,
   },
-  primaryText: {
-    color: G.white,
-    fontWeight: "800",
-    fontSize: 16,
-  },
-  btnDisabled: {
-    opacity: 0.5,
-  },
+  verifyBtnText: { color: "#fff", fontWeight: "800", fontSize: 16 },
+  btnDisabled: { opacity: 0.45 },
+
+  /* ── Modal ── */
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.35)",
+    backgroundColor: "rgba(15,23,42,0.4)",
     justifyContent: "flex-end",
   },
   modalCard: {
-    maxHeight: "60%",
-    backgroundColor: "#FFFFFF",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    maxHeight: "65%",
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 16,
+    paddingBottom: Platform.OS === "ios" ? 32 : 20,
+    paddingTop: 8,
+  },
+  dragHandle: {
+    width: 40, height: 4, borderRadius: 2,
+    backgroundColor: "#E2E8F0",
+    alignSelf: "center",
+    marginBottom: 12,
   },
   modalHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  modalTitle: { color: "#0F172A", fontSize: 16, fontWeight: "800" },
+  modalClose: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center", justifyContent: "center",
+  },
+
+  /* ── Bank rows (inside modal) ── */
+  bankRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: "#F1F5F9",
+    backgroundColor: "#fff",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     marginBottom: 8,
   },
-  modalTitle: {
-    color: G.slate,
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  emptyWrap: {
-    paddingVertical: 20,
-    alignItems: "center",
-  },
-  emptyText: {
-    color: G.sub,
-    fontSize: 13,
-    fontWeight: "600",
-  },
+  bankRowActive: { borderColor: G.grab, backgroundColor: "#F5F3FF" },
+  bankRowLeft:   { flexDirection: "row", alignItems: "center", gap: 12 },
+  bankLogo:      { width: 32, height: 32, borderRadius: 8, resizeMode: "contain" },
+  bankName:      { color: "#1E293B", fontWeight: "600", fontSize: 14 },
+  bankNameActive:{ color: G.grab, fontWeight: "700" },
 });

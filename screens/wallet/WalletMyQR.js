@@ -1,43 +1,57 @@
 // services/wallet/WalletMyQR.js
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   ActivityIndicator,
   TouchableOpacity,
+  ScrollView,
+  StatusBar,
   Platform,
 } from "react-native";
 import { useNavigation, useRoute } from "@react-navigation/native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import QRCode from "react-native-qrcode-svg";
-
+import { captureRef } from "react-native-view-shot";
+import * as MediaLibrary from "expo-media-library";
+import { C as T } from "../../theme/colors";
 import { getUserInfo } from "../../utils/authToken";
+import { useAlert } from "../../components/CustomAlert";
 
-/* ========= tokens ========= */
-const G = {
-  grab: "#00B14F",
-  grab2: "#00C853",
-  text: "#0F172A",
-  sub: "#6B7280",
-  bg: "#F6F7F9",
-  line: "#E5E7EB",
-  danger: "#EF4444",
-  ok: "#10B981",
-  warn: "#F59E0B",
-  white: "#ffffff",
-  slate: "#0F172A",
-};
+const LOGO_URI = Image.resolveAssetSource(require("../../assets/icon.png")).uri;
 
-export default function WalletMyQR() {
+export default function WalletMyQRScreen() {
   const nav = useNavigation();
+  const insets = useSafeAreaInsets();
   const route = useRoute();
+  const { showAlert, alertNode } = useAlert();
   const wallet = route?.params?.wallet || null;
 
+  const passedUserName =
+    route?.params?.userName ||
+    route?.params?.username ||
+    route?.params?.full_name ||
+    route?.params?.name ||
+    "";
+
+  const passedUserId = route?.params?.user_id || route?.params?.userId || null;
+
   const [loading, setLoading] = useState(true);
-  const [userName, setUserName] = useState("");
-  const [userId, setUserId] = useState(null);
+  const [userName, setUserName] = useState(passedUserName);
+  const [userId, setUserId] = useState(passedUserId);
+  const [saving, setSaving] = useState(false);
+
+  const posterRef = useRef(null);
 
   useEffect(() => {
     let alive = true;
@@ -45,22 +59,58 @@ export default function WalletMyQR() {
     (async () => {
       try {
         const me = await getUserInfo();
+
         if (!alive) return;
 
-        const name =
+        const resolvedName =
+          passedUserName ||
+          wallet?.user_name ||
+          wallet?.full_name ||
+          wallet?.name ||
+          wallet?.customer_name ||
+          wallet?.passenger_name ||
           me?.user_name ||
           me?.full_name ||
           me?.name ||
+          me?.customer_name ||
+          me?.passenger_name ||
+          me?.user?.user_name ||
+          me?.user?.full_name ||
+          me?.user?.name ||
+          me?.data?.user_name ||
+          me?.data?.full_name ||
+          me?.data?.name ||
           `${me?.first_name || ""} ${me?.last_name || ""}`.trim() ||
-          "Wallet user";
+          "Wallet User";
 
-        setUserName(name);
-        setUserId(me?.user_id || me?.id || null);
-      } catch (e) {
-        console.log("[WalletMyQR] getUserInfo error:", e?.message || e);
-        if (!alive) return;
-        setUserName("Wallet user");
-        setUserId(null);
+        const resolvedUserId =
+          passedUserId ||
+          wallet?.user_id ||
+          wallet?.customer_id ||
+          wallet?.passenger_id ||
+          me?.user_id ||
+          me?.id ||
+          me?.customer_id ||
+          me?.passenger_id ||
+          me?.user?.user_id ||
+          me?.user?.id ||
+          me?.data?.user_id ||
+          me?.data?.id ||
+          null;
+
+        setUserName(resolvedName);
+        setUserId(resolvedUserId);
+      } catch {
+        if (alive) {
+          setUserName(
+            passedUserName ||
+              wallet?.user_name ||
+              wallet?.full_name ||
+              wallet?.name ||
+              "Wallet User",
+          );
+          setUserId(passedUserId || wallet?.user_id || null);
+        }
       } finally {
         if (alive) setLoading(false);
       }
@@ -69,40 +119,70 @@ export default function WalletMyQR() {
     return () => {
       alive = false;
     };
-  }, []);
-
-  const goBack = () => {
-    try {
-      nav.goBack();
-    } catch {}
-  };
+  }, [passedUserName, passedUserId, wallet]);
 
   const qrValue = useMemo(() => {
     if (!wallet?.wallet_id) return "";
-
-    const payload = {
-      kind: "user_wallet",
-      walletId: wallet.wallet_id,
-      userName,
-      userId,
-      // currency: "BTN",
-      // platform: "backend.tabdhey.bt",
-    };
-
     try {
-      return JSON.stringify(payload);
-    } catch (e) {
-      console.log("[WalletMyQR] QR stringify error:", e?.message || e);
+      return JSON.stringify({
+        kind: "user_wallet",
+        walletId: wallet.wallet_id,
+        userName,
+        userId,
+      });
+    } catch {
       return "";
     }
   }, [wallet?.wallet_id, userName, userId]);
 
+  const downloadQR = useCallback(async () => {
+    setSaving(true);
+    try {
+      const uri = await captureRef(posterRef, { format: "png", quality: 1 });
+      await MediaLibrary.saveToLibraryAsync(uri);
+      showAlert({
+        type: "success",
+        title: "Saved!",
+        message: "Your QR poster has been saved to your photo library.",
+        primaryLabel: "OK",
+      });
+    } catch (e) {
+      const msg = e?.message || "";
+      if (
+        msg.toLowerCase().includes("permission") ||
+        msg.toLowerCase().includes("denied")
+      ) {
+        showAlert({
+          type: "warn",
+          title: "Permission required",
+          message:
+            "Please allow photo library access in Settings to save your QR.",
+          primaryLabel: "OK",
+        });
+      } else {
+        showAlert({
+          type: "error",
+          title: "Save failed",
+          message: "Could not save your QR. Please try again.",
+          primaryLabel: "OK",
+        });
+      }
+    } finally {
+      setSaving(false);
+    }
+  }, [showAlert]);
+
   if (!wallet?.wallet_id) {
     return (
       <View style={styles.center}>
-        <Text style={styles.centerText}>
-          Wallet not available. Please open your wallet again.
-        </Text>
+        <StatusBar
+          translucent
+          backgroundColor="transparent"
+          barStyle="dark-content"
+        />
+        <Ionicons name="wallet-outline" size={40} color="#94A3B8" />
+        <Text style={styles.centerTitle}>Wallet not available</Text>
+        <Text style={styles.centerSub}>Please open your wallet again.</Text>
       </View>
     );
   }
@@ -110,147 +190,249 @@ export default function WalletMyQR() {
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color={G.grab} />
-        <Text style={styles.centerText}>Preparing your QR code…</Text>
+        <StatusBar
+          translucent
+          backgroundColor="transparent"
+          barStyle="dark-content"
+        />
+        <ActivityIndicator size="large" color={T.brand} />
+        <Text style={styles.centerTitle}>Preparing your QR…</Text>
       </View>
     );
   }
 
   return (
     <View style={styles.wrap}>
+      <StatusBar
+        translucent
+        backgroundColor="transparent"
+        barStyle="light-content"
+      />
+
+      {/* ── Header ── */}
       <LinearGradient
-        colors={["#46e693", "#40d9c2"]}
+        colors={T.gradHeader}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={styles.gradientHeader}
+        style={[styles.header, { paddingTop: insets.top + 12 }]}
       >
-        <View style={styles.headerRow}>
-          <TouchableOpacity style={styles.backBtn} onPress={goBack}>
-            <Ionicons name="chevron-back" size={22} color={G.white} />
-          </TouchableOpacity>
-
-          <Text style={styles.headerTitle}>My QR Code</Text>
-          <View style={{ width: 32 }} />
-        </View>
-
-        <Text style={styles.headerSub}>
-          Let others scan this QR to send money directly to your wallet.
-        </Text>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={() => {
+            try {
+              nav.goBack();
+            } catch {}
+          }}
+        >
+          <Ionicons name="chevron-back" size={22} color="#fff" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>My QR Code</Text>
+        <View style={{ width: 38 }} />
       </LinearGradient>
 
-      <View style={styles.body}>
-        <View style={styles.card}>
-          <Text style={styles.nameText}>{userName || "Wallet user"}</Text>
-          <Text style={styles.walletIdText}>Wallet ID: {wallet.wallet_id}</Text>
+      {/* ── Body ── */}
+      <ScrollView
+        contentContainerStyle={[
+          styles.body,
+          { paddingBottom: insets.bottom + 40 },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* posterRef — no overflow:hidden, prevents partial capture on Android */}
+        <View ref={posterRef} collapsable={false} style={styles.poster}>
+          {/* Brand row inside captured area */}
+          <View style={styles.posterBrandRow}>
+            <Image
+              source={require("../../assets/icon.png")}
+              style={styles.posterLogo}
+            />
+            <View>
+              <Text style={styles.posterBrand}>TàbDey</Text>
+              <Text style={styles.posterTagline}>Digital Wallet</Text>
+            </View>
+          </View>
 
-          <View style={styles.qrWrap}>
+          <Text style={styles.posterInstruction}>Scan to pay</Text>
+
+          {/* QR code */}
+          <View style={styles.qrBox}>
             {qrValue ? (
               <QRCode
                 value={qrValue}
                 size={220}
                 backgroundColor="#ffffff"
-                color="#000000"
+                color="#111827"
+                logo={{ uri: LOGO_URI }}
+                logoSize={44}
+                logoMargin={4}
+                logoBorderRadius={10}
+                logoBackgroundColor="#ffffff"
               />
             ) : (
-              <Text style={styles.qrUnavailableText}>QR data not available</Text>
+              <Text style={{ color: T.sub }}>QR data not available</Text>
             )}
           </View>
 
-          <Text style={styles.helperText}>
-            Ask the sender to open “Scan to Pay” and scan this code. The wallet
-            ID and your name are inside the QR payload.
-          </Text>
+          {/* Name + ID */}
+          <Text style={styles.posterName}>{userName}</Text>
+          <View style={styles.posterIdRow}>
+            <Ionicons name="card-outline" size={13} color="#94A3B8" />
+            <Text style={styles.posterId}>{wallet.wallet_id}</Text>
+          </View>
+
+          <Text style={styles.posterFooterText}>www.tabdey.com</Text>
         </View>
-      </View>
+
+        {/* Divider */}
+        <View style={styles.divider} />
+
+        {/* Save button */}
+        <TouchableOpacity
+          onPress={downloadQR}
+          disabled={saving}
+          activeOpacity={0.85}
+          style={[styles.saveBtn, saving && { opacity: 0.55 }]}
+        >
+          {saving ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : (
+            <Ionicons name="download-outline" size={18} color="#fff" />
+          )}
+          <Text style={styles.saveBtnText}>
+            {saving ? "Saving…" : "Save to Gallery"}
+          </Text>
+        </TouchableOpacity>
+
+        <Text style={styles.hint}>
+          Saves as a high-res image to your photo library
+        </Text>
+      </ScrollView>
+      {alertNode}
     </View>
   );
 }
 
-/* ========= styles ========= */
 const styles = StyleSheet.create({
-  wrap: {
-    flex: 1,
-    backgroundColor: G.bg,
-  },
+  wrap: { flex: 1, backgroundColor: "#fff" },
   center: {
     flex: 1,
+    backgroundColor: "#fff",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: G.bg,
-    padding: 24,
+    padding: 32,
+    gap: 6,
   },
-  centerText: {
+  centerTitle: {
+    color: "#1E293B",
+    fontWeight: "700",
+    fontSize: 15,
     marginTop: 8,
-    color: G.slate,
-    fontWeight: "600",
-    textAlign: "center",
   },
-  gradientHeader: {
-    paddingTop: Platform.OS === "android" ? 36 : 56,
+  centerSub: { color: "#64748B", fontSize: 13, textAlign: "center" },
+
+  /* header */
+  header: {
     paddingHorizontal: 16,
     paddingBottom: 16,
-  },
-  headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingTop: 14,
   },
   backBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,.18)",
+    backgroundColor: "rgba(255,255,255,0.2)",
   },
-  headerTitle: {
-    color: G.white,
-    fontSize: 18,
-    fontWeight: "800",
-  },
-  headerSub: {
-    marginTop: 8,
-    color: "rgba(255,255,255,.9)",
-    fontSize: 13,
-  },
-  body: {
-    flex: 1,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-  card: {
+  headerTitle: { color: "#fff", fontSize: 18, fontWeight: "800" },
+
+  /* body */
+  body: { paddingHorizontal: 24, paddingTop: 36, alignItems: "center" },
+
+  /* captured poster — no shadow, no border, no overflow:hidden */
+  poster: {
+    width: "100%",
     backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: G.line,
     alignItems: "center",
+    padding: 28,
   },
-  nameText: {
-    fontSize: 18,
+
+  posterBrandRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 28,
+    alignSelf: "flex-start",
+  },
+  posterLogo: { width: 36, height: 36, borderRadius: 10 },
+  posterBrand: { color: "#0F172A", fontSize: 15, fontWeight: "900" },
+  posterTagline: {
+    color: "#94A3B8",
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 1,
+  },
+
+  posterInstruction: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#94A3B8",
+    letterSpacing: 1.2,
+    textTransform: "uppercase",
+    marginBottom: 20,
+  },
+
+  qrBox: { backgroundColor: "#fff" },
+
+  posterName: {
+    marginTop: 22,
+    fontSize: 17,
     fontWeight: "800",
-    color: G.slate,
-  },
-  walletIdText: {
-    marginTop: 4,
-    color: "#64748B",
-    fontSize: 13,
-  },
-  qrWrap: {
-    marginTop: 18,
-    marginBottom: 12,
-    padding: 12,
-    borderRadius: 16,
-    backgroundColor: "#F9FAFB",
-  },
-  qrUnavailableText: {
-    color: G.sub,
-  },
-  helperText: {
-    marginTop: 4,
-    color: "#6B7280",
-    fontSize: 12,
+    color: "#0F172A",
+    letterSpacing: 0.5,
     textAlign: "center",
   },
+  posterIdRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    marginTop: 6,
+  },
+  posterId: {
+    color: "#94A3B8",
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 0.5,
+  },
+  posterFooterText: {
+    marginTop: 20,
+    color: "#CBD5E1",
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: 1,
+  },
+
+  divider: {
+    width: "100%",
+    height: 1,
+    backgroundColor: "#F1F5F9",
+    marginTop: 32,
+    marginBottom: 24,
+  },
+
+  /* save button */
+  saveBtn: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: T.brand,
+    borderRadius: 16,
+    paddingVertical: 15,
+  },
+  saveBtnText: { fontSize: 15, fontWeight: "800", color: "#fff" },
+  hint: { marginTop: 12, fontSize: 12, color: "#CBD5E1", textAlign: "center" },
 });

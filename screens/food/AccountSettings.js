@@ -847,7 +847,17 @@ const AccountSettings = () => {
           <SettingsRow
             icon="wallet-outline"
             title="Wallet"
-            onPress={() => navigation.navigate("Wallet", { authContext })}
+            onPress={() =>
+              navigation.navigate("Wallet", {
+                user_id: userId,
+                business_id: businessId,
+                username: name,
+                full_name: name,
+                userName: name,
+                business_name: biz.business_name || "",
+                authContext,
+              })
+            }
           />
 
           <SettingsRow
@@ -875,7 +885,7 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: "#FBF7FF",
-  }, 
+  },
   topGlow: {
     position: "absolute",
     top: -120,
@@ -917,7 +927,7 @@ const styles = StyleSheet.create({
     height: 42,
   },
 
-   headerTitle: {
+  headerTitle: {
     flex: 1,
     textAlign: "center",
     fontFamily: FONT.header,

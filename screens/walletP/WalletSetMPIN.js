@@ -7,47 +7,46 @@ import {
   TextInput,
   Platform,
   ActivityIndicator,
-  StatusBar,
+  Alert,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import * as SecureStore from "expo-secure-store";
-import { useAlert } from "../../components/CustomAlert";
-import { C } from "../../theme";
 
 const G = {
-  grab:   C.brand,
-  grab2:  C.brandDark,
-  text:   C.text,
-  sub:    C.sub,
-  bg:     C.card2,
-  line:   C.line,
-  danger: C.danger,
-  white:  C.white,
+  grab: "#00B14F",
+  grab2: "#00C853",
+  text: "#0F172A",
+  sub: "#6B7280",
+  bg: "#F6F7F9",
+  line: "#E5E7EB",
+  danger: "#EF4444",
+  white: "#ffffff",
+  slate: "#0F172A",
 };
 
 const mpinKeyForWallet = (walletId) => {
   const raw = String(walletId || "default");
-  const safe = raw.replace(/[^A-Za-z0-9._-]/g, "_"); // replace *, :, etc. with "_"
+  const safe = raw.replace(/[^A-Za-z0-9._-]/g, "_");
   return `wallet_mpin_${safe}`;
 };
 
 export default function WalletSetMPIN() {
   const nav = useNavigation();
   const route = useRoute();
-  const { showAlert, alertNode } = useAlert();
 
-  const userId = route?.params?.user_id;
-  const walletId = route?.params?.wallet_id;
+  const userId = route?.params?.user_id || null;
+  const walletId = route?.params?.wallet_id || null;
 
-  const [existingMpin, setExistingMpin] = useState(null); // if present, we can show "Change MPIN" later
+  const [existingMpin, setExistingMpin] = useState(null);
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let alive = true;
+
     (async () => {
       try {
         if (!walletId) return;
@@ -56,21 +55,26 @@ export default function WalletSetMPIN() {
           setExistingMpin(stored);
         }
       } catch (e) {
-        // ignore
+        console.log("[WalletSetMPIN] load existing MPIN error:", e?.message || e);
       }
     })();
+
     return () => {
       alive = false;
     };
   }, [walletId]);
 
   const onChangePin = (val) => {
-    const clean = (val || "").replace(/[^0-9]/g, "").slice(0, 4);
+    const clean = String(val || "")
+      .replace(/[^0-9]/g, "")
+      .slice(0, 4);
     setPin(clean);
   };
 
   const onChangePin2 = (val) => {
-    const clean = (val || "").replace(/[^0-9]/g, "").slice(0, 4);
+    const clean = String(val || "")
+      .replace(/[^0-9]/g, "")
+      .slice(0, 4);
     setPin2(clean);
   };
 
@@ -78,30 +82,38 @@ export default function WalletSetMPIN() {
 
   const handleSave = async () => {
     if (!walletId) {
-      showAlert({ type: "error", title: "Error", message: "Wallet ID missing. Please reopen your wallet.", primaryLabel: "OK" });
+      Alert.alert("Error", "Wallet ID missing. Please reopen your wallet.");
       return;
     }
+
     if (!canSubmit) {
-      showAlert({ type: "warn", title: "Invalid MPIN", message: "Please enter and confirm a 4-digit MPIN.", primaryLabel: "OK" });
+      Alert.alert("Invalid MPIN", "Please enter and confirm a 4-digit MPIN.");
       return;
     }
 
     setLoading(true);
     try {
-      // === Local secure save ===
-      // If later you create a backend API for MPIN,
-      // replace this block with a fetch() call and keep SecureStore as cache.
       await SecureStore.setItemAsync(mpinKeyForWallet(walletId), pin);
 
-      showAlert({
-        type: "success",
-        title: "MPIN set",
-        message: existingMpin ? "Your wallet MPIN has been updated." : "Your wallet MPIN has been created.",
-        primaryLabel: "OK",
-        primaryAction: () => { try { nav.goBack(); } catch {} },
-      });
+      Alert.alert(
+        "MPIN set",
+        existingMpin
+          ? "Your wallet MPIN has been updated."
+          : "Your wallet MPIN has been created.",
+        [
+          {
+            text: "OK",
+            onPress: () => {
+              try {
+                nav.goBack();
+              } catch {}
+            },
+          },
+        ]
+      );
     } catch (e) {
-      showAlert({ type: "error", title: "Failed", message: e?.message || "Could not save MPIN.", primaryLabel: "OK" });
+      console.log("[WalletSetMPIN] save MPIN error:", e?.message || e);
+      Alert.alert("Failed", e?.message || "Could not save MPIN.");
     } finally {
       setLoading(false);
     }
@@ -109,9 +121,8 @@ export default function WalletSetMPIN() {
 
   return (
     <View style={styles.wrap}>
-      <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
       <LinearGradient
-        colors={C.gradBrand}
+        colors={["#46e693", "#40d9c2"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.gradientHeader}
@@ -139,15 +150,17 @@ export default function WalletSetMPIN() {
       <View style={styles.body}>
         <View style={styles.card}>
           <Ionicons name="keypad-outline" size={32} color={G.grab} />
+
           <Text style={styles.title}>
             {existingMpin ? "Update your wallet MPIN" : "Create your wallet MPIN"}
           </Text>
+
           <Text style={styles.sub}>
             This 4-digit MPIN will be used to access your wallet information on
             this device when biometrics are not available.
           </Text>
 
-          <View style={{ marginTop: 16, width: "100%" }}>
+          <View style={styles.inputBlock}>
             <Text style={styles.label}>New MPIN</Text>
             <TextInput
               value={pin}
@@ -158,10 +171,11 @@ export default function WalletSetMPIN() {
               style={styles.input}
               placeholder="••••"
               placeholderTextColor="#CBD5E1"
+              editable={!loading}
             />
           </View>
 
-          <View style={{ marginTop: 12, width: "100%" }}>
+          <View style={styles.inputBlock}>
             <Text style={styles.label}>Confirm MPIN</Text>
             <TextInput
               value={pin2}
@@ -172,15 +186,16 @@ export default function WalletSetMPIN() {
               style={styles.input}
               placeholder="••••"
               placeholderTextColor="#CBD5E1"
+              editable={!loading}
             />
           </View>
 
-          {pin2.length === 4 && pin !== pin2 && (
+          {pin2.length === 4 && pin !== pin2 ? (
             <Text style={styles.errorText}>MPIN does not match.</Text>
-          )}
+          ) : null}
 
           <TouchableOpacity
-            style={[styles.btn, !canSubmit || loading ? styles.btnDisabled : null]}
+            style={[styles.btn, (!canSubmit || loading) && styles.btnDisabled]}
             onPress={handleSave}
             disabled={!canSubmit || loading}
             activeOpacity={0.9}
@@ -200,13 +215,15 @@ export default function WalletSetMPIN() {
           wallet settings.
         </Text>
       </View>
-      {alertNode}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, backgroundColor: G.bg },
+  wrap: {
+    flex: 1,
+    backgroundColor: G.bg,
+  },
   gradientHeader: {
     paddingTop: Platform.OS === "android" ? 36 : 56,
     paddingHorizontal: 16,
@@ -216,6 +233,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    paddingTop: 14,
   },
   backBtn: {
     width: 32,
@@ -223,9 +241,13 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,.18)",
   },
-  headerTitle: { color: G.white, fontSize: 18, fontWeight: "800" },
-
+  headerTitle: {
+    color: G.white,
+    fontSize: 18,
+    fontWeight: "800",
+  },
   body: {
     flex: 1,
     padding: 16,
@@ -250,6 +272,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: G.sub,
     textAlign: "center",
+  },
+  inputBlock: {
+    marginTop: 16,
+    width: "100%",
   },
   label: {
     fontSize: 13,

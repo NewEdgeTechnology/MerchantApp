@@ -1,10 +1,7 @@
 // screens/general/WelcomeScreen.js
-// 📦 requires: npx expo install expo-linear-gradient
 
 import "react-native-gesture-handler";
-import React, { useState, useRef } from "react";
-import { LinearGradient } from "expo-linear-gradient";
-import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
+import React, { useRef, useState } from "react";
 import {
   View,
   Text,
@@ -13,7 +10,7 @@ import {
   Image,
   StatusBar,
   Dimensions,
-  ScrollView,
+  Platform,
 } from "react-native";
 import {
   SafeAreaView,
@@ -22,50 +19,48 @@ import {
 import Carousel from "react-native-reanimated-carousel";
 import { useNavigation } from "@react-navigation/native";
 
+import { BRAND, FONT, RADIUS } from "../styles/tabdey_brand";
+
 const { width, height } = Dimensions.get("window");
+
+const LOGO_URL =
+  "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1780554371104_hlvv6tc34zr.webp";
 
 const slides = [
   {
     image: require("../../assets/Reach your Customers.png"),
-    tag: "GROW",
-    title: "Reach Thousands of Customers",
+    title: "Reach your\nCustomers",
     description:
-      "Expand your business with delivery, pickup, cashless payments, and more.",
-    accent: BRAND.purple,
-    // gradStart: "#F3E6FF",
-    // gradEnd: "#FAF5FF",
+      "Expand your business with delivery, pickup, cashless payments, and more",
   },
   {
     image: require("../../assets/Accelerate your Business.png"),
-    tag: "SCALE",
-    title: "Accelerate Your Business Growth",
-    description:
-      "Get all the tools to run and grow your business in one place.",
-    accent: BRAND.magenta,
-    // gradStart: "#FFE6F5",
-    // gradEnd: "#FFF5FB",
+    title: "Accelerate\nyour Business",
+    description: "Get all the tools to run and grow your business in one place",
   },
   {
     image: require("../../assets/Be Our Partner.png"),
-    tag: "JOIN",
-    title: "Be Our Merchant-Partner Today",
+    title: "Be our\nPartner",
     description:
-      "Signing up is simple — get onboard in as little as 3 working days.",
-    accent: BRAND.amber,
-    // gradStart: "#FFF3D6",
-    // gradEnd: "#FFFAF0",
+      "Signing up is simple — get onboard and start selling with TàbDey",
   },
 ];
 
-const DOT_SIZE = 7;
+const IS_SMALL = height < 700;
+const IS_VERY_SMALL = height < 620;
+
+const CARD_WIDTH = Math.min(width * 0.73, 390);
+const CARD_HEIGHT = IS_VERY_SMALL
+  ? height * 0.46
+  : IS_SMALL
+    ? height * 0.5
+    : height * 0.52;
+
+const BUTTON_WIDTH = CARD_WIDTH;
+const BUTTON_HEIGHT = 48;
 
 export default function WelcomeScreen() {
   const [activeIndex, setActiveIndex] = useState(0);
-  const [selectedCountry] = useState({
-    name: "Bhutan",
-    code: "bt",
-    timestamp: Date.now(),
-  });
   const carouselRef = useRef(null);
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -73,374 +68,372 @@ export default function WelcomeScreen() {
   const openTerms = () => navigation.navigate("TermsOfService");
   const openPrivacy = () => navigation.navigate("PrivacyPolicy");
 
-  const slide = slides[activeIndex] ?? slides[0];
-
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FBF7FF" />
-      <View style={styles.topGlow} />
+      <StatusBar barStyle="dark-content" backgroundColor={BRAND.white} />
 
       <SafeAreaView style={styles.safe}>
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { minHeight: height - insets.top - insets.bottom },
+        <View
+          style={[
+            styles.container,
+            {
+              paddingBottom: Math.max(insets.bottom, 24),
+            },
           ]}
-          showsVerticalScrollIndicator={false}
         >
-          <View style={styles.inner}>
-            <View style={styles.header}>
-              <View style={styles.brandBlock}>
-                <Text style={styles.brandTitle}>
-                  Tàbdey <Text style={styles.brandAccent}>Merchant</Text>
-                </Text>
-                <Text style={styles.brandLabel}>MERCHANT PARTNER APP</Text>
-                <Text style={styles.brandSubtitle}>
-                  Start selling, managing orders and growing your business with
-                  Tàbdey.
-                </Text>
+          {/* ── LOGO + MERCHANT BADGE ── */}
+          <View style={styles.logoSection}>
+            <Image
+              source={{ uri: LOGO_URL }}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+            <View style={styles.merchantBadgeWrap}>
+              <View style={styles.merchantCutLeft} />
+
+              <View style={styles.merchantBadgeCenter}>
+                <Text style={styles.merchantText}>MERCHANT</Text>
               </View>
 
-              <TouchableOpacity style={styles.countryChip} activeOpacity={0.8}>
-                <Image
-                  source={{
-                    uri: `https://flagcdn.com/w40/${selectedCountry.code}.png?ts=${selectedCountry.timestamp}`,
-                  }}
-                  style={styles.flag}
-                />
-                <Text style={styles.countryText}>{selectedCountry.name}</Text>
-              </TouchableOpacity>
+              <View style={styles.merchantCutRight} />
             </View>
+            <Text style={styles.subtitle}>
+              Start selling, managing orders and{"\n"}
+              growing your business with TàbDey
+            </Text>
+          </View>
 
-            <View style={styles.carouselCard}>
+          {/* ── CAROUSEL ── */}
+          <View style={styles.middleSection}>
+            <View style={styles.carouselWrapper}>
               <Carousel
                 ref={carouselRef}
-                width={width - 44}
-                height={Math.min(height * 0.4, 430)}
+                width={CARD_WIDTH}
+                height={CARD_HEIGHT}
                 autoPlay
                 autoPlayInterval={4500}
                 loop
                 data={slides}
                 onSnapToItem={setActiveIndex}
                 renderItem={({ item }) => (
-                  <View style={styles.slide}>
-                    <View style={styles.imageCard}>
-                      <View
-                        style={[styles.tag, { backgroundColor: item.accent }]}
-                      >
-                        <Text style={styles.tagText}>{item.tag}</Text>
-                      </View>
-
-                      <View
-                        style={[
-                          styles.circle,
-                          { backgroundColor: item.accent + "33" },
-                        ]}
-                      />
-
-                      <Image
-                        source={item.image}
-                        style={styles.slideImage}
-                        resizeMode="contain"
-                      />
-                    </View>
-
+                  <View style={styles.slideCard}>
                     <Text style={styles.slideTitle}>{item.title}</Text>
+                    <Image
+                      source={item.image}
+                      style={styles.slideImage}
+                      resizeMode="contain"
+                    />
                     <Text style={styles.slideDesc}>{item.description}</Text>
                   </View>
                 )}
               />
-
-              <View style={styles.dotsRow}>
-                {slides.map((s, i) => (
-                  <View
-                    key={i}
-                    style={[
-                      styles.dot,
-                      i === activeIndex
-                        ? { width: DOT_SIZE * 3, backgroundColor: slide.accent }
-                        : { width: DOT_SIZE, backgroundColor: BRAND.greyLight },
-                    ]}
-                  />
-                ))}
-              </View>
             </View>
 
-            <View
-              style={[styles.footer, { paddingBottom: insets.bottom + 10 }]}
-            >
-              <TouchableOpacity
-                style={styles.btnPrimary}
-                onPress={() => navigation.navigate("MobileLoginScreen")}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.btnPrimaryText}>Log In</Text>
-              </TouchableOpacity>
+            <View style={styles.indicatorRow}>
+              {slides.map((_, index) => {
+                const active = index === activeIndex;
+                const color = active ? BRAND.purple : BRAND.purpleLight;
 
-              <TouchableOpacity
-                style={styles.btnGhost}
-                onPress={() => navigation.navigate("OnboardingScreen")}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.btnGhostText}>Create Merchant Account</Text>
-              </TouchableOpacity>
-
-              <Text style={styles.terms}>
-                By continuing you accept our{" "}
-                <Text style={styles.termsLink} onPress={openTerms}>
-                  Terms of Service
-                </Text>{" "}
-                and{" "}
-                <Text style={styles.termsLink} onPress={openPrivacy}>
-                  Privacy Policy
-                </Text>
-                .
-              </Text>
+                return (
+                  <View
+                    key={index}
+                    style={[
+                      styles.diamondBar,
+                      !active && styles.diamondBarInactive,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.diamondCutLeft,
+                        { borderRightColor: color },
+                      ]}
+                    />
+                    <View
+                      style={[styles.diamondMiddle, { backgroundColor: color }]}
+                    />
+                    <View
+                      style={[
+                        styles.diamondCutRight,
+                        { borderLeftColor: color },
+                      ]}
+                    />
+                  </View>
+                );
+              })}
             </View>
           </View>
-        </ScrollView>
+
+          {/* ── BUTTONS ── */}
+          <View style={styles.actions}>
+            <TouchableOpacity
+              style={styles.btnPrimary}
+              onPress={() => navigation.navigate("MobileLoginScreen")}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.btnPrimaryText}>Log In</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.btnSecondary}
+              onPress={() => navigation.navigate("OnboardingScreen")}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.btnSecondaryText}>
+                Create Merchant Account
+              </Text>
+            </TouchableOpacity>
+
+            <Text style={styles.terms}>
+              By continuing you accept our{" "}
+              <Text style={styles.termsLink} onPress={openTerms}>
+                Terms of Service
+              </Text>{" "}
+              and{" "}
+              <Text style={styles.termsLink} onPress={openPrivacy}>
+                Privacy Policy
+              </Text>
+            </Text>
+          </View>
+        </View>
       </SafeAreaView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
+  root: { flex: 1, backgroundColor: BRAND.white },
+  safe: { flex: 1, backgroundColor: BRAND.white },
+
+  container: {
     flex: 1,
-    backgroundColor: "#FBF7FF",
+    alignItems: "center",
+    justifyContent: "flex-start",
+    backgroundColor: BRAND.white,
   },
 
-  safe: {
-    flex: 1,
-    paddingTop: 12,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingBottom: 28,
-  },
-  topGlow: {
-    position: "absolute",
-    top: -120,
-    right: -90,
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    backgroundColor: BRAND.purpleLight,
-    opacity: 0.45,
+  // ── logo ──
+  logoSection: {
+    alignItems: "center",
   },
 
-  inner: {
-    flex: 1,
-    paddingHorizontal: 30,
-    justifyContent: "space-between",
+  logo: {
+    width: 150,
+    height: 65,
   },
 
-  header: {
-    marginBottom: 18,
-  },
-
-  brandBlock: {
-    flex: 1,
-    paddingRight: 12,
-  },
-
-  brandTitle: {
-    fontFamily: FONT.header,
-    fontSize: 30,
-    fontWeight: "800",
-    color: BRAND.black,
-    marginBottom: 6,
-    paddingRight: 90,
-  },
-
-  brandAccent: {
-    color: BRAND.purple,
-  },
-
-  brandLabel: {
-    fontFamily: FONT.body,
-    fontSize: 10.5,
-    fontWeight: "800",
-    letterSpacing: 1.4,
-    color: BRAND.magenta,
-    marginBottom: 8,
-  },
-
-  brandSubtitle: {
-    fontFamily: FONT.body,
-    fontSize: 14,
-    lineHeight: 21,
-    color: BRAND.grey,
-    maxWidth: "92%",
-  },
-
-  countryChip: {
-    position: "absolute",
-    right: 0,
-    top: 4,
+  merchantBadgeWrap: {
+    marginTop: -16,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 11,
-    paddingVertical: 7,
-    borderRadius: RADIUS.full,
-    backgroundColor: BRAND.white,
-    gap: 6,
-    ...SHADOW.sm,
-  },
-  flag: {
-    width: 22,
-    height: 15,
-    borderRadius: 2,
+    height: 26,
+    alignSelf: "center",
+    transform: [{ translateX: width * 0.055 }],
   },
 
-  countryText: {
-    fontFamily: FONT.body,
-    fontSize: 13,
-    color: BRAND.black,
-    fontWeight: "600",
-  },
-
-  carouselCard: {
-    backgroundColor: BRAND.white,
-    borderRadius: 28,
-    paddingTop: 14,
-    paddingBottom: 14,
-    borderWidth: 1,
-    borderColor: "rgba(157,0,255,0.08)",
-    ...SHADOW.sm,
-  },
-
-  slide: {
-    flex: 1,
-    paddingHorizontal: 18,
-    alignItems: "center",
-  },
-
-  imageCard: {
-    width: "100%",
-    height: Math.min(height * 0.23, 250),
-    borderRadius: 22,
-    // backgroundColor: "#FCFCFC",
+  merchantBadgeCenter: {
+    height: 26,
+    backgroundColor: BRAND.purple,
+    paddingHorizontal: 8,
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
-    marginBottom: 18,
   },
 
-  circle: {
-    position: "absolute",
-    width: 190,
-    height: 190,
-    borderRadius: 105,
-    opacity: 1,
-    zIndex: 0,
+  merchantCutLeft: {
+    width: 0,
+    height: 0,
+    borderBottomWidth: 26,
+    borderBottomColor: BRAND.purple,
+    borderLeftWidth: 6,
+    borderLeftColor: "transparent",
+    marginRight: -1,
   },
 
-  tag: {
-    position: "absolute",
-    top: 14,
-    left: 14,
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-    borderRadius: RADIUS.full,
-    zIndex: 2,
+  merchantCutRight: {
+    width: 0,
+    height: 0,
+    borderTopWidth: 26,
+    borderTopColor: BRAND.purple,
+    borderRightWidth: 6,
+    borderRightColor: "transparent",
   },
-
-  tagText: {
+  merchantText: {
     fontFamily: FONT.body,
-    fontSize: 10,
-    fontWeight: "700",
+    fontSize: 13,
+    fontWeight: "800",
+    fontStyle: "italic",
     color: BRAND.white,
-    letterSpacing: 1.3,
+    letterSpacing: 2,
+  },
+
+  subtitle: {
+    marginTop: 18,
+    fontFamily: FONT.body,
+    fontSize: 14,
+    fontWeight: "400",
+    color: BRAND.black,
+    textAlign: "center",
+    lineHeight: 11 * 1.4,
+    width: BUTTON_WIDTH,
+  },
+
+  middleSection: {
+    alignItems: "center",
+    marginTop: IS_VERY_SMALL ? 2 : 12,
+  },
+
+  carouselWrapper: {
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
+    overflow: "hidden",
+  },
+
+  slideCard: {
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
+    backgroundColor: BRAND.white,
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
+    borderRadius: 20,
+    paddingTop: IS_VERY_SMALL ? 14 : 24,
+    paddingHorizontal: IS_VERY_SMALL ? 18 : 26,
+    paddingBottom: IS_VERY_SMALL ? 14 : 22,
+    overflow: "hidden",
+  },
+
+  slideTitle: {
+    fontFamily: FONT.body,
+    fontSize: IS_VERY_SMALL ? 21 : IS_SMALL ? 23 : 26,
+    fontWeight: "700",
+    color: "#1a1a1a",
+    lineHeight: IS_VERY_SMALL ? 25 : IS_SMALL ? 28 : 32,
+    textAlign: "left",
   },
 
   slideImage: {
-    width: width * 0.48,
-    height: height * 0.16,
-    zIndex: 1,
-  },
-  slideTitle: {
-    fontFamily: FONT.header,
-    fontWeight: "800",
-    fontSize: 20,
-    color: BRAND.black,
-    textAlign: "center",
-    lineHeight: 26,
-    marginBottom: 6,
+    width: CARD_WIDTH * 0.82,
+    height: CARD_HEIGHT * 0.5,
+    alignSelf: "center",
+    marginTop: IS_VERY_SMALL ? 42 : 52,
+    marginBottom: IS_VERY_SMALL ? 14 : 24,
   },
 
   slideDesc: {
     fontFamily: FONT.body,
-    fontSize: 13.5,
-    color: BRAND.grey,
-    textAlign: "center",
-    lineHeight: 20,
-    paddingHorizontal: 10,
+    fontSize: IS_VERY_SMALL ? 12 : 14,
+    fontWeight: "400",
+    color: "#333333",
+    lineHeight: IS_VERY_SMALL ? 16 : 19,
+    textAlign: "left",
+    lineHeight: 11 * 1.4,
   },
 
-  dotsRow: {
+  indicatorRow: {
     flexDirection: "row",
-    justifyContent: "center",
     alignItems: "center",
-    gap: 7,
-    marginTop: 4,
+    justifyContent: "center",
+    gap: 8,
+    marginTop: IS_VERY_SMALL ? 8 : 14,
+    marginBottom: IS_VERY_SMALL ? 8 : 14,
+    height: 14,
   },
 
-  dot: {
-    height: DOT_SIZE,
-    borderRadius: DOT_SIZE / 2,
+  diamondBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    height: 5,
   },
 
-  footer: {
-    marginTop: 20,
+  diamondBarInactive: {
+    opacity: 0.35,
+  },
+
+  diamondCutLeft: {
+    width: 0,
+    height: 0,
+    borderTopWidth: 5,
+    borderTopColor: "transparent",
+    borderRightWidth: 5,
+    borderBottomWidth: 0,
+    borderBottomColor: "transparent",
+  },
+
+  diamondMiddle: {
+    width: 24,
+    height: 5,
+  },
+
+  diamondCutRight: {
+    width: 0,
+    height: 0,
+    borderTopWidth: 0,
+    borderTopColor: "transparent",
+    borderLeftWidth: 5,
+    borderBottomWidth: 5,
+    borderBottomColor: "transparent",
+  },
+
+  // ── buttons ──
+  actions: {
+    alignItems: "center",
+    width: "100%",
+    marginTop: 22,
+    paddingBottom: 0,
   },
 
   btnPrimary: {
-    backgroundColor: BRAND.purple,
-    paddingVertical: 16,
+    width: BUTTON_WIDTH,
+    height: BUTTON_HEIGHT,
     borderRadius: RADIUS.pill,
+    backgroundColor: BRAND.purple,
     alignItems: "center",
+    justifyContent: "center",
     marginBottom: 12,
-    ...SHADOW.md,
+    shadowColor: BRAND.purple,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: Platform.OS === "android" ? 5 : 0,
   },
 
   btnPrimaryText: {
     fontFamily: FONT.body,
-    color: BRAND.white,
     fontSize: 16,
-    fontWeight: "700",
+    fontWeight: "600",
+    color: BRAND.white,
   },
 
-  btnGhost: {
+  btnSecondary: {
+    width: BUTTON_WIDTH,
+    height: BUTTON_HEIGHT,
+    borderRadius: RADIUS.pill,
     backgroundColor: BRAND.white,
     borderWidth: 1.5,
     borderColor: BRAND.purple,
-    paddingVertical: 16,
-    borderRadius: RADIUS.pill,
     alignItems: "center",
-    marginBottom: 16,
+    justifyContent: "center",
+    marginBottom: 12,
   },
 
-  btnGhostText: {
+  btnSecondaryText: {
     fontFamily: FONT.body,
-    color: BRAND.purple,
     fontSize: 16,
-    fontWeight: "700",
+    fontWeight: "500",
+    color: BRAND.purple,
   },
 
   terms: {
     fontFamily: FONT.body,
-    fontSize: 11.5,
-    color: BRAND.grey,
+    fontSize: 11,
+    fontWeight: "400",
+    color: BRAND.black,
     textAlign: "center",
-    lineHeight: 17,
-    paddingHorizontal: 20,
-    marginTop: 2,
+    lineHeight: 16,
+    width: BUTTON_WIDTH,
   },
 
   termsLink: {
     fontFamily: FONT.body,
-    fontWeight: "700",
+    fontSize: 11,
     color: BRAND.magenta,
   },
 });
