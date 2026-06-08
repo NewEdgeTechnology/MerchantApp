@@ -28,7 +28,7 @@ import {
 } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
-import { OSMView } from "expo-osm-sdk";
+import { OSMView, CustomOverlay } from "expo-osm-sdk";
 import * as SecureStore from "expo-secure-store";
 import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
 import {
@@ -64,6 +64,38 @@ const makePinSvg = (color, label = "") =>
       }
     </svg>
   `)}`;
+
+const MapTimelineDot = ({ coordinate, color, label = "" }) => {
+  const hasLabel = !!label;
+
+  return (
+    <CustomOverlay coordinate={coordinate}>
+      <View
+        style={{
+          width: hasLabel ? 18 : 10,
+          height: hasLabel ? 18 : 10,
+          borderRadius: hasLabel ? 9 : 5,
+          backgroundColor: color,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {hasLabel ? (
+          <Text
+            style={{
+              color: "#fff",
+              fontSize: 10,
+              fontWeight: "900",
+              lineHeight: 12,
+            }}
+          >
+            {label}
+          </Text>
+        ) : null}
+      </View>
+    </CustomOverlay>
+  );
+};
 
 class OSMViewErrorBoundary extends React.Component {
   constructor(props) {
@@ -121,19 +153,51 @@ const getItemQty = (it) => {
 
 const extractLatLng = (obj) => {
   if (!obj) return null;
+
   const cand = [
+    // common formats
     { lat: obj.lat, lng: obj.lng },
     { lat: obj.latitude, lng: obj.longitude },
+
+    // driver formats
     { lat: obj.current_lat, lng: obj.current_lng },
     { lat: obj.driver_lat, lng: obj.driver_lng },
+    { lat: obj.driver_latitude, lng: obj.driver_longitude },
+
+    // business formats
+    { lat: obj.business_lat, lng: obj.business_lng },
+    { lat: obj.business_latitude, lng: obj.business_longitude },
+    { lat: obj.location_lat, lng: obj.location_lng },
+    { lat: obj.location_latitude, lng: obj.location_longitude },
+    { lat: obj.address_lat, lng: obj.address_lng },
+    { lat: obj.address_latitude, lng: obj.address_longitude },
+
+    // pickup/drop formats
+    { lat: obj.pickup_lat, lng: obj.pickup_lng },
+    { lat: obj.pickup_latitude, lng: obj.pickup_longitude },
+    { lat: obj.drop_lat, lng: obj.drop_lng },
+    { lat: obj.drop_latitude, lng: obj.drop_longitude },
+    { lat: obj.delivery_lat, lng: obj.delivery_lng },
+    { lat: obj.delivery_latitude, lng: obj.delivery_longitude },
+
+    // nested formats
     { lat: obj?.coords?.lat, lng: obj?.coords?.lng },
+    { lat: obj?.coords?.latitude, lng: obj?.coords?.longitude },
     { lat: obj?.location?.lat, lng: obj?.location?.lng },
+    { lat: obj?.location?.latitude, lng: obj?.location?.longitude },
+    { lat: obj?.address?.lat, lng: obj?.address?.lng },
+    { lat: obj?.address?.latitude, lng: obj?.address?.longitude },
   ];
+
   for (const c of cand) {
     const la = Number(c.lat);
     const lo = Number(c.lng);
-    if (Number.isFinite(la) && Number.isFinite(lo)) return { lat: la, lng: lo };
+
+    if (Number.isFinite(la) && Number.isFinite(lo)) {
+      return { lat: la, lng: lo };
+    }
   }
+
   return null;
 };
 
@@ -154,12 +218,21 @@ const buildGroupedOrdersUrl = (businessId) => {
 };
 
 const buildBusinessDetailsUrl = (businessId) => {
-  if (!businessId) return null;
+  const id = safeStr(businessId);
+  if (!id) return null;
+
   const tmpl = String(ENV_BUSINESS_DETAILS || "").trim();
   if (!tmpl) return null;
-  if (tmpl.includes("{businessId}"))
-    return tmpl.replace("{businessId}", encodeURIComponent(businessId));
-  return `${tmpl.replace(/\/+$/, "")}/${encodeURIComponent(businessId)}`;
+
+  if (tmpl.includes("{businessId}")) {
+    return tmpl.replace("{businessId}", encodeURIComponent(id));
+  }
+
+  if (tmpl.includes("{business_id}")) {
+    return tmpl.replace("{business_id}", encodeURIComponent(id));
+  }
+
+  return `${tmpl.replace(/\/+$/, "")}/${encodeURIComponent(id)}`;
 };
 
 const buildDriverDetailsUrl = (driverId) => {
@@ -339,11 +412,15 @@ export default function TrackBatchOrdersScreen() {
 
   const [batchOrders, setBatchOrders] = useState(() => {
     const passed = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
+
     if (batchOrderIds.length) {
       return passed.filter((o) => batchOrderIds.includes(getOrderId(o)));
     }
-    return [];
+
+    // important: if batch_order_ids is empty, still use the orders passed from previous screen
+    return passed;
   });
+
   const [batchOrdersLoading, setBatchOrdersLoading] = useState(false);
 
   // Map state
@@ -415,10 +492,18 @@ export default function TrackBatchOrdersScreen() {
     try {
       const all = await fetchAllGroupedOrdersFlat();
       if (!all.length) return;
-      const picked = all.filter((o) => {
-        const id = getOrderId(o);
-        return id && batchOrderIds.includes(id);
-      });
+      let picked = [];
+
+      if (batchOrderIds.length) {
+        picked = all.filter((o) => {
+          const id = getOrderId(o);
+          return id && batchOrderIds.includes(id);
+        });
+      } else {
+        // fallback: if no batch_order_ids came from API, keep currently passed orders
+        picked = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
+      }
+
       if (picked.length) setBatchOrders(picked);
     } finally {
       setBatchOrdersLoading(false);
@@ -429,6 +514,7 @@ export default function TrackBatchOrdersScreen() {
     batchId,
     batchOrders.length,
     fetchAllGroupedOrdersFlat,
+    passedOrdersRaw,
   ]);
 
   useEffect(() => {
@@ -552,33 +638,57 @@ export default function TrackBatchOrdersScreen() {
   );
   const fetchBusinessLocation = useCallback(async () => {
     if (businessCoords) return;
+
     const url = buildBusinessDetailsUrl(businessId);
+
+    console.log("[BUSINESS] businessId:", businessId);
+    console.log("[BUSINESS] url:", url);
+
     if (!url) {
       setLoadingLocation(false);
       return;
     }
+
     try {
       const token = await SecureStore.getItemAsync("auth_token");
       const headers = { Accept: "application/json" };
       if (token) headers.Authorization = `Bearer ${token}`;
+
       const res = await fetch(url, { headers });
+      const text = await res.text();
+
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {}
+
+      console.log("[BUSINESS] status:", res.status);
+      console.log("[BUSINESS] raw response:", text);
+
       if (!res.ok) {
         setLoadingLocation(false);
         return;
       }
-      const json = await res.json();
+
       const base = json?.data || json || {};
+
       const coords =
         extractLatLng(base) ||
         extractLatLng(base?.business) ||
-        extractLatLng(base?.location);
+        extractLatLng(base?.data) ||
+        extractLatLng(base?.location) ||
+        extractLatLng(base?.business_location) ||
+        extractLatLng(base?.address);
+
+      console.log("[BUSINESS] extracted coords:", coords);
+
       if (coords) {
-        console.log("Business coordinates found:", coords);
         setBusinessCoords(coords);
       }
+
       setLoadingLocation(false);
     } catch (error) {
-      console.error("Error fetching business location:", error);
+      console.error("[BUSINESS] error:", error);
       setLoadingLocation(false);
     }
   }, [businessId, businessCoords]);
@@ -689,7 +799,26 @@ export default function TrackBatchOrdersScreen() {
     () => groupDropsByDistance(batchOrders, 12),
     [batchOrders],
   );
+  useEffect(() => {
+    if (businessCoords) return;
 
+    const passed = Array.isArray(passedOrdersRaw) ? passedOrdersRaw : [];
+    const first = passed[0]?.raw || passed[0] || {};
+
+    const fallbackCoords =
+      extractLatLng(first?.business) ||
+      extractLatLng(first?.merchant_business) ||
+      extractLatLng(first?.pickup) ||
+      extractLatLng(first?.pickup_location) ||
+      extractLatLng(first?.restaurant) ||
+      extractLatLng(first);
+
+    console.log("[BUSINESS] fallback coords from order:", fallbackCoords);
+
+    if (fallbackCoords) {
+      setBusinessCoords(fallbackCoords);
+    }
+  }, [businessCoords, passedOrdersRaw]);
   const { initialMapCenter, initialZoom } = useMemo(() => {
     const points = [];
     if (businessCoords) points.push(businessCoords);
@@ -785,6 +914,51 @@ export default function TrackBatchOrdersScreen() {
     return list;
   }, [businessCoords, driversByRideId, groupedDropPoints, driverId]);
 
+  const mapDotMarkers = useMemo(() => {
+    const list = [];
+
+    if (businessCoords) {
+      list.push({
+        id: "business",
+        coordinate: {
+          latitude: businessCoords.lat,
+          longitude: businessCoords.lng,
+        },
+        color: COLORS.BUSINESS,
+        label: "",
+      });
+    }
+
+    Object.keys(driversByRideId).forEach((rid) => {
+      const c = driversByRideId[rid]?.coords;
+      if (!c) return;
+
+      list.push({
+        id: `driver-${rid}`,
+        coordinate: {
+          latitude: c.lat,
+          longitude: c.lng,
+        },
+        color: COLORS.DRIVER,
+        label: "",
+      });
+    });
+
+    groupedDropPoints.slice(0, 15).forEach((g) => {
+      list.push({
+        id: `cust-${g.key}`,
+        coordinate: {
+          latitude: g.lat,
+          longitude: g.lng,
+        },
+        color: COLORS.CUSTOMER,
+        label: g.count > 1 ? String(g.count) : "",
+      });
+    });
+
+    return list;
+  }, [businessCoords, driversByRideId, groupedDropPoints]);
+
   const computeMultiRoutes = useCallback(async () => {
     const firstDriverKey = Object.keys(driversByRideId || {})[0];
     const driver = firstDriverKey
@@ -798,6 +972,10 @@ export default function TrackBatchOrdersScreen() {
       lat: g.lat,
       lng: g.lng,
     }));
+
+    console.log("[ROUTE] business:", biz);
+    console.log("[ROUTE] driver:", driver);
+    console.log("[ROUTE] drops:", drops);
 
     const key = JSON.stringify({ driver, biz, drops });
     const now = Date.now();
@@ -919,6 +1097,50 @@ export default function TrackBatchOrdersScreen() {
     return lines;
   }, [routeDriverToBiz, routeBizToCustomers]);
 
+  const toMapRoutePoints = (points = []) =>
+    points
+      .map((p) => ({
+        latitude: Number(p.latitude ?? p.lat),
+        longitude: Number(p.longitude ?? p.lng),
+      }))
+      .filter(
+        (p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude),
+      );
+
+  const drawRoutesOnMap = useCallback(
+    (targetRef) => {
+      if (!targetRef?.current) return;
+
+      setTimeout(() => {
+        const driverBizPoints = toMapRoutePoints(routeDriverToBiz);
+        const bizCustomerPoints = toMapRoutePoints(routeBizToCustomers);
+
+        console.log("[ROUTE] draw driver->business:", driverBizPoints.length);
+        console.log(
+          "[ROUTE] draw business->customers:",
+          bizCustomerPoints.length,
+        );
+
+        if (driverBizPoints.length > 1) {
+          targetRef.current?.displayRoute?.(driverBizPoints, {
+            color: COLORS.DRIVER,
+            width: 6,
+          });
+        }
+
+        if (bizCustomerPoints.length > 1) {
+          targetRef.current?.displayRoute?.(bizCustomerPoints, {
+            color: COLORS.CUSTOMER,
+            width: 6,
+          });
+        }
+      }, 600);
+    },
+    [routeDriverToBiz, routeBizToCustomers],
+  );
+  useEffect(() => {
+    drawRoutesOnMap(mapRef);
+  }, [drawRoutesOnMap]);
   // ============ FIT MAP ============
   const fitAll = useCallback(() => {
     if (!mapRef.current) return;
@@ -1178,6 +1400,123 @@ export default function TrackBatchOrdersScreen() {
   const deliveredByText = `Delivered by ${driverName}${driverId ? ` (${driverId})` : ""}`;
   const title = `${batchOrders.length} order${batchOrders.length !== 1 ? "s" : ""}${selectedMethod ? ` · ${selectedMethod}` : ""}${batchId ? ` · Batch #${batchId}` : ""}`;
 
+  const ListHeaderComponent = () => (
+    <>
+      {/* SUMMARY */}
+      <View style={styles.summaryBox}>
+        <Text style={styles.summaryMain}>{title}</Text>
+
+        {!!label && <Text style={styles.summarySub}>Deliver To: {label}</Text>}
+
+        {!!rideMessage && <Text style={styles.summarySub}>{rideMessage}</Text>}
+
+        <Text style={styles.summarySub}>
+          Batch: {batchId || "—"} · Ride: {effectiveRideIds.join(", ") || "—"}
+        </Text>
+      </View>
+
+      {/* MAP CARD */}
+      <View style={styles.mapCard}>
+        <View style={styles.mapWrap}>
+          <OSMViewErrorBoundary>
+            <OSMView
+              key={mapKey}
+              ref={mapRef}
+              style={styles.map}
+              initialCenter={initialMapCenter}
+              initialZoom={initialZoom}
+              polylines={polylines}
+              styleUrl="https://tiles.openfreemap.org/styles/liberty"
+              onMapReady={() => {
+                console.log("Map ready");
+                setShowLoader(false);
+
+                setTimeout(() => {
+                  drawRoutesOnMap(mapRef);
+                  fitAll();
+                }, 800);
+              }}
+              onError={() => setMapError(true)}
+              onPress={openOverlay}
+            >
+              {mapDotMarkers.map((m) => (
+                <MapTimelineDot
+                  key={m.id}
+                  coordinate={m.coordinate}
+                  color={m.color}
+                  label={m.label}
+                />
+              ))}
+            </OSMView>
+          </OSMViewErrorBoundary>
+
+          {showLoader && (
+            <View style={styles.mapLoadingOverlay}>
+              <ActivityIndicator size="large" color="#16a34a" />
+              <Text style={styles.mapLoadingText}>Loading map...</Text>
+            </View>
+          )}
+
+          <View style={styles.mapActions}>
+            <TouchableOpacity style={styles.fitBtn} onPress={fitAll}>
+              <Ionicons name="scan-outline" size={16} color="#fff" />
+              <Text style={styles.fitBtnText}>Fit All</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.fullBtn} onPress={openOverlay}>
+              <Ionicons name="expand-outline" size={16} color="#fff" />
+              <Text style={styles.fitBtnText}>Full Map</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
+      {/* DRIVER CARD */}
+      <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
+        <View style={styles.driverCard}>
+          <View style={styles.driverHeaderRow}>
+            <Ionicons name="car-outline" size={18} color="#111827" />
+            <Text style={styles.driverTitle}>Driver</Text>
+
+            <TouchableOpacity onPress={onRefresh}>
+              <Ionicons name="refresh" size={18} color="#111827" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.driverText}>{deliveredByText}</Text>
+
+          <View style={{ flexDirection: "row", marginTop: 10 }}>
+            <TouchableOpacity
+              style={[
+                styles.callBtn,
+                !driverPhoneText && styles.callBtnDisabled,
+              ]}
+              onPress={onCallDriver}
+              disabled={!driverPhoneText}
+            >
+              <Ionicons name="call-outline" size={16} color="#fff" />
+              <Text style={styles.callBtnText}>Call driver</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.chatBtn, chatDisabled && styles.chatBtnDisabled]}
+              onPress={onChatDriver}
+              disabled={chatDisabled}
+            >
+              <Ionicons name="chatbubbles-outline" size={16} color="#fff" />
+              <Text style={styles.chatBtnText}>Chat driver</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
+      {/* ORDER LIST TITLE */}
+      <View style={styles.listHeader}>
+        <Text style={styles.listHeaderText}>Orders in this batch</Text>
+      </View>
+    </>
+  );
+
   return (
     <SafeAreaView
       style={styles.safe}
@@ -1229,10 +1568,23 @@ export default function TrackBatchOrdersScreen() {
               style={{ flex: 1 }}
               initialCenter={initialMapCenter}
               initialZoom={initialZoom}
-              markers={markers}
               polylines={polylines}
               styleUrl="https://tiles.openfreemap.org/styles/liberty"
-            />
+              onMapReady={() => {
+                setTimeout(() => {
+                  drawRoutesOnMap(overlayMapRef);
+                }, 800);
+              }}
+            >
+              {mapDotMarkers.map((m) => (
+                <MapTimelineDot
+                  key={m.id}
+                  coordinate={m.coordinate}
+                  color={m.color}
+                  label={m.label}
+                />
+              ))}
+            </OSMView>
           </OSMViewErrorBoundary>
         </SafeAreaView>
       </Modal>
@@ -1248,115 +1600,20 @@ export default function TrackBatchOrdersScreen() {
         <View style={{ width: 40 }} />
       </View>
 
-      {/* SUMMARY */}
-      <View style={styles.summaryBox}>
-        <Text style={styles.summaryMain}>{title}</Text>
-        {!!label && <Text style={styles.summarySub}>Deliver To: {label}</Text>}
-        {!!rideMessage && <Text style={styles.summarySub}>{rideMessage}</Text>}
-        <Text style={styles.summarySub}>
-          Batch: {batchId || "—"} · Ride: {effectiveRideIds.join(", ") || "—"}
-        </Text>
-      </View>
-
-      {/* MAP CARD */}
-      <View style={styles.mapCard}>
-        <View style={styles.mapWrap}>
-          <OSMViewErrorBoundary>
-            <OSMView
-              key={mapKey}
-              ref={mapRef}
-              style={styles.map}
-              initialCenter={initialMapCenter}
-              initialZoom={initialZoom}
-              markers={markers}
-              polylines={polylines}
-              styleUrl="https://tiles.openfreemap.org/styles/liberty"
-              onMapReady={() => {
-                console.log("Map ready");
-                setShowLoader(false);
-                if (!didFitOnceRef.current) {
-                  didFitOnceRef.current = true;
-                  setTimeout(() => fitAll(), 100); // CHANGED: Reduced from 500ms to 100ms
-                }
-              }}
-              onError={() => setMapError(true)}
-              onPress={openOverlay}
-            />
-          </OSMViewErrorBoundary>
-          {showLoader && (
-            <View style={styles.mapLoadingOverlay}>
-              <ActivityIndicator size="large" color="#16a34a" />
-              <Text style={styles.mapLoadingText}>Loading map...</Text>
-            </View>
-          )}
-          <View style={styles.mapActions}>
-            <TouchableOpacity style={styles.fitBtn} onPress={fitAll}>
-              <Ionicons name="scan-outline" size={16} color="#fff" />
-              <Text style={styles.fitBtnText}>Fit All</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.fullBtn} onPress={openOverlay}>
-              <Ionicons name="expand-outline" size={16} color="#fff" />
-              <Text style={styles.fitBtnText}>Full Map</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-
-      {/* DRIVER CARD */}
-      <View style={{ paddingHorizontal: 16, paddingTop: 10 }}>
-        <View style={styles.driverCard}>
-          <View style={styles.driverHeaderRow}>
-            <Ionicons name="car-outline" size={18} color="#111827" />
-            <Text style={styles.driverTitle}>Driver</Text>
-            <TouchableOpacity onPress={onRefresh}>
-              <Ionicons name="refresh" size={18} color="#111827" />
-            </TouchableOpacity>
-          </View>
-          <Text style={styles.driverText}>{deliveredByText}</Text>
-          <View style={{ flexDirection: "row", marginTop: 10 }}>
-            <TouchableOpacity
-              style={[
-                styles.callBtn,
-                !driverPhoneText && styles.callBtnDisabled,
-              ]}
-              onPress={onCallDriver}
-              disabled={!driverPhoneText}
-            >
-              <Ionicons name="call-outline" size={16} color="#fff" />
-              <Text style={styles.callBtnText}>Call driver</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.chatBtn, chatDisabled && styles.chatBtnDisabled]}
-              onPress={onChatDriver}
-              disabled={chatDisabled}
-            >
-              <Ionicons name="chatbubbles-outline" size={16} color="#fff" />
-              <Text style={styles.chatBtnText}>Chat driver</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-
-      {/* ORDER LIST */}
-      <View style={styles.listHeader}>
-        <Text style={styles.listHeaderText}>Orders in this batch</Text>
-      </View>
-
       <FlatList
         data={batchOrders}
         keyExtractor={(it, idx) => String(getOrderId(it) || it?.id || idx)}
         renderItem={renderRow}
+        ListHeaderComponent={ListHeaderComponent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
         contentContainerStyle={{
-          paddingHorizontal: 18,
           paddingBottom: 120,
         }}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
-          <View style={{ paddingTop: 20 }}>
+          <View style={{ paddingHorizontal: 18, paddingTop: 20 }}>
             <Text style={{ color: "#6b7280", textAlign: "center" }}>
               {batchOrdersLoading
                 ? "Loading orders…"
@@ -1559,6 +1816,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#F3E8FF",
     padding: 18,
+    marginHorizontal: 18,
     marginBottom: 14,
     ...SHADOW.sm,
   },

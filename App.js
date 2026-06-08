@@ -13,8 +13,6 @@ import {
   Platform,
   UIManager,
   DeviceEventEmitter,
-  View,
-  ActivityIndicator,
   Alert,
 } from "react-native";
 
@@ -24,11 +22,11 @@ import { getExpoPushTokenAsync } from "./utils/getExpoPushTokenAsync";
 import Constants from "expo-constants";
 // Add this import at the top with your other imports
 import { LogBox } from "react-native";
-
+import SplashScreen from "./components/SplashScreen";
 // Add this after your imports, before the component definitions
 // Ignore the non-serializable warning - safe since we don't use persistence/deep linking
 LogBox.ignoreLogs([
-  'Non-serializable values were found in the navigation state',
+  "Non-serializable values were found in the navigation state",
 ]);
 // Screens (all your existing imports remain the same)
 import WelcomeScreen from "./screens/general/WelcomeScreen";
@@ -234,23 +232,6 @@ async function saveVerifySessionPayloadToSecureStore(payload) {
   };
 }
 
-/* ---------------- Splash Gate (verify first, then decide) ---------------- */
-
-function BootSplash() {
-  return (
-    <View
-      style={{
-        flex: 1,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: "#fff",
-      }}
-    >
-      <ActivityIndicator size="large" color="#00b14f" />
-    </View>
-  );
-}
-
 /* ---------------- App ---------------- */
 
 export default function App() {
@@ -261,6 +242,8 @@ export default function App() {
     target: "WelcomeScreen",
     homeParams: {},
   });
+
+  const [showSplash, setShowSplash] = useState(true);
 
   const ranRef = useRef(false);
 
@@ -376,7 +359,8 @@ export default function App() {
           console.warn(
             "  ⚠️ No endpoint found in any source, using hardcoded fallback",
           );
-          verifyEndpoint = "https://backend.tabdhey.bt/driver/api/verify-session";
+          verifyEndpoint =
+            "https://backend.tabdhey.bt/driver/api/verify-session";
           console.log("  ✅ Using hardcoded fallback:", verifyEndpoint);
         }
 
@@ -620,7 +604,6 @@ export default function App() {
     })();
   }, []);
 
-  // Catch-all for 'open-order-details'
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener(
       "open-order-details",
@@ -631,8 +614,9 @@ export default function App() {
         if (
           current?.name === "OrderDetails" &&
           current?.params?.orderId === params.orderId
-        )
+        ) {
           return;
+        }
 
         try {
           navRef.dispatch(
@@ -651,228 +635,274 @@ export default function App() {
     return () => sub.remove();
   }, [navRef]);
 
-  if (bootState.loading) {
-    return (
-      <SafeAreaProvider>
-        <BootSplash />
-      </SafeAreaProvider>
-    );
-  }
-
   return (
     <SafeAreaProvider>
-      <NavigationContainer ref={navRef} onReady={() => (global.__nav = navRef)}>
-        <AppLockGate>
-          <Stack.Navigator
-            initialRouteName={bootState.target}
-            screenOptions={{ headerShown: false }}
+      {!bootState.loading && (
+        <>
+          <NavigationContainer
+            ref={navRef}
+            onReady={() => (global.__nav = navRef)}
           >
-            <Stack.Screen name="Welcome" component={WelcomeScreen} />
-            <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} />
+            <AppLockGate>
+              <Stack.Navigator
+                initialRouteName={bootState.target}
+                screenOptions={{ headerShown: false }}
+              >
+                <Stack.Screen name="Welcome" component={WelcomeScreen} />
+                <Stack.Screen name="WelcomeScreen" component={WelcomeScreen} />
 
-            <Stack.Screen
-              name="GrabMerchantHomeScreen"
-              component={GrabMerchantHomeScreen}
-              initialParams={
-                bootState.target === "GrabMerchantHomeScreen"
-                  ? bootState.homeParams
-                  : {}
-              }
-            />
+                <Stack.Screen
+                  name="GrabMerchantHomeScreen"
+                  component={GrabMerchantHomeScreen}
+                  initialParams={
+                    bootState.target === "GrabMerchantHomeScreen"
+                      ? bootState.homeParams
+                      : {}
+                  }
+                />
 
-            <Stack.Screen name="LoginScreen" component={LoginScreen} />
-            <Stack.Screen
-              name="OnboardingScreen"
-              component={OnboardingScreen}
-            />
-            <Stack.Screen
-              name="SellingTypeScreen"
-              component={SellingTypeScreen}
-            />
-            <Stack.Screen name="GrabFoodScreen" component={GrabFoodScreen} />
-            <Stack.Screen name="GrabMartScreen" component={GrabMartScreen} />
-            <Stack.Screen name="SignupScreen" component={SignupScreen} />
-            <Stack.Screen
-              name="PhoneNumberScreen"
-              component={PhoneNumberScreen}
-            />
-            <Stack.Screen
-              name="MobileLoginScreen"
-              component={MobileLoginScreen}
-            />
-            <Stack.Screen name="ForgotUsername" component={ForgotUsername} />
-            <Stack.Screen name="EmailSentScreen" component={EmailSentScreen} />
-            <Stack.Screen name="ForgotPassword" component={ForgotPassword} />
-            <Stack.Screen
-              name="ResetPasswordNumber"
-              component={ResetPasswordNumber}
-            />
-            <Stack.Screen
-              name="MerchantRegistrationScreen"
-              component={MerchantRegistrationScreen}
-            />
-            <Stack.Screen
-              name="MerchantExtrasScreen"
-              component={MerchantExtrasScreen}
-            />
-            <Stack.Screen
-              name="BankPaymentInfoScreen"
-              component={BankPaymentInfoScreen}
-            />
-            <Stack.Screen
-              name="DeliveryOptionsScreen"
-              component={DeliveryOptionsScreen}
-            />
-            <Stack.Screen
-              name="ReviewSubmitScreen"
-              component={ReviewSubmitScreen}
-            />
-            <Stack.Screen
-              name="EmailOtpVerificationScreen"
-              component={EmailOtpVerificationScreen}
-            />
-            <Stack.Screen
-              name="MartServiceSetupScreen"
-              component={MartServiceSetupScreen}
-            />
-            <Stack.Screen
-              name="FoodMenuSetupScreen"
-              component={FoodMenuSetupScreen}
-            />
+                <Stack.Screen name="LoginScreen" component={LoginScreen} />
+                <Stack.Screen
+                  name="OnboardingScreen"
+                  component={OnboardingScreen}
+                />
+                <Stack.Screen
+                  name="SellingTypeScreen"
+                  component={SellingTypeScreen}
+                />
+                <Stack.Screen
+                  name="GrabFoodScreen"
+                  component={GrabFoodScreen}
+                />
+                <Stack.Screen
+                  name="GrabMartScreen"
+                  component={GrabMartScreen}
+                />
+                <Stack.Screen name="SignupScreen" component={SignupScreen} />
+                <Stack.Screen
+                  name="PhoneNumberScreen"
+                  component={PhoneNumberScreen}
+                />
+                <Stack.Screen
+                  name="MobileLoginScreen"
+                  component={MobileLoginScreen}
+                />
+                <Stack.Screen
+                  name="ForgotUsername"
+                  component={ForgotUsername}
+                />
+                <Stack.Screen
+                  name="EmailSentScreen"
+                  component={EmailSentScreen}
+                />
+                <Stack.Screen
+                  name="ForgotPassword"
+                  component={ForgotPassword}
+                />
+                <Stack.Screen
+                  name="ResetPasswordNumber"
+                  component={ResetPasswordNumber}
+                />
+                <Stack.Screen
+                  name="MerchantRegistrationScreen"
+                  component={MerchantRegistrationScreen}
+                />
+                <Stack.Screen
+                  name="MerchantExtrasScreen"
+                  component={MerchantExtrasScreen}
+                />
+                <Stack.Screen
+                  name="BankPaymentInfoScreen"
+                  component={BankPaymentInfoScreen}
+                />
+                <Stack.Screen
+                  name="DeliveryOptionsScreen"
+                  component={DeliveryOptionsScreen}
+                />
+                <Stack.Screen
+                  name="ReviewSubmitScreen"
+                  component={ReviewSubmitScreen}
+                />
+                <Stack.Screen
+                  name="EmailOtpVerificationScreen"
+                  component={EmailOtpVerificationScreen}
+                />
+                <Stack.Screen
+                  name="MartServiceSetupScreen"
+                  component={MartServiceSetupScreen}
+                />
+                <Stack.Screen
+                  name="FoodMenuSetupScreen"
+                  component={FoodMenuSetupScreen}
+                />
 
-            <Stack.Screen name="MenuScreen" component={MenuScreen} />
-            <Stack.Screen name="AccountSettings" component={AccountSettings} />
-            <Stack.Screen
-              name="PersonalInformation"
-              component={PersonalInformation}
-            />
-            <Stack.Screen
-              name="PasswordManagement"
-              component={PasswordManagement}
-            />
-            <Stack.Screen
-              name="SecuritySettings"
-              component={SecuritySettings}
-            />
-            <Stack.Screen
-              name="NotificationSettings"
-              component={NotificationSettings}
-            />
-            <Stack.Screen
-              name="ProfileBusinessDetails"
-              component={ProfileBusinessDetails}
-            />
-            <Stack.Screen
-              name="EditBusinessDetails"
-              component={EditBusinessDetails}
-            />
-            <Stack.Screen
-              name="ManageQuickActions"
-              component={ManageQuickActionsScreen}
-            />
-            <Stack.Screen name="OrderDetails" component={OrderDetails} />
-            <Stack.Screen name="FeedbackScreen" component={FeedbackScreen} />
-            <Stack.Screen
-              name="TwoFactorPromptScreen"
-              component={TwoFactorPromptScreen}
-            />
-            <Stack.Screen name="TermsOfService" component={TermsOfService} />
-            <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicy} />
-            <Stack.Screen name="HelpScreen" component={HelpScreen} />
-            <Stack.Screen
-              name="SetNewPasswordScreen"
-              component={SetNewPasswordScreen}
-            />
-            <Stack.Screen name="ForgotOTPVerify" component={ForgotOTPVerify} />
-            <Stack.Screen name="MartOrdersTab" component={MartOrdersTab} />
-            <Stack.Screen name="MessageScreen" component={MessageScreen} />
-            <Stack.Screen
-              name="ChatDetailScreen"
-              component={ChatDetailScreen}
-            />
-            <Stack.Screen name="PayoutTab" component={PayoutTab} />
-            <Stack.Screen
-              name="SalesAnalyticsScreen"
-              component={SalesAnalyticsScreen}
-            />
+                <Stack.Screen name="MenuScreen" component={MenuScreen} />
+                <Stack.Screen
+                  name="AccountSettings"
+                  component={AccountSettings}
+                />
+                <Stack.Screen
+                  name="PersonalInformation"
+                  component={PersonalInformation}
+                />
+                <Stack.Screen
+                  name="PasswordManagement"
+                  component={PasswordManagement}
+                />
+                <Stack.Screen
+                  name="SecuritySettings"
+                  component={SecuritySettings}
+                />
+                <Stack.Screen
+                  name="NotificationSettings"
+                  component={NotificationSettings}
+                />
+                <Stack.Screen
+                  name="ProfileBusinessDetails"
+                  component={ProfileBusinessDetails}
+                />
+                <Stack.Screen
+                  name="EditBusinessDetails"
+                  component={EditBusinessDetails}
+                />
+                <Stack.Screen
+                  name="ManageQuickActions"
+                  component={ManageQuickActionsScreen}
+                />
+                <Stack.Screen name="OrderDetails" component={OrderDetails} />
+                <Stack.Screen
+                  name="FeedbackScreen"
+                  component={FeedbackScreen}
+                />
+                <Stack.Screen
+                  name="TwoFactorPromptScreen"
+                  component={TwoFactorPromptScreen}
+                />
+                <Stack.Screen
+                  name="TermsOfService"
+                  component={TermsOfService}
+                />
+                <Stack.Screen name="PrivacyPolicy" component={PrivacyPolicy} />
+                <Stack.Screen name="HelpScreen" component={HelpScreen} />
+                <Stack.Screen
+                  name="SetNewPasswordScreen"
+                  component={SetNewPasswordScreen}
+                />
+                <Stack.Screen
+                  name="ForgotOTPVerify"
+                  component={ForgotOTPVerify}
+                />
+                <Stack.Screen name="MartOrdersTab" component={MartOrdersTab} />
+                <Stack.Screen name="MessageScreen" component={MessageScreen} />
+                <Stack.Screen
+                  name="ChatDetailScreen"
+                  component={ChatDetailScreen}
+                />
+                <Stack.Screen name="PayoutTab" component={PayoutTab} />
+                <Stack.Screen
+                  name="SalesAnalyticsScreen"
+                  component={SalesAnalyticsScreen}
+                />
 
-            <Stack.Screen
-              name="NearbyOrdersScreen"
-              component={NearbyOrdersScreen}
-            />
-            <Stack.Screen
-              name="NearbyClusterOrdersScreen"
-              component={NearbyClusterOrdersScreen}
-            />
-            <Stack.Screen
-              name="ClusterDeliveryOptionsScreen"
-              component={ClusterDeliveryOptionsScreen}
-            />
-            <Stack.Screen
-              name="SimilarItemCatalog"
-              component={SimilarItemCatalog}
-            />
-            <Stack.Screen
-              name="TrackBatchOrdersScreen"
-              component={TrackBatchOrdersScreen}
-            />
-            <Stack.Screen
-              name="TrackDeliveryDriver"
-              component={TrackDeliveryDriver}
-            />
-            <Stack.Screen
-              name="DriverBatchDetailsOverlayScreen"
-              component={DriverBatchDetailsOverlayScreen}
-              options={{ headerShown: false, presentation: "modal" }}
-            />
-            <Stack.Screen
-              name="TermsOfServiceScreen"
-              component={TermsOfServiceScreen}
-            />
-            <Stack.Screen
-              name="PrivacyPolicyScreen"
-              component={PrivacyPolicyScreen}
-            />
-            <Stack.Screen
-              name="PasswordSentScreen"
-              component={PasswordSentScreen}
-            />
-            <Stack.Screen
-              name="BatchRidesScreen"
-              component={BatchRidesScreen}
-            />
+                <Stack.Screen
+                  name="NearbyOrdersScreen"
+                  component={NearbyOrdersScreen}
+                />
+                <Stack.Screen
+                  name="NearbyClusterOrdersScreen"
+                  component={NearbyClusterOrdersScreen}
+                />
+                <Stack.Screen
+                  name="ClusterDeliveryOptionsScreen"
+                  component={ClusterDeliveryOptionsScreen}
+                />
+                <Stack.Screen
+                  name="SimilarItemCatalog"
+                  component={SimilarItemCatalog}
+                />
+                <Stack.Screen
+                  name="TrackBatchOrdersScreen"
+                  component={TrackBatchOrdersScreen}
+                />
+                <Stack.Screen
+                  name="TrackDeliveryDriver"
+                  component={TrackDeliveryDriver}
+                />
 
-            <Stack.Screen name="Wallet" component={Wallet} />
-            <Stack.Screen name="ScanQR" component={ScanQR} />
-            <Stack.Screen name="TopUp" component={TopUp} />
-            <Stack.Screen name="TopUpBank" component={TopUpBank} />
-            <Stack.Screen name="TopUpOtp" component={TopUpOtp} />
-            <Stack.Screen name="WalletMyQR" component={WalletMyQR} />
-            <Stack.Screen name="WalletSetMPIN" component={WalletSetMPIN} />
-            <Stack.Screen name="WalletSettings" component={WalletSettings} />
-            <Stack.Screen name="WalletSetTPIN" component={WalletSetTPIN} />
-            <Stack.Screen name="WalletTransfer" component={WalletTransfer} />
-            <Stack.Screen
-              name="WalletTransferSuccess"
-              component={WalletTransferSuccess}
-            />
-            <Stack.Screen name="Withdrawal" component={Withdrawal} />
+                <Stack.Screen
+                  name="DriverBatchDetailsOverlayScreen"
+                  component={DriverBatchDetailsOverlayScreen}
+                  options={{ headerShown: false, presentation: "modal" }}
+                />
 
-            <Stack.Screen name="Chat" component={Chat} />
-            <Stack.Screen name="EditItemScreen" component={EditItemScreen} />
-            <Stack.Screen
-              name="ItemDetailScreen"
-              component={ItemDetailScreen}
-            />
-            <Stack.Screen
-              name="MerchantChatRoomScreen"
-              component={ChatRoomScreen}
-            />
-          </Stack.Navigator>
-        </AppLockGate>
-      </NavigationContainer>
+                <Stack.Screen
+                  name="TermsOfServiceScreen"
+                  component={TermsOfServiceScreen}
+                />
+                <Stack.Screen
+                  name="PrivacyPolicyScreen"
+                  component={PrivacyPolicyScreen}
+                />
+                <Stack.Screen
+                  name="PasswordSentScreen"
+                  component={PasswordSentScreen}
+                />
+                <Stack.Screen
+                  name="BatchRidesScreen"
+                  component={BatchRidesScreen}
+                />
 
-      <OrderNotifyOverlay navigation={navRef} />
+                <Stack.Screen name="Wallet" component={Wallet} />
+                <Stack.Screen name="ScanQR" component={ScanQR} />
+                <Stack.Screen name="TopUp" component={TopUp} />
+                <Stack.Screen name="TopUpBank" component={TopUpBank} />
+                <Stack.Screen name="TopUpOtp" component={TopUpOtp} />
+                <Stack.Screen name="WalletMyQR" component={WalletMyQR} />
+                <Stack.Screen name="WalletSetMPIN" component={WalletSetMPIN} />
+                <Stack.Screen
+                  name="WalletSettings"
+                  component={WalletSettings}
+                />
+                <Stack.Screen name="WalletSetTPIN" component={WalletSetTPIN} />
+                <Stack.Screen
+                  name="WalletTransfer"
+                  component={WalletTransfer}
+                />
+
+                <Stack.Screen
+                  name="WalletTransferSuccess"
+                  component={WalletTransferSuccess}
+                />
+
+                <Stack.Screen name="Withdrawal" component={Withdrawal} />
+                <Stack.Screen name="Chat" component={Chat} />
+                <Stack.Screen
+                  name="EditItemScreen"
+                  component={EditItemScreen}
+                />
+                <Stack.Screen
+                  name="ItemDetailScreen"
+                  component={ItemDetailScreen}
+                />
+
+                <Stack.Screen
+                  name="MerchantChatRoomScreen"
+                  component={ChatRoomScreen}
+                />
+              </Stack.Navigator>
+            </AppLockGate>
+          </NavigationContainer>
+
+          <OrderNotifyOverlay navigation={navRef} />
+        </>
+      )}
+
+      {showSplash && (
+        <SplashScreen
+          loading={bootState.loading}
+          onHidden={() => setShowSplash(false)}
+        />
+      )}
     </SafeAreaProvider>
   );
 }

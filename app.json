@@ -7,11 +7,6 @@
     "icon": "./assets/logo_v2.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
       "bundleIdentifier": "com.tabdhey.tabdhey_merchant",
       "buildNumber": "1",
