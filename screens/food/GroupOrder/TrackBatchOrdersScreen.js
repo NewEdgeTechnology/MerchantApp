@@ -28,9 +28,12 @@ import {
 } from "react-native-safe-area-context";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
-import { OSMView, CustomOverlay } from "expo-osm-sdk";
+import { OSMView } from "expo-osm-sdk";
+import { captureRef } from "react-native-view-shot";
+import Svg, { Circle, Rect, Text as SvgText } from "react-native-svg";
 import * as SecureStore from "expo-secure-store";
 import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
+const dropAnim = { type: "drop", duration: 400 };
 import {
   ORDER_ENDPOINT as ENV_ORDER_ENDPOINT,
   BUSINESS_DETAILS as ENV_BUSINESS_DETAILS,
@@ -46,56 +49,149 @@ import {
 } from "./socket";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
+
 const COLORS = {
-  BUSINESS: "#e71414", // red
-  DRIVER: "#2563eb", // blue
-  CUSTOMER: "#00b14f", // green
+  PICKUP: "#00B14F",
+  BUSINESS: "#00B14F",
+
+  DRIVER: "#2563EB",
+
+  DROPOFF: "#18181B",
+  CUSTOMER: "#18181B",
+
+  ROUTE_DRIVER: "#2563EB",
+  ROUTE_CUSTOMER: "#00B14F",
 };
-const PIN_SIZE = Math.max(30, Math.min(38, SCREEN_W * 0.09));
 
-const makePinSvg = (color, label = "") =>
-  `data:image/svg+xml;utf8,${encodeURIComponent(`
-    <svg xmlns="http://www.w3.org/2000/svg" width="38" height="38" viewBox="0 0 38 38">
-      <circle cx="19" cy="19" r="12" fill="${color}" stroke="white" stroke-width="4"/>
-      ${
-        label
-          ? `<text x="19" y="24" text-anchor="middle" font-size="13" font-weight="700" fill="white">${label}</text>`
-          : `<circle cx="19" cy="19" r="5" fill="${color}"/>`
-      }
-    </svg>
-  `)}`;
+const MARKER_SIZE = 100;
 
-const MapTimelineDot = ({ coordinate, color, label = "" }) => {
-  const hasLabel = !!label;
+const BusinessIconView = React.forwardRef((_, ref) => (
+  <View
+    ref={ref}
+    collapsable={false}
+    style={{ backgroundColor: "transparent" }}
+  >
+    <Svg width={100} height={100} viewBox="0 0 60 60">
+      <Circle cx={30} cy={22} r={19} fill={COLORS.PICKUP} />
+      <Circle
+        cx={30}
+        cy={22}
+        r={19}
+        fill="none"
+        stroke="white"
+        strokeWidth={2.5}
+      />
+      <Circle cx={30} cy={22} r={7} fill="white" />
 
-  return (
-    <CustomOverlay coordinate={coordinate}>
-      <View
-        style={{
-          width: hasLabel ? 18 : 10,
-          height: hasLabel ? 18 : 10,
-          borderRadius: hasLabel ? 9 : 5,
-          backgroundColor: color,
-          alignItems: "center",
-          justifyContent: "center",
-        }}
+      <Rect x={2} y={43} width={56} height={15} rx={4} fill={COLORS.PICKUP} />
+      <SvgText
+        x={30}
+        y={54}
+        textAnchor="middle"
+        fontSize={10}
+        fontWeight="bold"
+        fill="white"
+        fontFamily="sans-serif"
       >
-        {hasLabel ? (
-          <Text
-            style={{
-              color: "#fff",
-              fontSize: 10,
-              fontWeight: "900",
-              lineHeight: 12,
-            }}
-          >
-            {label}
-          </Text>
-        ) : null}
-      </View>
-    </CustomOverlay>
-  );
-};
+        Pickup
+      </SvgText>
+    </Svg>
+  </View>
+));
+
+const DriverIconView = React.forwardRef((_, ref) => (
+  <View
+    ref={ref}
+    collapsable={false}
+    style={{ backgroundColor: "transparent" }}
+  >
+    <Svg width={100} height={100} viewBox="0 0 60 60">
+      <Circle cx={30} cy={22} r={19} fill={COLORS.DRIVER} />
+      <Circle
+        cx={30}
+        cy={22}
+        r={19}
+        fill="none"
+        stroke="white"
+        strokeWidth={2.5}
+      />
+
+      <SvgText
+        x={30}
+        y={27}
+        textAnchor="middle"
+        fontSize={14}
+        fontWeight="bold"
+        fill="white"
+        fontFamily="sans-serif"
+      >
+        D
+      </SvgText>
+
+      <Rect x={2} y={43} width={56} height={15} rx={4} fill={COLORS.DRIVER} />
+      <SvgText
+        x={30}
+        y={54}
+        textAnchor="middle"
+        fontSize={9}
+        fontWeight="bold"
+        fill="white"
+        fontFamily="sans-serif"
+      >
+        Driver
+      </SvgText>
+    </Svg>
+  </View>
+));
+
+const CustomerIconView = React.forwardRef(({ label = "" }, ref) => (
+  <View
+    ref={ref}
+    collapsable={false}
+    style={{ backgroundColor: "transparent" }}
+  >
+    <Svg width={100} height={100} viewBox="0 0 60 60">
+      <Circle cx={30} cy={22} r={19} fill={COLORS.DROPOFF} />
+      <Circle
+        cx={30}
+        cy={22}
+        r={19}
+        fill="none"
+        stroke="white"
+        strokeWidth={2.5}
+      />
+
+      <Rect x={23} y={15} width={14} height={14} rx={2} fill="white" />
+
+      {!!label && (
+        <SvgText
+          x={30}
+          y={26}
+          textAnchor="middle"
+          fontSize={9}
+          fontWeight="bold"
+          fill={COLORS.DROPOFF}
+          fontFamily="sans-serif"
+        >
+          {label}
+        </SvgText>
+      )}
+
+      <Rect x={2} y={43} width={56} height={15} rx={4} fill={COLORS.DROPOFF} />
+      <SvgText
+        x={30}
+        y={54}
+        textAnchor="middle"
+        fontSize={8}
+        fontWeight="bold"
+        fill="white"
+        fontFamily="sans-serif"
+      >
+        Drop-off
+      </SvgText>
+    </Svg>
+  </View>
+));
 
 class OSMViewErrorBoundary extends React.Component {
   constructor(props) {
@@ -123,6 +219,40 @@ class OSMViewErrorBoundary extends React.Component {
     return this.props.children;
   }
 }
+const MapLegend = ({ full = false }) => (
+  <View style={[styles.mapLegend, full && styles.mapLegendFull]}>
+    <Text style={styles.legendTitle}>Map Legend</Text>
+
+    <View style={styles.legendRow}>
+      <View style={[styles.legendDot, { backgroundColor: COLORS.PICKUP }]} />
+      <Text style={styles.legendText}>Pickup / Store</Text>
+    </View>
+
+    <View style={styles.legendRow}>
+      <View style={[styles.legendDot, { backgroundColor: COLORS.DRIVER }]} />
+      <Text style={styles.legendText}>Driver</Text>
+    </View>
+
+    <View style={styles.legendRow}>
+      <View style={[styles.legendDot, { backgroundColor: COLORS.DROPOFF }]} />
+      <Text style={styles.legendText}>Customer drop-off</Text>
+    </View>
+
+    <View style={styles.legendRow}>
+      <View
+        style={[styles.legendLine, { backgroundColor: COLORS.ROUTE_DRIVER }]}
+      />
+      <Text style={styles.legendText}>Driver → Store</Text>
+    </View>
+
+    <View style={styles.legendRow}>
+      <View
+        style={[styles.legendLine, { backgroundColor: COLORS.ROUTE_CUSTOMER }]}
+      />
+      <Text style={styles.legendText}>Store → Customer</Text>
+    </View>
+  </View>
+);
 
 // ============ HELPERS ============
 const safeStr = (v) => (v == null ? "" : String(v)).trim();
@@ -444,6 +574,12 @@ export default function TrackBatchOrdersScreen() {
 
   const mapRef = useRef(null);
   const overlayMapRef = useRef(null);
+  const businessIconRef = useRef(null);
+  const driverIconRef = useRef(null);
+  const customerIconRef = useRef(null);
+  const customerMultiIconRef = useRef(null);
+
+  const [capturedIcons, setCapturedIcons] = useState({});
   const unsubscribeRef = useRef(null);
   const lastRouteKeyRef = useRef("");
   const lastRouteAtMsRef = useRef(0);
@@ -662,8 +798,8 @@ export default function TrackBatchOrdersScreen() {
         json = text ? JSON.parse(text) : null;
       } catch {}
 
-      console.log("[BUSINESS] status:", res.status);
-      console.log("[BUSINESS] raw response:", text);
+      // console.log("[BUSINESS] status:", res.status);
+      // console.log("[BUSINESS] raw response:", text);
 
       if (!res.ok) {
         setLoadingLocation(false);
@@ -680,7 +816,7 @@ export default function TrackBatchOrdersScreen() {
         extractLatLng(base?.business_location) ||
         extractLatLng(base?.address);
 
-      console.log("[BUSINESS] extracted coords:", coords);
+      // console.log("[BUSINESS] extracted coords:", coords);
 
       if (coords) {
         setBusinessCoords(coords);
@@ -813,7 +949,7 @@ export default function TrackBatchOrdersScreen() {
       extractLatLng(first?.restaurant) ||
       extractLatLng(first);
 
-    console.log("[BUSINESS] fallback coords from order:", fallbackCoords);
+    // console.log("[BUSINESS] fallback coords from order:", fallbackCoords);
 
     if (fallbackCoords) {
       setBusinessCoords(fallbackCoords);
@@ -854,6 +990,15 @@ export default function TrackBatchOrdersScreen() {
     const zoom = computeZoomForPoints(points);
     return { initialMapCenter: center, initialZoom: zoom };
   }, [businessCoords, driversByRideId, groupedDropPoints]);
+  const openGroupModal = useCallback((group) => {
+    setSelectedGroup(group);
+    setLocationModalOpen(true);
+  }, []);
+
+  const closeGroupModal = useCallback(() => {
+    setLocationModalOpen(false);
+    setSelectedGroup(null);
+  }, []);
 
   // ============ MARKERS ============
   const driverName = useMemo(() => {
@@ -864,68 +1009,29 @@ export default function TrackBatchOrdersScreen() {
   }, [driverInfo, driverNameFromParams]);
 
   const markers = useMemo(() => {
+    const mkPin = (key) =>
+      capturedIcons[key]
+        ? {
+            uri: capturedIcons[key],
+            size: MARKER_SIZE,
+            anchor: { x: 0.5, y: 0.7 },
+          }
+        : undefined;
+
     const list = [];
 
     if (businessCoords) {
       list.push({
         id: "business",
         coordinate: {
-          latitude: businessCoords.lat,
-          longitude: businessCoords.lng,
+          latitude: Number(businessCoords.lat),
+          longitude: Number(businessCoords.lng),
         },
-        title: "Business",
-        description: "Your pickup point",
-        icon: { uri: makePinSvg(COLORS.BUSINESS), size: PIN_SIZE },
-      });
-    }
-
-    Object.keys(driversByRideId).forEach((rid) => {
-      const c = driversByRideId[rid]?.coords;
-      if (c) {
-        list.push({
-          id: `driver-${rid}`,
-          coordinate: {
-            latitude: c.lat,
-            longitude: c.lng,
-          },
-          title: "Driver",
-          description: `ID: ${driverId || "N/A"}`,
-          icon: { uri: makePinSvg(COLORS.DRIVER), size: PIN_SIZE },
-        });
-      }
-    });
-
-    groupedDropPoints.slice(0, 15).forEach((g) => {
-      list.push({
-        id: `cust-${g.key}`,
-        coordinate: {
-          latitude: g.lat,
-          longitude: g.lng,
-        },
-        title: `${g.count} Orders`,
-        description: `${g.count} customer(s)`,
-        icon: {
-          uri: makePinSvg(COLORS.CUSTOMER, g.count > 1 ? String(g.count) : ""),
-          size: PIN_SIZE,
-        },
-      });
-    });
-
-    return list;
-  }, [businessCoords, driversByRideId, groupedDropPoints, driverId]);
-
-  const mapDotMarkers = useMemo(() => {
-    const list = [];
-
-    if (businessCoords) {
-      list.push({
-        id: "business",
-        coordinate: {
-          latitude: businessCoords.lat,
-          longitude: businessCoords.lng,
-        },
-        color: COLORS.BUSINESS,
-        label: "",
+        title: "Pickup",
+        description: "Store / pickup point",
+        icon: mkPin("business"),
+        animation: dropAnim,
+        zIndex: 12,
       });
     }
 
@@ -936,11 +1042,14 @@ export default function TrackBatchOrdersScreen() {
       list.push({
         id: `driver-${rid}`,
         coordinate: {
-          latitude: c.lat,
-          longitude: c.lng,
+          latitude: Number(c.lat),
+          longitude: Number(c.lng),
         },
-        color: COLORS.DRIVER,
-        label: "",
+        title: "Driver",
+        description: `ID: ${driverId || "N/A"}`,
+        icon: mkPin("driver"),
+        animation: dropAnim,
+        zIndex: 13,
       });
     });
 
@@ -948,17 +1057,60 @@ export default function TrackBatchOrdersScreen() {
       list.push({
         id: `cust-${g.key}`,
         coordinate: {
-          latitude: g.lat,
-          longitude: g.lng,
+          latitude: Number(g.lat),
+          longitude: Number(g.lng),
         },
-        color: COLORS.CUSTOMER,
-        label: g.count > 1 ? String(g.count) : "",
+        title: g.count > 1 ? `${g.count} Orders` : "Drop-off",
+        description:
+          g.count > 1
+            ? `${g.count} customer(s) at this location`
+            : "Customer drop-off",
+        icon: mkPin(g.count > 1 ? "customerMulti" : "customer"),
+        animation: dropAnim,
+        zIndex: 11,
       });
     });
 
-    return list;
-  }, [businessCoords, driversByRideId, groupedDropPoints]);
+    console.log(
+      "[MAP] markers:",
+      list.map((m) => ({
+        id: m.id,
+        coordinate: m.coordinate,
+        hasIcon: !!m.icon,
+        iconUri: m.icon?.uri || null,
+      })),
+    );
 
+    return list;
+  }, [
+    businessCoords,
+    driversByRideId,
+    groupedDropPoints,
+    driverId,
+    capturedIcons,
+  ]);
+  const markerIconsReady = useMemo(() => {
+    return (
+      !!capturedIcons.business &&
+      !!capturedIcons.driver &&
+      !!capturedIcons.customer &&
+      !!capturedIcons.customerMulti
+    );
+  }, [capturedIcons]);
+  const markerRenderKey = useMemo(() => {
+    const markerKey = markers
+      .map((m) => {
+        const lat = m.coordinate?.latitude;
+        const lng = m.coordinate?.longitude;
+        const iconUri = m.icon?.uri || "no-icon";
+        return `${m.id}:${lat},${lng}:${iconUri}`;
+      })
+      .join("|");
+
+    return `markers-${markerIconsReady ? "ready" : "not-ready"}-${markerKey}`;
+  }, [markers, markerIconsReady]);
+
+  const canRenderMap = markerIconsReady && markers.length > 0;
   const computeMultiRoutes = useCallback(async () => {
     const firstDriverKey = Object.keys(driversByRideId || {})[0];
     const driver = firstDriverKey
@@ -973,9 +1125,9 @@ export default function TrackBatchOrdersScreen() {
       lng: g.lng,
     }));
 
-    console.log("[ROUTE] business:", biz);
-    console.log("[ROUTE] driver:", driver);
-    console.log("[ROUTE] drops:", drops);
+    // console.log("[ROUTE] business:", biz);
+    // console.log("[ROUTE] driver:", driver);
+    // console.log("[ROUTE] drops:", drops);
 
     const key = JSON.stringify({ driver, biz, drops });
     const now = Date.now();
@@ -1065,30 +1217,26 @@ export default function TrackBatchOrdersScreen() {
     if (routeDriverToBiz?.length > 1) {
       lines.push({
         id: "driver-biz",
-
-        // keep both because different OSMView builds may use different keys
         coordinates: routeDriverToBiz,
         points: routeDriverToBiz,
-
-        strokeColor: COLORS.DRIVER,
-        color: COLORS.DRIVER,
+        strokeColor: COLORS.ROUTE_DRIVER,
+        color: COLORS.ROUTE_DRIVER,
         strokeWidth: 5,
         width: 5,
+        zIndex: 4,
       });
     }
 
     if (routeBizToCustomers?.length > 1) {
       lines.push({
         id: "biz-customers",
-
-        // keep both because different OSMView builds may use different keys
         coordinates: routeBizToCustomers,
         points: routeBizToCustomers,
-
-        strokeColor: COLORS.CUSTOMER,
-        color: COLORS.CUSTOMER,
+        strokeColor: COLORS.ROUTE_CUSTOMER,
+        color: COLORS.ROUTE_CUSTOMER,
         strokeWidth: 5,
         width: 5,
+        zIndex: 3,
       });
     }
 
@@ -1107,40 +1255,95 @@ export default function TrackBatchOrdersScreen() {
         (p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude),
       );
 
-  const drawRoutesOnMap = useCallback(
-    (targetRef) => {
-      if (!targetRef?.current) return;
+  const drawRoutesOnMap = useCallback(() => {
+    // Route is already rendered using the OSMView polylines prop.
+    // Do not call displayRoute here, because it can draw above marker icons.
+  }, []);
 
-      setTimeout(() => {
-        const driverBizPoints = toMapRoutePoints(routeDriverToBiz);
-        const bizCustomerPoints = toMapRoutePoints(routeBizToCustomers);
-
-        console.log("[ROUTE] draw driver->business:", driverBizPoints.length);
-        console.log(
-          "[ROUTE] draw business->customers:",
-          bizCustomerPoints.length,
-        );
-
-        if (driverBizPoints.length > 1) {
-          targetRef.current?.displayRoute?.(driverBizPoints, {
-            color: COLORS.DRIVER,
-            width: 6,
-          });
-        }
-
-        if (bizCustomerPoints.length > 1) {
-          targetRef.current?.displayRoute?.(bizCustomerPoints, {
-            color: COLORS.CUSTOMER,
-            width: 6,
-          });
-        }
-      }, 600);
-    },
-    [routeDriverToBiz, routeBizToCustomers],
-  );
   useEffect(() => {
     drawRoutesOnMap(mapRef);
   }, [drawRoutesOnMap]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer = null;
+
+    const captureIcons = (attempt = 0) => {
+      timer = setTimeout(
+        async () => {
+          try {
+            if (
+              !businessIconRef.current ||
+              !driverIconRef.current ||
+              !customerIconRef.current ||
+              !customerMultiIconRef.current
+            ) {
+              console.log("[MARKER CAPTURE] refs not ready, attempt:", attempt);
+
+              if (attempt < 8) {
+                captureIcons(attempt + 1);
+              }
+
+              return;
+            }
+
+            const [business, driver, customer, customerMulti] =
+              await Promise.all([
+                captureRef(businessIconRef, {
+                  format: "png",
+                  quality: 1,
+                }),
+                captureRef(driverIconRef, {
+                  format: "png",
+                  quality: 1,
+                }),
+                captureRef(customerIconRef, {
+                  format: "png",
+                  quality: 1,
+                }),
+                captureRef(customerMultiIconRef, {
+                  format: "png",
+                  quality: 1,
+                }),
+              ]);
+
+            if (cancelled) return;
+
+            console.log("[MARKER CAPTURE] icons ready:", {
+              business,
+              driver,
+              customer,
+              customerMulti,
+            });
+
+            setCapturedIcons({
+              business,
+              driver,
+              customer,
+              customerMulti,
+            });
+
+            setMapKey(Date.now());
+          } catch (e) {
+            console.log("[MARKER CAPTURE] failed:", e?.message || e);
+
+            if (attempt < 8) {
+              captureIcons(attempt + 1);
+            }
+          }
+        },
+        attempt === 0 ? 500 : 300,
+      );
+    };
+
+    captureIcons();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
   // ============ FIT MAP ============
   const fitAll = useCallback(() => {
     if (!mapRef.current) return;
@@ -1365,16 +1568,6 @@ export default function TrackBatchOrdersScreen() {
     }
   }, [fetchGroupedStatusesItems, fetchBusinessLocation, loadBatchOrders]);
 
-  const openGroupModal = useCallback((group) => {
-    setSelectedGroup(group);
-    setLocationModalOpen(true);
-  }, []);
-
-  const closeGroupModal = useCallback(() => {
-    setLocationModalOpen(false);
-    setSelectedGroup(null);
-  }, []);
-
   const openOverlay = () => setOverlayOpen(true);
   const fitOverlay = () => {};
 
@@ -1418,38 +1611,58 @@ export default function TrackBatchOrdersScreen() {
       {/* MAP CARD */}
       <View style={styles.mapCard}>
         <View style={styles.mapWrap}>
+          <View style={styles.markerCaptureLayer} pointerEvents="none">
+            <BusinessIconView ref={businessIconRef} />
+            <DriverIconView ref={driverIconRef} />
+            <CustomerIconView ref={customerIconRef} />
+            <CustomerIconView ref={customerMultiIconRef} label="2+" />
+          </View>
+
           <OSMViewErrorBoundary>
-            <OSMView
-              key={mapKey}
-              ref={mapRef}
-              style={styles.map}
-              initialCenter={initialMapCenter}
-              initialZoom={initialZoom}
-              polylines={polylines}
-              styleUrl="https://tiles.openfreemap.org/styles/liberty"
-              onMapReady={() => {
-                console.log("Map ready");
-                setShowLoader(false);
+            {canRenderMap ? (
+              <OSMView
+                key={`main-${mapKey}-${markerRenderKey}`}
+                ref={mapRef}
+                style={styles.map}
+                initialCenter={initialMapCenter}
+                initialZoom={initialZoom}
+                markers={markers}
+                polylines={polylines}
+                styleUrl="https://tiles.openfreemap.org/styles/liberty"
+                onMarkerPress={(marker) => {
+                  const markerId =
+                    typeof marker === "string" ? marker : marker?.id;
 
-                setTimeout(() => {
-                  drawRoutesOnMap(mapRef);
-                  fitAll();
-                }, 800);
-              }}
-              onError={() => setMapError(true)}
-              onPress={openOverlay}
-            >
-              {mapDotMarkers.map((m) => (
-                <MapTimelineDot
-                  key={m.id}
-                  coordinate={m.coordinate}
-                  color={m.color}
-                  label={m.label}
-                />
-              ))}
-            </OSMView>
+                  if (!markerId?.startsWith("cust-")) return;
+
+                  const groupKey = markerId.replace("cust-", "");
+                  const group = groupedDropPoints.find(
+                    (g) => g.key === groupKey,
+                  );
+
+                  if (group) openGroupModal(group);
+                }}
+                onMapReady={() => {
+                  console.log("[MAP] main ready with markers:", markers.length);
+                  setShowLoader(false);
+
+                  setTimeout(() => {
+                    drawRoutesOnMap(mapRef);
+                    fitAll();
+                  }, 800);
+                }}
+                onError={() => setMapError(true)}
+                onPress={openOverlay}
+              />
+            ) : (
+              <View style={styles.mapLoadingOverlay}>
+                <ActivityIndicator size="large" color="#16a34a" />
+                <Text style={styles.mapLoadingText}>
+                  Preparing map markers...
+                </Text>
+              </View>
+            )}
           </OSMViewErrorBoundary>
-
           {showLoader && (
             <View style={styles.mapLoadingOverlay}>
               <ActivityIndicator size="large" color="#16a34a" />
@@ -1468,6 +1681,7 @@ export default function TrackBatchOrdersScreen() {
               <Text style={styles.fitBtnText}>Full Map</Text>
             </TouchableOpacity>
           </View>
+          <MapLegend />
         </View>
       </View>
 
@@ -1523,6 +1737,7 @@ export default function TrackBatchOrdersScreen() {
       edges={["top", "left", "right", "bottom"]}
     >
       <View style={styles.topGlow} />
+
       {/* LOCATION GROUP MODAL */}
       <Modal
         visible={locationModalOpen}
@@ -1538,7 +1753,51 @@ export default function TrackBatchOrdersScreen() {
                 <Ionicons name="close" size={18} color="#0f172a" />
               </Pressable>
             </View>
-            <Text style={styles.modalEmpty}>Tap an order to view details</Text>
+            <Text style={styles.modalEmpty}>
+              {selectedGroup?.count || 0} order(s) at this drop-off location
+            </Text>
+
+            {selectedGroup?.orders?.map((order, index) => {
+              const base = order?.raw || order || {};
+
+              const orderId =
+                getOrderId(base) || getOrderId(order) || `Order ${index + 1}`;
+
+              const customerName =
+                base.customer_name ||
+                base.user_name ||
+                base.customer?.name ||
+                base.user?.name ||
+                "Customer";
+
+              const phone =
+                base.customer_phone ||
+                base.phone ||
+                base.customer?.phone ||
+                base.user?.phone ||
+                "";
+
+              return (
+                <View key={`${orderId}-${index}`} style={styles.groupOrderRow}>
+                  <View style={styles.groupOrderIcon}>
+                    <Ionicons
+                      name="person-outline"
+                      size={16}
+                      color={COLORS.DROPOFF}
+                    />
+                  </View>
+
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.groupOrderId}>#{orderId}</Text>
+                    <Text style={styles.groupCustomerName}>{customerName}</Text>
+                    {!!phone && (
+                      <Text style={styles.groupCustomerPhone}>{phone}</Text>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+
             <TouchableOpacity onPress={closeGroupModal}>
               <Text
                 style={{ color: "#16a34a", textAlign: "center", marginTop: 16 }}
@@ -1549,6 +1808,7 @@ export default function TrackBatchOrdersScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
       <Modal
         visible={overlayOpen}
         animationType="slide"
@@ -1562,32 +1822,54 @@ export default function TrackBatchOrdersScreen() {
               <Ionicons name="close" size={24} color="#0f172a" />
             </TouchableOpacity>
           </View>
-          <OSMViewErrorBoundary>
-            <OSMView
-              ref={overlayMapRef}
-              style={{ flex: 1 }}
-              initialCenter={initialMapCenter}
-              initialZoom={initialZoom}
-              polylines={polylines}
-              styleUrl="https://tiles.openfreemap.org/styles/liberty"
-              onMapReady={() => {
-                setTimeout(() => {
-                  drawRoutesOnMap(overlayMapRef);
-                }, 800);
-              }}
-            >
-              {mapDotMarkers.map((m) => (
-                <MapTimelineDot
-                  key={m.id}
-                  coordinate={m.coordinate}
-                  color={m.color}
-                  label={m.label}
+
+          <View style={styles.fullMapBody}>
+            <OSMViewErrorBoundary>
+              {canRenderMap ? (
+                <OSMView
+                  key={`overlay-${mapKey}-${markerRenderKey}`}
+                  ref={overlayMapRef}
+                  style={{ flex: 1 }}
+                  initialCenter={initialMapCenter}
+                  initialZoom={initialZoom}
+                  markers={markers}
+                  polylines={polylines}
+                  styleUrl="https://tiles.openfreemap.org/styles/liberty"
+                  onMarkerPress={(marker) => {
+                    const markerId =
+                      typeof marker === "string" ? marker : marker?.id;
+
+                    if (!markerId?.startsWith("cust-")) return;
+
+                    const groupKey = markerId.replace("cust-", "");
+                    const group = groupedDropPoints.find(
+                      (g) => g.key === groupKey,
+                    );
+
+                    if (group) openGroupModal(group);
+                  }}
+                  onMapReady={() => {
+                    console.log(
+                      "[MAP] overlay ready with markers:",
+                      markers.length,
+                    );
+                  }}
                 />
-              ))}
-            </OSMView>
-          </OSMViewErrorBoundary>
+              ) : (
+                <View style={styles.mapLoadingOverlay}>
+                  <ActivityIndicator size="large" color="#16a34a" />
+                  <Text style={styles.mapLoadingText}>
+                    Preparing map markers...
+                  </Text>
+                </View>
+              )}
+            </OSMViewErrorBoundary>
+
+            <MapLegend full />
+          </View>
         </SafeAreaView>
       </Modal>
+
       {/* HEADER */}
       <View style={[styles.headerBar]}>
         <TouchableOpacity
@@ -1637,6 +1919,14 @@ const styles = StyleSheet.create({
     borderRadius: 130,
     backgroundColor: BRAND.purpleLight,
     opacity: 0.38,
+  },
+  markerCaptureLayer: {
+    position: "absolute",
+    top: -9999,
+    left: 0,
+    width: 120,
+    height: 420,
+    backgroundColor: "transparent",
   },
   headerBar: {
     minHeight: 54,
@@ -1721,7 +2011,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     fontSize: 16,
     fontWeight: "600",
-    color: "#374151",
+    color: BRAND.black,
   },
   mapRetryBtn: {
     marginTop: 16,
@@ -1757,7 +2047,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   driverTitle: { fontSize: 13, fontWeight: "800", color: "#111827", flex: 1 },
-  driverText: { marginTop: 6, fontSize: 12, color: "#374151" },
+  driverText: { marginTop: 6, fontSize: 12, color: BRAND.black },
   callBtn: {
     flex: 1,
     flexDirection: "row",
@@ -1799,17 +2089,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     color: BRAND.black,
   },
-  // Add these to the styles object
-  statusPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    backgroundColor: "#f3f4f6",
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-  },
-  statusPillText: { fontSize: 10, fontWeight: "700", color: "#374151" },
-  statusReadyText: { color: "#16a34a" },
   orderCard: {
     backgroundColor: BRAND.white,
     borderRadius: 24,
@@ -1857,7 +2136,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingVertical: 4,
   },
-  itemName: { flex: 1, fontSize: 12, color: "#374151", paddingRight: 8 },
+  itemName: { flex: 1, fontSize: 12, color: BRAND.black, paddingRight: 8 },
   itemQty: { fontSize: 12, fontWeight: "600", color: "#111827" },
 
   readyButton: {
@@ -1922,5 +2201,100 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     borderBottomWidth: 1,
     borderBottomColor: "#e5e7eb",
+  },
+  mapLegend: {
+    position: "absolute",
+    left: 12,
+    top: 12,
+    zIndex: 999,
+    elevation: 999,
+    backgroundColor: "rgba(255,255,255,0.96)",
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.08)",
+    minWidth: 150,
+    ...SHADOW.sm,
+  },
+
+  mapLegendFull: {
+    top: 12,
+    left: 12,
+  },
+
+  legendTitle: {
+    fontSize: 11,
+    fontWeight: "900",
+    color: "#111827",
+    marginBottom: 6,
+  },
+
+  legendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 5,
+  },
+
+  legendDot: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    marginRight: 8,
+    borderWidth: 1.5,
+    borderColor: "#ffffff",
+  },
+
+  legendLine: {
+    width: 22,
+    height: 4,
+    borderRadius: 99,
+    marginRight: 8,
+  },
+
+  legendText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: BRAND.black,
+  },
+  fullMapBody: {
+    flex: 1,
+    position: "relative",
+  },
+  groupOrderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+  },
+
+  groupOrderIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#f3f4f6",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 10,
+  },
+
+  groupOrderId: {
+    fontSize: 13,
+    fontWeight: "900",
+    color: BRAND.black,
+  },
+
+  groupCustomerName: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#374151",
+    marginTop: 2,
+  },
+
+  groupCustomerPhone: {
+    fontSize: 11,
+    color: "#6b7280",
+    marginTop: 1,
   },
 });

@@ -8,8 +8,7 @@
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
-      "bundleIdentifier": "com.tabdhey.tabdhey_merchant",
-      "buildNumber": "1",
+      "bundleIdentifier": "com.tabdhey.tabdheymerchant",
       "supportsTablet": true,
       "infoPlist": {
         "NSAppTransportSecurity": {
@@ -33,7 +32,8 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "We need your location to provide location-based services.",
         "NSCameraUsageDescription": "We need access to your camera to take business logo photos and scan documents.",
         "NSPhotoLibraryUsageDescription": "We need access to your photo library to upload business logo and documents.",
-        "NSFaceIDUsageDescription": "Allow Face ID/Touch ID to unlock your account."
+        "NSFaceIDUsageDescription": "Allow Face ID/Touch ID to unlock your account.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -50,7 +50,8 @@
         "android.permission.VIBRATE",
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.WRITE_EXTERNAL_STORAGE"
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo_v2.png",

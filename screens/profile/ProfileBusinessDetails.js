@@ -185,6 +185,28 @@ const pct = (v) => {
   return `${n}%`;
 };
 
+const formatBusinessTypes = (details) => {
+  const types = Array.isArray(details?.business_types)
+    ? details.business_types
+        .map((t) => t?.name)
+        .filter((name) => !isNilish(name))
+    : [];
+
+  if (types.length > 0) {
+    return types.join(", ");
+  }
+
+  const ids = Array.isArray(details?.business_type_ids)
+    ? details.business_type_ids.filter((id) => !isNilish(id))
+    : [];
+
+  if (ids.length > 0) {
+    return ids.map(String).join(", ");
+  }
+
+  return "—";
+};
+
 const Section = ({ title, icon, children }) => (
   <View style={styles.card}>
     <View style={styles.sectionHeader}>
@@ -375,7 +397,6 @@ export default function ProfileBusinessDetails() {
     });
   }, [navigation, details, businessIdParam]);
 
-
   if (loading) {
     return (
       <View style={styles.centerWrap}>
@@ -398,12 +419,16 @@ export default function ProfileBusinessDetails() {
 
   const deliveryOpt = deliveryLabel(details?.delivery_option);
   const fdMin = moneyNu(details?.min_amount_for_fd);
+  const businessTypesLabel = formatBusinessTypes(details);
 
   const hasLicense = !!imageUrls.licenseUrl;
   const hasLogo = !!imageUrls.logoUrl;
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top","left", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top", "left", "right", "bottom"]}
+    >
       <View style={styles.topGlow} />
       {/* Image popup */}
       <Modal
@@ -561,6 +586,13 @@ export default function ProfileBusinessDetails() {
             value={safeText(details?.business_name)}
             icon="storefront-outline"
           />
+
+          <Row
+            label="Business Types"
+            value={businessTypesLabel}
+            icon="grid-outline"
+          />
+
           <Row label="Delivery Option" value={deliveryOpt} icon="car-outline" />
           <Row label="Opening Time" value={openT} icon="time-outline" />
           <Row label="Closing Time" value={closeT} icon="time-outline" />

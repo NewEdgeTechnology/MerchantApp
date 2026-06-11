@@ -37,7 +37,12 @@ import * as Location from "expo-location";
 import { OSMView } from "expo-osm-sdk";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import { BRAND, FONT, RADIUS, SHADOW } from "../../styles/tabdey_brand";
-import { BUSINESS_DETAILS, MERCHANT_LOGO } from "@env";
+import {
+  BUSINESS_DETAILS,
+  MERCHANT_LOGO,
+  BUSINESS_TYPES_FOOD_ENDPOINT,
+  BUSINESS_TYPES_MART_ENDPOINT,
+} from "@env";
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 
@@ -344,6 +349,65 @@ const jsonArrayToCommaString = (jsonStr) => {
   }
 };
 
+const normalizeBusinessTypes = (json) => {
+  const raw = Array.isArray(json?.data)
+    ? json.data
+    : Array.isArray(json?.business_types)
+      ? json.business_types
+      : Array.isArray(json)
+        ? json
+        : [];
+
+  return raw
+    .map((item) => ({
+      business_type_id:
+        item?.business_type_id ?? item?.id ?? item?.type_id ?? null,
+      name: item?.name ?? item?.business_type_name ?? item?.title ?? "",
+    }))
+    .filter((item) => item.business_type_id != null && !isNilish(item.name));
+};
+
+const getBusinessTypeEndpoint = (ownerType) => {
+  const type = String(ownerType || "")
+    .trim()
+    .toLowerCase();
+
+  if (type === "food") return BUSINESS_TYPES_FOOD_ENDPOINT;
+  if (type === "mart") return BUSINESS_TYPES_MART_ENDPOINT;
+
+  return "";
+};
+
+const getExistingBusinessTypeIds = (details) => {
+  const idsFromIds = Array.isArray(details?.business_type_ids)
+    ? details.business_type_ids
+    : [];
+
+  const idsFromObjects = Array.isArray(details?.business_types)
+    ? details.business_types.map((t) => t?.business_type_id ?? t?.id)
+    : [];
+
+  return [...idsFromIds, ...idsFromObjects]
+    .filter((id) => id != null)
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id));
+};
+
+const uniqueNumberIds = (ids = []) => {
+  return Array.from(
+    new Set(
+      ids
+        .filter((id) => id != null)
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id)),
+    ),
+  );
+};
+
+const normalizeIdListForCompare = (ids = []) => {
+  return JSON.stringify(uniqueNumberIds(ids).sort((a, b) => a - b));
+};
+
 /* ---------------- small UI atoms ---------------- */
 
 const Label = ({ children }) => <Text style={styles.label}>{children}</Text>;
@@ -391,6 +455,13 @@ export default function EditBusinessDetails() {
   const [saving, setSaving] = useState(false);
 
   const [details, setDetails] = useState(initial);
+
+  const [allBusinessTypes, setAllBusinessTypes] = useState([]);
+  const [businessTypesLoading, setBusinessTypesLoading] = useState(false);
+
+  // Only new selected business type ids.
+  // Existing business types stay locked and are never removed.
+  const [newBusinessTypeIds, setNewBusinessTypeIds] = useState([]);
 
   // focused input -> green border
   const [focusedKey, setFocusedKey] = useState(null);
@@ -567,6 +638,48 @@ export default function EditBusinessDetails() {
     if (isNilish(p)) return "";
     return isHttpUrl(p) ? p : joinUrl(MERCHANT_LOGO, p);
   }, [pickedLicense, details]);
+
+  const loadBusinessTypes = useCallback(async () => {
+    try {
+      const ownerType = details?.owner_type ?? initial?.owner_type;
+      const endpoint = getBusinessTypeEndpoint(ownerType);
+
+      if (!endpoint) {
+        setAllBusinessTypes([]);
+        return;
+      }
+
+      setBusinessTypesLoading(true);
+
+      const accessToken = await getAccessTokenFromLogin();
+
+      const res = await fetch(endpoint, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        const msg =
+          json?.message ||
+          json?.error ||
+          `Business types failed (${res.status})`;
+        throw new Error(msg);
+      }
+
+      setAllBusinessTypes(normalizeBusinessTypes(json));
+    } catch (e) {
+      console.warn("Business types load failed:", e?.message || e);
+      setAllBusinessTypes([]);
+    } finally {
+      setBusinessTypesLoading(false);
+    }
+  }, [details?.owner_type, initial?.owner_type]);
 
   const reverseGeocodeToAddress = useCallback(async (lat, lng) => {
     try {
@@ -806,6 +919,7 @@ export default function EditBusinessDetails() {
 
         const data = json?.data ?? json;
         setDetails(data);
+        setNewBusinessTypeIds([]);
 
         setBusinessName(safeText(data?.business_name));
         setAddress(safeText(data?.address));
@@ -864,6 +978,10 @@ export default function EditBusinessDetails() {
     if (!initial) loadDetails();
   }, [initial, loadDetails]);
 
+  useEffect(() => {
+    loadBusinessTypes();
+  }, [loadBusinessTypes]);
+
   const onRefresh = useCallback(
     () => loadDetails({ isRefresh: true }),
     [loadDetails],
@@ -894,6 +1012,58 @@ export default function EditBusinessDetails() {
       closeSourceModal();
     }
   }, [sourceTarget, closeSourceModal]);
+
+  const existingBusinessTypeIds = useMemo(() => {
+    return uniqueNumberIds(getExistingBusinessTypeIds(details || initial));
+  }, [details, initial]);
+
+  const existingBusinessTypes = useMemo(() => {
+    const fromDetails = Array.isArray(details?.business_types)
+      ? details.business_types
+          .map((t) => ({
+            business_type_id: t?.business_type_id ?? t?.id,
+            name: t?.name ?? t?.business_type_name ?? "",
+          }))
+          .filter((t) => t.business_type_id != null && !isNilish(t.name))
+      : [];
+
+    if (fromDetails.length > 0) return fromDetails;
+
+    return existingBusinessTypeIds.map((id) => {
+      const matched = allBusinessTypes.find(
+        (t) => Number(t.business_type_id) === Number(id),
+      );
+
+      return {
+        business_type_id: id,
+        name: matched?.name || `Business Type ID ${id}`,
+      };
+    });
+  }, [details, allBusinessTypes, existingBusinessTypeIds]);
+
+  const availableBusinessTypesToAdd = useMemo(() => {
+    return allBusinessTypes.filter((type) => {
+      const id = Number(type.business_type_id);
+      return Number.isFinite(id) && !existingBusinessTypeIds.includes(id);
+    });
+  }, [allBusinessTypes, existingBusinessTypeIds]);
+
+  const finalBusinessTypeIds = useMemo(() => {
+    return uniqueNumberIds([...existingBusinessTypeIds, ...newBusinessTypeIds]);
+  }, [existingBusinessTypeIds, newBusinessTypeIds]);
+
+  const toggleNewBusinessType = useCallback((businessTypeId) => {
+    const id = Number(businessTypeId);
+    if (!Number.isFinite(id)) return;
+
+    setNewBusinessTypeIds((prev) => {
+      if (prev.includes(id)) {
+        return prev.filter((x) => x !== id);
+      }
+
+      return [...prev, id];
+    });
+  }, []);
 
   const validate = useCallback(() => {
     if (!business_name.trim()) return "Business name is required";
@@ -943,6 +1113,7 @@ export default function EditBusinessDetails() {
       "special_celebration",
       "special_celebration_discount_percentage",
       "min_amount_for_fd",
+      "business_type_ids",
     ],
     [],
   );
@@ -970,6 +1141,10 @@ export default function EditBusinessDetails() {
       special_celebration_discount_percentage:
         special_celebration_discount_percentage.trim() || null,
       min_amount_for_fd: min_amount_for_fd.trim() || null,
+
+      // Existing + newly selected business type ids.
+      // Existing ones are never removed.
+      business_type_ids: finalBusinessTypeIds,
     };
 
     if (!payload.special_celebration) {
@@ -991,11 +1166,14 @@ export default function EditBusinessDetails() {
     special_celebration_discount_percentage,
     min_amount_for_fd,
     confirmedCoord,
+    finalBusinessTypeIds,
   ]);
 
   const valueForCompare = (key, obj) => {
     const v = obj?.[key];
-
+    if (key === "business_type_ids") {
+      return normalizeIdListForCompare(getExistingBusinessTypeIds(obj));
+    }
     if (key === "opening_time" || key === "closing_time") {
       const t = safeText(v);
       const maybe24 = to24hHHmmss(t);
@@ -1077,6 +1255,12 @@ export default function EditBusinessDetails() {
           const vv = payload[k];
           if (vv === undefined) return;
           if (vv === null) return;
+
+          if (k === "business_type_ids") {
+            form.append(k, JSON.stringify(vv));
+            return;
+          }
+
           form.append(k, String(vv));
         });
 
@@ -1149,6 +1333,7 @@ export default function EditBusinessDetails() {
     valueForCompare,
     confirmedCoord,
   ]);
+
   const EXTRA_KB_SPACE = 24 + (insets?.bottom ?? 0);
 
   if (loading) {
@@ -1666,6 +1851,95 @@ export default function EditBusinessDetails() {
               onBlur={() => setFocusedKey(null)}
             />
 
+            <Label>Existing Business Types</Label>
+            <View style={styles.readOnlyBox}>
+              {existingBusinessTypes.length > 0 ? (
+                <View style={styles.businessTypeChipWrap}>
+                  {existingBusinessTypes.map((type) => (
+                    <View
+                      key={String(type.business_type_id)}
+                      style={styles.businessTypeChipDisabled}
+                    >
+                      <Ionicons
+                        name="lock-closed-outline"
+                        size={13}
+                        color={BRAND.grey}
+                      />
+                      <Text style={styles.businessTypeChipText}>
+                        {type.name}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.readOnlyText}>
+                  No existing business type assigned
+                </Text>
+              )}
+            </View>
+
+            <Text style={styles.hintText}>
+              Existing business types are locked. They will be kept during
+              update.
+            </Text>
+
+            <Label>Add New Business Types</Label>
+            <View style={styles.businessTypeSelectBox}>
+              {businessTypesLoading ? (
+                <View style={styles.readOnlyLoadingRow}>
+                  <ActivityIndicator size="small" color={BRAND.purple} />
+                  <Text style={styles.readOnlyText}>
+                    Loading business types...
+                  </Text>
+                </View>
+              ) : availableBusinessTypesToAdd.length > 0 ? (
+                <View style={styles.businessTypeChipWrap}>
+                  {availableBusinessTypesToAdd.map((type) => {
+                    const id = Number(type.business_type_id);
+                    const selected = newBusinessTypeIds.includes(id);
+
+                    return (
+                      <TouchableOpacity
+                        key={String(type.business_type_id)}
+                        activeOpacity={0.85}
+                        onPress={() => toggleNewBusinessType(id)}
+                        style={[
+                          styles.businessTypeChipSelectable,
+                          selected ? styles.businessTypeChipSelected : null,
+                        ]}
+                      >
+                        <Ionicons
+                          name={
+                            selected ? "checkmark-circle" : "add-circle-outline"
+                          }
+                          size={14}
+                          color={selected ? BRAND.white : BRAND.purple}
+                        />
+                        <Text
+                          style={[
+                            styles.businessTypeSelectableText,
+                            selected ? styles.businessTypeSelectedText : null,
+                          ]}
+                        >
+                          {type.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : (
+                <Text style={styles.readOnlyText}>
+                  No new business types available to add.
+                </Text>
+              )}
+            </View>
+
+            {newBusinessTypeIds.length > 0 ? (
+              <Text style={styles.hintText}>
+                Selected new IDs: {newBusinessTypeIds.join(", ")}
+              </Text>
+            ) : null}
+
             <Label>Delivery Option</Label>
             <SelectRow
               value={delivery_option}
@@ -2051,7 +2325,88 @@ const styles = StyleSheet.create({
   inputMultiline: { minHeight: 88, textAlignVertical: "top" },
 
   grid2: { flexDirection: "row", gap: 10, marginTop: 4 },
+  readOnlyBox: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: BRAND.greyBorder,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
 
+  readOnlyLoadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  readOnlyText: {
+    fontFamily: FONT.body,
+    fontSize: 13,
+    color: BRAND.grey,
+    fontWeight: "700",
+  },
+
+  businessTypeChipWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+
+  businessTypeChipDisabled: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: RADIUS.full,
+    backgroundColor: "#F1F5F9",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+
+  businessTypeChipText: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.grey,
+    fontWeight: "800",
+  },
+  businessTypeSelectBox: {
+    backgroundColor: "#FCF7FF",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+
+  businessTypeChipSelectable: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: RADIUS.full,
+    backgroundColor: BRAND.white,
+    borderWidth: 1,
+    borderColor: BRAND.purpleLight,
+  },
+
+  businessTypeChipSelected: {
+    backgroundColor: BRAND.purple,
+    borderColor: BRAND.purple,
+  },
+
+  businessTypeSelectableText: {
+    fontFamily: FONT.body,
+    fontSize: 12,
+    color: BRAND.purple,
+    fontWeight: "800",
+  },
+
+  businessTypeSelectedText: {
+    color: BRAND.white,
+  },
   imageRow: { flexDirection: "row", gap: 12, alignItems: "flex-start" },
   imageBox: {
     width: 150,
