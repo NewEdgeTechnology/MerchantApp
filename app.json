@@ -83,7 +83,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/notification-icon.png",
+          "icon": "./assets/logo_v2_real.png",
           "color": "#00B14F"
         }
       ]

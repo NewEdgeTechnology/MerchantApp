@@ -14,6 +14,10 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Icon from "react-native-vector-icons/Ionicons";
 import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
+const FOOD_IMAGE_URL = "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781244547584_dec4og20ws.webp";
+
+const MART_IMAGE_URL = "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781244655298_keee5i4jstr.webp";
+
 const SellingTypeScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
@@ -37,7 +41,7 @@ const SellingTypeScreen = () => {
   return (
     <SafeAreaView
       style={styles.container}
-      edges={[ "left", "top", "right", "bottom"]}
+      edges={["left", "top", "right", "bottom"]}
     >
       <View style={styles.topGlow} />
 
@@ -51,10 +55,10 @@ const SellingTypeScreen = () => {
         >
           <View style={styles.heroCard}>
             <Text style={styles.brandLabel}>TÀBDEY MERCHANT</Text>
-            <Text style={styles.title}>Choose your selling category</Text>
+            <Text style={styles.title}>Select your business type</Text>
             <Text style={styles.subtitle}>
-              Select the option that best matches your business. This helps
-              Tàbdey set up the correct store flow for you.
+              Choose the category that fits your business so we can prepare the
+              right registration steps, store setup and product options for you.
             </Text>
           </View>
 
@@ -64,16 +68,13 @@ const SellingTypeScreen = () => {
             onPress={goFood}
           >
             <View style={styles.imageWrap}>
-              <Image
-                source={require("../../assets/grabfood.png")}
-                style={styles.image}
-              />
+              <Image source={{ uri: FOOD_IMAGE_URL }} style={styles.image} />
             </View>
 
             <View style={styles.cardBody}>
               <View style={styles.cardHeader}>
                 <View>
-                  <Text style={styles.cardTag}>READY-TO-EAT</Text>
+                  <Text style={styles.cardTag}>FOOD & BEVERAGES</Text>
                   <Text style={styles.cardTitle}>TàbdeyFood</Text>
                 </View>
 
@@ -83,8 +84,8 @@ const SellingTypeScreen = () => {
               </View>
 
               <Text style={styles.cardText}>
-                Select this if you sell prepared food, snacks, drinks or meals
-                that customers can order for delivery.
+                Choose this if your business prepares meals, snacks, bakery
+                items, drinks or ready-to-eat food for customer orders.
               </Text>
             </View>
           </TouchableOpacity>
@@ -95,16 +96,13 @@ const SellingTypeScreen = () => {
             onPress={goMart}
           >
             <View style={styles.imageWrap}>
-              <Image
-                source={require("../../assets/grabmart.png")}
-                style={styles.image}
-              />
+              <Image source={{ uri: MART_IMAGE_URL }} style={styles.image} />
             </View>
 
             <View style={styles.cardBody}>
               <View style={styles.cardHeader}>
                 <View>
-                  <Text style={styles.cardTag}>GROCERY & RETAIL</Text>
+                  <Text style={styles.cardTag}>MART & DAILY ESSENTIALS</Text>
                   <Text style={styles.cardTitle}>TàbdeyMart</Text>
                 </View>
 
@@ -114,8 +112,8 @@ const SellingTypeScreen = () => {
               </View>
 
               <Text style={styles.cardText}>
-                Select this if you sell groceries, packaged goods, household
-                items, beauty products or raw and dry ingredients.
+                Choose this if your business sells groceries, packaged products,
+                household items, personal care goods or other daily essentials.
               </Text>
             </View>
           </TouchableOpacity>
@@ -145,10 +143,10 @@ const styles = StyleSheet.create({
   },
 
   inner: {
-  flex: 1,
-  paddingHorizontal: 18,
-  paddingTop: 0,
-},
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingTop: 0,
+  },
 
   scrollView: {
     flex: 1,

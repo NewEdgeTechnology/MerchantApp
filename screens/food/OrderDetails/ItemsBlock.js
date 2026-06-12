@@ -23,6 +23,9 @@ import {
   MENU_IMAGE_ENDPOINT, // https://backend.tabdhey.bt/food
 } from "@env";
 
+const PLACEHOLDER_IMAGE_URL =
+  "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781245409539_dk1z0k6kqld.webp";
+
 // Map button styles/text to icons for the card modal
 const getButtonIcon = (button) => {
   const text = (button.text || "").toLowerCase();
@@ -403,24 +406,17 @@ export default function ItemsBlock({
               onPress={canEdit ? () => handlePressItem(it) : undefined}
             >
               <View style={styles.itemImageContainer}>
-                {itemImage ? (
-                  <Image
-                    source={{ uri: itemImage }}
-                    style={styles.itemImage}
-                    defaultSource={require("../../../assets/placeholder.png")}
-                    onError={(e) => {
-                      console.log(
-                        "Image load error for:",
-                        itemImage,
-                        e.nativeEvent.error,
-                      );
-                    }}
-                  />
-                ) : (
-                  <View style={styles.itemImagePlaceholder}>
-                    <Ionicons name="image-outline" size={24} color="#94a3b8" />
-                  </View>
-                )}
+                <Image
+                  source={{ uri: itemImage || PLACEHOLDER_IMAGE_URL }}
+                  style={styles.itemImage}
+                  onError={(e) => {
+                    console.log(
+                      "Image load error for:",
+                      itemImage || PLACEHOLDER_IMAGE_URL,
+                      e.nativeEvent.error,
+                    );
+                  }}
+                />
               </View>
 
               <View style={{ flex: 1 }}>

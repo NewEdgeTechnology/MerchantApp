@@ -28,18 +28,21 @@ const LOGO_URL =
 
 const slides = [
   {
-    image: require("../../assets/Reach your Customers.png"),
+    imageUrl:
+      "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781242752961_v59o7h9ywfh.webp",
     title: "Reach your\nCustomers",
     description:
       "Expand your business with delivery, pickup, cashless payments, and more",
   },
   {
-    image: require("../../assets/Accelerate your Business.png"),
+    imageUrl:
+      "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781242090072_3i7nwd3po6s.webp",
     title: "Accelerate\nyour Business",
     description: "Get all the tools to run and grow your business in one place",
   },
   {
-    image: require("../../assets/Be Our Partner.png"),
+    imageUrl:
+      "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781242184796_59oi3qffc6d.webp",
     title: "Be our\nPartner",
     description:
       "Signing up is simple — get onboard and start selling with TàbDey",
@@ -119,10 +122,10 @@ export default function WelcomeScreen() {
                   <View style={styles.slideCard}>
                     <Text style={styles.slideTitle}>{item.title}</Text>
                     <Image
-                      source={item.image}
-                      style={styles.slideImage}
-                      resizeMode="contain"
-                    />
+  source={{ uri: item.imageUrl }}
+  style={styles.slideImage}
+  resizeMode="contain"
+/>
                     <Text style={styles.slideDesc}>{item.description}</Text>
                   </View>
                 )}

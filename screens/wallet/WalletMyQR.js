@@ -28,7 +28,7 @@ import { C as T } from "../../theme/colors";
 import { getUserInfo } from "../../utils/authToken";
 import { useAlert } from "../../components/CustomAlert";
 
-const LOGO_URI = Image.resolveAssetSource(require("../../assets/icon.png")).uri;
+const LOGO_URI = Image.resolveAssetSource(require("../../assets/logo_v2_real.png")).uri;
 
 export default function WalletMyQRScreen() {
   const nav = useNavigation();
@@ -243,7 +243,7 @@ export default function WalletMyQRScreen() {
           {/* Brand row inside captured area */}
           <View style={styles.posterBrandRow}>
             <Image
-              source={require("../../assets/icon.png")}
+              source={require("../../assets/logo_v2_real.png")}
               style={styles.posterLogo}
             />
             <View>

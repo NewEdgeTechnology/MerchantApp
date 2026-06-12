@@ -16,26 +16,26 @@ const OnboardingScreen = () => {
   const navigation = useNavigation();
 
   const stepImages = [
-    require("../../assets/tell.png"),
-    require("../../assets/store.png"),
-    require("../../assets/contract.jpg"),
+    "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781246589386_zpbizhupt5p.webp",
+    "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781246619353_r5ugepobnjo.webp",
+    "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781246516703_fgl1sumq5mr.webp",
   ];
 
   const steps = [
     {
-      title: "Tell us about your business",
+      title: "Choose how you want to sell",
       description:
-        "Add your business details so customers can recognize and trust your store.",
+        "Select the type of business you want to run on Tàbdey so we can set up the right flow for your store.",
     },
     {
-      title: "Set up your store",
+      title: "Create your merchant profile",
       description:
-        "Upload banners, manage your menu and prepare your store profile for customers.",
+        "Add your business information, logo, banners and store details to make your profile ready for customers.",
     },
     {
-      title: "Sign your contract",
+      title: "Complete verification",
       description:
-        "Review and complete your agreement, then start getting ready to receive orders.",
+        "Review your details, complete the required agreement and get your store ready to start receiving orders.",
     },
   ];
 
@@ -101,7 +101,7 @@ const OnboardingScreen = () => {
               >
                 <View style={styles.imageWrap}>
                   <Image
-                    source={stepImages[index]}
+                    source={{ uri: stepImages[index] }}
                     style={styles.stepImage}
                     resizeMode="cover"
                   />

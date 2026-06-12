@@ -30,37 +30,37 @@ const BANKS = [
     code: "bdb",
     name: "Bhutan Development Bank Ltd.",
     accountLength: 12,
-    logoSource: require("../../assets/banks/bdbl.jpeg"),
+    logoUrl: "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781242607361_9bbtkp1ykhe.webp",
   },
   {
     code: "bnb",
     name: "Bhutan National Bank Limited",
     accountLength: 9,
-    logoSource: require("../../assets/banks/bnb.png"),
+    logoUrl: "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781242625061_ao6jqck79yk.webp",
   },
   {
     code: "bob",
     name: "Bank of Bhutan Limited",
     accountLength: 9,
-    logoSource: require("../../assets/banks/bob.png"),
+    logoUrl: "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781242661159_h58ix4mzvwq.webp",
   },
   {
     code: "drukpnb",
     name: "Druk PNB",
     accountLength: 12,
-    logoSource: require("../../assets/banks/drukpnb.png"),
+    logoUrl: "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781242481264_kbeq81vy6jb.webp",
   },
   {
     code: "tbank",
     name: "T Bank Ltd.",
     accountLength: 9,
-    logoSource: require("../../assets/banks/tbank.jpeg"),
+    logoUrl: "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781243867060_4aln975xkj2.webp",
   },
   {
     code: "dk",
     name: "DK Limited Bank",
     accountLength: 12,
-    logoSource: require("../../assets/banks/dk.png"),
+    logoUrl: "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781242674959_pcz9u06cv49.webp",
   },
 ];
 
@@ -286,7 +286,10 @@ export default function BankPaymentInfoScreen() {
   const isFormValid = validate();
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={["left", "top", "right", "bottom"]}>
+    <SafeAreaView
+      style={styles.safeArea}
+      edges={["left", "top", "right", "bottom"]}
+    >
       <View style={styles.topGlow} />
 
       <View style={styles.page}>
@@ -324,9 +327,9 @@ export default function BankPaymentInfoScreen() {
               onPress={() => setBankModalVisible(true)}
             >
               <View style={styles.selectLeft}>
-                {selectedBank?.logoSource ? (
+                {selectedBank?.logoUrl ? (
                   <Image
-                    source={selectedBank.logoSource}
+                    source={{ uri: selectedBank.logoUrl }}
                     style={styles.logoSm}
                   />
                 ) : (
@@ -483,7 +486,7 @@ export default function BankPaymentInfoScreen() {
                   }}
                 >
                   <View style={styles.bankRowLeft}>
-                    <Image source={b.logoSource} style={styles.logoLg} />
+                    <Image source={{ uri: b.logoUrl }} style={styles.logoLg} />
                     <View style={{ flex: 1 }}>
                       <Text
                         style={[
@@ -670,10 +673,10 @@ const styles = StyleSheet.create({
   },
 
   page: {
-  flex: 1,
-  paddingHorizontal: 18,
-  paddingTop: 0,
-},
+    flex: 1,
+    paddingHorizontal: 18,
+    paddingTop: 0,
+  },
 
   container: {
     flexGrow: 1,

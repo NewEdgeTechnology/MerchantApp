@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 import {
   View,
   Text,
@@ -6,9 +6,18 @@ import {
   Image,
   ScrollView,
   TouchableOpacity,
-} from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+} from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
+
+const GRAB_FOOD_IMAGE_URL =
+  "https://your-domain.com/uploads/images/grabfood.png";
+
+const REACH_IMAGE_URL = "https://your-domain.com/uploads/images/reach.png";
+
+const BOOST_IMAGE_URL = "https://your-domain.com/uploads/images/boost.png";
+
+const EASE_IMAGE_URL = "https://your-domain.com/uploads/images/ease.png";
 
 const GrabFoodScreen = () => {
   const navigation = useNavigation();
@@ -21,7 +30,7 @@ const GrabFoodScreen = () => {
         style={styles.backButton}
         activeOpacity={0.7}
       >
-        <Icon name="arrow-back" size={24} color="#1A1D1F" />
+        <Ionicons name="arrow-back" size={24} color="#1A1D1F" />
       </TouchableOpacity>
 
       {/* Scrollable Content */}
@@ -32,7 +41,7 @@ const GrabFoodScreen = () => {
         {/* Header Image */}
         <View style={styles.imageContainer}>
           <Image
-            source={require('../../assets/grabfood.png')}
+            source={{ uri: GRAB_FOOD_IMAGE_URL }}
             style={styles.headerImage}
           />
         </View>
@@ -52,7 +61,7 @@ const GrabFoodScreen = () => {
 
           <View style={styles.feature}>
             <Image
-              source={require('../../assets/reach.png')}
+              source={{ uri: REACH_IMAGE_URL }}
               style={styles.featureIcon}
             />
             <View style={styles.featureText}>
@@ -66,7 +75,7 @@ const GrabFoodScreen = () => {
 
           <View style={styles.feature}>
             <Image
-              source={require('../../assets/boost.png')}
+              source={{ uri: BOOST_IMAGE_URL }}
               style={styles.featureIcon}
             />
             <View style={styles.featureText}>
@@ -80,15 +89,14 @@ const GrabFoodScreen = () => {
 
           <View style={styles.feature}>
             <Image
-              source={require('../../assets/ease.png')}
+              source={{ uri: EASE_IMAGE_URL }}
               style={styles.featureIcon}
             />
             <View style={styles.featureText}>
               <Text style={styles.featureTitle}>Operate with ease & speed</Text>
               <Text style={styles.featureDescription}>
-                You don’t have to worry about any of the logistics. All you
-                have to do is prepare the customer orders and we'll manage the
-                rest
+                You don’t have to worry about any of the logistics. All you have
+                to do is prepare the customer orders and we'll manage the rest
               </Text>
             </View>
           </View>
@@ -99,7 +107,7 @@ const GrabFoodScreen = () => {
       <View style={styles.buttonContainer}>
         <TouchableOpacity
           style={styles.button}
-          onPress={() => navigation.navigate('SignupScreen')}
+          onPress={() => navigation.navigate("SignupScreen")}
           activeOpacity={0.9}
         >
           <Text style={styles.buttonText}>Continue</Text>
@@ -114,30 +122,30 @@ export default GrabFoodScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     paddingTop: 30,
   },
   scrollContent: {
     paddingBottom: 100,
   },
   imageContainer: {
-    position: 'relative',
+    position: "relative",
   },
   headerImage: {
-    width: '100%',
+    width: "100%",
     height: 200,
-    resizeMode: 'cover',
+    resizeMode: "cover",
   },
   backButton: {
-    position: 'absolute',
+    position: "absolute",
     top: 40,
     left: 16,
-    backgroundColor: 'rgba(255,255,255,0.7)',
+    backgroundColor: "rgba(255,255,255,0.7)",
     width: 40,
     height: 40,
     borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     zIndex: 10,
   },
   content: {
@@ -145,18 +153,18 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    fontWeight: '600',
+    fontWeight: "600",
     marginBottom: 8,
   },
   description: {
     fontSize: 14,
-    color: '#555',
+    color: "#555",
     marginBottom: 10,
     lineHeight: 19,
   },
   subheading: {
     fontSize: 19,
-    fontWeight: '600',
+    fontWeight: "600",
     marginTop: 8,
     marginBottom: 10,
   },
@@ -167,9 +175,9 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   feature: {
-    flexDirection: 'row',
+    flexDirection: "row",
     marginBottom: 20,
-    alignItems: 'flex-start',
+    alignItems: "flex-start",
   },
   featureIcon: {
     width: 40,
@@ -183,40 +191,40 @@ const styles = StyleSheet.create({
   },
   featureTitle: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
     marginBottom: 4,
   },
   featureDescription: {
     fontSize: 14,
-    color: '#555',
+    color: "#555",
     lineHeight: 20,
   },
   buttonContainer: {
-    position: 'absolute',
+    position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    width: '100%',
+    width: "100%",
     padding: 24,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderTopWidth: 1,
-    borderTopColor: '#eee',
+    borderTopColor: "#eee",
     borderRadius: 15,
     elevation: 15,
     marginBottom: 3,
   },
   button: {
-    backgroundColor: '#00b14f',
+    backgroundColor: "#00b14f",
     paddingVertical: 16,
     borderRadius: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
     marginBottom: 6,
   },
   buttonText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: "600",
   },
 });
