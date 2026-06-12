@@ -1,0 +1,2043 @@
+import ExpoModulesCore
+import MapLibre
+import UIKit
+import CoreLocation
+
+// Enhanced native iOS map view using MapLibre GL Native
+class OSMMapView: ExpoView, MLNMapViewDelegate, CLLocationManagerDelegate {
+    // MapLibre map view
+    var mapView: MLNMapView!
+    
+    // Location manager for GPS features
+    var locationManager: CLLocationManager!
+    private var lastKnownLocation: CLLocation?
+    
+    // Configuration properties
+    private var initialCenter: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 0, longitude: 0)
+    private var initialZoom: Double = 10
+    private var initialPitch: Double = 0
+    private var initialBearing: Double = 0
+    private var tileServerUrl: String = "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
+    private var styleUrl: String? = nil
+    private var isVectorStyle: Bool = true
+    private var markers: [EnhancedMarkerData] = []
+    private var polylines: [PolylineData] = []
+    private var polygons: [PolygonData] = []
+    private var circles: [CircleData] = []
+    private var overlays: [OverlayData] = []
+    
+    // Map configuration
+    private var showUserLocation: Bool = false
+    private var followUserLocation: Bool = false
+    private var userLocationTintColor: String = "#9C1AFF"
+    private var userLocationAccuracyFillColor: String = "rgba(156, 26, 255, 0.2)"
+    private var userLocationAccuracyBorderColor: String = "#9C1AFF"
+    private var showsCompass: Bool = false
+    private var showsScale: Bool = false
+    private var rotateEnabled: Bool = true
+    private var scrollEnabled: Bool = true
+    private var zoomEnabled: Bool = true
+    private var pitchEnabled: Bool = false
+    
+    // Clustering configuration
+    private var clusteringEnabled: Bool = false
+    private var clusterRadius: Double = 50
+    private var clusterMaxZoom: Double = 15
+    private var clusterMinPoints: Int = 2
+    
+    // Event emitters
+    private let onMapReady = EventDispatcher()
+    private let onRegionChange = EventDispatcher()
+    private let onMarkerPress = EventDispatcher()
+    private let onMarkerDragStart = EventDispatcher()
+    private let onMarkerDrag = EventDispatcher()
+    private let onMarkerDragEnd = EventDispatcher()
+    private let onInfoWindowPress = EventDispatcher()
+    private let onPress = EventDispatcher()
+    private let onLongPress = EventDispatcher()
+    private let onPolylinePress = EventDispatcher()
+    private let onPolygonPress = EventDispatcher()
+    private let onCirclePress = EventDispatcher()
+    private let onOverlayPress = EventDispatcher()
+    private let onUserLocationChange = EventDispatcher()
+    
+    // MARK: - Data Structures
+    
+    struct EnhancedMarkerData {
+        let id: String
+        let coordinate: CLLocationCoordinate2D
+        let title: String?
+        let description: String?
+        let icon: MarkerIconData?
+        let infoWindow: InfoWindowData?
+        let animation: MarkerAnimationData?
+        let zIndex: Int
+        let draggable: Bool
+        let opacity: Double
+        let rotation: Double
+        let visible: Bool
+        let clustered: Bool
+    }
+    
+    struct MarkerIconData {
+        let uri: String?
+        let name: String?
+        let size: Double
+        let color: String?
+        let anchor: CGPoint
+    }
+    
+    struct InfoWindowData {
+        let title: String?
+        let description: String?
+        let backgroundColor: String?
+        let borderColor: String?
+        let borderRadius: Double
+        let maxWidth: Double
+    }
+    
+    struct MarkerAnimationData {
+        let type: String
+        let duration: Double
+        let delay: Double
+        let shouldRepeat: Bool
+    }
+    
+    struct PolylineData {
+        let id: String
+        let coordinates: [CLLocationCoordinate2D]
+        let strokeColor: String
+        let strokeWidth: Double
+        let strokeOpacity: Double
+        let strokePattern: String
+        let lineCap: String
+        let lineJoin: String
+        let zIndex: Int
+        let visible: Bool
+    }
+    
+    struct PolygonData {
+        let id: String
+        let coordinates: [CLLocationCoordinate2D]
+        let holes: [[CLLocationCoordinate2D]]?
+        let fillColor: String
+        let fillOpacity: Double
+        let strokeColor: String
+        let strokeWidth: Double
+        let strokeOpacity: Double
+        let strokePattern: String
+        let zIndex: Int
+        let visible: Bool
+    }
+    
+    struct CircleData {
+        let id: String
+        let center: CLLocationCoordinate2D
+        let radius: Double
+        let fillColor: String
+        let fillOpacity: Double
+        let strokeColor: String
+        let strokeWidth: Double
+        let strokeOpacity: Double
+        let strokePattern: String
+        let zIndex: Int
+        let visible: Bool
+    }
+    
+    struct OverlayData {
+        let id: String
+        let coordinate: CLLocationCoordinate2D
+        let width: Double
+        let height: Double
+        let anchor: CGPoint
+        let zIndex: Int
+        let visible: Bool
+    }
+    
+    // MARK: - Init
+    
+    required init(appContext: AppContext? = nil) {
+        super.init(appContext: appContext)
+        initializeView()
+    }
+    
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not available")
+    }
+    
+    deinit {
+        locationManager?.delegate = nil
+        mapView?.delegate = nil
+    }
+    
+    private func initializeView() {
+        setupMapView()
+    }
+    
+    // MARK: - Setup
+    
+    func setupMapView() {
+        mapView = MLNMapView(frame: bounds)
+        mapView.delegate = self
+        mapView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        
+        mapView.setCenter(initialCenter, zoomLevel: initialZoom, animated: false)
+        
+        let camera = mapView.camera
+        camera.pitch = CGFloat(initialPitch)
+        camera.heading = initialBearing
+        mapView.setCamera(camera, animated: false)
+        
+        mapView.isRotateEnabled = rotateEnabled
+        mapView.isScrollEnabled = scrollEnabled
+        mapView.isZoomEnabled = zoomEnabled
+        mapView.isPitchEnabled = pitchEnabled
+        mapView.showsUserLocation = showUserLocation
+        mapView.userTrackingMode = followUserLocation ? .follow : .none
+        
+        setupLocationManager()
+        setupTileSource()
+        setupGestureRecognizers()
+        setupMapControls()
+        
+        addSubview(mapView)
+        
+        mapView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            mapView.topAnchor.constraint(equalTo: topAnchor),
+            mapView.leftAnchor.constraint(equalTo: leftAnchor),
+            mapView.rightAnchor.constraint(equalTo: rightAnchor),
+            mapView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+    
+    private func getLocationAuthorizationStatus() -> CLAuthorizationStatus {
+        if #available(iOS 14.0, *) {
+            return locationManager?.authorizationStatus ?? .notDetermined
+        } else {
+            return CLLocationManager.authorizationStatus()
+        }
+    }
+    
+    func isMapReady() -> Bool {
+        return mapView != nil && mapView.style != nil
+    }
+    
+    private func setupLocationManager() {
+        locationManager = CLLocationManager()
+        locationManager.delegate = self
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.distanceFilter = 10.0
+        
+        if CLLocationManager.locationServicesEnabled() {
+            switch getLocationAuthorizationStatus() {
+            case .notDetermined:
+                locationManager.requestWhenInUseAuthorization()
+            case .denied, .restricted:
+                break
+            case .authorizedWhenInUse, .authorizedAlways:
+                if showUserLocation {
+                    locationManager.startUpdatingLocation()
+                }
+            @unknown default:
+                break
+            }
+        }
+    }
+    
+    private func setupGestureRecognizers() {
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(mapTapped(_:)))
+        tapGesture.numberOfTapsRequired = 1
+        mapView.addGestureRecognizer(tapGesture)
+        
+        let longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(mapLongPressed(_:)))
+        longPressGesture.minimumPressDuration = 0.5
+        mapView.addGestureRecognizer(longPressGesture)
+    }
+    
+    private func setupMapControls() {
+        if showsCompass {
+            mapView.compassView.isHidden = false
+            mapView.compassViewPosition = .topLeft
+            mapView.compassViewMargins = CGPoint(x: 16, y: 64)
+        } else {
+            mapView.compassView.isHidden = true
+        }
+        
+        if showsScale {
+            addCustomScaleBar()
+        }
+    }
+    
+    private func addCustomScaleBar() {
+        // Custom scale bar can be implemented here later.
+    }
+    
+    private func setupTileSource() {
+        if isVectorStyleUrl(tileServerUrl) {
+            setupVectorStyle()
+        } else {
+            setupRasterTiles()
+        }
+    }
+    
+    private func isVectorStyleUrl(_ url: String) -> Bool {
+        return url.hasSuffix(".json") || url.contains("style.json") || url.contains("/styles/")
+    }
+    
+    private func setupVectorStyle() {
+        let vectorStyleUrl = styleUrl ?? tileServerUrl
+        
+        guard let url = URL(string: vectorStyleUrl) else {
+            setupRasterTilesFallback()
+            return
+        }
+        
+        mapView.styleURL = url
+    }
+    
+    private func setupRasterTilesFallback() {
+        guard let style = mapView.style else { return }
+        
+        for layer in style.layers {
+            style.removeLayer(layer)
+        }
+        
+        for source in style.sources {
+            style.removeSource(source)
+        }
+        
+        let fallbackTileSource = MLNRasterTileSource(
+            identifier: "osm-fallback",
+            tileURLTemplates: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+            options: [
+                .minimumZoomLevel: 0,
+                .maximumZoomLevel: 18,
+                .tileSize: 256,
+                .attributionInfos: [
+                    MLNAttributionInfo(
+                        title: NSAttributedString(string: "© OpenStreetMap contributors"),
+                        url: URL(string: "https://www.openstreetmap.org/copyright")
+                    )
+                ]
+            ]
+        )
+        
+        let fallbackRasterLayer = MLNRasterStyleLayer(
+            identifier: "osm-fallback-layer",
+            source: fallbackTileSource
+        )
+        
+        style.addSource(fallbackTileSource)
+        style.addLayer(fallbackRasterLayer)
+    }
+    
+    private func setupRasterTiles() {
+        guard let style = mapView.style else { return }
+        
+        removeLayerIfExists("osm-layer", from: style)
+        removeSourceIfExists("osm-tiles", from: style)
+        
+        let tileSource = MLNRasterTileSource(
+            identifier: "osm-tiles",
+            tileURLTemplates: [tileServerUrl],
+            options: [
+                .minimumZoomLevel: 0,
+                .maximumZoomLevel: 18,
+                .tileSize: 256,
+                .attributionInfos: [
+                    MLNAttributionInfo(
+                        title: NSAttributedString(string: "© OpenStreetMap contributors"),
+                        url: URL(string: "https://www.openstreetmap.org/copyright")
+                    )
+                ]
+            ]
+        )
+        
+        let rasterLayer = MLNRasterStyleLayer(identifier: "osm-layer", source: tileSource)
+        
+        style.addSource(tileSource)
+        style.addLayer(rasterLayer)
+    }
+    
+    // MARK: - Property Setters
+    
+    func setInitialCenter(_ center: [String: Double]) {
+        if let lat = center["latitude"], let lng = center["longitude"] {
+            initialCenter = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            mapView?.centerCoordinate = initialCenter
+        }
+    }
+    
+    func setInitialZoom(_ zoom: Double) {
+        initialZoom = zoom
+        mapView?.zoomLevel = zoom
+    }
+    
+    func setInitialPitch(_ pitch: Double) {
+        initialPitch = max(0.0, min(pitch, 60.0))
+        
+        if let mapView = mapView {
+            let camera = mapView.camera
+            camera.pitch = CGFloat(initialPitch)
+            mapView.setCamera(camera, animated: false)
+        }
+    }
+    
+    func setInitialBearing(_ bearing: Double) {
+        var normalized = bearing.truncatingRemainder(dividingBy: 360.0)
+        if normalized < 0 {
+            normalized += 360.0
+        }
+        
+        initialBearing = normalized
+        
+        if let mapView = mapView {
+            let camera = mapView.camera
+            camera.heading = initialBearing
+            mapView.setCamera(camera, animated: false)
+        }
+    }
+    
+    func setTileServerUrl(_ url: String) {
+        tileServerUrl = url
+        isVectorStyle = isVectorStyleUrl(url)
+        
+        if mapView != nil {
+            setupTileSource()
+        }
+    }
+    
+    func setStyleUrl(_ url: String?) {
+        styleUrl = url
+        
+        if mapView != nil && url != nil {
+            setupTileSource()
+        }
+    }
+    
+    func setShowUserLocation(_ show: Bool) {
+        showUserLocation = show
+        mapView?.showsUserLocation = show
+        
+        if show {
+            applyUserLocationTintColor()
+        }
+        
+        if show && getLocationAuthorizationStatus() == .authorizedWhenInUse {
+            locationManager?.startUpdatingLocation()
+        } else {
+            locationManager?.stopUpdatingLocation()
+        }
+    }
+    
+    func setUserLocationTintColor(_ color: String) {
+        userLocationTintColor = color
+        applyUserLocationTintColor()
+    }
+    
+    func setUserLocationAccuracyFillColor(_ color: String) {
+        userLocationAccuracyFillColor = color
+        applyUserLocationTintColor()
+    }
+    
+    func setUserLocationAccuracyBorderColor(_ color: String) {
+        userLocationAccuracyBorderColor = color
+        applyUserLocationTintColor()
+    }
+    
+    private func applyUserLocationTintColor() {
+        guard let mapView = mapView else { return }
+        
+        if let tintColor = parseColor(userLocationTintColor) {
+            mapView.tintColor = tintColor
+        }
+    }
+    
+    private func parseColor(_ colorString: String) -> UIColor? {
+        if colorString.hasPrefix("#") {
+            let hex = String(colorString.dropFirst())
+            var rgbValue: UInt64 = 0
+            Scanner(string: hex).scanHexInt64(&rgbValue)
+            
+            let r = CGFloat((rgbValue & 0xFF0000) >> 16) / 255.0
+            let g = CGFloat((rgbValue & 0x00FF00) >> 8) / 255.0
+            let b = CGFloat(rgbValue & 0x0000FF) / 255.0
+            
+            return UIColor(red: r, green: g, blue: b, alpha: 1.0)
+        }
+        
+        if colorString.hasPrefix("rgba") {
+            let values = colorString
+                .replacingOccurrences(of: "rgba(", with: "")
+                .replacingOccurrences(of: ")", with: "")
+                .split(separator: ",")
+                .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            
+            if values.count == 4 {
+                return UIColor(
+                    red: CGFloat(values[0]) / 255.0,
+                    green: CGFloat(values[1]) / 255.0,
+                    blue: CGFloat(values[2]) / 255.0,
+                    alpha: CGFloat(values[3])
+                )
+            }
+        }
+        
+        if colorString.hasPrefix("rgb") {
+            let values = colorString
+                .replacingOccurrences(of: "rgb(", with: "")
+                .replacingOccurrences(of: ")", with: "")
+                .split(separator: ",")
+                .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            
+            if values.count == 3 {
+                return UIColor(
+                    red: CGFloat(values[0]) / 255.0,
+                    green: CGFloat(values[1]) / 255.0,
+                    blue: CGFloat(values[2]) / 255.0,
+                    alpha: 1.0
+                )
+            }
+        }
+        
+        return UIColor(red: 156 / 255.0, green: 26 / 255.0, blue: 255 / 255.0, alpha: 1.0)
+    }
+    
+    func setFollowUserLocation(_ follow: Bool) {
+        followUserLocation = follow
+        mapView?.userTrackingMode = follow ? .follow : .none
+    }
+    
+    func setShowsCompass(_ show: Bool) {
+        showsCompass = show
+        mapView?.compassView.isHidden = !show
+    }
+    
+    func setShowsScale(_ show: Bool) {
+        showsScale = show
+    }
+    
+    func setRotateEnabled(_ enabled: Bool) {
+        rotateEnabled = enabled
+        mapView?.isRotateEnabled = enabled
+    }
+    
+    func setScrollEnabled(_ enabled: Bool) {
+        scrollEnabled = enabled
+        mapView?.isScrollEnabled = enabled
+    }
+    
+    func setZoomEnabled(_ enabled: Bool) {
+        zoomEnabled = enabled
+        mapView?.isZoomEnabled = enabled
+    }
+    
+    func setPitchEnabled(_ enabled: Bool) {
+        pitchEnabled = enabled
+        mapView?.isPitchEnabled = enabled
+    }
+    
+    func setClustering(_ clusterData: [String: Any]) {
+        clusteringEnabled = clusterData["enabled"] as? Bool ?? false
+        clusterRadius = clusterData["radius"] as? Double ?? 50
+        clusterMaxZoom = clusterData["maxZoom"] as? Double ?? 15
+        clusterMinPoints = clusterData["minPoints"] as? Int ?? 2
+        
+        addMarkersToMap()
+    }
+    
+    func setMarkers(_ markersData: [[String: Any]]) {
+        if let annotations = mapView?.annotations {
+            mapView?.removeAnnotations(annotations)
+        }
+        
+        markers = markersData.compactMap { data in
+            guard let id = data["id"] as? String,
+                  let coordinate = data["coordinate"] as? [String: Double],
+                  let lat = coordinate["latitude"],
+                  let lng = coordinate["longitude"] else {
+                return nil
+            }
+            
+            guard lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0 else {
+                return nil
+            }
+            
+            var iconData: MarkerIconData?
+            if let iconDict = data["icon"] as? [String: Any] {
+                let anchor = iconDict["anchor"] as? [String: Double]
+                iconData = MarkerIconData(
+                    uri: iconDict["uri"] as? String,
+                    name: iconDict["name"] as? String,
+                    size: iconDict["size"] as? Double ?? 30,
+                    color: iconDict["color"] as? String,
+                    anchor: CGPoint(
+                        x: anchor?["x"] ?? 0.5,
+                        y: anchor?["y"] ?? 1.0
+                    )
+                )
+            }
+            
+            var infoWindowData: InfoWindowData?
+            if let infoDict = data["infoWindow"] as? [String: Any] {
+                infoWindowData = InfoWindowData(
+                    title: infoDict["title"] as? String,
+                    description: infoDict["description"] as? String,
+                    backgroundColor: infoDict["backgroundColor"] as? String,
+                    borderColor: infoDict["borderColor"] as? String,
+                    borderRadius: infoDict["borderRadius"] as? Double ?? 8,
+                    maxWidth: infoDict["maxWidth"] as? Double ?? 250
+                )
+            }
+            
+            var animationData: MarkerAnimationData?
+            if let animDict = data["animation"] as? [String: Any] {
+                animationData = MarkerAnimationData(
+                    type: animDict["type"] as? String ?? "bounce",
+                    duration: animDict["duration"] as? Double ?? 1000,
+                    delay: animDict["delay"] as? Double ?? 0,
+                    shouldRepeat: animDict["repeat"] as? Bool ?? false
+                )
+            }
+            
+            return EnhancedMarkerData(
+                id: id,
+                coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng),
+                title: data["title"] as? String,
+                description: data["description"] as? String,
+                icon: iconData,
+                infoWindow: infoWindowData,
+                animation: animationData,
+                zIndex: data["zIndex"] as? Int ?? 0,
+                draggable: data["draggable"] as? Bool ?? false,
+                opacity: data["opacity"] as? Double ?? 1.0,
+                rotation: data["rotation"] as? Double ?? 0.0,
+                visible: data["visible"] as? Bool ?? true,
+                clustered: data["clustered"] as? Bool ?? true
+            )
+        }
+        
+        addMarkersToMap()
+    }
+    
+    func setPolylines(_ polylinesData: [[String: Any]]) {
+        removeExistingPolylines()
+        
+        polylines = polylinesData.compactMap { data in
+            guard let id = data["id"] as? String,
+                  let coordinatesData = data["coordinates"] as? [[String: Double]] else {
+                return nil
+            }
+            
+            let coordinates = coordinatesData.compactMap { coord -> CLLocationCoordinate2D? in
+                guard let lat = coord["latitude"], let lng = coord["longitude"] else {
+                    return nil
+                }
+                
+                guard lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0 else {
+                    return nil
+                }
+                
+                return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            }
+            
+            guard coordinates.count >= 2 else {
+                return nil
+            }
+            
+            return PolylineData(
+                id: id,
+                coordinates: coordinates,
+                strokeColor: data["strokeColor"] as? String ?? "#000000",
+                strokeWidth: data["strokeWidth"] as? Double ?? 2,
+                strokeOpacity: data["strokeOpacity"] as? Double ?? 1.0,
+                strokePattern: data["strokePattern"] as? String ?? "solid",
+                lineCap: data["lineCap"] as? String ?? "round",
+                lineJoin: data["lineJoin"] as? String ?? "round",
+                zIndex: data["zIndex"] as? Int ?? 0,
+                visible: data["visible"] as? Bool ?? true
+            )
+        }
+        
+        addPolylinesToMap()
+    }
+    
+    func setPolygons(_ polygonsData: [[String: Any]]) {
+        removeExistingPolygons()
+        
+        polygons = polygonsData.compactMap { data in
+            guard let id = data["id"] as? String,
+                  let coordinatesData = data["coordinates"] as? [[String: Double]] else {
+                return nil
+            }
+            
+            let coordinates = coordinatesData.compactMap { coord -> CLLocationCoordinate2D? in
+                guard let lat = coord["latitude"], let lng = coord["longitude"] else {
+                    return nil
+                }
+                
+                guard lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0 else {
+                    return nil
+                }
+                
+                return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+            }
+            
+            guard coordinates.count >= 3 else {
+                return nil
+            }
+            
+            var holes: [[CLLocationCoordinate2D]]?
+            if let holesData = data["holes"] as? [[[String: Double]]] {
+                holes = holesData.map { holeData in
+                    return holeData.compactMap { coord -> CLLocationCoordinate2D? in
+                        guard let lat = coord["latitude"], let lng = coord["longitude"] else {
+                            return nil
+                        }
+                        
+                        guard lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0 else {
+                            return nil
+                        }
+                        
+                        return CLLocationCoordinate2D(latitude: lat, longitude: lng)
+                    }
+                }
+            }
+            
+            return PolygonData(
+                id: id,
+                coordinates: coordinates,
+                holes: holes,
+                fillColor: data["fillColor"] as? String ?? "#000000",
+                fillOpacity: data["fillOpacity"] as? Double ?? 0.3,
+                strokeColor: data["strokeColor"] as? String ?? "#000000",
+                strokeWidth: data["strokeWidth"] as? Double ?? 2,
+                strokeOpacity: data["strokeOpacity"] as? Double ?? 1.0,
+                strokePattern: data["strokePattern"] as? String ?? "solid",
+                zIndex: data["zIndex"] as? Int ?? 0,
+                visible: data["visible"] as? Bool ?? true
+            )
+        }
+        
+        addPolygonsToMap()
+    }
+    
+    func setCircles(_ circlesData: [[String: Any]]) {
+        removeExistingCircles()
+        
+        circles = circlesData.compactMap { data in
+            guard let id = data["id"] as? String,
+                  let centerData = data["center"] as? [String: Double],
+                  let lat = centerData["latitude"],
+                  let lng = centerData["longitude"],
+                  let radius = data["radius"] as? Double else {
+                return nil
+            }
+            
+            guard lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0 else {
+                return nil
+            }
+            
+            guard radius > 0 else {
+                return nil
+            }
+            
+            return CircleData(
+                id: id,
+                center: CLLocationCoordinate2D(latitude: lat, longitude: lng),
+                radius: radius,
+                fillColor: data["fillColor"] as? String ?? "#000000",
+                fillOpacity: data["fillOpacity"] as? Double ?? 0.3,
+                strokeColor: data["strokeColor"] as? String ?? "#000000",
+                strokeWidth: data["strokeWidth"] as? Double ?? 2,
+                strokeOpacity: data["strokeOpacity"] as? Double ?? 1.0,
+                strokePattern: data["strokePattern"] as? String ?? "solid",
+                zIndex: data["zIndex"] as? Int ?? 0,
+                visible: data["visible"] as? Bool ?? true
+            )
+        }
+        
+        addCirclesToMap()
+    }
+    
+    // MARK: - Add Map Objects
+    
+    private func addMarkersToMap() {
+        guard mapView != nil else { return }
+        
+        for marker in markers {
+            guard marker.visible else { continue }
+            
+            let annotation = CustomMarkerAnnotation()
+            annotation.coordinate = marker.coordinate
+            annotation.title = marker.title
+            annotation.subtitle = marker.description
+            annotation.markerId = marker.id
+            annotation.markerData = marker
+            
+            mapView.addAnnotation(annotation)
+            
+            if let animation = marker.animation {
+                DispatchQueue.main.asyncAfter(deadline: .now() + animation.delay / 1000.0) {
+                    self.animateMarker(annotation, with: animation)
+                }
+            }
+        }
+    }
+    
+    private func addPolylinesToMap() {
+        guard let style = mapView?.style else { return }
+        
+        for polyline in polylines {
+            guard polyline.visible && polyline.coordinates.count >= 2 else { continue }
+            
+            removeLayerIfExists("polyline-layer-\(polyline.id)", from: style)
+            removeSourceIfExists("polyline-\(polyline.id)", from: style)
+            
+            let coordinates = polyline.coordinates
+            let polylineFeature = MLNPolylineFeature(coordinates: coordinates, count: UInt(coordinates.count))
+            polylineFeature.identifier = polyline.id
+            
+            let source = MLNShapeSource(
+                identifier: "polyline-\(polyline.id)",
+                shape: polylineFeature,
+                options: nil
+            )
+            
+            let layer = MLNLineStyleLayer(
+                identifier: "polyline-layer-\(polyline.id)",
+                source: source
+            )
+            
+            layer.lineColor = NSExpression(forConstantValue: UIColor.from(hex: polyline.strokeColor))
+            layer.lineWidth = NSExpression(forConstantValue: polyline.strokeWidth)
+            layer.lineOpacity = NSExpression(forConstantValue: polyline.strokeOpacity)
+            
+            style.addSource(source)
+            style.addLayer(layer)
+        }
+    }
+    
+    private func addPolygonsToMap() {
+        guard let style = mapView?.style else { return }
+        
+        for polygon in polygons {
+            guard polygon.visible && polygon.coordinates.count >= 3 else { continue }
+            
+            removeLayerIfExists("polygon-fill-\(polygon.id)", from: style)
+            removeLayerIfExists("polygon-stroke-\(polygon.id)", from: style)
+            removeSourceIfExists("polygon-\(polygon.id)", from: style)
+            
+            let coordinates = polygon.coordinates
+            var polygonFeature = MLNPolygonFeature(
+                coordinates: coordinates,
+                count: UInt(coordinates.count)
+            )
+            polygonFeature.identifier = polygon.id
+            
+            if let holes = polygon.holes, !holes.isEmpty {
+                var interiorPolygons: [MLNPolygon] = []
+                
+                for hole in holes {
+                    if hole.count >= 3 {
+                        let holePolygon = MLNPolygon(
+                            coordinates: hole,
+                            count: UInt(hole.count)
+                        )
+                        interiorPolygons.append(holePolygon)
+                    }
+                }
+                
+               if !interiorPolygons.isEmpty {
+                polygonFeature = MLNPolygonFeature(
+                    coordinates: coordinates,
+                    count: UInt(coordinates.count),
+                    interiorPolygons: interiorPolygons
+                )
+                polygonFeature.identifier = polygon.id
+            }
+            }
+            
+            let source = MLNShapeSource(
+                identifier: "polygon-\(polygon.id)",
+                shape: polygonFeature,
+                options: nil
+            )
+            
+            let fillLayer = MLNFillStyleLayer(
+                identifier: "polygon-fill-\(polygon.id)",
+                source: source
+            )
+            fillLayer.fillColor = NSExpression(forConstantValue: UIColor.from(hex: polygon.fillColor))
+            fillLayer.fillOpacity = NSExpression(forConstantValue: polygon.fillOpacity)
+            
+            let strokeLayer = MLNLineStyleLayer(
+                identifier: "polygon-stroke-\(polygon.id)",
+                source: source
+            )
+            strokeLayer.lineColor = NSExpression(forConstantValue: UIColor.from(hex: polygon.strokeColor))
+            strokeLayer.lineWidth = NSExpression(forConstantValue: polygon.strokeWidth)
+            strokeLayer.lineOpacity = NSExpression(forConstantValue: polygon.strokeOpacity)
+            
+            style.addSource(source)
+            style.addLayer(fillLayer)
+            style.addLayer(strokeLayer)
+        }
+    }
+    
+    private func addCirclesToMap() {
+        guard let style = mapView?.style else { return }
+        
+        for circle in circles {
+            guard circle.visible else { continue }
+            
+            removeLayerIfExists("circle-fill-\(circle.id)", from: style)
+            removeLayerIfExists("circle-stroke-\(circle.id)", from: style)
+            removeSourceIfExists("circle-\(circle.id)", from: style)
+            
+           let circleCoordinates = createCircleCoordinates(center: circle.center, radius: circle.radius)
+            let circleFeature = MLNPolygonFeature(
+                coordinates: circleCoordinates,
+                count: UInt(circleCoordinates.count)
+            )
+            circleFeature.identifier = circle.id
+            
+            let source = MLNShapeSource(
+                identifier: "circle-\(circle.id)",
+                shape: circleFeature,
+                options: nil
+            )
+            
+            let fillLayer = MLNFillStyleLayer(
+                identifier: "circle-fill-\(circle.id)",
+                source: source
+            )
+            fillLayer.fillColor = NSExpression(forConstantValue: UIColor.from(hex: circle.fillColor))
+            fillLayer.fillOpacity = NSExpression(forConstantValue: circle.fillOpacity)
+            
+            let strokeLayer = MLNLineStyleLayer(
+                identifier: "circle-stroke-\(circle.id)",
+                source: source
+            )
+            strokeLayer.lineColor = NSExpression(forConstantValue: UIColor.from(hex: circle.strokeColor))
+            strokeLayer.lineWidth = NSExpression(forConstantValue: circle.strokeWidth)
+            strokeLayer.lineOpacity = NSExpression(forConstantValue: circle.strokeOpacity)
+            
+            style.addSource(source)
+            style.addLayer(fillLayer)
+            style.addLayer(strokeLayer)
+        }
+    }
+    
+    private func createCircleCoordinates(center: CLLocationCoordinate2D, radius: Double) -> [CLLocationCoordinate2D] {
+        let numberOfSides = 64
+        var coordinates: [CLLocationCoordinate2D] = []
+        
+        for i in 0..<numberOfSides {
+            let angle = Double(i) * 2.0 * .pi / Double(numberOfSides)
+            let lat = center.latitude + (radius / 111_320.0) * cos(angle)
+            let lng = center.longitude + (radius / (111_320.0 * cos(center.latitude * .pi / 180.0))) * sin(angle)
+            coordinates.append(CLLocationCoordinate2D(latitude: lat, longitude: lng))
+        }
+        
+        return coordinates
+    }
+    
+    // MARK: - Remove Map Objects
+    
+    private func removeLayerIfExists(_ identifier: String, from style: MLNStyle) {
+        if let layer = style.layer(withIdentifier: identifier) {
+            style.removeLayer(layer)
+        }
+    }
+    
+    private func removeSourceIfExists(_ identifier: String, from style: MLNStyle) {
+        if let source = style.source(withIdentifier: identifier) {
+            style.removeSource(source)
+        }
+    }
+    
+    private func removeExistingPolylines() {
+        guard let style = mapView?.style else { return }
+        
+        for polyline in polylines {
+            removeLayerIfExists("polyline-layer-\(polyline.id)", from: style)
+            removeSourceIfExists("polyline-\(polyline.id)", from: style)
+        }
+    }
+    
+    private func removeExistingPolygons() {
+        guard let style = mapView?.style else { return }
+        
+        for polygon in polygons {
+            removeLayerIfExists("polygon-fill-\(polygon.id)", from: style)
+            removeLayerIfExists("polygon-stroke-\(polygon.id)", from: style)
+            removeSourceIfExists("polygon-\(polygon.id)", from: style)
+        }
+    }
+    
+    private func removeExistingCircles() {
+        guard let style = mapView?.style else { return }
+        
+        for circle in circles {
+            removeLayerIfExists("circle-fill-\(circle.id)", from: style)
+            removeLayerIfExists("circle-stroke-\(circle.id)", from: style)
+            removeSourceIfExists("circle-\(circle.id)", from: style)
+        }
+    }
+    
+    // MARK: - Marker Animation
+    
+    private func animateMarker(_ annotation: MLNAnnotation, with animation: MarkerAnimationData) {
+        guard let annotationView = mapView?.view(for: annotation) else { return }
+        
+        let duration = animation.duration / 1000.0
+        
+        switch animation.type {
+        case "bounce":
+            UIView.animate(
+                withDuration: duration,
+                delay: 0,
+                usingSpringWithDamping: 0.3,
+                initialSpringVelocity: 0.8,
+                options: [],
+                animations: {
+                    annotationView.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
+                }
+            ) { _ in
+                UIView.animate(withDuration: duration / 2) {
+                    annotationView.transform = CGAffineTransform.identity
+                }
+            }
+            
+        case "pulse":
+            let pulseAnimation = {
+                UIView.animate(withDuration: duration / 2, animations: {
+                    annotationView.alpha = 0.3
+                }) { _ in
+                    UIView.animate(withDuration: duration / 2) {
+                        annotationView.alpha = 1.0
+                    }
+                }
+            }
+            
+            pulseAnimation()
+            
+            if animation.shouldRepeat {
+                Timer.scheduledTimer(withTimeInterval: duration, repeats: true) { _ in
+                    pulseAnimation()
+                }
+            }
+            
+        case "fade":
+            annotationView.alpha = 0
+            UIView.animate(withDuration: duration) {
+                annotationView.alpha = 1.0
+            }
+            
+        case "scale":
+            annotationView.transform = CGAffineTransform(scaleX: 0.1, y: 0.1)
+            UIView.animate(
+                withDuration: duration,
+                delay: 0,
+                usingSpringWithDamping: 0.7,
+                initialSpringVelocity: 0.5,
+                options: [],
+                animations: {
+                    annotationView.transform = CGAffineTransform.identity
+                }
+            )
+            
+        case "drop":
+            let originalCenter = annotationView.center
+            annotationView.center = CGPoint(x: originalCenter.x, y: originalCenter.y - 100)
+            UIView.animate(
+                withDuration: duration,
+                delay: 0,
+                usingSpringWithDamping: 0.8,
+                initialSpringVelocity: 0.5,
+                options: [],
+                animations: {
+                    annotationView.center = originalCenter
+                }
+            )
+            
+        default:
+            break
+        }
+    }
+    
+    // MARK: - Gesture Handlers
+    
+    @objc private func mapTapped(_ gesture: UITapGestureRecognizer) {
+        let point = gesture.location(in: mapView)
+        let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
+        
+        if checkOverlayTap(at: point, coordinate: coordinate) {
+            return
+        }
+        
+        onPress([
+            "coordinate": [
+                "latitude": coordinate.latitude,
+                "longitude": coordinate.longitude
+            ]
+        ])
+    }
+    
+    @objc private func mapLongPressed(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        
+        let point = gesture.location(in: mapView)
+        let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
+        
+        onLongPress([
+            "coordinate": [
+                "latitude": coordinate.latitude,
+                "longitude": coordinate.longitude
+            ]
+        ])
+    }
+    
+    private func checkOverlayTap(at point: CGPoint, coordinate: CLLocationCoordinate2D) -> Bool {
+        for polyline in polylines {
+            if isPointNearPolyline(point: coordinate, polyline: polyline, tolerance: 20) {
+                onPolylinePress([
+                    "polylineId": polyline.id,
+                    "coordinate": [
+                        "latitude": coordinate.latitude,
+                        "longitude": coordinate.longitude
+                    ]
+                ])
+                return true
+            }
+        }
+        
+        for polygon in polygons {
+            if isPointInsidePolygon(point: coordinate, polygon: polygon) {
+                onPolygonPress([
+                    "polygonId": polygon.id,
+                    "coordinate": [
+                        "latitude": coordinate.latitude,
+                        "longitude": coordinate.longitude
+                    ]
+                ])
+                return true
+            }
+        }
+        
+        for circle in circles {
+            if isPointInsideCircle(point: coordinate, circle: circle) {
+                onCirclePress([
+                    "circleId": circle.id,
+                    "coordinate": [
+                        "latitude": coordinate.latitude,
+                        "longitude": coordinate.longitude
+                    ]
+                ])
+                return true
+            }
+        }
+        
+        return false
+    }
+    
+    // MARK: - Geometry Helpers
+    
+    private func isPointNearPolyline(point: CLLocationCoordinate2D, polyline: PolylineData, tolerance: Double) -> Bool {
+        for i in 0..<(polyline.coordinates.count - 1) {
+            let start = polyline.coordinates[i]
+            let end = polyline.coordinates[i + 1]
+            
+            let distance = distanceFromPointToLineSegment(
+                point: point,
+                lineStart: start,
+                lineEnd: end
+            )
+            
+            if distance < tolerance {
+                return true
+            }
+        }
+        
+        return false
+    }
+    
+    private func isPointInsidePolygon(point: CLLocationCoordinate2D, polygon: PolygonData) -> Bool {
+        let coordinates = polygon.coordinates
+        var inside = false
+        
+        var j = coordinates.count - 1
+        
+        for i in 0..<coordinates.count {
+            let xi = coordinates[i].longitude
+            let yi = coordinates[i].latitude
+            let xj = coordinates[j].longitude
+            let yj = coordinates[j].latitude
+            
+            if ((yi > point.latitude) != (yj > point.latitude)) &&
+                (point.longitude < (xj - xi) * (point.latitude - yi) / (yj - yi) + xi) {
+                inside = !inside
+            }
+            
+            j = i
+        }
+        
+        return inside
+    }
+    
+    private func isPointInsideCircle(point: CLLocationCoordinate2D, circle: CircleData) -> Bool {
+        let distance = distanceBetweenCoordinates(point, circle.center)
+        return distance <= circle.radius
+    }
+    
+    private func distanceFromPointToLineSegment(
+        point: CLLocationCoordinate2D,
+        lineStart: CLLocationCoordinate2D,
+        lineEnd: CLLocationCoordinate2D
+    ) -> Double {
+        let A = point.latitude - lineStart.latitude
+        let B = point.longitude - lineStart.longitude
+        let C = lineEnd.latitude - lineStart.latitude
+        let D = lineEnd.longitude - lineStart.longitude
+        
+        let dot = A * C + B * D
+        let lenSq = C * C + D * D
+        
+        if lenSq == 0 {
+            return sqrt(A * A + B * B)
+        }
+        
+        let param = dot / lenSq
+        
+        let xx: Double
+        let yy: Double
+        
+        if param < 0 {
+            xx = lineStart.latitude
+            yy = lineStart.longitude
+        } else if param > 1 {
+            xx = lineEnd.latitude
+            yy = lineEnd.longitude
+        } else {
+            xx = lineStart.latitude + param * C
+            yy = lineStart.longitude + param * D
+        }
+        
+        let dx = point.latitude - xx
+        let dy = point.longitude - yy
+        
+        return sqrt(dx * dx + dy * dy) * 111_320.0
+    }
+    
+    private func distanceBetweenCoordinates(_ coord1: CLLocationCoordinate2D, _ coord2: CLLocationCoordinate2D) -> Double {
+        let location1 = CLLocation(latitude: coord1.latitude, longitude: coord1.longitude)
+        let location2 = CLLocation(latitude: coord2.latitude, longitude: coord2.longitude)
+        return location1.distance(from: location2)
+    }
+    
+    // MARK: - MLNMapViewDelegate
+    
+    func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
+        if !isVectorStyleUrl(tileServerUrl) {
+            setupRasterTiles()
+        }
+        
+        addPolylinesToMap()
+        addPolygonsToMap()
+        addCirclesToMap()
+        
+        onMapReady([:])
+    }
+    
+    func mapViewDidFailLoadingMap(_ mapView: MLNMapView, withError error: Error) {
+        setupRasterTilesFallback()
+    }
+    
+    func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
+        let region = mapView.visibleCoordinateBounds
+        let center = mapView.centerCoordinate
+        
+        onRegionChange([
+            "latitude": center.latitude,
+            "longitude": center.longitude,
+            "latitudeDelta": region.ne.latitude - region.sw.latitude,
+            "longitudeDelta": region.ne.longitude - region.sw.longitude
+        ])
+    }
+    
+    func mapView(_ mapView: MLNMapView, didSelect annotation: MLNAnnotation) {
+        if let customAnnotation = annotation as? CustomMarkerAnnotation {
+            onMarkerPress([
+                "markerId": customAnnotation.markerId,
+                "coordinate": [
+                    "latitude": annotation.coordinate.latitude,
+                    "longitude": annotation.coordinate.longitude
+                ]
+            ])
+            
+            if let markerData = customAnnotation.markerData,
+               let infoWindow = markerData.infoWindow {
+                showCustomInfoWindow(for: customAnnotation, with: infoWindow)
+            }
+        }
+    }
+    
+    func mapView(_ mapView: MLNMapView, viewFor annotation: MLNAnnotation) -> MLNAnnotationView? {
+        guard let customAnnotation = annotation as? CustomMarkerAnnotation,
+              let markerData = customAnnotation.markerData else {
+            return nil
+        }
+        
+        let identifier = "CustomMarker"
+        var annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier) as? CustomMarkerAnnotationView
+        
+        if annotationView == nil {
+            annotationView = CustomMarkerAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+        }
+        
+        annotationView?.annotation = annotation
+        annotationView?.configureWith(markerData: markerData)
+        
+        return annotationView
+    }
+    
+    private func showCustomInfoWindow(for annotation: CustomMarkerAnnotation, with infoWindow: InfoWindowData) {
+        let infoWindowView = CustomInfoWindowView()
+        infoWindowView.configureWith(infoWindow: infoWindow, markerId: annotation.markerId)
+        infoWindowView.onPress = { [weak self] markerId in
+            self?.onInfoWindowPress(["markerId": markerId])
+        }
+        
+        if let annotationView = mapView.view(for: annotation),
+           let parentView = annotationView.superview {
+            parentView.addSubview(infoWindowView)
+            infoWindowView.showAbove(view: annotationView)
+        }
+    }
+    
+    // MARK: - CLLocationManagerDelegate
+    
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last else { return }
+        
+        lastKnownLocation = location
+        
+        let coordinate = location.coordinate
+        
+        onUserLocationChange([
+            "latitude": coordinate.latitude,
+            "longitude": coordinate.longitude,
+            "accuracy": location.horizontalAccuracy,
+            "altitude": location.altitude,
+            "heading": location.course,
+            "speed": location.speed
+        ])
+        
+        if followUserLocation {
+            mapView?.setCenter(coordinate, animated: true)
+        }
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        // Keep silent to avoid crashing JS.
+    }
+    
+    @available(iOS 14.0, *)
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        handleAuthorizationChange(status: manager.authorizationStatus)
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        if #available(iOS 14.0, *) {
+            // iOS 14+ uses locationManagerDidChangeAuthorization.
+        } else {
+            handleAuthorizationChange(status: status)
+        }
+    }
+    
+    private func handleAuthorizationChange(status: CLAuthorizationStatus) {
+        switch status {
+        case .authorizedWhenInUse, .authorizedAlways:
+            if showUserLocation {
+                locationManager.startUpdatingLocation()
+            }
+        case .denied, .restricted:
+            locationManager.stopUpdatingLocation()
+        default:
+            break
+        }
+    }
+    
+    // MARK: - Layout
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        mapView?.frame = bounds
+    }
+    
+    // MARK: - Zoom Controls
+    
+    func zoomIn() throws {
+        guard let mapView = mapView else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Map view not initialized"]
+            )
+        }
+        
+        let currentZoom = mapView.zoomLevel
+        let newZoom = min(currentZoom + 1.0, 20.0)
+        mapView.setZoomLevel(newZoom, animated: true)
+    }
+    
+    func zoomOut() throws {
+        guard let mapView = mapView else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Map view not initialized"]
+            )
+        }
+        
+        let currentZoom = mapView.zoomLevel
+        let newZoom = max(currentZoom - 1.0, 1.0)
+        mapView.setZoomLevel(newZoom, animated: true)
+    }
+    
+    func setZoom(_ zoom: Double) throws {
+        guard let mapView = mapView else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Map view not initialized"]
+            )
+        }
+        
+        let clampedZoom = max(1.0, min(zoom, 20.0))
+        mapView.setZoomLevel(clampedZoom, animated: true)
+    }
+    
+    // MARK: - Camera Orientation Controls
+    
+    func setPitch(_ pitch: Double) throws {
+        guard let mapView = mapView else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Map view not initialized"]
+            )
+        }
+        
+        let clampedPitch = max(0.0, min(pitch, 60.0))
+        let camera = mapView.camera
+        camera.pitch = CGFloat(clampedPitch)
+        mapView.setCamera(camera, animated: true)
+    }
+    
+    func setBearing(_ bearing: Double) throws {
+        guard let mapView = mapView else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Map view not initialized"]
+            )
+        }
+        
+        var normalizedBearing = bearing.truncatingRemainder(dividingBy: 360.0)
+        if normalizedBearing < 0 {
+            normalizedBearing += 360.0
+        }
+        
+        let camera = mapView.camera
+        camera.heading = normalizedBearing
+        mapView.setCamera(camera, animated: true)
+    }
+    
+    func getPitch() -> Double {
+        guard let mapView = mapView else {
+            return 0.0
+        }
+        
+        return Double(mapView.camera.pitch)
+    }
+    
+    func getBearing() -> Double {
+        guard let mapView = mapView else {
+            return 0.0
+        }
+        
+        return mapView.camera.heading
+    }
+    
+    func animateCamera(
+        latitude: Double?,
+        longitude: Double?,
+        zoom: Double?,
+        pitch: Double?,
+        bearing: Double?,
+        duration: Double?
+    ) throws {
+        guard let mapView = mapView else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Map view not initialized"]
+            )
+        }
+        
+        let currentCamera = mapView.camera
+        
+        let targetCenter: CLLocationCoordinate2D
+        
+        if let lat = latitude, let lng = longitude {
+            guard isValidCoordinate(latitude: lat, longitude: lng) else {
+                throw NSError(
+                    domain: "OSMMapView",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "Invalid coordinates"]
+                )
+            }
+            
+            targetCenter = CLLocationCoordinate2D(latitude: lat, longitude: lng)
+        } else {
+            targetCenter = currentCamera.centerCoordinate
+        }
+        
+        let targetZoom = zoom.map { max(1.0, min($0, 20.0)) } ?? mapView.zoomLevel
+        let targetPitch = pitch.map { CGFloat(max(0.0, min($0, 60.0))) } ?? currentCamera.pitch
+        
+        let targetBearing: Double
+        if let bear = bearing {
+            var normalized = bear.truncatingRemainder(dividingBy: 360.0)
+            if normalized < 0 {
+                normalized += 360.0
+            }
+            targetBearing = normalized
+        } else {
+            targetBearing = currentCamera.heading
+        }
+        
+        let animDuration = duration ?? 1.0
+        
+        let newCamera = MLNMapCamera(
+            lookingAtCenter: targetCenter,
+            altitude: currentCamera.altitude,
+            pitch: targetPitch,
+            heading: targetBearing
+        )
+        
+        UIView.animate(
+            withDuration: animDuration,
+            delay: 0,
+            options: [.curveEaseInOut],
+            animations: {
+                mapView.setCenter(targetCenter, zoomLevel: targetZoom, animated: false)
+                mapView.setCamera(newCamera, animated: false)
+            }
+        )
+    }
+    
+    // MARK: - Location Controls
+    
+    func animateToLocation(latitude: Double, longitude: Double, zoom: Double? = nil) throws {
+        guard isValidCoordinate(latitude: latitude, longitude: longitude) else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid coordinates: latitude must be between -90 and 90, longitude between -180 and 180"
+                ]
+            )
+        }
+        
+        guard let mapView = mapView else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Map view not initialized"]
+            )
+        }
+        
+        let targetCoordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        let currentCoordinate = mapView.centerCoordinate
+        let currentZoom = mapView.zoomLevel
+        let targetZoom = zoom ?? currentZoom
+        let clampedZoom = max(1.0, min(targetZoom, 20.0))
+        
+        let animationDuration = calculateAnimationDuration(
+            from: currentCoordinate,
+            to: targetCoordinate,
+            fromZoom: currentZoom,
+            toZoom: clampedZoom
+        )
+        
+        UIView.animate(
+            withDuration: animationDuration,
+            delay: 0,
+            options: [.curveEaseInOut],
+            animations: {
+                mapView.setCenter(targetCoordinate, zoomLevel: clampedZoom, animated: false)
+            }
+        )
+    }
+    
+    func getCurrentLocation() throws -> [String: Double] {
+        guard let locationManager = locationManager else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Location manager not initialized"]
+            )
+        }
+        
+        let authStatus = getLocationAuthorizationStatus()
+        
+        switch authStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            if let trackedLocation = lastKnownLocation,
+               isLocationRecent(trackedLocation) {
+                let coordinate = trackedLocation.coordinate
+                return [
+                    "latitude": coordinate.latitude,
+                    "longitude": coordinate.longitude,
+                    "accuracy": trackedLocation.horizontalAccuracy,
+                    "timestamp": trackedLocation.timestamp.timeIntervalSince1970
+                ]
+            }
+            
+            if let lastLocation = locationManager.location,
+               isLocationRecent(lastLocation) {
+                let coordinate = lastLocation.coordinate
+                return [
+                    "latitude": coordinate.latitude,
+                    "longitude": coordinate.longitude,
+                    "accuracy": lastLocation.horizontalAccuracy,
+                    "timestamp": lastLocation.timestamp.timeIntervalSince1970
+                ]
+            }
+            
+            throw NSError(
+                domain: "OSMMapView",
+                code: 4,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "No recent location available. Please start location tracking first and wait for GPS fix."
+                ]
+            )
+            
+        case .notDetermined:
+            throw NSError(
+                domain: "OSMMapView",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "Location permission not determined. Please start location tracking first."]
+            )
+            
+        case .denied:
+            throw NSError(
+                domain: "OSMMapView",
+                code: 6,
+                userInfo: [NSLocalizedDescriptionKey: "Location permission denied by user"]
+            )
+            
+        case .restricted:
+            throw NSError(
+                domain: "OSMMapView",
+                code: 7,
+                userInfo: [NSLocalizedDescriptionKey: "Location access restricted by system"]
+            )
+            
+        @unknown default:
+            throw NSError(
+                domain: "OSMMapView",
+                code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "Unknown location permission status"]
+            )
+        }
+    }
+    
+    func startLocationTracking() throws {
+        guard let locationManager = locationManager else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Location manager not initialized"]
+            )
+        }
+        
+        let authStatus = getLocationAuthorizationStatus()
+        
+        switch authStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            guard CLLocationManager.locationServicesEnabled() else {
+                throw NSError(
+                    domain: "OSMMapView",
+                    code: 9,
+                    userInfo: [NSLocalizedDescriptionKey: "Location services are disabled system-wide. Please enable in Settings."]
+                )
+            }
+            
+            locationManager.startUpdatingLocation()
+            
+        case .notDetermined:
+            locationManager.requestWhenInUseAuthorization()
+            
+        case .denied:
+            throw NSError(
+                domain: "OSMMapView",
+                code: 6,
+                userInfo: [NSLocalizedDescriptionKey: "Location permission denied by user"]
+            )
+            
+        case .restricted:
+            throw NSError(
+                domain: "OSMMapView",
+                code: 7,
+                userInfo: [NSLocalizedDescriptionKey: "Location access restricted by system"]
+            )
+            
+        @unknown default:
+            throw NSError(
+                domain: "OSMMapView",
+                code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "Unknown location permission status"]
+            )
+        }
+    }
+    
+    func stopLocationTracking() {
+        locationManager?.stopUpdatingLocation()
+    }
+    
+    func waitForLocation(timeoutSeconds: Int) throws -> [String: Double] {
+        guard let locationManager = locationManager else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Location manager not initialized"]
+            )
+        }
+        
+        let authStatus = getLocationAuthorizationStatus()
+        
+        guard authStatus == .authorizedWhenInUse || authStatus == .authorizedAlways else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 6,
+                userInfo: [NSLocalizedDescriptionKey: "Location permission not granted"]
+            )
+        }
+        
+        guard CLLocationManager.locationServicesEnabled() else {
+            throw NSError(
+                domain: "OSMMapView",
+                code: 9,
+                userInfo: [NSLocalizedDescriptionKey: "Location services are disabled. Please enable in Settings."]
+            )
+        }
+        
+        let shouldStartTracking: Bool
+        
+        if let location = locationManager.location {
+            shouldStartTracking = !isLocationRecent(location)
+        } else {
+            shouldStartTracking = true
+        }
+        
+        if shouldStartTracking {
+            try startLocationTracking()
+        }
+        
+        let startTime = Date()
+        let timeout = TimeInterval(timeoutSeconds)
+        
+        while Date().timeIntervalSince(startTime) < timeout {
+            if let location = lastKnownLocation {
+                let locationAge = Date().timeIntervalSince(location.timestamp)
+                
+                if locationAge < 30 {
+                    let coordinate = location.coordinate
+                    return [
+                        "latitude": coordinate.latitude,
+                        "longitude": coordinate.longitude,
+                        "accuracy": location.horizontalAccuracy,
+                        "timestamp": location.timestamp.timeIntervalSince1970
+                    ]
+                }
+            }
+            
+            if let systemLocation = locationManager.location {
+                let locationAge = Date().timeIntervalSince(systemLocation.timestamp)
+                
+                if locationAge < 30 {
+                    let coordinate = systemLocation.coordinate
+                    return [
+                        "latitude": coordinate.latitude,
+                        "longitude": coordinate.longitude,
+                        "accuracy": systemLocation.horizontalAccuracy,
+                        "timestamp": systemLocation.timestamp.timeIntervalSince1970
+                    ]
+                }
+            }
+            
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        
+        throw NSError(
+            domain: "OSMMapView",
+            code: 8,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Timeout waiting for location. Please ensure location services are enabled and GPS has clear sky view."
+            ]
+        )
+    }
+    
+    // MARK: - Helper Functions
+    
+    private func isValidCoordinate(latitude: Double, longitude: Double) -> Bool {
+        return latitude >= -90.0 && latitude <= 90.0 && longitude >= -180.0 && longitude <= 180.0
+    }
+    
+    private func calculateAnimationDuration(
+        from: CLLocationCoordinate2D,
+        to: CLLocationCoordinate2D,
+        fromZoom: Double,
+        toZoom: Double
+    ) -> TimeInterval {
+        let distance = from.distance(to: to)
+        let zoomDiff = abs(fromZoom - toZoom)
+        
+        let baseDuration: TimeInterval = 0.5
+        let distanceFactor: TimeInterval = min(distance / 10_000, 1.0)
+        let zoomFactor: TimeInterval = min(zoomDiff / 5, 1.0)
+        
+        return baseDuration + distanceFactor + zoomFactor
+    }
+    
+    private func isLocationRecent(_ location: CLLocation) -> Bool {
+        let maxAge: TimeInterval = 5 * 60
+        let locationAge = Date().timeIntervalSince(location.timestamp)
+        return locationAge < maxAge
+    }
+}
+
+// MARK: - Helper Classes and Extensions
+
+class CustomMarkerAnnotation: MLNPointAnnotation {
+    var markerId: String = ""
+    var markerData: OSMMapView.EnhancedMarkerData?
+}
+
+class CustomMarkerAnnotationView: MLNAnnotationView {
+    private var iconImageView: UIImageView!
+    private var markerData: OSMMapView.EnhancedMarkerData?
+    
+    override init(annotation: MLNAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        setupView()
+    }
+    
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not available")
+    }
+    
+    private func setupView() {
+        iconImageView = UIImageView()
+        iconImageView.contentMode = .scaleAspectFit
+        addSubview(iconImageView)
+        
+        iconImageView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            iconImageView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            iconImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconImageView.widthAnchor.constraint(equalToConstant: 30),
+            iconImageView.heightAnchor.constraint(equalToConstant: 30)
+        ])
+    }
+    
+    func configureWith(markerData: OSMMapView.EnhancedMarkerData) {
+        self.markerData = markerData
+        
+        if let icon = markerData.icon {
+            iconImageView.widthAnchor.constraint(equalToConstant: icon.size).isActive = true
+            iconImageView.heightAnchor.constraint(equalToConstant: icon.size).isActive = true
+            
+            if let colorString = icon.color {
+                iconImageView.tintColor = UIColor.from(hex: colorString)
+            }
+            
+            if let iconName = icon.name {
+                iconImageView.image = iconForName(iconName)
+            } else if let iconUri = icon.uri {
+                loadIconFromURI(iconUri)
+            } else {
+                iconImageView.image = defaultMarkerIcon()
+            }
+        } else {
+            iconImageView.image = defaultMarkerIcon()
+        }
+        
+        alpha = markerData.opacity
+        
+        if markerData.rotation != 0 {
+            transform = CGAffineTransform(rotationAngle: markerData.rotation * .pi / 180)
+        }
+        
+        isHidden = !markerData.visible
+        layer.zPosition = CGFloat(markerData.zIndex)
+    }
+    
+    private func iconForName(_ name: String) -> UIImage? {
+        switch name.lowercased() {
+        case "park":
+            return UIImage(systemName: "tree.fill")
+        case "building":
+            return UIImage(systemName: "building.fill")
+        case "beach":
+            return UIImage(systemName: "water.waves")
+        case "star":
+            return UIImage(systemName: "star.fill")
+        case "pin":
+            return UIImage(systemName: "mappin.circle.fill")
+        default:
+            return UIImage(systemName: "mappin.circle.fill")
+        }
+    }
+    
+    private func loadIconFromURI(_ uri: String) {
+        if let url = URL(string: uri) {
+            URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+                if let data = data, let image = UIImage(data: data) {
+                    DispatchQueue.main.async {
+                        self?.iconImageView.image = image
+                    }
+                }
+            }.resume()
+        }
+    }
+    
+    private func defaultMarkerIcon() -> UIImage? {
+        return UIImage(systemName: "mappin.circle.fill")
+    }
+}
+
+class CustomInfoWindowView: UIView {
+    private var titleLabel: UILabel!
+    private var descriptionLabel: UILabel!
+    private var markerId: String = ""
+    var onPress: ((String) -> Void)?
+    
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        setupView()
+    }
+    
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupView()
+    }
+    
+    private func setupView() {
+        backgroundColor = UIColor.white
+        layer.cornerRadius = 8
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOffset = CGSize(width: 0, height: 2)
+        layer.shadowOpacity = 0.2
+        layer.shadowRadius = 4
+        
+        titleLabel = UILabel()
+        titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        titleLabel.numberOfLines = 0
+        
+        descriptionLabel = UILabel()
+        descriptionLabel.font = UIFont.systemFont(ofSize: 14)
+        descriptionLabel.numberOfLines = 0
+        descriptionLabel.textColor = UIColor.darkGray
+        
+        let stackView = UIStackView(arrangedSubviews: [titleLabel, descriptionLabel])
+        stackView.axis = .vertical
+        stackView.spacing = 4
+        stackView.alignment = .leading
+        
+        addSubview(stackView)
+        
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            stackView.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            stackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            stackView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            stackView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
+        ])
+        
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(infoWindowTapped))
+        addGestureRecognizer(tapGesture)
+    }
+    
+    func configureWith(infoWindow: OSMMapView.InfoWindowData, markerId: String) {
+        self.markerId = markerId
+        
+        titleLabel.text = infoWindow.title
+        descriptionLabel.text = infoWindow.description
+        
+        if let bgColor = infoWindow.backgroundColor {
+            backgroundColor = UIColor.from(hex: bgColor)
+        }
+        
+        if let borderColor = infoWindow.borderColor {
+            layer.borderColor = UIColor.from(hex: borderColor).cgColor
+            layer.borderWidth = 1
+        }
+        
+        layer.cornerRadius = infoWindow.borderRadius
+        widthAnchor.constraint(lessThanOrEqualToConstant: infoWindow.maxWidth).isActive = true
+    }
+    
+    func showAbove(view: UIView) {
+        guard view.superview != nil else { return }
+        
+        translatesAutoresizingMaskIntoConstraints = false
+        
+        NSLayoutConstraint.activate([
+            centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            bottomAnchor.constraint(equalTo: view.topAnchor, constant: -8)
+        ])
+        
+        alpha = 0
+        transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+        
+        UIView.animate(
+            withDuration: 0.3,
+            delay: 0,
+            usingSpringWithDamping: 0.7,
+            initialSpringVelocity: 0.5,
+            options: [],
+            animations: {
+                self.alpha = 1
+                self.transform = CGAffineTransform.identity
+            }
+        )
+    }
+    
+    @objc private func infoWindowTapped() {
+        onPress?(markerId)
+    }
+}
+
+extension UIColor {
+    static func from(hex: String) -> UIColor {
+        var hexString = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        hexString = hexString.replacingOccurrences(of: "#", with: "")
+        
+        var rgb: UInt64 = 0
+        Scanner(string: hexString).scanHexInt64(&rgb)
+        
+        let red = CGFloat((rgb & 0xFF0000) >> 16) / 255.0
+        let green = CGFloat((rgb & 0x00FF00) >> 8) / 255.0
+        let blue = CGFloat(rgb & 0x0000FF) / 255.0
+        
+        return UIColor(red: red, green: green, blue: blue, alpha: 1.0)
+    }
+}

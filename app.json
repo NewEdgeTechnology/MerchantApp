@@ -4,11 +4,12 @@
     "slug": "tabdhey-merchant",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/logo_v2.png",
+    "icon": "./assets/logo_v2_real.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "ios": {
       "bundleIdentifier": "com.tabdhey.tabdheymerchant",
+      "buildNumber": "2",
       "supportsTablet": true,
       "infoPlist": {
         "NSAppTransportSecurity": {
@@ -54,7 +55,7 @@
         "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/logo_v2.png",
+        "foregroundImage": "./assets/logo_v2_real.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
