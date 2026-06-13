@@ -489,6 +489,8 @@ const buildUnavailableChanges = ({
   businessId,
   businessName,
 }) => {
+  const modeUpper = String(mode || "").toUpperCase();
+
   const bizIdNum = Number(businessId);
   const business_id = Number.isFinite(bizIdNum) ? bizIdNum : businessId;
 
@@ -502,24 +504,38 @@ const buildUnavailableChanges = ({
     ]),
   );
 
-  if (String(mode).toUpperCase() === "REMOVE") {
-    for (const [k, v] of Object.entries(unavailableMap || {})) {
-      if (!v) continue;
-      const it = itemByKey.get(String(k)) || null;
-      if (!it) continue;
+  const makeOldItem = (it) => ({
+    business_id,
+    menu_id: getItemMenuId(it),
+    item_name: getItemName(it),
+  });
 
-      removed.push({
-        business_id,
-        menu_id: getItemMenuId(it),
-        item_name: getItemName(it),
-      });
+  // ✅ Important:
+  // In REPLACE mode, an item can still be removed if unavailableMap=true
+  // and there is no replacementMap entry.
+  for (const [k, v] of Object.entries(unavailableMap || {})) {
+    if (!v) continue;
+
+    const key = String(k);
+    const it = itemByKey.get(key) || null;
+    if (!it) continue;
+
+    const repl = replacementMap?.[key];
+
+    if (modeUpper === "REMOVE") {
+      removed.push(makeOldItem(it));
+      continue;
     }
-    return { removed, replaced: [] };
+
+    if (modeUpper === "REPLACE" && !repl) {
+      removed.push(makeOldItem(it));
+    }
   }
 
-  if (String(mode).toUpperCase() === "REPLACE") {
+  if (modeUpper === "REPLACE") {
     for (const [k, repl] of Object.entries(replacementMap || {})) {
       if (!repl) continue;
+
       const it = itemByKey.get(String(k)) || null;
       if (!it) continue;
 
@@ -530,11 +546,7 @@ const buildUnavailableChanges = ({
       const newImage = getItemImage(repl);
 
       replaced.push({
-        old: {
-          business_id,
-          menu_id: getItemMenuId(it),
-          item_name: getItemName(it),
-        },
+        old: makeOldItem(it),
         new: {
           business_id,
           business_name: businessName || "",
@@ -547,10 +559,9 @@ const buildUnavailableChanges = ({
         },
       });
     }
-    return { removed: [], replaced };
   }
 
-  return { removed: [], replaced: [] };
+  return { removed, replaced };
 };
 
 /* ===========================
@@ -808,8 +819,14 @@ const SelfDeliveryStatusButtons = ({
       ) : (
         <>
           <Ionicons name={config.icon} size={20} color={BRAND.white} />
-          <Text style={{ color: BRAND.white, fontSize: 16, fontFamily: FONT.body,
-fontWeight: "600" }}>
+          <Text
+            style={{
+              color: BRAND.white,
+              fontSize: 16,
+              fontFamily: FONT.body,
+              fontWeight: "600",
+            }}
+          >
             {config.label}
           </Text>
         </>
@@ -1880,7 +1897,7 @@ export default function OrderDetails() {
           message += `📋 *Suggested replacement:*\n`;
           message += `✅ *${replacementName}*\n`;
           message += `💰 Price: ${money(replacementPrice, "BTN.")} (×${qty}) = ${money(replacementTotal, "BTN.")}\n\n`;
-         
+
           message += `💰 *New order total:* ${money(newTotal, "BTN.")}${reasonText}\n\n`;
           message += `*Please respond within 10 minutes if you dont accept the replacement.*`;
         }
@@ -2176,8 +2193,9 @@ export default function OrderDetails() {
       const actualMode = forceRemove ? "REMOVE" : effectiveUnavailableMode;
       const isReplacing = actualMode === "REPLACE" && replacementItem;
 
-      // Prevent duplicate only for REMOVE, not REPLACE
-      if (itemUnavailableMap[key] && !isReplacing) {
+      // Prevent duplicate only for normal remove.
+      // But allow forceRemove because replaced items are already marked unavailable.
+      if (itemUnavailableMap[key] && !isReplacing && !forceRemove) {
         console.log("[DEBUG] Item already marked unavailable, skipping");
         return false;
       }
@@ -2278,8 +2296,18 @@ export default function OrderDetails() {
               text: "Proceed & Decline",
               onPress: async () => {
                 // Mark as unavailable
+                // Mark as unavailable immediately
                 setItemUnavailableMap((prev) => ({ ...prev, [key]: true }));
 
+                // If user removes an already-replaced item, clear its replacement too.
+                // Otherwise computedItemsTotal will still count the replacement item.
+                if (forceRemove) {
+                  setItemReplacementMap((prev) => {
+                    const next = { ...prev };
+                    delete next[key];
+                    return next;
+                  });
+                }
                 // Send message
                 if (!autoMessageSentRef.current) {
                   autoMessageSentRef.current = true;
@@ -2365,6 +2393,17 @@ export default function OrderDetails() {
 
       // Mark as unavailable immediately
       setItemUnavailableMap((prev) => ({ ...prev, [key]: true }));
+
+      // ✅ CRITICAL FIX:
+      // If removing an item that already had a replacement,
+      // remove the replacement too. Otherwise the total still counts replacement.
+      if (forceRemove) {
+        setItemReplacementMap((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+      }
 
       // ✅ FIX: Use actualMode instead of ifUnavailableMode
       const mode = actualMode === "REPLACE" ? "REPLACE" : "REMOVE";
@@ -3277,7 +3316,9 @@ export default function OrderDetails() {
           params?.business_name ||
           "";
 
-        const modeUpper = String(ifUnavailableMode || "").toUpperCase();
+        const modeUpper = String(
+          effectiveUnavailableMode || ifUnavailableMode || "",
+        ).toUpperCase();
         const unavailable_changes =
           modeUpper === "REMOVE" || modeUpper === "REPLACE"
             ? buildUnavailableChanges({
@@ -3351,20 +3392,56 @@ export default function OrderDetails() {
         return;
       }
 
-      // OTHER STATUSES (including READY)
-      // For GRAB deliveries, ensure delivery_option stays as GRAB when updating to READY
+      // OTHER STATUSES, including READY and COMPLETED
       const finalDeliveryBy =
         newStatus === "READY" && isGrabSelected ? "GRAB" : deliveryBy;
-      const finalExtraPatch =
-        newStatus === "READY" && isGrabSelected
-          ? { delivery_option: "GRAB" }
+
+      const feeSnap = getOrderTotalsSnapshot(order, null);
+
+      const final_platform_fee = feeSnap.platform_fee ?? 0;
+      const final_discount_amount = feeSnap.discount_amount ?? 0;
+      const final_delivery_fee = feeSnap.delivery_fee ?? 0;
+      const final_merchant_delivery_fee = feeSnap.merchant_delivery_fee ?? 0;
+
+      const final_total_amount_raw =
+        Number(computedItemsTotal || 0) +
+        Number(final_platform_fee || 0) +
+        Number(final_delivery_fee || 0) +
+        Number(final_merchant_delivery_fee || 0) -
+        Number(final_discount_amount || 0);
+
+      const final_total_amount = Math.round(final_total_amount_raw * 100) / 100;
+
+      const finalExtraPayload =
+        newStatus === "COMPLETED"
+          ? {
+              final_total_amount,
+              total_amount: final_total_amount,
+              final_platform_fee,
+              final_discount_amount,
+              final_delivery_fee,
+              final_merchant_delivery_fee,
+              payment_method: order?.payment_method || order?.payment || "",
+            }
           : {};
+
+      const finalExtraPatch = {
+        ...(newStatus === "READY" && isGrabSelected
+          ? { delivery_option: "GRAB" }
+          : {}),
+        ...(newStatus === "COMPLETED"
+          ? {
+              total: final_total_amount,
+              total_amount: final_total_amount,
+            }
+          : {}),
+      };
 
       await updateSingleStatusLikeCluster({
         newStatus,
         deliveryBy: finalDeliveryBy || null,
         reasonText: String(opts?.reason || "").trim(),
-        extraPayload: {},
+        extraPayload: finalExtraPayload,
         extraPatch: finalExtraPatch,
         showSuccessAlert: true,
       });
@@ -4232,7 +4309,11 @@ export default function OrderDetails() {
                       marginBottom: S(8),
                     }}
                   >
-                    <Ionicons name="car-outline" size={S(18)} color={BRAND.grey} />
+                    <Ionicons
+                      name="car-outline"
+                      size={S(18)}
+                      color={BRAND.grey}
+                    />
                     <Text
                       style={{
                         fontSize: S(13),
@@ -4357,7 +4438,9 @@ export default function OrderDetails() {
                           });
                         }}
                         style={({ pressed }) => ({
-                          backgroundColor: pressed ? BRAND.purpleLight : BRAND.purple,
+                          backgroundColor: pressed
+                            ? BRAND.purpleLight
+                            : BRAND.purple,
                           paddingVertical: S(10),
                           paddingHorizontal: S(16),
                           borderRadius: S(10),
@@ -4376,9 +4459,9 @@ export default function OrderDetails() {
                         <Text
                           style={{
                             color: BRAND.white,
-    fontSize: S(14),
-    fontFamily: FONT.body,
-    fontWeight: "600",
+                            fontSize: S(14),
+                            fontFamily: FONT.body,
+                            fontWeight: "600",
                           }}
                         >
                           Track Driver
@@ -4700,7 +4783,9 @@ export default function OrderDetails() {
                   setPickedUpByName("");
                 }}
               >
-                <Text style={{ color: BRAND.white, fontWeight: "600" }}>Cancel</Text>
+                <Text style={{ color: BRAND.white, fontWeight: "600" }}>
+                  Cancel
+                </Text>
               </Pressable>
 
               <Pressable

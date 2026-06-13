@@ -14,9 +14,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Icon from "react-native-vector-icons/Ionicons";
 import { BRAND, FONT, RADIUS, SHADOW } from "../styles/tabdey_brand";
 
-const FOOD_IMAGE_URL = "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781244547584_dec4og20ws.webp";
+const FOOD_IMAGE_URL =
+  "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781244547584_dec4og20ws.webp";
 
-const MART_IMAGE_URL = "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781244655298_keee5i4jstr.webp";
+const MART_IMAGE_URL =
+  "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781244655298_keee5i4jstr.webp";
 
 const SellingTypeScreen = () => {
   const navigation = useNavigation();
@@ -200,12 +202,14 @@ const styles = StyleSheet.create({
   imageWrap: {
     height: 150,
     backgroundColor: "#F4ECFF",
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "hidden",
   },
 
   image: {
     width: "100%",
     height: "100%",
-    resizeMode: "cover",
   },
 
   cardBody: {

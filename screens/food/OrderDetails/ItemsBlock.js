@@ -116,27 +116,37 @@ export default function ItemsBlock({
     return `BTN ${Number(amount || 0).toFixed(2)}`;
   };
 
+  const getItemKey = (item, idx = "") => {
+    return String(
+      item?._key ||
+        item?.order_item_id ||
+        item?.cart_item_id ||
+        item?.item_id ||
+        item?.id ||
+        idx,
+    );
+  };
+
   // ✅ Calculate items total (excluding unavailable items)
   const calculateItemsTotal = () => {
     let total = 0;
-    items.forEach((it) => {
-      const key = it._key;
+
+    items.forEach((it, idx) => {
+      const key = getItemKey(it, idx);
       const isUnavailable = !!unavailableMap[key];
       const hasReplacement = !!replacementMap?.[key];
 
-      // Skip if item is unavailable without replacement in REPLACE mode
-      if (ifUnavailableMode === "REPLACE" && isUnavailable && !hasReplacement) {
-        return;
-      }
-      // Skip if item is removed in REMOVE mode
-      if (ifUnavailableMode === "REMOVE" && isUnavailable) {
+      // Removed item = unavailable and has no replacement
+      if (isUnavailable && !hasReplacement) {
         return;
       }
 
       const price = Number(it.unit_price || it.price || 0);
       const qty = Number(it.qty || it.quantity || 1);
+
       total += price * qty;
     });
+
     return total;
   };
 
@@ -352,9 +362,11 @@ export default function ItemsBlock({
         ) : null}
 
         {(items || []).map((it, idx) => {
-          const key = it._key || String(it.item_id || it.id || idx);
+          const key = getItemKey(it, idx);
           const isUnavailable = !!unavailableMap[key];
           const replacement = replacementMap?.[key];
+          const hasReplacement = !!replacement;
+          const isRemoved = isUnavailable && !hasReplacement;
           const price = Number(it.unit_price || it.price || 0);
           const qty = Number(it.qty || it.quantity || 1);
           const itemTotal = price * qty;
@@ -364,7 +376,7 @@ export default function ItemsBlock({
           const ContainerComp = container;
 
           const nameStyle = [styles.itemName];
-          if (isUnavailable && ifUnavailableMode === "REMOVE") {
+          if (isRemoved) {
             nameStyle.push({
               textDecorationLine: "line-through",
               color: "#ef4444",
@@ -372,8 +384,14 @@ export default function ItemsBlock({
           }
 
           let statusBadge = null;
-          if (canEdit && ifUnavailableMode === "REPLACE") {
-            if (replacement) {
+
+          if (canEdit) {
+            if (isRemoved) {
+              statusBadge = {
+                text: "✓ Removed",
+                style: styles.removedBadge,
+              };
+            } else if (replacement) {
               statusBadge = {
                 text: "🔄 Replaced",
                 style: styles.replacedBadge,
@@ -384,12 +402,6 @@ export default function ItemsBlock({
                 style: styles.unavailableBadge,
               };
             }
-          } else if (
-            canEdit &&
-            ifUnavailableMode === "REMOVE" &&
-            isUnavailable
-          ) {
-            statusBadge = { text: "✓ Removed", style: styles.removedBadge };
           }
 
           return (
@@ -398,10 +410,8 @@ export default function ItemsBlock({
               style={[
                 styles.itemRow,
                 canEdit && styles.itemPressable,
-                replacement && styles.itemReplacedRow,
-                isUnavailable &&
-                  ifUnavailableMode === "REMOVE" &&
-                  styles.itemRemovedRow,
+                replacement && !isRemoved && styles.itemReplacedRow,
+                isRemoved && styles.itemRemovedRow,
               ]}
               onPress={canEdit ? () => handlePressItem(it) : undefined}
             >
@@ -443,7 +453,7 @@ export default function ItemsBlock({
                   {formatMoney(price)} × {qty} = {formatMoney(itemTotal)}
                 </Text>
 
-                {replacement && (
+                {replacement && !isRemoved && (
                   <Text style={styles.itemReplacement}>
                     → {toText(replacement.name || replacement.item_name || "")}
                   </Text>
@@ -467,11 +477,9 @@ export default function ItemsBlock({
                   ×{Number.isFinite(qty) ? qty : 1}
                 </Text>
 
-                {isUnavailable &&
-                  ifUnavailableMode === "REMOVE" &&
-                  !replacement && (
-                    <Text style={styles.unavailableTag}>Removed</Text>
-                  )}
+                {isRemoved && (
+                  <Text style={styles.unavailableTag}>Removed</Text>
+                )}
               </View>
             </ContainerComp>
           );

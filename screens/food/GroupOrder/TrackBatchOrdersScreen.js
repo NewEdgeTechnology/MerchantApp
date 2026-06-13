@@ -1287,24 +1287,24 @@ export default function TrackBatchOrdersScreen() {
               return;
             }
 
+            const captureMarkerIcon = async (ref) => {
+              const uri = await captureRef(ref, {
+                format: "png",
+                quality: 1,
+                result: "tmpfile",
+                width: MARKER_SIZE,
+                height: MARKER_SIZE,
+              });
+
+              return uri?.startsWith("file://") ? uri : `file://${uri}`;
+            };
+
             const [business, driver, customer, customerMulti] =
               await Promise.all([
-                captureRef(businessIconRef, {
-                  format: "png",
-                  quality: 1,
-                }),
-                captureRef(driverIconRef, {
-                  format: "png",
-                  quality: 1,
-                }),
-                captureRef(customerIconRef, {
-                  format: "png",
-                  quality: 1,
-                }),
-                captureRef(customerMultiIconRef, {
-                  format: "png",
-                  quality: 1,
-                }),
+                captureMarkerIcon(businessIconRef),
+                captureMarkerIcon(driverIconRef),
+                captureMarkerIcon(customerIconRef),
+                captureMarkerIcon(customerMultiIconRef),
               ]);
 
             if (cancelled) return;
@@ -1922,11 +1922,13 @@ const styles = StyleSheet.create({
   },
   markerCaptureLayer: {
     position: "absolute",
-    top: -9999,
+    top: 0,
     left: 0,
     width: 120,
     height: 420,
     backgroundColor: "transparent",
+    zIndex: 0,
+    pointerEvents: "none",
   },
   headerBar: {
     minHeight: 54,
@@ -1984,7 +1986,10 @@ const styles = StyleSheet.create({
     height: 260,
     position: "relative",
   },
-  map: { flex: 1 },
+  map: {
+    flex: 1,
+    zIndex: 1,
+  },
   mapLoadingOverlay: {
     position: "absolute",
     top: 0,

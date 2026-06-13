@@ -16,9 +16,9 @@ const OnboardingScreen = () => {
   const navigation = useNavigation();
 
   const stepImages = [
-    "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781246589386_zpbizhupt5p.webp",
-    "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781246619353_r5ugepobnjo.webp",
     "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781246516703_fgl1sumq5mr.webp",
+    "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781246619353_r5ugepobnjo.webp",
+    "https://backend.tabdhey.bt/admin/uploads/logo_and_image/logo_1781246589386_zpbizhupt5p.webp",
   ];
 
   const steps = [
@@ -247,7 +247,7 @@ const styles = StyleSheet.create({
     width: 68,
     height: 68,
     borderRadius: 24,
-    backgroundColor: "#F4ECFF",
+    // backgroundColor: "#F4ECFF",
     justifyContent: "center",
     alignItems: "center",
     marginRight: 14,
@@ -255,8 +255,8 @@ const styles = StyleSheet.create({
   },
 
   stepImage: {
-    width: 58,
-    height: 58,
+    width: 80,
+    height: 80,
     borderRadius: 20,
   },
 
