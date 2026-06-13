@@ -271,13 +271,13 @@ function getSections(t) {
             {t.s6.contact}{" "}
             <Text
               style={styles.link}
-              onPress={() => onLink("mailto:info@newedge.bt")}
+              onPress={() => onLink("mailto:pema.chodron@tabdey.com")}
             >
-              info@newedge.bt
+              pema.chodron@tabdey.com
             </Text>{" "}
             {t.s6.or}{" "}
-            <Text style={styles.link} onPress={() => onLink("tel:+9752337191")}>
-              +975 2 337191
+            <Text style={styles.link} onPress={() => onLink("tel:+97517999977")}>
+              +975 17999977
             </Text>
             .
           </Text>

@@ -40,7 +40,7 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import { LOGIN_MERCHANT_ENDPOINT } from "@env";
+import { LOGIN_MERCHANT_ENDPOINT, DEVICE_CHANGE_OTP_SEND_ENDPOINT } from "@env";
 import { connectMerchantSocket } from "../realtime/merchantSocket";
 import { getExpoPushTokenAsync } from "../../utils/getExpoPushTokenAsync";
 
@@ -129,8 +129,12 @@ const KEY_SAVED_PHONE_PASSWORD = "saved_phone_password_v1";
 const KEY_LAST_LOGIN_PHONE = "last_login_phone_v1";
 
 // Existing push/device debug keys
+// Existing push/device debug keys
 const KEY_EXPO_PUSH_TOKEN = "expo_push_token_v1";
 const KEY_LOCAL_DEVICE_ID = "local_device_id_v1";
+
+// ✅ Used when login returns 409 because account is active on another device
+const KEY_PENDING_DEVICE_LOGIN = "pending_device_login_v1";
 
 /* ---------------- helpers ---------------- */
 const digitsOnly = (t = "") => String(t || "").replace(/\D/g, "");
@@ -235,7 +239,19 @@ function extractErrorMessage(out) {
 
   return fallback;
 }
+function extractSuccessMessage(out, fallback = "OTP sent successfully.") {
+  if (out?.data && typeof out.data === "object") {
+    const msg =
+      out.data.message ||
+      out.data.msg ||
+      out.data?.data?.message ||
+      out.data?.data?.msg ||
+      "";
+    if (String(msg || "").trim()) return String(msg).trim();
+  }
 
+  return fallback;
+}
 export default function MobileLoginScreen() {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -424,6 +440,180 @@ export default function MobileLoginScreen() {
         console.log("Login failed response:", out.res.status, out.raw);
 
         const msg = extractErrorMessage(out);
+
+        // ✅ 409 = account already logged in on another device
+        if (out.res.status === 409) {
+          const conflictToken =
+            out?.data?.conflict_token ||
+            out?.data?.data?.conflict_token ||
+            out?.data?.verification_token ||
+            out?.data?.data?.verification_token ||
+            "";
+
+          const previousDevice =
+            out?.data?.previous_device ||
+            out?.data?.data?.previous_device ||
+            out?.data?.device ||
+            out?.data?.data?.device ||
+            "";
+
+          await SecureStore.setItemAsync(
+            KEY_PENDING_DEVICE_LOGIN,
+            JSON.stringify({
+              phone: `${COUNTRY.dial}${digits}`,
+              phone_digits: digits,
+              password: password.trim(),
+              device_id: expoToken,
+              push_token: expoToken,
+              save_password: !!savePassword,
+              conflict_token: conflictToken,
+            }),
+          );
+
+          const conflictMessage =
+            msg ||
+            "This account is already logged in on another device. Verify this device to continue.";
+
+          setErrorText(conflictMessage);
+
+          Alert.alert(
+            "Already logged in",
+            conflictMessage,
+            [
+              {
+                text: "Cancel",
+                style: "cancel",
+              },
+              {
+                text: "Verify this device",
+                onPress: async () => {
+                  const otpEndpoint = (
+                    DEVICE_CHANGE_OTP_SEND_ENDPOINT || ""
+                  ).trim();
+
+                  if (!otpEndpoint) {
+                    Alert.alert(
+                      "Configuration error",
+                      "DEVICE_CHANGE_OTP_SEND_ENDPOINT is not configured in .env",
+                    );
+                    return;
+                  }
+
+                  const otpPayload = {
+                    phone: `${COUNTRY.dial}${digits}`,
+                    phone_digits: digits,
+                    device_id: expoToken,
+                    push_token: expoToken,
+                    conflict_token: conflictToken,
+                  };
+
+                  setLoading(true);
+
+                  const otpController = new AbortController();
+                  const otpTimer = setTimeout(
+                    () => otpController.abort(),
+                    15000,
+                  );
+
+                  try {
+                    const otpOut = await postJson(
+                      otpEndpoint,
+                      otpPayload,
+                      otpController.signal,
+                    );
+
+                    console.log(
+                      "Send change-device OTP response:",
+                      otpOut.res.status,
+                      otpOut.raw,
+                    );
+
+                    if (!otpOut.res.ok) {
+                      const otpMsg = extractErrorMessage(otpOut);
+                      setErrorText(otpMsg);
+                      Alert.alert("OTP failed", otpMsg);
+                      return;
+                    }
+
+                    const otpData = otpOut.data || {};
+
+                    const verificationToken =
+                      otpData?.verification_token ||
+                      otpData?.data?.verification_token ||
+                      otpData?.otp_token ||
+                      otpData?.data?.otp_token ||
+                      conflictToken ||
+                      "";
+
+                    const otpSessionId =
+                      otpData?.otp_session_id ||
+                      otpData?.data?.otp_session_id ||
+                      otpData?.session_id ||
+                      otpData?.data?.session_id ||
+                      "";
+
+                    await SecureStore.setItemAsync(
+                      KEY_PENDING_DEVICE_LOGIN,
+                      JSON.stringify({
+                        phone: `${COUNTRY.dial}${digits}`,
+                        phone_digits: digits,
+                        password: password.trim(),
+                        device_id: expoToken,
+                        push_token: expoToken,
+                        save_password: !!savePassword,
+                        conflict_token: conflictToken,
+                        verification_token: verificationToken,
+                        otp_session_id: otpSessionId,
+                      }),
+                    );
+
+                    const otpMsg = extractSuccessMessage(
+                      otpOut,
+                      "OTP has been sent to your registered mobile number.",
+                    );
+
+                    Alert.alert("OTP sent", otpMsg, [
+                      {
+                        text: "Continue",
+                        onPress: () => {
+                          navigation.navigate("DeviceVerificationScreen", {
+                            message: conflictMessage,
+                            previous_device: previousDevice,
+                            masked_phone: `${COUNTRY.dial} ${digits.slice(0, 2)}***${digits.slice(-3)}`,
+                            phone: `${COUNTRY.dial}${digits}`,
+                            phone_digits: digits,
+                            device_id: expoToken,
+                            push_token: expoToken,
+                            conflict_token: conflictToken,
+                            verification_token: verificationToken,
+                            otp_session_id: otpSessionId,
+                          });
+                        },
+                      },
+                    ]);
+                  } catch (e) {
+                    console.error("Send change-device OTP error:", e);
+
+                    const otpMsg =
+                      e?.name === "AbortError"
+                        ? "OTP request timeout. Please try again."
+                        : "Network error while sending OTP. Please try again.";
+
+                    setErrorText(otpMsg);
+                    Alert.alert("OTP failed", otpMsg);
+                  } finally {
+                    clearTimeout(otpTimer);
+                    setLoading(false);
+                  }
+                },
+              },
+            ],
+            { cancelable: true },
+          );
+
+          return;
+        }
+
         setErrorText(msg);
         Alert.alert("Login failed", msg);
         return;

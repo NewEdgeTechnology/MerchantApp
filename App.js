@@ -103,6 +103,7 @@ import Chat from "./screens/message/Chat.js";
 import ChatRoomScreen from "./screens/message/ChatRoomScreen";
 import ItemDetailScreen from "./screens/food/ItemDetailScreen.js";
 import EditItemScreen from "./screens/food/EditItemScreen.js";
+import DeviceVerificationScreen from "./screens/general/DeviceVerificationScreen";
 
 const Stack = createStackNavigator();
 
@@ -185,15 +186,6 @@ async function saveVerifySessionPayloadToSecureStore(payload) {
   const userId = userObj?.user_id ?? payload?.user_id ?? null;
   const businessId = userObj?.business_id ?? payload?.business_id ?? null;
 
-  console.log("💾 Replacing SecureStore from verify-session:", {
-    hasAccessToken: !!accessToken,
-    hasRefreshToken: !!refreshToken,
-    userId,
-    businessId,
-    accessTime,
-    refreshTime,
-  });
-
   if (accessToken)
     await SecureStore.setItemAsync(KEY_AUTH_TOKEN, String(accessToken));
   if (refreshToken)
@@ -252,59 +244,24 @@ export default function App() {
     ranRef.current = true;
 
     (async () => {
-      console.log("=".repeat(50));
-      console.log("🚀 Boot: starting session check BEFORE showing any screen");
-      console.log("📱 Platform:", Platform.OS);
-      console.log("🔧 Is Development:", __DEV__);
-      console.log(
-        "📦 App Version:",
-        Constants.expoConfig?.version || "unknown",
-      );
-      console.log("=".repeat(50));
 
       try {
         // Step 1: Test SecureStore accessibility
-        console.log("\n🔐 Step 1: Testing SecureStore accessibility...");
         const testKey = "_test_" + Date.now();
         await SecureStore.setItemAsync(testKey, "test_value_123");
         const testValue = await SecureStore.getItemAsync(testKey);
-        if (testValue === "test_value_123") {
-          console.log("✅ SecureStore is working correctly");
-        } else {
-          console.error("❌ SecureStore test failed - returned:", testValue);
-        }
         await SecureStore.deleteItemAsync(testKey);
-        console.log("✅ SecureStore test completed\n");
 
         // Step 2: Get all stored credentials
-        console.log("🔑 Step 2: Checking stored credentials...");
         const userIdRaw = await SecureStore.getItemAsync(KEY_USER_ID);
         const authTokenRaw = await SecureStore.getItemAsync(KEY_AUTH_TOKEN);
         const refreshTokenRaw =
           await SecureStore.getItemAsync(KEY_REFRESH_TOKEN);
         const businessIdRaw = await SecureStore.getItemAsync(KEY_BUSINESS_ID);
 
-        console.log("📦 Stored values:");
-        console.log(
-          "  - user_id_v1:",
-          userIdRaw ? `${userIdRaw.substring(0, 10)}...` : "NOT FOUND",
-        );
-        console.log(
-          "  - auth_token:",
-          authTokenRaw ? `${authTokenRaw.substring(0, 20)}...` : "NOT FOUND",
-        );
-        console.log(
-          "  - refresh_token:",
-          refreshTokenRaw ? "EXISTS" : "NOT FOUND",
-        );
-        console.log("  - business_id:", businessIdRaw ? "EXISTS" : "NOT FOUND");
-
         const userId = toInt(userIdRaw);
 
         if (!userId) {
-          console.log(
-            "\n❌ Boot: user_id missing or invalid -> going to WelcomeScreen",
-          );
           setBootState({
             loading: false,
             target: "WelcomeScreen",
@@ -313,33 +270,11 @@ export default function App() {
           return;
         }
 
-        console.log("\n✅ Found valid user_id:", userId);
-
-        // Step 3: Check environment configuration - FIXED VERSION
-        console.log("\n🌐 Step 3: Checking environment configuration...");
-        let verifyEndpoint = "";
-
-        // Debug: Log all possible sources
-        console.log(
-          "  - Debug - ENV_VERIFY_SESSION_ENDPOINT from @env:",
-          ENV_VERIFY_SESSION_ENDPOINT,
-        );
-        console.log("  - Debug - Constants.extra:", Constants.extra);
-        console.log(
-          "  - Debug - Constants.extra?.VERIFY_SESSION_ENDPOINT:",
-          Constants.extra?.VERIFY_SESSION_ENDPOINT,
-        );
-        console.log(
-          "  - Debug - process.env.VERIFY_SESSION_ENDPOINT:",
-          process.env.VERIFY_SESSION_ENDPOINT,
-        );
-
         // Try Constants.extra FIRST (this works in production APK)
         if (Constants.extra?.VERIFY_SESSION_ENDPOINT) {
           verifyEndpoint = String(
             Constants.extra.VERIFY_SESSION_ENDPOINT,
           ).trim();
-          console.log("  ✅ From Constants.extra:", verifyEndpoint);
         }
         // Then try @env (works in development)
         else if (
@@ -347,12 +282,10 @@ export default function App() {
           ENV_VERIFY_SESSION_ENDPOINT !== "undefined"
         ) {
           verifyEndpoint = String(ENV_VERIFY_SESSION_ENDPOINT).trim();
-          console.log("  ✅ From @env:", verifyEndpoint);
         }
         // Then try process.env (fallback)
         else if (process.env.VERIFY_SESSION_ENDPOINT) {
           verifyEndpoint = String(process.env.VERIFY_SESSION_ENDPOINT).trim();
-          console.log("  ✅ From process.env:", verifyEndpoint);
         }
         // Hardcoded fallback as last resort
         else {
@@ -361,11 +294,7 @@ export default function App() {
           );
           verifyEndpoint =
             "https://backend.tabdhey.bt/driver/api/verify-session";
-          console.log("  ✅ Using hardcoded fallback:", verifyEndpoint);
         }
-
-        console.log("  - Final endpoint:", verifyEndpoint);
-
         if (
           !verifyEndpoint ||
           verifyEndpoint === "undefined" ||
@@ -381,9 +310,7 @@ export default function App() {
         }
 
         // Step 4: Get push token - UPDATED with skipPermissionRequest: true
-        console.log(
-          "\n📲 Step 4: Fetching Expo push token (skipping permission request)...",
-        );
+        
         let deviceId = null;
         try {
           // IMPORTANT: Pass skipPermissionRequest: true to avoid permission popup during boot
@@ -400,47 +327,25 @@ export default function App() {
           deviceId = await Promise.race([pushTokenPromise, timeoutPromise]);
 
           if (deviceId && typeof deviceId === "string" && deviceId.length > 0) {
-            console.log("✅ Device ID obtained successfully");
-            console.log("  - Device ID length:", deviceId.length);
-            console.log(
-              "  - Device ID format:",
-              deviceId.startsWith("ExponentPushToken")
-                ? "ExponentPushToken ✓"
-                : "Device format",
-            );
-            console.log(
-              "  - Device ID prefix:",
-              deviceId.substring(0, 30) + "...",
-            );
           } else {
             console.error("❌ Device ID is invalid or empty:", deviceId);
-            console.log("⚠️ Continuing without device ID (server may reject)");
             // Don't return here, try without device ID as fallback
             deviceId = null;
           }
         } catch (pushErr) {
           console.error("❌ Failed to get push token:", pushErr);
-          console.log("⚠️ Continuing without device ID (server may reject)");
           deviceId = null;
         }
 
         // Step 5: Make verification request
-        console.log("\n➡️ Step 5: Calling verify-session endpoint...");
-        console.log("  - URL:", verifyEndpoint);
 
         // Prepare request body
         const requestBody = { user_id: userId };
         if (deviceId) {
           requestBody.device_id = String(deviceId);
-          console.log("  - Including device_id in request");
         } else {
-          console.log("  - No device_id available, sending only user_id");
+          console.warn(" No device_id available, sending only user_id");
         }
-
-        console.log("  - Request body:", {
-          ...requestBody,
-          device_id: deviceId ? deviceId.substring(0, 20) + "..." : "null",
-        });
 
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -459,26 +364,11 @@ export default function App() {
 
           clearTimeout(timeoutId);
 
-          console.log("  - HTTP Status:", response.status, response.statusText);
-          console.log("  - Response Headers:", {
-            contentType: response.headers.get("content-type"),
-            contentLength: response.headers.get("content-length"),
-          });
-
           const responseText = await response.text();
-          console.log("  - Response length:", responseText.length);
-          console.log(
-            "  - Raw response (first 200 chars):",
-            responseText.substring(0, 200),
-          );
 
           let data = {};
           try {
             data = responseText ? JSON.parse(responseText) : {};
-            console.log("  - Parsed success flag:", data?.success);
-            console.log("  - Has token:", !!data?.token);
-            console.log("  - Has user:", !!data?.user);
-            console.log("  - Server message:", data?.message || "No message");
           } catch (parseError) {
             console.error("  - Failed to parse JSON:", parseError);
             throw new Error(
@@ -530,35 +420,13 @@ export default function App() {
             return;
           }
 
-          console.log("\n✅ Boot: Verify-session successful!");
-
           // Step 6: Save to SecureStore
-          console.log("\n💾 Step 6: Saving session to SecureStore...");
           const saved = await saveVerifySessionPayloadToSecureStore(data);
-          console.log(
-            "  - Saved accessToken:",
-            saved.accessToken ? "YES" : "NO",
-          );
-          console.log(
-            "  - Saved refreshToken:",
-            saved.refreshToken ? "YES" : "NO",
-          );
-          console.log("  - Saved userId:", saved.userId);
-          console.log("  - Saved businessId:", saved.businessId);
 
           // Verify the save was successful
           const verifyUserId = await SecureStore.getItemAsync(KEY_USER_ID);
           const verifyAuthToken =
             await SecureStore.getItemAsync(KEY_AUTH_TOKEN);
-          console.log("  - Verification - user_id saved:", !!verifyUserId);
-          console.log(
-            "  - Verification - auth_token saved:",
-            !!verifyAuthToken,
-          );
-
-          console.log(
-            "\n✅✅✅ AUTO-LOGIN SUCCESSFUL! Navigating to Home Screen ✅✅✅",
-          );
 
           setBootState({
             loading: false,
@@ -597,10 +465,6 @@ export default function App() {
           homeParams: {},
         });
       }
-
-      console.log("=".repeat(50));
-      console.log("🏁 Boot sequence completed");
-      console.log("=".repeat(50));
     })();
   }, []);
 
@@ -888,6 +752,12 @@ export default function App() {
                 <Stack.Screen
                   name="MerchantChatRoomScreen"
                   component={ChatRoomScreen}
+                />
+
+                <Stack.Screen
+                  name="DeviceVerificationScreen"
+                  component={DeviceVerificationScreen}
+                  options={{ headerShown: false }}
                 />
               </Stack.Navigator>
             </AppLockGate>

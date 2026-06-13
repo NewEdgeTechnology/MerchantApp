@@ -28,9 +28,9 @@ export default function HelpScreen() {
   };
 
   const emailSupport = () =>
-    onLink("mailto:info@newedge.bt?subject=Merchant%20Support");
+    onLink("mailto:pema.chodron@tabdey.com?subject=Merchant%20Support");
 
-  const callSupport = () => onLink("tel:+9752337191");
+  const callSupport = () => onLink("tel:+97517999977");
 
   return (
     <SafeAreaView
@@ -129,11 +129,11 @@ export default function HelpScreen() {
             <Text style={styles.p}>
               Email{" "}
               <Text style={styles.link} onPress={emailSupport}>
-                info@newedge.bt
+                pema.chodron@tabdey.com
               </Text>{" "}
               or call{" "}
               <Text style={styles.link} onPress={callSupport}>
-                +975 2 337191
+                +975 17999977
               </Text>
               . Share your app username and a brief description of the issue.
             </Text>

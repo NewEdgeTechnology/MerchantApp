@@ -35,13 +35,6 @@ export function useRideChat({ role, ids, rideId }) {
       try {
         const senderRole = message?.sender_role ?? message?.sender_type ?? "unknown";
         const senderId = message?.sender_id ?? message?.from?.id ?? "unknown";
-        console.log("[rideChat] recv message", {
-          event: "chat:new*",
-          senderRole,
-          senderId,
-          id: message?.id ?? message?.message_id ?? null,
-          request_id: message?.request_id ?? payload?.request_id ?? null,
-        });
       } catch {}
       setMessages((prev) => {
         if (temp_id) {

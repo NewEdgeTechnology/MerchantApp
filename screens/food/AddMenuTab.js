@@ -24,8 +24,8 @@ import {
 /* ───────── Debug ───────── */
 const DEBUG = true;
 const rid = () => Math.random().toString(36).slice(2, 8);
-const dlog = (...a) => DEBUG && console.log('[ADD-MENU]', ...a);
-const derr = (...a) => DEBUG && console.log('%c[ADD-MENU ERR]', 'color:#d00', ...a);
+const dlog = (...a) => DEBUG;
+const derr = (...a) => DEBUG;
 
 /* ───────── Theme ───────── */
 const FONT_FAMILY = FONT.body;

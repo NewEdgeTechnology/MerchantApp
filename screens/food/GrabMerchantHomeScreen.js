@@ -696,10 +696,10 @@ export default function GrabMerchantHomeScreen() {
   });
 
   const applyHeaderIfChanged = useCallback((payload = {}) => {
-    console.log(
-      "📸 applyHeaderIfChanged received:",
-      JSON.stringify(payload, null, 2),
-    );
+    // console.log(
+    //   "📸 applyHeaderIfChanged received:",
+    //   JSON.stringify(payload, null, 2),
+    // );
 
     const next = {
       name: payload.business_name ?? payload.name ?? null,
@@ -714,7 +714,7 @@ export default function GrabMerchantHomeScreen() {
         null,
     };
 
-    console.log("📸 Extracted profile image path:", next.profile);
+    // console.log("📸 Extracted profile image path:", next.profile);
 
     let bumped = false;
 
@@ -740,21 +740,21 @@ export default function GrabMerchantHomeScreen() {
 
     // ✅ IMPROVED: Handle profile image with better logging
     if (next.profile) {
-      console.log("📸 Processing profile image:", next.profile);
+      // console.log("📸 Processing profile image:", next.profile);
       const resolvedP = makeEnvImageUrl(String(next.profile), "profile");
-      console.log("📸 Resolved profile URL:", resolvedP);
+      // console.log("📸 Resolved profile URL:", resolvedP);
       if (resolvedP && resolvedP !== headerSnapRef.current.profile) {
-        console.log("📸 Setting profile avatar to:", resolvedP);
+        // console.log("📸 Setting profile avatar to:", resolvedP);
         setProfileAvatar(resolvedP);
         headerSnapRef.current.profile = resolvedP;
       } else if (!resolvedP && next.profile) {
         // If makeEnvImageUrl fails, try using the raw URL
-        console.log("📸 Using raw profile URL:", next.profile);
+        // console.log("📸 Using raw profile URL:", next.profile);
         setProfileAvatar(next.profile);
         headerSnapRef.current.profile = next.profile;
       }
     } else {
-      console.log("📸 No profile image in payload");
+      // console.log("📸 No profile image in payload");
     }
 
     if (bumped) setLogoVersion((v) => v + 1);
@@ -984,11 +984,11 @@ export default function GrabMerchantHomeScreen() {
           // API returns { success: true, data: { ...userData } }
           const profileData = response?.data || response;
 
-          console.log("📸 Profile data extracted:", {
-            user_name: profileData?.user_name,
-            profile_image: profileData?.profile_image,
-            business_name: profileData?.business_name,
-          });
+          // console.log("📸 Profile data extracted:", {
+          //   user_name: profileData?.user_name,
+          //   profile_image: profileData?.profile_image,
+          //   business_name: profileData?.business_name,
+          // });
 
           // ✅ Pass the extracted profile data to applyHeaderIfChanged
           applyHeaderIfChanged({
@@ -1120,7 +1120,7 @@ export default function GrabMerchantHomeScreen() {
             rr.backoffUntil = Date.now() + 60000;
           }
           if (e?.name === "AbortError" || e?.message === "Aborted") return;
-          if (__DEV__) console.log("[Home] profile fetch failed:", e?.message);
+          // if (__DEV__) console.log("[Home] profile fetch failed:", e?.message);
         } finally {
           profileReqRef.current.inFlight = false;
         }

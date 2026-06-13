@@ -142,9 +142,8 @@ async function wipeAllSecureStore() {
     if (typeof SecureStore.getAllKeysAsync === "function") {
       const keys = await SecureStore.getAllKeysAsync();
       (keys || []).forEach((k) => known.add(k));
-      console.log("🔐 Logout: SecureStore keys discovered:", keys);
     } else {
-      console.log(
+      console.warn(
         "🔐 Logout: SecureStore.getAllKeysAsync not available, wiping known keys only.",
       );
     }
@@ -153,8 +152,6 @@ async function wipeAllSecureStore() {
   }
 
   const keysArr = Array.from(known).filter(Boolean);
-
-  console.log("🧹 Logout: wiping SecureStore keys count:", keysArr.length);
 
   await Promise.allSettled(
     keysArr.map(async (k) => {
@@ -168,10 +165,6 @@ async function wipeAllSecureStore() {
   try {
     const leftUserId = await SecureStore.getItemAsync("user_id_v1");
     const leftToken = await SecureStore.getItemAsync("auth_token");
-    console.log("✅ Logout: post-wipe check:", {
-      user_id_v1: leftUserId,
-      auth_token: leftToken ? "<<still exists>>" : null,
-    });
   } catch {}
 }
 
@@ -698,7 +691,6 @@ const AccountSettings = () => {
   ]);
 
   const handleLogoutNow = useCallback(async () => {
-    console.log("🚪 Logout: started");
 
     try {
       if (authContext?.onBeforeLogout) {
@@ -711,23 +703,11 @@ const AccountSettings = () => {
         authContext?.logoutEndpoint || route?.params?.logoutEndpoint || null;
 
       // ✅ keep your existing server logout / socket disconnect / clears
-      console.log("🌐 Logout: attempt server logout");
       await attemptServerLogout({ explicitEndpoint, userId });
-
-      console.log("🔌 Logout: disconnect merchant socket");
       await disconnectSocketGracefully({ userId, businessId });
-
-      console.log("🧹 Logout: clear known credential stores (existing)");
       await clearCredentialStores();
-
-      // ✅ NEW: wipe everything from SecureStore too
-      console.log("🧨 Logout: wipe ALL SecureStore (best-effort)");
       await wipeAllSecureStore();
-
-      console.log("🧽 Logout: clear image caches");
       await clearImageCacheAsync();
-
-      console.log("♻️ Logout: reset local state + emit logged-out");
       resetLocalState({
         setName,
         setImageUri,
@@ -741,8 +721,6 @@ const AccountSettings = () => {
           await authContext.onAfterLogout();
         } catch {}
       }
-
-      console.log("✅ Logout: finished");
     } finally {
       navigation.reset({ index: 0, routes: [{ name: "MobileLoginScreen" }] });
     }

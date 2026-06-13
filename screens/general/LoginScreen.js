@@ -38,6 +38,7 @@ import * as SecureStore from "expo-secure-store";
 import {
   LOGIN_USERNAME_MERCHANT_ENDPOINT as ENV_LOGIN_USERNAME_MERCHANT_ENDPOINT,
   PROFILE_ENDPOINT,
+  DEVICE_CHANGE_OTP_SEND_ENDPOINT,
 } from "@env";
 
 // Shared socket connector
@@ -65,7 +66,42 @@ const KEY_REFRESH_TOKEN = "refresh_token_v1";
 // ✅ NEW: store user_id separately
 const KEY_USER_ID = "user_id_v1";
 const KEY_BUSINESS_ID = "business_id_v1"; // ✅ stable key for business id
+const KEY_PENDING_DEVICE_LOGIN = "pending_device_login_v1";
 
+const changeDeviceOtpEndpoint = (DEVICE_CHANGE_OTP_SEND_ENDPOINT ?? "").trim();
+
+const digitsOnly = (value = "") => String(value || "").replace(/\D/g, "");
+
+const extractMessage = (data, fallback = "Something went wrong.") => {
+  const msg =
+    data?.message ||
+    data?.error ||
+    data?.msg ||
+    data?.data?.message ||
+    data?.data?.error ||
+    data?.data?.msg ||
+    "";
+
+  return String(msg || "").trim() || fallback;
+};
+
+const extractPhoneFromConflict = (data) => {
+  return digitsOnly(
+    data?.phone ||
+      data?.mobile ||
+      data?.user?.phone ||
+      data?.user?.mobile ||
+      data?.merchant?.phone ||
+      data?.merchant?.mobile ||
+      data?.data?.phone ||
+      data?.data?.mobile ||
+      data?.data?.user?.phone ||
+      data?.data?.user?.mobile ||
+      data?.data?.merchant?.phone ||
+      data?.data?.merchant?.mobile ||
+      "",
+  ).slice(-8);
+};
 const endpoint = (ENV_LOGIN_USERNAME_MERCHANT_ENDPOINT ?? "").trim();
 
 /* ───────── Navigation helpers ───────── */
@@ -543,6 +579,12 @@ const LoginScreen = () => {
 
       console.log("LOGIN device_id:", expoToken);
 
+      const cleanEmail = String(email || "")
+        .trim()
+        .toLowerCase();
+
+      const cleanPassword = String(password || "").trim();
+
       const res = await fetch(endpoint, {
         method: "POST",
         headers: {
@@ -550,10 +592,8 @@ const LoginScreen = () => {
           Accept: "application/json",
         },
         body: JSON.stringify({
-          email: String(email || "")
-            .trim()
-            .toLowerCase(),
-          password: String(password || ""),
+          email: cleanEmail,
+          password: cleanPassword,
           device_id: expoToken,
           push_token: expoToken,
         }),
@@ -568,7 +608,124 @@ const LoginScreen = () => {
       }
 
       if (!res.ok) {
-        throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+        const msg = extractMessage(data, `HTTP ${res.status}`);
+
+        if (res.status === 409) {
+          await SecureStore.setItemAsync(
+            KEY_PENDING_DEVICE_LOGIN,
+            JSON.stringify({
+              email: cleanEmail,
+              password: cleanPassword,
+              device_id: expoToken,
+              save_password: !!savePassword,
+            }),
+          );
+
+          Alert.alert(
+            "Already logged in",
+            msg || "This account is already logged in on another device.",
+            [
+              {
+                text: "Cancel",
+                style: "cancel",
+              },
+              {
+                text: "Verify this device",
+                onPress: async () => {
+                  if (!changeDeviceOtpEndpoint) {
+                    Alert.alert(
+                      "Configuration error",
+                      "DEVICE_CHANGE_OTP_SEND_ENDPOINT is not set in your .env file.",
+                    );
+                    return;
+                  }
+
+                  setLoading(true);
+
+                  const otpController = new AbortController();
+                  const otpTimer = setTimeout(
+                    () => otpController.abort(),
+                    15000,
+                  );
+
+                  try {
+                    const otpRes = await fetch(changeDeviceOtpEndpoint, {
+                      method: "POST",
+                      headers: {
+                        "Content-Type": "application/json",
+                        Accept: "application/json",
+                      },
+                      body: JSON.stringify({
+                        email: cleanEmail,
+                        device_id: expoToken,
+                      }),
+                      signal: otpController.signal,
+                    });
+
+                    const otpTxt = await otpRes.text();
+                    let otpData = {};
+
+                    try {
+                      otpData = otpTxt ? JSON.parse(otpTxt) : {};
+                    } catch {
+                      otpData = {};
+                    }
+
+                    console.log(
+                      "Send change-device OTP:",
+                      otpRes.status,
+                      otpTxt,
+                    );
+
+                    if (!otpRes.ok) {
+                      const otpMsg = extractMessage(
+                        otpData,
+                        otpTxt || "Failed to send OTP.",
+                      );
+
+                      setErrorText(otpMsg);
+                      Alert.alert("OTP failed", otpMsg);
+                      return;
+                    }
+
+                    const otpMsg = extractMessage(
+                      otpData,
+                      "OTP has been sent to your registered email.",
+                    );
+
+                    Alert.alert("OTP sent", otpMsg, [
+                      {
+                        text: "Continue",
+                        onPress: () => {
+                          navigation.navigate("DeviceVerificationScreen", {
+                            message: msg,
+                            email: cleanEmail,
+                            device_id: expoToken,
+                          });
+                        },
+                      },
+                    ]);
+                  } catch (e) {
+                    const otpMsg =
+                      e?.name === "AbortError"
+                        ? "OTP request timeout. Please try again."
+                        : "Network error while sending OTP. Please try again.";
+
+                    setErrorText(otpMsg);
+                    Alert.alert("OTP failed", otpMsg);
+                  } finally {
+                    clearTimeout(otpTimer);
+                    setLoading(false);
+                  }
+                },
+              },
+            ],
+          );
+
+          return;
+        }
+
+        throw new Error(msg);
       }
 
       const tokenObj = data?.token || {};

@@ -117,9 +117,9 @@ const hit = (n) => ({ top: n, bottom: n, left: n, right: n });
 /* ---------------- debug helpers ---------------- */
 const logJson = (label, obj) => {
   try {
-    console.log(label, JSON.stringify(obj, null, 2));
+    // console.log(label, JSON.stringify(obj, null, 2));
   } catch (e) {
-    console.log(label, obj);
+    // console.log(label, obj);
   }
 };
 
@@ -1007,12 +1007,12 @@ export default function OrderDetails() {
         return;
       }
 
-      console.log("[CHAT] Opening chat - Details:", {
-        orderCode,
-        customerId: customer_id,
-        businessId: business_id,
-        merchantUserId: merchant_user_id,
-      });
+      // console.log("[CHAT] Opening chat - Details:", {
+      //   orderCode,
+      //   customerId: customer_id,
+      //   businessId: business_id,
+      //   merchantUserId: merchant_user_id,
+      // });
 
       const conversationId = await getOrCreateOrderConversation({
         orderCode,
@@ -1086,7 +1086,7 @@ export default function OrderDetails() {
       // Optional: You could also send an auto-message about this specific item
       if (item) {
         const itemName = getItemName(item);
-        console.log(`[CHAT] Opening chat from item: ${itemName}`);
+        // console.log(`[CHAT] Opening chat from item: ${itemName}`);
         // You could optionally pre-fill a message here if your chat screen supports it
       }
     },
@@ -1129,11 +1129,11 @@ export default function OrderDetails() {
     driverAcceptedRef.current = !!driverAccepted;
   }, [driverAccepted]);
   useEffect(() => {
-    console.log("[ORDER] Status changed to:", status);
-    console.log("[ORDER] isTerminalNegative:", isTerminalNegative);
-    console.log("[ORDER] isTerminalSuccess:", isTerminalSuccess);
-    console.log("[ORDER] isCancelledByCustomer:", isCancelledByCustomer);
-    console.log("[ORDER] isSelfSelected:", isSelfSelected);
+    // console.log("[ORDER] Status changed to:", status);
+    // console.log("[ORDER] isTerminalNegative:", isTerminalNegative);
+    // console.log("[ORDER] isTerminalSuccess:", isTerminalSuccess);
+    // console.log("[ORDER] isCancelledByCustomer:", isCancelledByCustomer);
+    // console.log("[ORDER] isSelfSelected:", isSelfSelected);
   }, [
     status,
     isTerminalNegative,
@@ -1374,7 +1374,7 @@ export default function OrderDetails() {
             (savedChoice === "grab" || savedChoice === "self")
           ) {
             setDeliveryChoice(savedChoice);
-            console.log("[DELIVERY] Restored choice:", savedChoice);
+            // console.log("[DELIVERY] Restored choice:", savedChoice);
           }
         }
       } catch (e) {
@@ -1407,7 +1407,7 @@ export default function OrderDetails() {
 
       // ✅ Stop if max attempts reached
       if (fetchAttemptCountRef.current >= MAX_FETCH_ATTEMPTS) {
-        console.log("[BATCH-RIDE] Max fetch attempts reached, stopping");
+        // console.log("[BATCH-RIDE] Max fetch attempts reached, stopping");
         return;
       }
 
@@ -1467,7 +1467,7 @@ export default function OrderDetails() {
         }
 
         if (!foundBatch) {
-          console.log("[BATCH-RIDE] No batch found for order:", orderId);
+          // console.log("[BATCH-RIDE] No batch found for order:", orderId);
           activeFetch = false;
           return;
         }
@@ -1476,7 +1476,7 @@ export default function OrderDetails() {
         const driver_id = foundBatch.driver_id;
 
         if (!driver_id) {
-          console.log("[BATCH-RIDE] No driver_id found in batch");
+          // console.log("[BATCH-RIDE] No driver_id found in batch");
           activeFetch = false;
           return;
         }
@@ -1835,13 +1835,13 @@ export default function OrderDetails() {
       shouldNavigateToChat = true,
     ) => {
       try {
-        console.log("[AUTO-MESSAGE] Starting to send auto-message for:", mode);
-        console.log("[AUTO-MESSAGE] Item details:", {
-          name: getItemName(item),
-          total: itemTotal,
-          newTotal: newTotal,
-          reason: reason,
-        });
+        // console.log("[AUTO-MESSAGE] Starting to send auto-message for:", mode);
+        // console.log("[AUTO-MESSAGE] Item details:", {
+        //   name: getItemName(item),
+        //   total: itemTotal,
+        //   newTotal: newTotal,
+        //   reason: reason,
+        // });
 
         const token = await SecureStore.getItemAsync("auth_token");
         if (!token) {
@@ -1908,11 +1908,11 @@ export default function OrderDetails() {
           message = `❌ *${itemName}* (×${qty}) has been REMOVED from your order as it is currently unavailable.${reasonText}\n\n💰 *New order total:* ${money(newTotal, "BTN.")}\n\nWe apologize for any inconvenience caused.`;
         }
 
-        console.log("[AUTO-MESSAGE] Message content length:", message.length);
-        console.log(
-          "[AUTO-MESSAGE] First 100 chars:",
-          message.substring(0, 100),
-        );
+        // console.log("[AUTO-MESSAGE] Message content length:", message.length);
+        // console.log(
+        //   "[AUTO-MESSAGE] First 100 chars:",
+        //   message.substring(0, 100),
+        // );
 
         const conversationId = await getOrCreateOrderConversation({
           orderCode,
@@ -1927,7 +1927,7 @@ export default function OrderDetails() {
           return false;
         }
         setLastConversationId(conversationId);
-        console.log("[AUTO-MESSAGE] Got conversation ID:", conversationId);
+        // console.log("[AUTO-MESSAGE] Got conversation ID:", conversationId);
 
         // Send the message using fetch
         const sendResponse = await fetch(
@@ -1952,8 +1952,8 @@ export default function OrderDetails() {
         const responseData = await sendResponse.json();
 
         if (sendResponse.ok) {
-          console.log("[AUTO-MESSAGE] Message sent successfully!");
-          console.log("[AUTO-MESSAGE] Response:", responseData);
+          // console.log("[AUTO-MESSAGE] Message sent successfully!");
+          // console.log("[AUTO-MESSAGE] Response:", responseData);
         } else {
           console.error("[AUTO-MESSAGE] Failed to send message:", responseData);
           return false;
@@ -1990,7 +1990,7 @@ export default function OrderDetails() {
                 source: "order-details-auto",
               });
             } catch (navError) {
-              console.log("[AUTO-MESSAGE] Navigation error:", navError);
+              // console.log("[AUTO-MESSAGE] Navigation error:", navError);
             }
           }, 500);
         }
@@ -2010,7 +2010,7 @@ export default function OrderDetails() {
   const checkAndAutoDeclineIfZeroTotal = useCallback(
     async (newTotal, shouldNavigateToChat = true) => {
       if (newTotal <= 0) {
-        console.log("[ORDER] Total became zero, auto-declining order");
+        // console.log("[ORDER] Total became zero, auto-declining order");
 
         // Auto-decline the order
         const declineSuccess = await updateSingleStatusLikeCluster({
@@ -2100,14 +2100,14 @@ export default function OrderDetails() {
               {
                 text: "Stay",
                 onPress: () => {
-                  console.log("[ORDER] User chose to stay");
+                  // console.log("[ORDER] User chose to stay");
                 },
                 style: "default",
               },
               {
                 text: "Go to Chat",
                 onPress: async () => {
-                  console.log("[ORDER] User chose to go to chat");
+                  // console.log("[ORDER] User chose to go to chat");
                   // ✅ Use the saved conversation ID instead of creating a new one
                   if (
                     lastConversationId &&
